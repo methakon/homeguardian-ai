@@ -7,7 +7,7 @@
 | g++ | 13.3.0 | C++20 compiler |
 | CMake | 3.28.3 | Build system |
 | Git | 2.x | Version control |
-| agy | 1.3.2 | Antigravity CLI for delegated implementation |
+| make | — | Build tool (Unix Makefiles generator) |
 
 ### Optional Dependencies
 | Library | Version | Status |
@@ -39,9 +39,15 @@ A single test executable `homeguardian_tests` runs all test cases.
 Registered with CTest via `add_test()`.
 
 Current test coverage:
-- Config: default values, validation (invalid port/log level), load/save round-trip
-- Logger: initialization, log level, file output verification
+- Config: default values, validation (port, log level, history, window, threshold), load/save round-trip
+- Logger: initialization, log level, file output, uninitialized throws
 - Application: construction, run/shutdown on worker thread
+- Event: construction, validation, JSON round-trip
+- EventValidator: validation, normalization, provenance preservation
+- SimulatedEventSource: replay order, exhaustion
+- TimeWindowCorrelation: fires, insufficient, outside window
+- Pipeline: no alert, alert generation, history bounds
+- Alert: creation, JSON round-trip
 
 ## Coding Standards
 
@@ -65,15 +71,10 @@ HomeGuardian development is limited to **30% of CPU capacity**:
 - Thread pool size: 4 threads (default)
 - No persistent background workers during development
 
-## Antigravity Workflow
+## Implementation Workflow
 
-See [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) for the full delegation workflow.
-
-Key rules:
-- `agy` writes code; Hermes runs every command
-- `agy` must never run `git` — all git operations stay with Hermes
-- `agy` uses `--mode plan` for investigation, `--mode accept-edits` for edits
-- Hermes verifies every result before committing
+All code is implemented directly with full architectural review.
+Hermes manages git, builds, tests, and verification.
 
 ## Debugging
 

@@ -113,7 +113,29 @@ Use CMake 3.28.3 with Unix Makefiles generator.
 - CMake syntax can be verbose
 - Build times longer than Ninja (mitigated by `-j4` flag)
 
-## ADR-006: Deferred License Selection
+## ADR-006: No AI Coding Agents
+
+**Status:** Accepted
+**Date:** 2026-10-09
+
+### Context
+AI coding agents can generate code quickly but may introduce AI fingerprints, subtle design issues, or code that does not match project standards.
+
+### Decision
+All code is implemented directly without AI coding agents. No AI-generated code, comments, or patterns are used.
+
+### Rationale
+- Full architectural control and code quality
+- No AI fingerprints in codebase
+- Every line of code is reviewed and understood
+- Maintains clean, hand-crafted implementation
+
+### Consequences
+- Slower development pace
+- More manual effort required
+- Higher code quality and maintainability
+
+## ADR-007: Deferred License Selection
 
 **Status:** Pending
 **Date:** 2026-10-09

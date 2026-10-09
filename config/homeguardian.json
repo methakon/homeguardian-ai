@@ -2,5 +2,8 @@
     "log_level": "info",
     "server_host": "127.0.0.1",
     "server_port": 8080,
-    "data_dir": "/var/lib/homeguardian"
+    "data_dir": "/var/lib/homeguardian",
+    "max_event_history": 1000,
+    "correlation_window_ms": 5000,
+    "alert_confidence_threshold": 0.5
 }

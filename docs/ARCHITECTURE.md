@@ -156,6 +156,26 @@ transmitting all raw media.
 - **Notification Service** — email, push, or webhook alerts for safety
   events.
 
+## Event Model
+
+Events are strongly typed, immutable objects with:
+- Unique event ID (UUID v4)
+- Schema version (uint32, >= 1)
+- Event type: observation, inference, or alert
+- Source identifier (e.g., "camera.front_door", "sensor.motion")
+- UTC observation timestamp (when the event occurred)
+- UTC ingestion timestamp (when the system received it)
+- Optional monotonic timestamp for elapsed-time calculations
+- Optional confidence in [0.0, 1.0]
+- Optional severity: info, warning, or critical
+- Structured JSON payload (object or null)
+- Optional evidence reference (opaque, not a file path)
+- Optional correlation ID (groups related events)
+- Optional processing metadata
+
+Events are validated on construction. Invalid events throw std::invalid_argument.
+Normalization is deterministic and preserves original timestamps and provenance.
+
 ## Event Flow
 
 1. A sensor or AI model emits a **raw event** (timestamp, source, type,
@@ -166,6 +186,23 @@ transmitting all raw media.
 4. The **inference** stage applies rules and ML models to the scene.
 5. The **routing** stage dispatches outputs: alerts, dashboard updates,
    notifications, or actions.
+
+## Pipeline Architecture
+
+The pipeline is synchronous and in-process:
+
+```
+EventSource → Pipeline::process() → [validate → normalize → correlate → alert]
+```
+
+- **IEventSource** — abstract interface for event producers (simulated, Android, etc.)
+- **Pipeline** — synchronous processor with bounded history and configurable rules
+- **ICorrelationRule** — abstract interface for correlation rules
+- **TimeWindowCorrelation** — detects N events of specified types within a time window
+- **EventValidator** — validates and normalizes events
+- **Alert** — strongly typed alert with provenance and explainability
+
+No threads, no queues, no async. The pipeline is deterministic and testable.
 
 ## Data Flow
 

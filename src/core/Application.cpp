@@ -14,6 +14,9 @@ Application::Application() {
         throw std::runtime_error("Application instance already exists");
     }
     instance_ = this;
+    
+    std::vector<std::shared_ptr<ICorrelationRule>> default_rules;
+    pipeline_ = std::make_unique<Pipeline>(default_rules);
 }
 
 Application::~Application() {
@@ -24,7 +27,6 @@ int Application::run(const std::string& config_path) {
     try {
         config_.load(config_path);
     } catch (const std::exception& e) {
-        // Since logger might not be initialized yet, initialize with default info
         Logger::initialize("info");
         Logger::get()->critical("Failed to load config: {}", e.what());
         return 1;
@@ -32,11 +34,9 @@ int Application::run(const std::string& config_path) {
 
     Logger::initialize(config_.log_level);
     Logger::get()->info("Starting HomeGuardian AI Application...");
-    Logger::get()->info("Server Host: {}", config_.server_host);
-    Logger::get()->info("Server Port: {}", config_.server_port);
-    Logger::get()->info("Data Directory: {}", config_.data_dir);
+    
+    pipeline_->set_max_history_size(config_.max_event_history);
 
-    // Register signal handlers
     std::signal(SIGINT, Application::signal_handler);
     std::signal(SIGTERM, Application::signal_handler);
 
@@ -44,7 +44,6 @@ int Application::run(const std::string& config_path) {
 
     while (!shutdown_flag_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        // Main loop logic would go here
     }
 
     Logger::get()->info("Main loop exited cleanly.");
@@ -57,6 +56,19 @@ void Application::request_shutdown() {
     if (auto logger = Logger::get()) {
         logger->info("Shutdown requested.");
     }
+}
+
+void Application::process_event(const Event& event) {
+    if (pipeline_) {
+        auto alert = pipeline_->process(event);
+        if (alert) {
+            Logger::get()->warn("Alert generated: {}", alert->message);
+        }
+    }
+}
+
+Pipeline& Application::get_pipeline() {
+    return *pipeline_;
 }
 
 void Application::signal_handler([[maybe_unused]] int signal) {

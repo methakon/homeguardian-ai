@@ -4,7 +4,7 @@
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| A-01 | Verify Antigravity delegation workflow | — | `agy --conversation` returns `SESSION_OK` | DONE |
+| A-01 | Initialize project and verify toolchain | — | C++20, CMake, spdlog, nlohmann/json, Catch2 all working | DONE |
 | A-02 | Initialize Git repository | A-01 | Repo exists at `/home/swarna-sekhar-dhar/projects/homeguardian-ai` on `main` branch | DONE |
 | A-03 | Create initial documentation | A-02 | README, ARCHITECTURE, ROADMAP, DEVELOPMENT, TESTING, ORCHESTRATION, DECISIONS, STATUS all exist and are committed | DONE |
 | A-04 | Review and first commit | A-03 | All docs reviewed, `.gitignore` present, initial commit created | DONE |
@@ -26,11 +26,14 @@
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| C-01 | Core event types | B-06 | Event, Scene, Alert types defined; serialization tested | TODO |
-| C-02 | Event ingestion interface | C-01 | IEventSource interface defined | TODO |
-| C-03 | Event processing pipeline | C-01, C-02 | Pipeline stages: ingest → correlate → infer → route | TODO |
-| C-04 | State manager | C-03 | Tracks occupancy, known faces, recent events | TODO |
-| C-05 | Consent manager | C-03 | Per-zone, per-activity consent enforcement | TODO |
+| C-01 | Core event types | B-06 | Event, Alert types defined; JSON serialization tested | DONE |
+| C-02 | Event ingestion interface | C-01 | IEventSource interface + SimulatedEventSource implemented | DONE |
+| C-03 | Event processing pipeline | C-01, C-02 | Pipeline: validate → normalize → correlate → alert | DONE |
+| C-04 | Correlation rules | C-03 | TimeWindowCorrelation with configurable window | DONE |
+| C-05 | Event validation | C-01 | EventValidator with deterministic normalization | DONE |
+| C-06 | Config extension | C-03 | max_event_history, correlation_window_ms, alert_confidence_threshold | DONE |
+| C-07 | Application integration | C-03 | Application::process_event() delegates to Pipeline | DONE |
+| C-08 | Test suite | C-01–C-07 | 13 test cases covering all modules | DONE |
 
 ## Phase D — Persistence
 

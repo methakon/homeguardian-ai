@@ -47,6 +47,11 @@ add_executable(homeguardian
     src/core/Config.cpp
     src/core/Logger.cpp
     src/core/Application.cpp
+    src/core/EventValidator.cpp
+    src/core/SimulatedEventSource.cpp
+    src/core/TimeWindowCorrelation.cpp
+    src/core/Pipeline.cpp
+    src/core/UUID.cpp
 )
 
 target_include_directories(homeguardian PRIVATE src)

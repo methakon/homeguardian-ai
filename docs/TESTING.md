@@ -70,7 +70,21 @@ cd build && ./tests/homeguardian_tests
 
 # With Catch2 filter
 cd build && ./tests/homeguardian_tests "[config]"
+
+# With AddressSanitizer + UndefinedBehaviorSanitizer
+cd build && cmake .. -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" && make -j4 && ctest --output-on-failure
 ```
+
+## Test Coverage
+
+Phase C adds tests for:
+- Event construction, validation, JSON round-trip
+- EventValidator: validation, normalization, provenance preservation
+- SimulatedEventSource: replay order, exhaustion
+- TimeWindowCorrelation: fires, insufficient events, outside window
+- Pipeline: no alert, alert generation, history bounds
+- Alert: creation, JSON round-trip
+- Config: new fields (max_event_history, correlation_window_ms, alert_confidence_threshold)
 
 ## Test Fixtures
 
