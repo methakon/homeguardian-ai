@@ -1,0 +1,51 @@
+# Build directories
+build/
+cmake-build-*/
+
+# Compiled binaries
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.exe
+homeguardian
+
+# IDE state
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+*.pid
+
+# Local databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Model artifacts
+*.onnx
+*.tflite
+*.pt
+*.pth
+*.h5
+
+# Test outputs
+Testing/
+test_results/
+coverage/
+
+# Configuration with secrets
+config/local*.json
+config/*.local.json
+
+# OS files
+.DS_Store
+Thumbs.db
