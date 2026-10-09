@@ -2,10 +2,71 @@
 
 ## Overview
 
-HomeGuardian AI follows a layered, event-driven architecture with clear
-separation between sensing, inference, event processing, and presentation.
-The core is a single native C++ process with well-defined interfaces for
-all external interactions.
+HomeGuardian AI follows a three-tier, event-driven architecture with clear
+separation between acquisition, inference, event processing, and presentation.
+
+### Tier 1 — Android Acquisition Client (later phase)
+
+A native C++ daemon running on an Android phone (MT6580, 1GB RAM) that
+captures sensor data, camera frames, and audio, performs lightweight
+threshold detection, and forwards compact observations to the PC via Wi-Fi.
+
+**Capabilities:**
+- Accelerometer, light, and proximity sensor reading (Android NDK `ASensorManager`)
+- Camera frame acquisition (Android NDK Camera2 API)
+- Audio capture and voice activity detection (Android NDK AAudio)
+- Lightweight threshold detection (motion spike, light step-change, proximity toggle)
+- Wi-Fi data forwarding to PC (libcurl or WebSocket)
+
+**Constraints:**
+- No root access assumed
+- Android foreground-service restrictions apply
+- Background camera/audio capture is restricted by Android security model
+- Battery life is a primary concern
+- Consent must be explicitly granted for all capture
+
+**Status:** Not yet implemented. Phase B focuses on Tier 2 only.
+
+### Tier 2 — PC-Side C++ Processing (current phase)
+
+A native C++ application running on the PC (40 logical CPUs, 15GB RAM) that
+receives data from Tier 1 (or simulated sources), runs ML inference,
+correlates events, and produces alerts and dashboard updates.
+
+**Modules:**
+- OpenCV-based image and video processing
+- ONNX Runtime inference (optional local ML backend)
+- Audio feature extraction (openSMILE or custom)
+- Body-pose estimation (MediaPipe C++ or OpenPose)
+- Experimental remote photoplethysmography (rPPG)
+- Time-series anomaly detection
+- Event correlation and multimodal fusion
+- Explainable safety rules
+- Optional animal-sound classification
+
+**Constraints:**
+- CPU budget: 30% of 40 logical CPUs = 12 logical CPUs max
+- Memory: 15GB total, monitor usage
+- No cloud dependencies for core operation
+- All inference is local
+
+**Status:** Phase B — minimal vertical slice (build system, entry point,
+logging, config, graceful shutdown, tests).
+
+### Tier 3 — Hybrid Acquisition and Inference (future phase)
+
+Evaluates sending compact derived observations instead of continuously
+transmitting all raw media.
+
+**Approach:**
+- Send face-region crops instead of full frames (where authorized)
+- Send pose keypoints instead of full video
+- Send voice segments instead of continuous audio
+- Send compact sensor summaries instead of raw streams
+
+**Decision criteria:** measured bandwidth, CPU, RAM, latency, privacy, and accuracy.
+
+**Status:** Not yet implemented. Requires Tier 1 and Tier 2 to be operational.
 
 ## Design Principles
 

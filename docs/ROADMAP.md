@@ -8,12 +8,14 @@
 | A-02 | Initialize Git repository | A-01 | Repo exists at `/home/swarna-sekhar-dhar/projects/homeguardian-ai` on `main` branch | DONE |
 | A-03 | Create initial documentation | A-02 | README, ARCHITECTURE, ROADMAP, DEVELOPMENT, TESTING, ORCHESTRATION, DECISIONS, STATUS all exist and are committed | DONE |
 | A-04 | Review and first commit | A-03 | All docs reviewed, `.gitignore` present, initial commit created | DONE |
+| A-05 | Create skill inventory | A-03 | `docs/SKILL_INVENTORY.md` created with all relevant skills documented | DONE |
+| A-06 | Update architecture for three-tier design | A-03 | `docs/ARCHITECTURE.md` updated with Tier 1/2/3 descriptions | DONE |
 
-## Phase B — Minimal Vertical Slice
+## Phase B — Minimal Vertical Slice (Tier 2 — PC-Side C++)
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| B-01 | CMake build system | A-04 | `cmake` configures and `make` builds an empty executable | TODO |
+| B-01 | CMake build system | A-06 | `cmake` configures and `make` builds an empty executable | TODO |
 | B-02 | Application entry point | B-01 | `main()` starts, initializes logging, loads config, enters main loop | TODO |
 | B-03 | Structured logging | B-01 | spdlog initialized with configurable level and output | TODO |
 | B-04 | Configuration loading | B-02 | JSON config loaded and validated; defaults applied for missing values | TODO |
