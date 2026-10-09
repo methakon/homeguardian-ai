@@ -62,14 +62,14 @@ A task is accepted only when:
 ## Running Tests
 
 ```bash
-# All tests
-cd build && ctest --output-on-failure
+# All tests (with verbose output)
+cd build && ctest --output-on-failure -V
 
 # Specific test executable
-cd build && ./tests/unit/core/event_test
+cd build && ./tests/homeguardian_tests
 
-# With verbose output
-cd build && ctest -V
+# With Catch2 filter
+cd build && ./tests/homeguardian_tests "[config]"
 ```
 
 ## Test Fixtures

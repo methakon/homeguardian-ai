@@ -15,12 +15,12 @@
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| B-01 | CMake build system | A-06 | `cmake` configures and `make` builds an empty executable | TODO |
-| B-02 | Application entry point | B-01 | `main()` starts, initializes logging, loads config, enters main loop | TODO |
-| B-03 | Structured logging | B-01 | spdlog initialized with configurable level and output | TODO |
-| B-04 | Configuration loading | B-02 | JSON config loaded and validated; defaults applied for missing values | TODO |
-| B-05 | Graceful shutdown | B-02 | SIGINT/SIGTERM handled; resources cleaned up; clean exit | TODO |
-| B-06 | Initial test suite | B-01–B-05 | Catch2 tests pass for all above modules | TODO |
+| B-01 | CMake build system | A-06 | `cmake` configures and `make` builds an empty executable | DONE |
+| B-02 | Application entry point | B-01 | `main()` starts, initializes logging, loads config, enters main loop | DONE |
+| B-03 | Structured logging | B-01 | spdlog initialized with configurable level and output | DONE |
+| B-04 | Configuration loading | B-02 | JSON config loaded and validated; defaults applied for missing values | DONE |
+| B-05 | Graceful shutdown | B-02 | SIGINT/SIGTERM handled; resources cleaned up; clean exit | DONE |
+| B-06 | Initial test suite | B-01–B-05 | Catch2 tests pass for all above modules | DONE |
 
 ## Phase C — Event Model and Pipeline
 

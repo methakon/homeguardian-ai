@@ -21,7 +21,7 @@
 
 ```bash
 mkdir build && cd build
-cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ..
+cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DHOMEGUARDIAN_BUILD_TESTS=ON ..
 make -j4
 ```
 
@@ -31,10 +31,17 @@ The `-j4` flag limits parallelism to 4 jobs, respecting the 30% CPU budget.
 
 ```bash
 cd build
-ctest --output-on-failure
+ctest --output-on-failure -V
 ```
 
-Tests use Catch2. Each module has its own test executable.
+Tests use Catch2 v2.13.10 (chosen for `CATCH_CONFIG_MAIN` support).
+A single test executable `homeguardian_tests` runs all test cases.
+Registered with CTest via `add_test()`.
+
+Current test coverage:
+- Config: default values, validation (invalid port/log level), load/save round-trip
+- Logger: initialization, log level, file output verification
+- Application: construction, run/shutdown on worker thread
 
 ## Coding Standards
 

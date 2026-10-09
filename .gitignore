@@ -2,6 +2,10 @@
 build/
 cmake-build-*/
 
+# Log files
+homeguardian.log
+*.log
+
 # Compiled binaries
 *.o
 *.obj
