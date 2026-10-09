@@ -4,6 +4,7 @@
 #include <chrono>
 #include <fstream>
 #include <cstdio>
+#include <atomic>
 
 using namespace homeguardian;
 
@@ -18,11 +19,13 @@ TEST_CASE("Application construction and shutdown", "[application]") {
     
     SECTION("Application runs and shuts down cleanly") {
         Application app;
+        std::atomic<int> result{-1};
+        std::atomic<bool> thread_done{false};
         
         // Run application in a separate thread so it doesn't block
-        std::thread app_thread([&app, test_config]() {
-            int result = app.run(test_config);
-            REQUIRE(result == 0);
+        std::thread app_thread([&]() {
+            result = app.run(test_config);
+            thread_done = true;
         });
         
         // Wait a bit to let it start
@@ -35,6 +38,10 @@ TEST_CASE("Application construction and shutdown", "[application]") {
         if (app_thread.joinable()) {
             app_thread.join();
         }
+        
+        // Verify results in main thread (not worker thread)
+        REQUIRE(result == 0);
+        REQUIRE(thread_done);
     }
     
     std::remove(test_config.c_str());

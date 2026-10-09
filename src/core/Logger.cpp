@@ -34,10 +34,16 @@ void Logger::initialize(const std::string& log_level) {
 
 std::shared_ptr<spdlog::logger> Logger::get() {
     if (!logger_) {
-        // Fallback if not initialized
-        initialize("info");
+        throw std::runtime_error("Logger not initialized. Call Logger::initialize() first.");
     }
     return logger_;
+}
+
+void Logger::reset() {
+    if (logger_) {
+        spdlog::drop(logger_->name());
+    }
+    logger_.reset();
 }
 
 } // namespace homeguardian

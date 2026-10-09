@@ -15,6 +15,13 @@ TEST_CASE("Logger initialization and level", "[logger]") {
     REQUIRE(logger->level() == spdlog::level::debug);
 }
 
+TEST_CASE("Logger get throws when not initialized", "[logger]") {
+    Logger::reset();
+    REQUIRE_THROWS_AS(Logger::get(), std::runtime_error);
+    // Re-initialize for other tests
+    Logger::initialize("info");
+}
+
 TEST_CASE("Logger file output", "[logger]") {
     // Since logger is initialized to homeguardian.log
     auto logger = Logger::get();

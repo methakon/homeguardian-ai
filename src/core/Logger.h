@@ -11,6 +11,7 @@ class Logger {
 public:
     static void initialize(const std::string& log_level);
     static std::shared_ptr<spdlog::logger> get();
+    static void reset();
 
 private:
     static std::shared_ptr<spdlog::logger> logger_;
