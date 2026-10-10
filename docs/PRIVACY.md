@@ -414,6 +414,31 @@ local:
 - No physical camera or microphone was activated; no kernel module was loaded;
   no system permission was changed.
 
+## Dual logical-device + shared audio broker — privacy notes (added 2026-10-11)
+
+The dual-device simulation adds no new data-retention or capture surface. It is
+the deterministic in-process simulator only:
+
+| Item | Status | Evidence |
+|---|---|---|
+| Dual-device + shared broker tests | VERIFIED (non-capture) | 12 `[dual]` cases / 74 assertions; ASan+UBSan clean. |
+| Real sensor capture | NOT RUN | No device file opened; no hardware syscall; no media written; no network. |
+
+- **One shared mic, many consent-guarded consumers.** Each fan-out is authorized
+  per consumer via `ConsentGate::check`; denied/withdrawn/revoked consumers
+  receive nothing and never stop the shared source for others. If no consumer is
+  authorized, the shared source produces nothing.
+- **Speaker output is an OUTPUT path**, not gated by the capture-consent
+  boundary; the bounded, arbitrated speaker queue carries only synthetic
+  responses. Memory is bounded (queue overflow rejects the new job; capture
+  buffers bounded).
+- Logical devices are HomeGuardian simulation entities; they do **not** run
+  Amazon's Alexa OS and make no Alexa-product claim. No AWS resources,
+  credentials, or Alexa skill deployment are involved. Camera remains a separate
+  simulated peripheral with no raw access from a logical device.
+- No physical microphone, speaker, or camera was activated; no kernel module
+  loaded; no system permission changed.
+
 ### End-to-end simulator workflow — privacy notes (added 2026-10-10)
 
 The end-to-end test (`test_e2e_simulator.cpp`) uses a **synthetic test

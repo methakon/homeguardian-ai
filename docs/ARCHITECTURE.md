@@ -618,3 +618,54 @@ not provide either. Docker remains a documented fallback if a future requirement
 needs a specific Ubuntu userspace or build-dependency isolation; it is not
 implemented. No privileged container; no host PipeWire socket mount; no
 camera/mic device passthrough.
+
+## Dual logical-device simulation + shared audio broker (added 2026-10-11)
+
+Two **independent logical devices** participate in a **shared Ubuntu audio
+broker** (all simulated, host-only, no physical sensor):
+
+- `simulated_alexa_enabled_device`
+- `simulated_alexa_assistant`
+
+Each logical device (`src/backend/simulator/LogicalDevice.{h,cpp}`) has its own
+**identity, capabilities, lifecycle, status, bounded event history, and
+configuration**. The devices are independent: one device's state, history, or
+failure never affects the other. A logical device is a HomeGuardian simulation
+entity — it does **not** run Amazon's original Alexa OS and makes no Alexa-
+product claim. "Alexa-enabled" here means only that the logical device consumes
+the shared microphone and emits speaker output through the broker.
+
+The **shared audio broker** (`src/backend/simulator/AudioBroker.{h,cpp}`)
+provides one future Ubuntu mic source and one speaker output:
+
+- **One microphone acquisition source.** The broker owns a single simulated mic
+  and starts exactly one capture session. There are no duplicate/competing
+  capture sessions; `capture_and_fanout()` advances the shared source once and
+  fans the SAME bytes out to consumers.
+- **Per-consumer consent at every audio-delivery boundary.** Each consumer is
+  registered with its own `ConsentGate` + `AcquisitionRequest` + optional
+  OS-permission callback. At each fan-out the broker re-evaluates every
+  consumer independently (`ConsentGate::check`); a denied/withdrawn/revoked
+  consumer receives nothing (fail-closed) and does **not** stop the shared
+  source for others. If NO consumer is authorized, the shared source produces
+  nothing (stays quiet).
+- **Bounded output queue + speaker arbitration.** Responses from all consumers
+  are enqueued onto ONE bounded queue (default 64; overflow rejects the new job
+  and counts it dropped — memory never grows without bound). `play_next()`
+  arbitrates the single speaker: it never overlaps playback; a job is removed
+  from the queue only after a successful play, so a playback error leaves the
+  job queued for retry after recovery.
+- **Explicit errors + deterministic shutdown.** Speaker playback errors are
+  injectable and recoverable (close + re-init). `shutdown()` stops the single
+  capture session, clears the bounded queue, releases the speaker, and is
+  idempotent.
+
+**Camera stays separate.** A logical device may advertise `has_camera`, but the
+broker provides no raw camera access to it; camera is a distinct simulated
+peripheral, and no assumption is made that an Alexa-enabled device yields camera
+frames.
+
+**Privacy/safety boundary:** speaker playback is an OUTPUT path and is NOT
+gated by the capture-consent boundary (it is not acquisition); capture fan-out
+IS gated per consumer. Everything is the deterministic in-process simulator — no
+physical microphone/speaker/camera, no AWS, no Alexa OS, no credentials.

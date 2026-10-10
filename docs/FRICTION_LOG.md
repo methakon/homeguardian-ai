@@ -627,6 +627,66 @@ capture and real OS permission semantics remain unverified (hardware-gated).
 
 ---
 
+## Incident 18: Dual Logical-Device Simulation + Shared Audio Broker
+
+**Date/time:** 2026-10-11 ~04:10 IST
+**Area:** Simulator / dual-device / audio broker / consent
+
+**Expected:** Two independent logical devices sharing one Ubuntu mic source and
+one speaker, with per-consumer consent, bounded/arbitrated output, and
+deterministic shutdown — all fully simulated.
+
+**Actual:**
+- Added `src/backend/simulator/LogicalDevice.{h,cpp}`: identity, capabilities,
+  lifecycle (Idle/Initialized/Active/Stopped/Error), bounded per-device event
+  history (overwrite-oldest), and config. Devices are independent.
+- Added `src/backend/simulator/AudioBroker.{h,cpp}`: ONE shared simulated mic
+  (single capture session) fanning out to N consumers, each with its own
+  `ConsentGate` re-evaluated at every fan-out; ONE bounded speaker output queue
+  (default 64) with arbitration (no overlap). Speaker is an OUTPUT path, not
+  gated by capture consent. Explicit injectable/recoverable playback errors;
+  deterministic idempotent `shutdown()`.
+- Added `tests/core/test_dual_device_broker.cpp`: 12 cases / 74 assertions —
+  device independence + bounded history; shared-source fan-out to both
+  consumers (single capture session: mic advanced once per fan-out, not per
+  consumer); per-consumer denial/withdrawal; no-consumer-authorized → source
+  stays quiet; speaker arbitration (no overlap); bounded queue overflow;
+  playback failure + recovery; speaker independent of capture consent;
+  deterministic shutdown (idempotent).
+
+**Design decisions recorded:**
+- Consumers do NOT drive the shared mic lifecycle; the broker owns the single
+  capture session, and consumers only authorize delivery per fan-out. This
+  avoids multiple consumers initializing/starting the same device (which the
+  simulator forbids) and keeps a denied consumer from stopping the shared
+  source. (An earlier draft had each consumer wrap the mic in a
+  `ConsentGuardedDevice`; that double-initialized the shared mic and was
+  replaced with direct per-consumer `ConsentGate::check`.)
+- Speaker queue overflow rejects the NEW job (queue stays at capacity) rather
+  than evicting the oldest, so a full queue is a clean back-pressure signal.
+- A speaker job is removed from the queue only after a successful play, so a
+  playback error leaves the job queued for retry after recovery.
+
+**Test results (this commit):**
+- Focused `[dual]`: 12 cases / 74 assertions pass.
+- Full host suite: **147 cases / 1546 assertions pass; ctest 100%.**
+- ASan+UBSan full suite (hg_asan, incremental): 147 / 1546 pass, zero sanitizer
+  errors.
+
+**Honesty note:** these logical devices do NOT run Amazon's Alexa OS and make
+no Alexa-product claim; "Alexa-enabled" only means the logical device consumes
+the shared mic and drives the speaker via the broker. No AWS, no Alexa skill
+deployment, no physical sensor.
+
+**Resolution:** Dual-device + shared audio broker landed (F22-23). Android
+backend, Linux simulator, and Alexa skill preserved. No physical peripheral
+activated, no kernel module, no permission change, no AWS/credentials.
+
+**Regression protection:** 12 new `[dual]` tests; full host + sanitizer suites
+green.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -665,7 +725,8 @@ The following were verified to work correctly and are not friction:
 | 15 | Realistic Linux sensor simulation + Alexa demotion to optional | — | Config/signals/speaker landed (23 sim tests); Alexa optional, not a prerequisite |
 | 16 | End-to-end Linux simulator workflow | — | 9 `[e2e]` tests; full host 135/1472 + ASan/UBSan clean; synthetic-only |
 | 17 | Product-readiness audit (stale docs + CMake portability) | — | Fixed stale README + hardcoded CMake paths; hardened .gitignore; build reproduced fresh; 135/1472 across 3 configs |
+| 18 | Dual logical-device simulation + shared audio broker | — | 12 `[dual]` tests; full host 147/1546 + ASan/UBSan clean; simulated-only, no Alexa OS claim |
 
-**Total verified incidents:** 17
+**Total verified incidents:** 18
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 14
+**Resolved incidents:** 15

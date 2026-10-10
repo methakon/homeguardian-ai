@@ -151,6 +151,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_ubuntu_backend.cpp
         tests/core/test_simulator_backend.cpp
         tests/core/test_e2e_simulator.cpp
+        tests/core/test_dual_device_broker.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
         ../src/core/Config.cpp
@@ -174,6 +175,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ../src/persistence/PersistenceManager.cpp
         ../src/backend/linux/SensorDiscovery.cpp
         ../src/backend/simulator/SimulatedSensorBackend.cpp
+        ../src/backend/simulator/LogicalDevice.cpp
+        ../src/backend/simulator/AudioBroker.cpp
     )
 
     target_include_directories(homeguardian_tests PRIVATE
