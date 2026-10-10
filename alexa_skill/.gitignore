@@ -1,0 +1,5 @@
+# Node dependencies are installed via `npm install`, not committed.
+node_modules/
+
+# Local test/scratch output
+npm-debug.log*

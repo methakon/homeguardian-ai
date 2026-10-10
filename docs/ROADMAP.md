@@ -117,6 +117,8 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-15 | Alexa+ integration (custom/Smart Home skill) | — | AVS deprecated for Alexa Built-in; viable route = Alexa skill → authenticated endpoint → C++ service | RESEARCH ONLY (not integrated) |
 | F22-16 | Simulator-first backend + host safety tests | — | Deterministic SimulatedSensorBackend behind IMediaDevice/ConsentGuardedDevice; 12 host tests (lifecycle, consent deny/withdraw/expire, delivery boundary, bounded buffers, error recovery, shutdown) | DONE (host, simulator) |
 | F22-17 | Real Linux capture (V4L2/ALSA/PipeWire) or Docker env if simulator insufficient | F22-16 | Only if a requirement is proven un-simulatable; simulator currently covers all in-scope behaviors | DEFERRED (simulator sufficient) |
+| F22-18 | Alexa custom skill (ASK SDK v2) + handler tests | — | HomeStatusIntent/GetAlertSummaryIntent/GetRoutineStatusIntent/Help/Stop with mock backend behind a documented interface; 13 Node tests pass | DONE (handler + unit tests) |
+| F22-19 | Alexa skill deployment + console-simulator verification | F22-18 | Deploy to Alexa-hosted skill (auto Lambda, $0); build interaction model; run text simulator; record results | BLOCKED (needs manual console steps — see alexa_skill/README.md) |
 
 Verification status is tracked separately per layer:
 - Compile (Android arm64-v8a/API 34): VERIFIED.
@@ -127,6 +129,8 @@ Verification status is tracked separately per layer:
 - Physical hardware capture (Camera1): NOT YET RUN — awaiting explicit approval.
 - Ubuntu sensor discovery + consent host tests (non-capture): VERIFIED (4 cases).
 - Simulator-first backend + host safety tests (non-capture): VERIFIED (12 cases).
+- Alexa custom skill handler unit tests (no deployment): VERIFIED (13 Node cases).
+- Alexa console-simulator end-to-end: NOT YET RUN — requires manual console steps (F22-19).
 - Ubuntu camera/mic/speaker capture: NOT IMPLEMENTED — awaiting explicit approval.
 - Docker deployment: NOT IMPLEMENTED (deferred — simulator sufficient for current scope).
 - Alexa+ integration: NOT INTEGRATED (research only).

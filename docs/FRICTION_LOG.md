@@ -419,6 +419,57 @@ gated behind explicit approval.
 
 ---
 
+## Incident 14: Alexa Custom Skill Prototype + Simulator Endpoint Requirement
+
+**Date/time:** 2026-10-10 ~22:00 IST
+**Area:** Alexa integration / free-first prototyping
+
+**Expected:** A minimal Alexa custom skill testable in the official Alexa
+Developer Console Simulator, free-first, separate from the C++ core and sensors.
+
+**Actual:**
+- Verified current official docs (Amazon, 2026):
+  - **The Alexa Developer Console Simulator requires a configured endpoint and
+    deployed skill code** — it cannot test a skill with no backend. Lowest-cost
+    supported path is an **Alexa-hosted skill** (auto-provisions AWS Lambda; no
+    AWS account; testing within Lambda free tier → expected $0).
+  - **Node.js 16 is deprecated**; Alexa-hosted skills default to a current
+    Node.js (18/20/22) or Python runtime. ASK SDK v2 (`ask-sdk-core`) is
+    compatible.
+  - AVS remains deprecated for Alexa Built-in (from Incident 12).
+- Implemented `alexa_skill/` using **ASK SDK v2 for Node.js**:
+  - `index.js` — Lambda entry + intents (`HomeStatusIntent`,
+    `GetAlertSummaryIntent`, `GetRoutineStatusIntent`, `AMAZON.HelpIntent`,
+    `AMAZON.StopIntent`/`CancelIntent`) + safe catch-all; error/invalid-data
+    paths return generic responses that never leak exception text or secrets.
+  - `src/backend-interface.js` — documented `HomeGuardianBackend` contract +
+    mock; handlers depend only on this interface; no network/disk/sensor/cred
+    access.
+  - `interactionModels/custom/en-US.json` — interaction model ("home guardian").
+  - `test/handler.test.js` — 13 Node tests (built-in runner), no deployment.
+  - `README.md` — exact manual console steps + cost/credential notes.
+- Tests: **Alexa 13/13 pass** (supported intents, malformed request, backend
+  error + invalid data, session-ended, mock exposes no capture/sensitive data).
+  C++ full regression still green: 115 cases / 575 assertions; ctest 100%.
+
+**Root cause (why simulator alone is not enough):** the console simulator is
+gated on a deployed endpoint; this is a platform requirement, not a code defect.
+
+**Resolution:** Handler + unit tests landed (F22-18). Deployment + console
+simulator (F22-19) is BLOCKED on manual console steps documented in
+`alexa_skill/README.md`; no deployment performed by these files, no AWS
+resources created, no credentials stored.
+
+**Regression protection:** 13 new Node tests; C++ regression unchanged/green.
+
+**Remaining impact:** Console-simulator end-to-end is NOT yet run — it requires
+the operator to create an Amazon Developer account, create/build the interaction
+model, deploy the handler (Alexa-hosted), and run text utterances. No Echo
+device, microphone, camera, or AWS account is required, and expected charge is
+$0. No physical sensor was opened.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -453,7 +504,8 @@ The following were verified to work correctly and are not friction:
 | 11 | Camera1-JNI adapter implementation | — | Implemented; device capture awaiting approval (F22-11) |
 | 12 | Ubuntu backend assessment + AVS deprecation finding | — | Non-capture discovery + host tests DONE; capture/Docker/Alexa proposed |
 | 13 | Simulator-first backend + Docker fallback decision | — | Simulator landed (12 host tests); Docker deferred as unnecessary |
+| 14 | Alexa custom skill prototype + simulator endpoint requirement | — | Handler + 13 unit tests DONE; console-simulator blocked on manual deploy steps |
 
-**Total verified incidents:** 13
-**Open incidents:** 2 (Incident 11 device-capture acceptance; Incident 12 capture adapters — both pending approval; root causes resolved)
+**Total verified incidents:** 14
+**Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy — all pending manual/approval steps; root causes resolved)
 **Resolved incidents:** 11

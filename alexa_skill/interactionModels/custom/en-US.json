@@ -1,0 +1,55 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "home guardian",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "HomeStatusIntent",
+          "slots": [],
+          "samples": [
+            "what is the home status",
+            "home status",
+            "how is the house doing",
+            "is home guardian running",
+            "status"
+          ]
+        },
+        {
+          "name": "GetAlertSummaryIntent",
+          "slots": [],
+          "samples": [
+            "are there any alerts",
+            "give me an alert summary",
+            "alert summary",
+            "any alerts",
+            "what alerts do i have"
+          ]
+        },
+        {
+          "name": "GetRoutineStatusIntent",
+          "slots": [],
+          "samples": [
+            "what is my routine status",
+            "routine status",
+            "status of my routines",
+            "are my routines running",
+            "routines"
+          ]
+        }
+      ],
+      "types": []
+    }
+  }
+}

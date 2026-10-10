@@ -403,3 +403,23 @@ stays independent of Alexa. The Alexa Developer Console simulator cannot reach
 the Ubuntu computer's camera or microphone. No Amazon credentials have been
 requested; none will be stored in source or Git. No Alexa+ interaction has been
 demonstrated, so no integration is claimed.
+
+## Alexa custom skill prototype — privacy notes (added 2026-10-10)
+
+The Alexa skill (`alexa_skill/`) is a separate, thin client that never contacts
+the C++ process or any sensor:
+
+| Item | Status | Evidence |
+|---|---|---|
+| Skill handler unit tests | VERIFIED (no deployment) | 13 Node cases: supported intents, malformed requests, backend error/invalid-data paths, session-ended, and a mock that exposes no capture capability and no sensitive detail. |
+| Console-simulator end-to-end | NOT YET RUN | Requires manual console steps (F22-19); no deployment performed by these files. |
+
+- The skill returns **no** camera/microphone status or control. The mock status
+  hard-codes `capture_enabled: false`.
+- Backend error and invalid-data paths return generic, non-sensitive responses;
+  tests assert that exception text and secrets never reach the spoken response.
+- No credentials, keys, or account data are stored in the repository. No AWS
+  resources are created by these files. No personal media or sensor data is
+  produced or retained.
+- The Alexa simulator cannot reach the Ubuntu computer's physical sensors; no
+  physical camera or microphone was opened.

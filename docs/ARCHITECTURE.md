@@ -425,6 +425,45 @@ C++ HomeGuardian service (event pipeline unchanged; Alexa stays a separate,
 authenticated client). The C++ event pipeline remains independent of Alexa. No
 Amazon credentials have been requested; none will be placed in source or Git.
 
+### Alexa custom skill prototype — implemented (added 2026-10-10)
+
+**Status: handler + unit tests VERIFIED (13 Node cases); console-simulator
+end-to-end NOT YET RUN (requires manual console steps — see
+`alexa_skill/README.md`).**
+
+A minimal **Alexa custom skill** using the **ASK SDK v2 for Node.js**
+(`ask-sdk-core` 2.14.0) lives in `alexa_skill/`:
+
+- `index.js` — Lambda entry point (`exports.handler`) and intent handlers:
+  `HomeStatusIntent`, `GetAlertSummaryIntent`, `GetRoutineStatusIntent`,
+  `AMAZON.HelpIntent`, `AMAZON.StopIntent`/`AMAZON.CancelIntent`, plus a safe
+  catch-all. Backend/error paths return generic, non-sensitive responses and
+  never leak exception text or secrets (verified by tests).
+- `src/backend-interface.js` — the documented contract (`HomeGuardianBackend`)
+  between the skill and the C++ core, with a **mock implementation**. The
+  handlers depend only on this interface; a real backend would be injected here
+  with no handler changes. **No network, disk, sensor, or credential access.**
+- `interactionModels/custom/en-US.json` — the interaction model
+  (invocation name "home guardian").
+- `test/handler.test.js` — 13 unit tests using Node's built-in test runner,
+  runnable with **no deployment, no AWS, no simulator**.
+
+**Verified current facts (Amazon docs, 2026):**
+- **The Alexa Developer Console Simulator requires a configured endpoint and
+  deployed skill code** — it cannot test a skill with no backend. The
+  lowest-cost supported path is an **Alexa-hosted skill**, which auto-provisions
+  the AWS Lambda without you creating an AWS account; testing volume is within
+  the Lambda free tier (expected charge $0). Node.js 16 is deprecated, so the
+  hosted skill defaults to a current Node.js (18/20/22) or Python runtime; the
+  ASK SDK v2 is compatible.
+- The Alexa simulator **cannot** access the Ubuntu computer's camera or
+  microphone. This skill exposes **no** sensor status or control.
+
+**Security boundary:** the skill is a separate, thin client. It never contacts
+the C++ process or any sensor in this prototype. Any real backend integration
+requires an authenticated interface and separate approval. No credentials are
+stored in the repository.
+
 ## Simulator-first development environment (added 2026-10-10)
 
 **Decision: SIMULATOR FIRST; Docker only if simulation is insufficient.** The
