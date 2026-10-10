@@ -2,7 +2,7 @@
 
 **Project:** HomeGuardian AI
 **Hackathon:** Amazon Developer Hackathon 2026
-**Last updated:** 2026-10-09
+**Last updated:** 2026-10-10
 
 This log records only verified friction encountered during development.
 Each incident includes the date, steps, expected vs actual result, severity,
@@ -149,6 +149,138 @@ workaround, and actionable suggestion.
 
 ---
 
+## Incident 7: APK Launch Crash on Android 8.1 — Java 8 Lambda invokedynamic
+
+**Date/time:** 2026-10-10 ~19:00 IST
+**Area:** Android / build system
+
+**Expected:** The harness APK launches and runs the non-capture self-test.
+
+**Actual:** App crashed on launch:
+`BootstrapMethodError` → `NoClassDefFoundError: Invalid descriptor: ex`
+at `MainActivity.java` button-listener creation.
+
+**Evidence:** `adb logcat` FATAL EXCEPTION; `dx` was invoked with
+`--min-sdk-version 27`.
+
+**Root cause:** Confirmed. Java 8 lambdas compile to `invokedynamic`. The
+Android 8.1 (API 27) dex verifier on this device rejects the lambda bootstrap
+descriptor. Two contributing factors: lambdas in the Java source, and `dx
+--min-sdk-version 27` which enables invokedynamic desugaring.
+
+**Resolution:** Replaced all six button listeners with anonymous inner classes
+and removed `--min-sdk-version` from the `dx` step so it emits legacy
+`StringBuilder` string-concat. Verified the actual DEX with `dexdump`:
+0 invokedynamic/invoke-custom opcodes, 5 StringBuilder uses, listeners compiled
+to `MainActivity$1..$6`. Commits `b3bd012`.
+
+**Regression protection:** On-device launch after fix: app runs, self-test
+executes, no crash.
+
+**Remaining impact:** None for launch. Related to Incident 8.
+
+---
+
+## Incident 8: APK Launch Crash — Missing `libc++_shared.so`
+
+**Date/time:** 2026-10-10 ~19:03 IST
+**Area:** Android / NDK / build system
+
+**Expected:** Native library loads after the lambda fix.
+
+**Actual:** `java.lang.UnsatisfiedLinkError: dlopen failed: library
+"libc++_shared.so" not found` at `System.loadLibrary`.
+
+**Evidence:** `adb logcat` HGHarness UnsatisfiedLinkError; APK contained only
+`libhg_harness.so`.
+
+**Root cause:** Confirmed. The NDK C++ runtime (`libc++_shared.so`) was not
+bundled into the APK, and it is not present as a system library on this device.
+
+**Resolution:** Build script now copies
+`$NDK/.../sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so` into
+`lib/armeabi-v7a/` in the APK. Verified both `.so` present via `unzip -l`.
+Commit `b3bd012`.
+
+**Regression protection:** On-device: native lib loads, self-test logs
+`gate_cam=1 gate_unknown_denied=1 cam_closed=1 mic_closed=1`.
+
+**Remaining impact:** None.
+
+---
+
+## Incident 9: Camera Test Crashed Process — Uncaught C++ Exception Across JNI
+
+**Date/time:** 2026-10-10 ~19:13 IST
+**Area:** Android / C++ core / consent-privacy
+
+**Expected:** A camera initialization failure returns a clean error to the UI.
+
+**Actual:** Tapping "Start CAMERA test" aborted the process:
+`libc++abi: terminating due to uncaught exception of type std::runtime_error:
+NdkCameraDevice: no camera available`. App died (Application Error).
+
+**Evidence:** `adb logcat` FATAL + tombstone abort message.
+
+**Root cause:** Confirmed. `nativeStartCamera` let a `std::runtime_error`
+thrown by the native `initialize()` escape the JNI boundary. A C++ exception
+crossing JNI terminates the process.
+
+**Resolution:** Wrapped `initialize()` and `start()` in both `nativeStartCamera`
+and `nativeStartMic` with try/catch; on exception the device is closed, the
+fail-closed reason is logged, and an error string is returned. Consent and
+capture authorization semantics unchanged. Commit `68e9360`.
+
+**Regression protection:** On-device after fix: tapping Start CAMERA keeps the
+process ALIVE; logcat shows `camera initialize threw (fail-closed)`; no camera
+opened. Host regression 93 cases / 424 assertions pass.
+
+**Remaining impact:** Underlying cause of the thrown exception is Incident 10.
+
+---
+
+## Incident 10: NDK Camera Enumeration Returns 0 Devices on MT6580 (Camera1-shim HAL)
+
+**Date/time:** 2026-10-10 ~19:28 IST
+**Area:** Android / NDK / device-HAL
+
+**Expected:** `ACameraManager_getCameraIdList` returns the 2 cameras the
+framework reports.
+
+**Actual:** NDK enumeration returns 0 cameras. `dumpsys media.camera` reports
+"Number of camera devices: 2", but the NDK call yields an empty list.
+
+**Evidence:**
+- Framework: `Number of camera devices: 2`; `Camera1 API shim is using
+  parameters`; HAL devices are `device@1.0/internal/0` (Back) and
+  `device@1.0/internal/1` (Front) — **HAL version 1.0**.
+- Instrumented NDK logcat: `ACameraManager_create OK (0x...)`;
+  `getCameraIdList status=0 list=0x... numCameras=0`;
+  `no camera available (status=0) — NDK enumeration returned 0 devices`.
+- Both HAL devices "closed, no client instance" (free). CAMERA granted=true.
+
+**Root cause:** Confirmed as an OEM/HAL limitation, not an application bug.
+The device exposes cameras only through a Camera HAL v1.0 legacy interface via
+the Camera1 shim. The NDK `ACameraManager` (camera2ndk) requires a camera2/HAL3
+provider; on a HAL1-only device the camera2 service has zero camera2 devices to
+enumerate. Framework inventory (via the shim) does NOT imply NDK camera2
+compatibility. Our code is correct and fails closed as designed.
+
+**Resolution:** No code fix — this is a device limitation. Diagnostic logging
+added to `NdkCameraDevice.cpp` (distinguishes create-null vs idlist-0). The
+exception guard and fail-closed behavior are retained. Committed with this log.
+
+**Regression protection:** Host regression 93 cases / 424 assertions pass.
+Fail-closed verified on-device (process stays alive, no capture).
+
+**Remaining impact:** Real camera capture is BLOCKED on this device via the NDK
+camera2 API. Viable alternatives for a HAL1-only device: (a) use the legacy
+Camera1 Java API (`android.hardware.Camera`) via JNI, or (b) verify on a
+camera2-native device. Not yet implemented. Next diagnostic step: decide
+Camera1-JNI path vs. testing on camera2 hardware.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -174,7 +306,11 @@ The following were verified to work correctly and are not friction:
 | 4 | Catch2 assertions in worker thread | Important | Resolved |
 | 5 | spdlog logger name collision | Important | Resolved |
 | 6 | Unused parameter warning | Nice-to-have | Resolved |
+| 7 | APK launch crash — lambda invokedynamic (Android 8.1) | Important | Resolved (`b3bd012`) |
+| 8 | APK launch crash — missing libc++_shared.so | Important | Resolved (`b3bd012`) |
+| 9 | Camera test crashed process — uncaught C++ exception across JNI | Important | Resolved (`68e9360`) |
+| 10 | NDK camera enumeration returns 0 devices on MT6580 (Camera1-shim HAL) | Important | Device limitation — documented; capture BLOCKED on this device |
 
-**Total verified incidents:** 6
-**Open incidents:** 0
-**Resolved incidents:** 6
+**Total verified incidents:** 10
+**Open incidents:** 1 (Incident 10 — OEM/HAL limitation; real capture blocked pending Camera1-JNI or camera2 hardware)
+**Resolved incidents:** 9

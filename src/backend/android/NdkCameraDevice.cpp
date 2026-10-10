@@ -3,6 +3,11 @@
 #ifdef HOMEGUARDIAN_ANDROID
 
 #include <stdexcept>
+#include <android/log.h>
+
+#define NCD_LOG_TAG "HGCam"
+#define NCD_LOGI(...) __android_log_print(ANDROID_LOG_INFO, NCD_LOG_TAG, __VA_ARGS__)
+#define NCD_LOGW(...) __android_log_print(ANDROID_LOG_WARN, NCD_LOG_TAG, __VA_ARGS__)
 
 namespace homeguardian {
 
@@ -38,11 +43,16 @@ void NdkCameraDeviceImpl::initialize() {
     camera_manager_ = ACameraManager_create();
     if (camera_manager_ == nullptr) {
         state_ = DeviceState::Error;
+        NCD_LOGW("ACameraManager_create returned null (no camera service / no native CAMERA permission)");
         throw std::runtime_error("NdkCameraDevice: ACameraManager_create failed");
     }
+    NCD_LOGI("ACameraManager_create OK (%p)", (void*)camera_manager_);
 
     ACameraIdList* camera_id_list = nullptr;
     camera_status_t status = ACameraManager_getCameraIdList(camera_manager_, &camera_id_list);
+    NCD_LOGI("getCameraIdList status=%d list=%p numCameras=%d",
+             (int)status, (void*)camera_id_list,
+             camera_id_list ? (int)camera_id_list->numCameras : -1);
     if (status != ACAMERA_OK || camera_id_list == nullptr ||
         camera_id_list->numCameras < 1) {
         if (camera_id_list) {
@@ -51,6 +61,7 @@ void NdkCameraDeviceImpl::initialize() {
         ACameraManager_delete(camera_manager_);
         camera_manager_ = nullptr;
         state_ = DeviceState::Error;
+        NCD_LOGW("no camera available (status=%d) — NDK enumeration returned 0 devices", (int)status);
         throw std::runtime_error("NdkCameraDevice: no camera available");
     }
 
