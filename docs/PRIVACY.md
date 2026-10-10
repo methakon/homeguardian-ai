@@ -260,12 +260,28 @@ prove real hardware enforcement.
 - **Camera:** NDK camera API — `ACameraManager`, `ACameraDevice`,
   `ACameraCaptureSession` (`camera/NdkCameraManager.h` etc.). Available since
   **API level 24**.
-- **Audio:** AAudio (`aaudio/AAudio.h`), `__INTRODUCED_IN(26)`. Available since
-  **API level 26**.
-- Both are within the assumed API 34 floor. **API 34 remains an unconfirmed
-  assumption**: no device is attached (`adb devices` is empty), so the target
-  phone model, Android version, and camera/microphone capabilities are unknown
-  and could not be established.
+- **Audio:** AAudio (`aaudio/AAudio.h`), core capture API `__INTRODUCED_IN(26)`.
+  Available since **API level 26** (newer AAudio calls 28–32 are avoided).
+- Both are within the confirmed API 27 floor.
+
+### Confirmed device (live, via ADB)
+
+A physical device is attached and verified. The model string is **not trusted**
+and was **not** corroborated:
+
+- `ro.product.model=S25_Ultra` is cosmetic. Corroborating properties disagree:
+  `ro.product.brand=alps`, `ro.product.manufacturer=alps`,
+  `ro.board.platform=mt6580`, `ro.hardware=mt6580`, fingerprint
+  `Ruby/Ruby/Ruby:8.1.0/...:user/release-keys`.
+- Conclusion: a MediaTek **MT6580 "Ruby"** reference device, 32-bit, ~1 GB RAM —
+  **not** a Samsung S25 Ultra. Recorded honestly as a discrepancy.
+- Android 8.1.0, SDK/API **27** (cross-checked via two getprop sources).
+- ABI: **armeabi-v7a** primary; abilist `armeabi-v7a,armeabi`; abilist64 empty →
+  32-bit only (no arm64 on this device).
+- RAM: MemTotal 984792 kB ≈ 962 MB.
+- Cameras: 2 (Back, Front); camera2 capable. Microphone present
+  (`android.hardware.microphone`, `android.hardware.audio.low_latency`).
+- Device serial is recorded internally only and is **not** published.
 
 ### Backend implementation status
 
@@ -276,14 +292,14 @@ prove real hardware enforcement.
 - **Fail-closed by default.** `initialize()` requires `set_device_confirmed(true)`,
   which must only be set after a physical device is confirmed available **and**
   hardware acceptance testing has passed. Until then `initialize()` throws and
-  moves to `Error`, so real capture is never opened. This is deliberate: hardware
-  acceptance testing has not been performed.
+  moves to `Error`, so real capture is never opened. `set_device_confirmed(false)`
+  remains the default.
 - Consent enforcement at the acquisition boundary is provided by
   `ConsentGuardedDevice`, which calls the `ConsentGate` immediately before
   `initialize()`, `start()`, and every per-frame/per-sample delivery
-  (`recheck_and_enforce()`), closing the time-of-check/time-of-use gap at the
+  (`authorize_delivery()`), closing the time-of-check/time-of-use gap at the
   interface level. A real backend must deliver a frame/sample only after
-  `recheck_and_enforce()` returns allowed.
+  `authorize_delivery()` returns allowed.
 
 ### Delivery-time consent gate (TOCTOU)
 
@@ -312,11 +328,15 @@ so repeated start/stop cannot leak handles.
 | Layer | Status | Evidence |
 |-------|--------|----------|
 | Compile (Android, arm64-v8a / API 34) | VERIFIED | `libhomeguardian_android_backend.a` builds with NDK r26d; objects reference `ACameraManager_create`, `ACameraManager_getCameraIdList`, `AAudio_createStreamBuilder` (unresolved — a static archive, NOT a runnable app) |
+| Compile (Android, armeabi-v7a / API 27) | VERIFIED | `hg_ondevice_selftest` builds for the confirmed device ABI/API |
 | Mock integration (host, fake backend) | VERIFIED | `test_fake_device_delivery.cpp`: delivery gate delivers only while authorized; withdrawal/expiry/permission-revocation/failure each stop delivery; repeated start/stop/close releases resources; destructor releases a capturing device |
-| Physical hardware | BLOCKED | No device attached (`adb devices` empty). Real capture, OS permission revocation, and acquisition-boundary enforcement on hardware are NOT tested. Hardware-level consent enforcement is NOT claimed. |
+| On-device non-capture self-test | VERIFIED | `hg_ondevice_selftest` pushed via `adb push` to `/data/local/tmp` and executed on the device: 17/17 checks pass (consent-gate decisions, lifecycle, fail-closed guards, cleanup). No camera/mic opened; no CAMERA/RECORD_AUDIO permission needed. |
+| Physical hardware capture (camera/audio) | BLOCKED | Real capture callbacks are not yet wired into an APK harness; no frame/sample acceptance test has run. Hardware-level consent enforcement at a real capture boundary is NOT claimed. |
 
-The fake backend proves the control-flow contract a real backend must satisfy.
-It does not prove real hardware enforcement.
+The on-device self-test proves the consent gate, lifecycle, and fail-closed
+guards execute correctly on real hardware, but it does **not** open the camera
+or microphone. Real capture acceptance requires the APK harness (runtime
+permission flow) and is a subsequent, separately-authorized step.
 
 Camera and microphone remain disabled by default (`media_capture_enabled =
 false`). `set_device_confirmed(false)` is the default on both backends, so real

@@ -70,6 +70,25 @@ if(HOMEGUARDIAN_BUILD_ANDROID_BACKEND)
         aaudio
         mediandk
     )
+
+    # Minimal on-device self-test binary (non-capture only). Exercises the
+    # consent gate, device lifecycle, and the fail-closed guards without
+    # opening the camera or microphone, so it needs no CAMERA/RECORD_AUDIO
+    # permission and is safe to run from `adb shell`.
+    add_executable(hg_ondevice_selftest
+        src/backend/android/ondevice_selftest.cpp
+        src/backend/android/NdkCameraDevice.cpp
+        src/backend/android/AAudioCaptureDevice.cpp
+        src/core/ConsentGate.cpp
+        src/core/ConsentGuardedDevice.cpp
+    )
+    target_include_directories(hg_ondevice_selftest PRIVATE src src/core ${nlohmann_json_SOURCE_DIR}/include)
+    target_compile_definitions(hg_ondevice_selftest PRIVATE HOMEGUARDIAN_ANDROID=1)
+    target_link_libraries(hg_ondevice_selftest PRIVATE
+        camera2ndk
+        aaudio
+        mediandk
+    )
 endif()
 
 if(HOMEGUARDIAN_BUILD_TESTS)

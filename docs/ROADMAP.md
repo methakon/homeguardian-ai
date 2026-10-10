@@ -107,11 +107,20 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-05 | Actual capture on a physical device | F22-04 | Verified real frame/sample capture gated by consent | BLOCKED (no device) |
 | F22-06 | Delivery-time consent gate + fake-backend tests | F22-02, F22-03 | authorize_delivery() re-checks before every frame/sample; withdrawal/expiry/permission/failure stop delivery; resource cleanup on repeated start/stop/close | DONE (host mock) |
 | F22-07 | Defect fix: errored device resurrection + camera stop handle release | F22-06 | Errored device stays Error until re-init; stop() releases capture handles | DONE |
+| F22-08 | armeabi-v7a / API 27 build + on-device non-capture self-test | F22-06 | Builds for confirmed device; runs on device via adb; 17/17 non-capture checks pass | DONE |
+| F22-09 | Real camera/audio capture in APK harness + on-device capture acceptance | F22-08 | Wired NDK callbacks gated by authorize_delivery; permission revocation/withdrawal stop delivery on device | BLOCKED (needs APK + runtime permissions + approval) |
 
 Verification status is tracked separately per layer:
-- Compile (Android arm64-v8a / API 34): VERIFIED.
+- Compile (Android arm64-v8a/API 34): VERIFIED.
+- Compile (Android armeabi-v7a/API 27): VERIFIED.
 - Mock integration (host fake backend): VERIFIED.
-- Physical hardware: BLOCKED (no device attached).
+- On-device non-capture self-test (real hardware, no capture): VERIFIED.
+- Physical hardware capture (camera/audio): BLOCKED — requires APK harness,
+  runtime permission grants, and explicit approval before first activation.
+
+Confirmed device: MediaTek MT6580 "Ruby" reference device (model string
+"S25_Ultra" is cosmetic and not corroborated), Android 8.1.0 / API 27,
+armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 
 ## Phase F — HTTP and MCP
 

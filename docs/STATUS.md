@@ -50,6 +50,9 @@ Phase F2.2 — Real Android Device Backends (NDK installed; hardware testing blo
 | Delivery-time consent gate | `ConsentGuardedDevice::authorize_delivery()` — re-checks before every frame/sample delivery | 2026-10-10 |
 | Fake-backend mock tests | `core/FakeMediaDevice` + `test_fake_device_delivery.cpp` — 8 host cases | 2026-10-10 |
 | Defect fix | Errored device no longer resurrected to Idle; camera stop() releases handles | 2026-10-10 |
+| Confirmed device | MediaTek MT6580 "Ruby" (model string cosmetic), Android 8.1.0 / API 27, armeabi-v7a, ~962MB RAM | 2026-10-10 |
+| armeabi-v7a/API 27 build + on-device self-test | `hg_ondevice_selftest` built for device ABI/API; 17/17 non-capture checks pass on device via adb | 2026-10-10 |
+| JDK + SDK platform 27 | Temurin JDK 17 (user-writable) and SDK platform 27 / build-tools 27.0.3 installed | 2026-10-10 |
 | Test suite | 93 test cases, 424 assertions, all passing | 2026-10-10 |
 
 ## Test Results
@@ -59,14 +62,19 @@ Phase F2.2 — Real Android Device Backends (NDK installed; hardware testing blo
 All tests passed (424 assertions in 93 test cases)
 ASan/UBSan: passed, no leaks, no sanitizer errors
 Android cross-compile (arm64-v8a/API 34): passed (static archive, not runnable)
+Android cross-compile (armeabi-v7a/API 27): passed (on-device self-test binary)
+On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
 ```
 
 ## Verification Status (separated by layer)
 
 - **Compile (Android arm64-v8a / API 34):** VERIFIED.
+- **Compile (Android armeabi-v7a / API 27):** VERIFIED.
 - **Mock integration (host fake backend):** VERIFIED.
-- **Physical hardware:** BLOCKED — no device attached. Hardware-level consent
-  enforcement is NOT claimed.
+- **On-device non-capture self-test (real hardware):** VERIFIED — consent gate,
+  lifecycle, fail-closed guards, cleanup; no camera/mic opened.
+- **Physical hardware capture (camera/audio):** BLOCKED — needs APK harness,
+  runtime permission grants, and explicit approval. NOT claimed.
 
 ## Current Work
 
@@ -78,12 +86,13 @@ unconfirmed assumption. Hardware-level consent enforcement is not claimed.
 
 ## Blockers
 
-- No Android device attached (`adb devices` empty). Hardware acceptance testing
-  (real capture, OS permission revocation, acquisition-boundary consent
-  enforcement) cannot be performed. Backends are fail-closed until a device is
-  confirmed.
-- No Java runtime and no passwordless sudo, so the official `sdkmanager` is
-  unusable; NDK was installed by direct download instead.
+- Real camera/audio capture (F22-09) is BLOCKED pending: an APK harness with a
+  proper Android runtime permission flow, and explicit approval before the first
+  camera/microphone activation. The no-capture on-device self-test already runs
+  and passes. Device is connected and authorized.
+- The device's marketing model string ("S25_Ultra") does not match its actual
+  hardware (MediaTek MT6580 "Ruby", 32-bit, ~1 GB RAM); build targets follow the
+  real hardware, not the model string.
 
 ## Known Issues
 
@@ -119,3 +128,4 @@ default and none is implemented.
 - **Phase F1 commit:** `90841e9`
 - **Phase F2.1 commit:** `e81584e`
 - **Phase F2.2 commit:** `50e43ea`
+- **F2.2 hardening commit:** `94e6714`
