@@ -369,6 +369,56 @@ been demonstrated, so no integration is claimed.
 
 ---
 
+## Incident 13: Simulator-First Backend + Docker Fallback Decision
+
+**Date/time:** 2026-10-10 ~21:00 IST
+**Area:** Platform / test strategy / Docker
+
+**Expected:** Assess and implement the most accurate simulator-based development
+and test environment; use Docker only if the simulator is insufficient.
+
+**Actual:**
+- Assessed the Linux virtual-device tooling actually present:
+  - `v4l2loopback` kernel module present on disk (v0.15.3) but **not loaded**
+    and **not loadable without root** (no passwordless sudo) → cannot be used
+    in this environment.
+  - PipeWire `module-null-sink` creatable at runtime (verified: sink `hgsim`
+    + `.monitor` appeared, then unloaded) → available but not needed for this
+    phase.
+  - ALSA `null` PCM plugin usable (`arecord -D null` OK) → not needed.
+  - `ffmpeg` with `lavfi` present (in `~/.hermes/tools`) → not needed.
+- Implemented `src/backend/simulator/SimulatedSensorBackend.{h,cpp}`: a
+  deterministic, in-process `IMediaDevice` (seeded LCG camera frames and 16-bit
+  PCM mic samples; `BoundedRing` acquisition buffer, capacity 256,
+  overwrite-oldest; `fail()`/`recover()` error paths). Sits behind the same
+  `ConsentGuardedDevice` gate as real backends.
+- Added `tests/core/test_simulator_backend.cpp`: 12 host cases (determinism,
+  lifecycle idempotency, capture-disabled denial, authorized delivery, consent
+  withdrawal, consent expiry, permission revocation, bounded-buffer overflow,
+  device error, error recovery, shutdown cleanup, audio PCM determinism).
+- Full host regression: **115 cases / 575 assertions pass; ctest 100%.**
+
+**Docker decision:** Docker is **NOT necessary** for this milestone. Every
+in-scope requirement (consent deny/withdraw/expire, delivery-boundary
+authorization, permission revocation, lifecycle, bounded buffers, error
+recovery, shutdown) is validated deterministically by the host simulator on the
+shared code paths. Only real V4L2/ALSA/PipeWire device interaction and real OS
+permission semantics need hardware, and Docker on this host does not provide
+that either. Docker remains a documented fallback; not implemented. No
+privileged container, no PipeWire socket mount, no camera/mic passthrough.
+
+**Resolution:** Simulator-first backend landed (F22-16); Docker deferred (F22-17)
+with the capability matrix documented in ARCHITECTURE.
+
+**Regression protection:** 12 new host tests; full host suite green.
+
+**Remaining impact:** The simulator validates behavior on shared code paths but
+does NOT prove real-device V4L2/ALSA/PipeWire correctness or real OS permission
+semantics. No physical camera or microphone was opened. Real capture remains
+gated behind explicit approval.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -402,7 +452,8 @@ The following were verified to work correctly and are not friction:
 | 10 | NDK camera enumeration returns 0 devices on MT6580 (Camera1-shim HAL) | Important | Resolved via Camera1-JNI (Incident 11) |
 | 11 | Camera1-JNI adapter implementation | — | Implemented; device capture awaiting approval (F22-11) |
 | 12 | Ubuntu backend assessment + AVS deprecation finding | — | Non-capture discovery + host tests DONE; capture/Docker/Alexa proposed |
+| 13 | Simulator-first backend + Docker fallback decision | — | Simulator landed (12 host tests); Docker deferred as unnecessary |
 
-**Total verified incidents:** 12
+**Total verified incidents:** 13
 **Open incidents:** 2 (Incident 11 device-capture acceptance; Incident 12 capture adapters — both pending approval; root causes resolved)
-**Resolved incidents:** 10
+**Resolved incidents:** 11

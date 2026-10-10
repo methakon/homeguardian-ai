@@ -424,3 +424,78 @@ Proposed architecture (if pursued): Alexa skill → authenticated HTTPS endpoint
 C++ HomeGuardian service (event pipeline unchanged; Alexa stays a separate,
 authenticated client). The C++ event pipeline remains independent of Alexa. No
 Amazon credentials have been requested; none will be placed in source or Git.
+
+## Simulator-first development environment (added 2026-10-10)
+
+**Decision: SIMULATOR FIRST; Docker only if simulation is insufficient.** The
+simulator validates the entire consent/lifecycle/delivery/bounded-buffer/shutdown
+machinery on the shared code paths, so no real sensor is opened during
+development.
+
+Implemented: `src/backend/simulator/SimulatedSensorBackend.{h,cpp}` — a
+deterministic, in-process `IMediaDevice` implementation:
+
+- **Deterministic camera frames:** seeded 64-bit LCG fills `width*height` bytes.
+  Same seed and call sequence → identical bytes (reproducible tests).
+- **Deterministic microphone samples:** seeded LCG fills 16-bit PCM mono buffers
+  (`samples_per_buffer * 2` bytes).
+- **`BoundedRing` acquisition buffer** (default capacity 256): overwrite-oldest
+  on overflow; `buffer_size()` can never exceed capacity; `buffer_dropped()`
+  counts evictions. This is the bounded-memory invariant under test.
+- **Lifecycle + error injection/recovery:** `initialize/start/stop/close` follow
+  the `IMediaDevice` contract with idempotent stop/close; `fail()` forces Error
+  and releases capture; `recover()` is the deterministic cleanup + re-init path.
+- **Speaker output:** modeled as output-only and validated only at the
+  interface/lifecycle level in-simulator; real PipeWire/ALSA playback is not
+  exercised here.
+
+It sits behind the **same** `ConsentGuardedDevice` gate as the Android and
+Ubuntu backends, so `authorize_delivery()` at the frame/sample boundary is the
+identical production enforcement point exercised by these tests.
+
+**Simulation safety:** opens no device file, makes no capture-hardware syscalls,
+writes no media files, no network. Frames/samples exist only in memory. This
+backend must never be used in place of a real backend in production capture.
+
+**Linux simulator/virtual-device environment assessed (not all required):**
+- `v4l2loopback` kernel module **is present** on this host
+  (`/lib/modules/.../v4l2loopback.ko.zst`, v0.15.3) but is **not loaded** and
+  **cannot be loaded without root** (no passwordless sudo). Not used.
+- PipeWire null-sink/source: a `module-null-sink` can be created at runtime
+  (verified: loaded sink `hgsim` + `.monitor`, then unloaded). Useful later for
+  real audio-path testing; **not used** in this phase.
+- ALSA `null` PCM plugin: present and usable (`arecord -D null` succeeds).
+  Not used in this phase.
+- `ffmpeg` (in `~/.hermes/tools`) with `lavfi` sources: available for generating
+  synthetic streams if a future hardware-in-loop test needs a real device feed.
+  Not used in this phase.
+
+### Capability matrix
+
+| Requirement / behavior | Simulator (host) | Docker | Real hardware |
+|---|---|---|---|
+| Consent denial / withdrawal / expiry blocks delivery | VALIDATED | not needed | not needed |
+| Delivery-boundary `authorize_delivery()` per frame/sample | VALIDATED | not needed | confirm on device |
+| Permission revocation stops delivery | VALIDATED (injected) | not needed | OS-level confirm |
+| Device lifecycle + idempotent stop/close | VALIDATED | not needed | confirm on device |
+| Bounded buffers (no unbounded growth) | VALIDATED | not needed | confirm on device |
+| Deterministic frame/sample generation | VALIDATED | not needed | n/a |
+| Error injection + recovery | VALIDATED | not needed | confirm on device |
+| Shutdown / resource cleanup | VALIDATED | not needed | confirm on device |
+| Alexa conversational behavior (skill logic) | Skill-logic sim (future) | n/a | n/a |
+| Real V4L2 ioctl / format negotiation | not simulated | could host build deps | **requires hardware** |
+| Real ALSA/PipeWire PCM stream + latency | not simulated | could host build deps | **requires hardware** |
+| Real device enumeration (`/dev/video*`, sound server) | metadata-only (SensorDiscovery) | n/a | **requires hardware** |
+| Real OS permission semantics | not simulated | n/a | **requires hardware** |
+
+**Docker conclusion:** Docker is **not necessary** for the current milestone.
+Every requirement in this phase — consent, lifecycle, delivery boundary,
+permission revocation, bounded buffers, error recovery, shutdown — is validated
+deterministically by the host simulator on the shared code paths. The only items
+that genuinely need more than the simulator are real V4L2/ALSA/PipeWire device
+interaction and real OS permission semantics, and those require physical
+hardware (or a loaded `v4l2loopback` / null-sink), which Docker on this host does
+not provide either. Docker remains a documented fallback if a future requirement
+needs a specific Ubuntu userspace or build-dependency isolation; it is not
+implemented. No privileged container; no host PipeWire socket mount; no
+camera/mic device passthrough.

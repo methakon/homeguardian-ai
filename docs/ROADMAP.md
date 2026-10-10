@@ -115,6 +115,8 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-13 | Ubuntu camera/mic/speaker capture adapters | F22-12 | V4L2 camera + ALSA/PipeWire mic + speaker adapters behind IMediaDevice; delivery-gated; bounded buffers | PROPOSED (awaiting approval) |
 | F22-14 | Docker container for C++ core service | — | Documented trade-offs; no privileged container; sensors stay on host; consent gate in delivery path | PROPOSED (not implemented) |
 | F22-15 | Alexa+ integration (custom/Smart Home skill) | — | AVS deprecated for Alexa Built-in; viable route = Alexa skill → authenticated endpoint → C++ service | RESEARCH ONLY (not integrated) |
+| F22-16 | Simulator-first backend + host safety tests | — | Deterministic SimulatedSensorBackend behind IMediaDevice/ConsentGuardedDevice; 12 host tests (lifecycle, consent deny/withdraw/expire, delivery boundary, bounded buffers, error recovery, shutdown) | DONE (host, simulator) |
+| F22-17 | Real Linux capture (V4L2/ALSA/PipeWire) or Docker env if simulator insufficient | F22-16 | Only if a requirement is proven un-simulatable; simulator currently covers all in-scope behaviors | DEFERRED (simulator sufficient) |
 
 Verification status is tracked separately per layer:
 - Compile (Android arm64-v8a/API 34): VERIFIED.
@@ -124,8 +126,9 @@ Verification status is tracked separately per layer:
 - APK build + on-device launch with Camera1 backend (no capture): VERIFIED.
 - Physical hardware capture (Camera1): NOT YET RUN — awaiting explicit approval.
 - Ubuntu sensor discovery + consent host tests (non-capture): VERIFIED (4 cases).
+- Simulator-first backend + host safety tests (non-capture): VERIFIED (12 cases).
 - Ubuntu camera/mic/speaker capture: NOT IMPLEMENTED — awaiting explicit approval.
-- Docker deployment: NOT IMPLEMENTED.
+- Docker deployment: NOT IMPLEMENTED (deferred — simulator sufficient for current scope).
 - Alexa+ integration: NOT INTEGRATED (research only).
 
 Confirmed device: MediaTek MT6580 "Ruby" reference device (model string

@@ -380,6 +380,21 @@ error stops delivery and releases resources. No recording to disk, no uploads,
 no retention of personal media. No automatic camera/mic access at launch or
 during tests. The computer's camera and microphone have NOT been opened.
 
+## Simulator-first backend — privacy notes (added 2026-10-10)
+
+The deterministic simulator (`SimulatedSensorBackend`) produces synthetic,
+in-memory-only frames and samples:
+
+| Item | Status | Evidence |
+|---|---|---|
+| Simulator consent/lifecycle/delivery tests | VERIFIED (non-capture) | 12 host cases via `ConsentGuardedDevice`: denial, withdrawal, expiry, permission revocation, delivery-boundary, bounded buffers, error recovery, shutdown. |
+| Real sensor capture | NOT RUN | Simulator opens no device file, makes no hardware syscalls, writes no media, no network. |
+
+Simulated frames/samples are never persisted, uploaded, or written to disk.
+They exist only in a bounded in-memory ring during a test. The simulator must
+not be substituted for a real backend in production capture. No physical camera
+or microphone was opened, and no real sensor data was produced.
+
 ## Alexa+ integration — privacy notes (added 2026-10-10)
 
 Alexa integration, if built, would be a separate authenticated client (Alexa
