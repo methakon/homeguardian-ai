@@ -109,14 +109,16 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-07 | Defect fix: errored device resurrection + camera stop handle release | F22-06 | Errored device stays Error until re-init; stop() releases capture handles | DONE |
 | F22-08 | armeabi-v7a / API 27 build + on-device non-capture self-test | F22-06 | Builds for confirmed device; runs on device via adb; 17/17 non-capture checks pass | DONE |
 | F22-09 | Real camera/audio capture in APK harness + on-device capture acceptance | F22-08 | Wired NDK callbacks gated by authorize_delivery; permission revocation/withdrawal stop delivery on device | BLOCKED (needs APK + runtime permissions + approval) |
+| F22-10 | Camera1-JNI adapter (legacy android.hardware.Camera) + host contract tests | F22-09 | Camera1Bridge + nativeOnPreviewFrame delivery gate; 6 host contract tests; APK builds; on-device launch clean (no capture) | DONE (host + build + launch) |
+| F22-11 | Camera1 capture acceptance on device | F22-10 | Real Camera1 preview frames gated by authorize_delivery; withdrawal stops delivery on device | BLOCKED (awaiting approval) |
 
 Verification status is tracked separately per layer:
 - Compile (Android arm64-v8a/API 34): VERIFIED.
 - Compile (Android armeabi-v7a/API 27): VERIFIED.
 - Mock integration (host fake backend): VERIFIED.
-- On-device non-capture self-test (real hardware, no capture): VERIFIED.
-- Physical hardware capture (camera/audio): BLOCKED — requires APK harness,
-  runtime permission grants, and explicit approval before first activation.
+- Camera1 adapter contract (host): VERIFIED (6 cases).
+- APK build + on-device launch with Camera1 backend (no capture): VERIFIED.
+- Physical hardware capture (Camera1): NOT YET RUN — awaiting explicit approval.
 
 Confirmed device: MediaTek MT6580 "Ruby" reference device (model string
 "S25_Ultra" is cosmetic and not corroborated), Android 8.1.0 / API 27,

@@ -36,6 +36,15 @@ public class MainActivity extends Activity {
     private TextView status;
     private static boolean nativeLoaded = false;
 
+    // Backend selection is EXPLICIT. The live diagnosis (friction log incident
+    // 10) established this MT6580 / Android 8.1 device exposes cameras only via
+    // the Camera1 compatibility path, on which NDK camera2 enumerates zero
+    // devices. We therefore use the Camera1 bridge here. This is a deliberate,
+    // documented choice for this device — never a silent fallback. On a
+    // camera2-native device, the NdkCameraDevice backend would be selected.
+    private static final boolean USE_CAMERA1 = true;
+    private Camera1Bridge camera1;
+
     static {
         try {
             System.loadLibrary("hg_harness");
@@ -70,6 +79,10 @@ public class MainActivity extends Activity {
                 : "Native library failed to load.");
         root.addView(status);
 
+        if (USE_CAMERA1) {
+            camera1 = new Camera1Bridge();
+        }
+
         root.addView(makeButton("Run non-capture self-test", new View.OnClickListener() {
             @Override public void onClick(View v) { status.setText(nativeSelfTest()); }
         }));
@@ -79,7 +92,14 @@ public class MainActivity extends Activity {
         }));
 
         root.addView(makeButton("Stop camera", new View.OnClickListener() {
-            @Override public void onClick(View v) { status.setText(nativeStopCamera()); }
+            @Override public void onClick(View v) {
+                if (USE_CAMERA1 && camera1 != null) {
+                    camera1.stopCamera();
+                    status.setText(nativeStopCamera());
+                } else {
+                    status.setText(nativeStopCamera());
+                }
+            }
         }));
 
         root.addView(makeButton("Withdraw consent", new View.OnClickListener() {
@@ -109,6 +129,18 @@ public class MainActivity extends Activity {
             // Standard runtime permission flow. We do NOT bypass with adb.
             requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
         } else {
+            startCameraBackend();
+        }
+    }
+
+    private void startCameraBackend() {
+        if (USE_CAMERA1 && camera1 != null) {
+            // Camera1 path: native delivery gate is invoked per-frame from
+            // Camera1Bridge.onPreviewFrame via nativeOnPreviewFrame.
+            String r = camera1.startCamera();
+            status.setText(r);
+        } else {
+            // Camera2 path (NdkCameraDevice) — not selected on this device.
             status.setText(nativeStartCamera());
         }
     }
@@ -129,11 +161,23 @@ public class MainActivity extends Activity {
         if (requestCode == REQ_CAMERA) {
             // Only start capture if the operator granted the permission. Never
             // auto-start on a denial.
-            status.setText(granted ? nativeStartCamera()
-                    : "CAMERA permission denied; capture not started.");
+            if (granted) {
+                startCameraBackend();
+            } else {
+                status.setText("CAMERA permission denied; capture not started.");
+            }
         } else if (requestCode == REQ_MIC) {
             status.setText(granted ? nativeStartMic()
                     : "MIC permission denied; capture not started.");
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Never leave the camera open when the activity is not foreground.
+        if (USE_CAMERA1 && camera1 != null) {
+            camera1.stopCamera();
         }
     }
 }

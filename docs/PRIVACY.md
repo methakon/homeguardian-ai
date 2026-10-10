@@ -331,12 +331,21 @@ so repeated start/stop cannot leak handles.
 | Compile (Android, armeabi-v7a / API 27) | VERIFIED | `hg_ondevice_selftest` builds for the confirmed device ABI/API |
 | Mock integration (host, fake backend) | VERIFIED | `test_fake_device_delivery.cpp`: delivery gate delivers only while authorized; withdrawal/expiry/permission-revocation/failure each stop delivery; repeated start/stop/close releases resources; destructor releases a capturing device |
 | On-device non-capture self-test | VERIFIED | `hg_ondevice_selftest` pushed via `adb push` to `/data/local/tmp` and executed on the device: 17/17 checks pass (consent-gate decisions, lifecycle, fail-closed guards, cleanup). No camera/mic opened; no CAMERA/RECORD_AUDIO permission needed. |
-| Physical hardware capture (camera/audio) | BLOCKED | Real capture callbacks are not yet wired into an APK harness; no frame/sample acceptance test has run. Hardware-level consent enforcement at a real capture boundary is NOT claimed. |
+| Camera1 adapter contract (host) | VERIFIED | `test_camera1_adapter.cpp`: 6 cases (authorized delivery; withdrawal drops frames + stops; permission revocation denies; device error denies + no resurrection; repeated start/stop/close idempotent; capture-disabled-by-default). Host only — not real capture. |
+| APK build with Camera1 backend | VERIFIED | Debug-signed APK builds for armeabi-v7a / API 27; `Camera1Bridge` in DEX (0 invokedynamic); native `nativeOnPreviewFrame` delivery-gate symbol exported; signature valid. |
+| On-device launch with Camera1 backend | VERIFIED | App installs, launches, self-test runs, no crash, camera NOT active (Active Camera Clients empty). Camera not opened. |
+| Physical hardware capture (Camera1) | NOT YET RUN | Camera1 capture path is implemented and delivery-gated, but no Camera1 frame has been captured on the device. Awaiting explicit approval. Hardware-level capture enforcement is NOT claimed. |
 
-The on-device self-test proves the consent gate, lifecycle, and fail-closed
-guards execute correctly on real hardware, but it does **not** open the camera
-or microphone. Real capture acceptance requires the APK harness (runtime
-permission flow) and is a subsequent, separately-authorized step.
+The Camera1 adapter (`apk/.../Camera1Bridge.java` +
+`nativeOnPreviewFrame` in `hg_harness_jni.cpp`) is used because the live
+diagnosis (friction log incident 10) established this MT6580 / Android 8.1
+device exposes cameras only via the Camera1 compatibility path. Backend
+selection is **explicit** (`USE_CAMERA1` in `MainActivity`), never a silent
+fallback; `NdkCameraDevice` is retained for camera2-native devices. Both reuse
+the same `ConsentGuardedDevice` delivery gate (`authorize_delivery()`), called
+per preview frame immediately before processing. On consent withdrawal,
+permission revocation, or device error the gate returns false, the frame is
+dropped, and the bridge stops preview and releases the camera.
 
 Camera and microphone remain disabled by default (`media_capture_enabled =
 false`). `set_device_confirmed(false)` is the default on both backends, so real

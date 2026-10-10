@@ -279,6 +279,51 @@ Camera1 Java API (`android.hardware.Camera`) via JNI, or (b) verify on a
 camera2-native device. Not yet implemented. Next diagnostic step: decide
 Camera1-JNI path vs. testing on camera2 hardware.
 
+**Amendment (2026-10-10, later):** Resolved by implementing the Camera1-JNI
+path (option a). See Incident 11.
+
+---
+
+## Incident 11: Camera1-JNI Adapter Implementation (resolution of Incident 10)
+
+**Date/time:** 2026-10-10 ~19:40 IST
+**Area:** Android / C++ core / consent-privacy
+
+**Expected:** A working, consent-gated camera path on the Camera1-only device.
+
+**Actual:** Implemented. `apk/.../Camera1Bridge.java` wraps
+`android.hardware.Camera` (legacy API) and a native delivery gate
+`nativeOnPreviewFrame` in `hg_harness_jni.cpp` reuses the existing
+`ConsentGuardedDevice::authorize_delivery()` per preview frame. Backend
+selection is explicit (`USE_CAMERA1`), never a silent fallback; `NdkCameraDevice`
+is retained for camera2-native devices.
+
+**Evidence:**
+- Host: `test_camera1_adapter.cpp` 6 cases pass (46 assertions); full host
+  regression 99 cases / 470 assertions pass; ctest 100%.
+- APK build (armeabi-v7a / API 27): `Camera1Bridge` in DEX (0 invokedynamic);
+  native symbol `Java_..._Camera1Bridge_nativeOnPreviewFrame` exported;
+  signature valid. (`android.hardware.Camera` deprecation note is expected.)
+- On-device launch (no capture): app runs, self-test logs
+  `gate_cam=1 gate_unknown_denied=1 cam_closed=1 mic_closed=1`, no crash,
+  camera NOT active (Active Camera Clients empty).
+
+**Root cause addressed:** Incident 10 (NDK camera2 enumerates 0 on this
+Camera1-shim HAL1 device).
+
+**Resolution:** Camera1 adapter added; reuses the single consent mechanism
+(`ConsentGuardedDevice`); every preview frame is gated immediately before
+delivery; on withdrawal/revocation/error the gate returns false, the frame is
+dropped, and the bridge stops preview and releases the camera. Capture stays
+disabled by default; requires operator action + CAMERA permission.
+
+**Regression protection:** 6 new host contract tests; full host suite green.
+
+**Remaining impact:** Real Camera1 capture on the device is NOT yet run —
+awaiting explicit approval (F22-11). Hardware-level capture enforcement is not
+claimed until a Camera1 frame is actually captured and the withdrawal-stops-
+delivery behaviour is observed on-device.
+
 ---
 
 ## Non-Issues (Verified Working)
@@ -309,8 +354,9 @@ The following were verified to work correctly and are not friction:
 | 7 | APK launch crash — lambda invokedynamic (Android 8.1) | Important | Resolved (`b3bd012`) |
 | 8 | APK launch crash — missing libc++_shared.so | Important | Resolved (`b3bd012`) |
 | 9 | Camera test crashed process — uncaught C++ exception across JNI | Important | Resolved (`68e9360`) |
-| 10 | NDK camera enumeration returns 0 devices on MT6580 (Camera1-shim HAL) | Important | Device limitation — documented; capture BLOCKED on this device |
+| 10 | NDK camera enumeration returns 0 devices on MT6580 (Camera1-shim HAL) | Important | Resolved via Camera1-JNI (Incident 11) |
+| 11 | Camera1-JNI adapter implementation | — | Implemented; device capture awaiting approval (F22-11) |
 
-**Total verified incidents:** 10
-**Open incidents:** 1 (Incident 10 — OEM/HAL limitation; real capture blocked pending Camera1-JNI or camera2 hardware)
-**Resolved incidents:** 9
+**Total verified incidents:** 11
+**Open incidents:** 1 (Incident 11 device-capture acceptance pending approval; root cause of Incident 10 resolved)
+**Resolved incidents:** 10

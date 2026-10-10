@@ -227,6 +227,52 @@ Java_org_homeguardian_harness_MainActivity_nativeStopMic(JNIEnv* env, jobject /*
     return env->NewStringUTF(out.c_str());
 }
 
+// Camera1 delivery gate. Called from Camera1Bridge.onPreviewFrame on the camera
+// callback thread for EVERY preview frame, immediately before the frame would
+// be processed. Returns true only if the delivery gate authorizes this frame;
+// false means capture must stop now (consent withdrawn / revoked / device
+// error) and the frame must be dropped. This is the single consent enforcement
+// point at the real acquisition boundary for the Camera1 backend.
+JNIEXPORT jboolean JNICALL
+Java_org_homeguardian_harness_Camera1Bridge_nativeOnPreviewFrame(JNIEnv* /*env*/, jobject /*thiz*/,
+                                                                 jbyteArray /*data*/, jint /*width*/,
+                                                                 jint /*height*/, jint /*format*/) {
+    auto& h = harness();
+    // Lazily create the guarded camera for the Camera1 path (consent already
+    // granted for camera_test). The device is confirmed only because the
+    // operator explicitly started capture AND the OS granted CAMERA.
+    {
+        std::lock_guard<std::mutex> lk(h.m);
+        if (!h.guarded_camera) {
+            h.camera = std::make_unique<NdkCameraDeviceImpl>();
+            h.camera->set_device_confirmed(true);
+            h.guarded_camera = std::make_unique<ConsentGuardedDevice>(
+                *h.camera, *h.gate, AcquisitionRequest{"harness", "camera_test", "camera"});
+        }
+    }
+    // Delivery-boundary authorization check. authorize_delivery() re-runs the
+    // full consent/permission/device evaluation and, on denial, forces the
+    // device out of capture.
+    bool allowed;
+    {
+        std::lock_guard<std::mutex> lk(h.m);
+        if (!h.guarded_camera) return JNI_FALSE;
+        try {
+            allowed = h.guarded_camera->authorize_delivery();
+        } catch (const std::exception& e) {
+            HG_LOGI("camera1 delivery gate threw (fail-closed): %s", e.what());
+            h.guarded_camera->close();
+            return JNI_FALSE;
+        }
+    }
+    if (allowed) {
+        h.camera_delivered.fetch_add(1);
+        return JNI_TRUE;
+    }
+    HG_LOGI("camera1 delivery gate denied a frame; capture must stop");
+    return JNI_FALSE;
+}
+
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeWithdrawConsent(JNIEnv* env, jobject /*thiz*/) {
     auto& h = harness();
