@@ -22,6 +22,10 @@ import android.widget.TextView;
  *    been granted through the standard Android flow (no adb pm grant).
  *  - No media is written to disk or uploaded. Frames/samples are held in
  *    memory only for the duration of an operator-initiated test.
+ *
+ * Note: this class deliberately uses anonymous inner classes instead of Java 8
+ * lambdas so the dex output contains no invokedynamic, which the Android 8.1
+ * (API 27) runtime's dex verifier on this device rejects.
  */
 public class MainActivity extends Activity {
 
@@ -66,23 +70,29 @@ public class MainActivity extends Activity {
                 : "Native library failed to load.");
         root.addView(status);
 
-        root.addView(makeButton("Run non-capture self-test", v ->
-                status.setText(nativeSelfTest())));
+        root.addView(makeButton("Run non-capture self-test", new View.OnClickListener() {
+            @Override public void onClick(View v) { status.setText(nativeSelfTest()); }
+        }));
 
-        root.addView(makeButton("Start CAMERA test (needs permission)", v ->
-                requestCameraThenStart()));
+        root.addView(makeButton("Start CAMERA test (needs permission)", new View.OnClickListener() {
+            @Override public void onClick(View v) { requestCameraThenStart(); }
+        }));
 
-        root.addView(makeButton("Stop camera", v ->
-                status.setText(nativeStopCamera())));
+        root.addView(makeButton("Stop camera", new View.OnClickListener() {
+            @Override public void onClick(View v) { status.setText(nativeStopCamera()); }
+        }));
 
-        root.addView(makeButton("Withdraw consent", v ->
-                status.setText(nativeWithdrawConsent())));
+        root.addView(makeButton("Withdraw consent", new View.OnClickListener() {
+            @Override public void onClick(View v) { status.setText(nativeWithdrawConsent()); }
+        }));
 
-        root.addView(makeButton("Start MIC test (needs permission)", v ->
-                requestMicThenStart()));
+        root.addView(makeButton("Start MIC test (needs permission)", new View.OnClickListener() {
+            @Override public void onClick(View v) { requestMicThenStart(); }
+        }));
 
-        root.addView(makeButton("Stop mic", v ->
-                status.setText(nativeStopMic())));
+        root.addView(makeButton("Stop mic", new View.OnClickListener() {
+            @Override public void onClick(View v) { status.setText(nativeStopMic()); }
+        }));
 
         setContentView(root);
     }

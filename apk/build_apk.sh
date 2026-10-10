@@ -66,8 +66,13 @@ JAVAC_SRC=$(find "$APK_DIR/src" -name '*.java')
 "$JAVA_HOME/bin/javac" --release 8 -classpath "$PLATFORM/android.jar" -d "$BUILD_DIR/classes" $JAVAC_SRC
 
 echo "==> Dex"
+# Do NOT pass --min-sdk-version to dx: that enables invokedynamic desugaring,
+# whose bootstrap descriptor the Android 8.1 (API 27) dex verifier on this
+# device rejects (BootstrapMethodError / NoClassDefFoundError). Without it, dx
+# emits legacy string-concat and interface-dispatch bytecode. The Java source
+# also avoids lambdas for the same reason.
 ( cd "$BUILD_DIR/classes" && "$JAVA_HOME/bin/jar" cf "$BUILD_DIR/dex/in.jar" . )
-"$BT/dx" --dex --min-sdk-version="$API" --output="$BUILD_DIR/dex/classes.dex" "$BUILD_DIR/dex/in.jar"
+"$BT/dx" --dex --output="$BUILD_DIR/dex/classes.dex" "$BUILD_DIR/dex/in.jar"
 
 echo "==> Package base APK with aapt (compile resources + link + manifest)"
 "$BT/aapt" package -f \
@@ -79,6 +84,14 @@ echo "==> Package base APK with aapt (compile resources + link + manifest)"
 echo "==> Add classes.dex and native lib"
 cp "$BUILD_DIR/dex/classes.dex" "$BUILD_DIR/gen/classes.dex"
 cp "$BUILD_DIR/lib/libhg_harness.so" "$BUILD_DIR/gen/lib/$ABI/libhg_harness.so"
+# Bundle the NDK C++ runtime so the app does not depend on a system libc++_shared.
+LIBCXX="$(ls "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" 2>/dev/null || true)"
+if [ -n "$LIBCXX" ]; then
+  cp "$LIBCXX" "$BUILD_DIR/gen/lib/$ABI/libc++_shared.so"
+  echo "bundled libc++_shared.so"
+else
+  echo "WARNING: libc++_shared.so not found; app may fail to dlopen"
+fi
 ( cd "$BUILD_DIR/gen" && \
   "$JAVA_HOME/bin/jar" uf base.apk classes.dex 2>/dev/null || zip -j base.apk classes.dex >/dev/null )
 ( cd "$BUILD_DIR/gen" && zip -r base.apk lib >/dev/null )

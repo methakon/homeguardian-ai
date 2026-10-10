@@ -21,6 +21,10 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
+#include <android/log.h>
+
+#define HG_LOG_TAG "HGHarness"
+#define HG_LOGI(...) __android_log_print(ANDROID_LOG_INFO, HG_LOG_TAG, __VA_ARGS__)
 
 #include "backend/android/NdkCameraDevice.h"
 #include "backend/android/AAudioCaptureDevice.h"
@@ -117,6 +121,9 @@ Java_org_homeguardian_harness_MainActivity_nativeSelfTest(JNIEnv* env, jobject /
     bool micClosed = false;
     try { mic.initialize(); } catch (const std::exception&) { micClosed = true; }
     out += micClosed ? "audio backend: fail-closed OK\n" : "audio backend: UNEXPECTED open\n";
+
+    HG_LOGI("non-capture self-test: gate_cam=%d gate_unknown_denied=%d cam_closed=%d mic_closed=%d",
+            (int)d.authorized, (int)(!w.authorized), (int)camClosed, (int)micClosed);
 
     return env->NewStringUTF(out.c_str());
 }
