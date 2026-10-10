@@ -140,10 +140,31 @@ Java_org_homeguardian_harness_MainActivity_nativeStartCamera(JNIEnv* env, jobjec
         h.guarded_camera = std::make_unique<ConsentGuardedDevice>(
             *h.camera, *h.gate, AcquisitionRequest{"harness", "camera_test", "camera"});
     }
-    if (!h.guarded_camera->initialize().allowed) {
+    // initialize() may throw (e.g. camera enumeration returns 0 devices). Never
+    // let a C++ exception escape the JNI boundary (it aborts the process);
+    // catch it and report a clean fail-closed result.
+    GuardResult init;
+    try {
+        init = h.guarded_camera->initialize();
+    } catch (const std::exception& e) {
+        h.guarded_camera->close();
+        HG_LOGI("camera initialize threw (fail-closed): %s", e.what());
+        return env->NewStringUTF((std::string("camera: initialize failed, capture not started (") + e.what() + ")").c_str());
+    }
+    if (!init.allowed) {
         return env->NewStringUTF("camera: initialize denied by gate");
     }
-    auto r = h.guarded_camera->start();
+    // A C++ exception here (e.g. camera enumeration returns 0 devices, or the
+    // device errors) must NOT escape across the JNI boundary, which would abort
+    // the process. Catch it and report a clean, fail-closed denial instead.
+    GuardResult r;
+    try {
+        r = h.guarded_camera->start();
+    } catch (const std::exception& e) {
+        h.guarded_camera->close();
+        HG_LOGI("camera start threw (fail-closed): %s", e.what());
+        return env->NewStringUTF((std::string("camera: start failed, capture not started (") + e.what() + ")").c_str());
+    }
     if (!r.allowed) {
         return env->NewStringUTF((std::string("camera: start denied (") + r.explanation + ")").c_str());
     }
@@ -172,10 +193,25 @@ Java_org_homeguardian_harness_MainActivity_nativeStartMic(JNIEnv* env, jobject /
         h.guarded_mic = std::make_unique<ConsentGuardedDevice>(
             *h.mic, *h.gate, AcquisitionRequest{"harness", "mic_test", "audio"});
     }
-    if (!h.guarded_mic->initialize().allowed) {
+    GuardResult init;
+    try {
+        init = h.guarded_mic->initialize();
+    } catch (const std::exception& e) {
+        h.guarded_mic->close();
+        HG_LOGI("mic initialize threw (fail-closed): %s", e.what());
+        return env->NewStringUTF((std::string("mic: initialize failed, capture not started (") + e.what() + ")").c_str());
+    }
+    if (!init.allowed) {
         return env->NewStringUTF("mic: initialize denied by gate");
     }
-    auto r = h.guarded_mic->start();
+    GuardResult r;
+    try {
+        r = h.guarded_mic->start();
+    } catch (const std::exception& e) {
+        h.guarded_mic->close();
+        HG_LOGI("mic start threw (fail-closed): %s", e.what());
+        return env->NewStringUTF((std::string("mic: start failed, capture not started (") + e.what() + ")").c_str());
+    }
     if (!r.allowed) {
         return env->NewStringUTF((std::string("mic: start denied (") + r.explanation + ")").c_str());
     }
