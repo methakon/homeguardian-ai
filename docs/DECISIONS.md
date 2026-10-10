@@ -113,27 +113,28 @@ Use CMake 3.28.3 with Unix Makefiles generator.
 - CMake syntax can be verbose
 - Build times longer than Ninja (mitigated by `-j4` flag)
 
-## ADR-006: No AI Coding Agents
+## ADR-006: Implementation History — Mixed Tool Usage
 
 **Status:** Accepted
 **Date:** 2026-10-09
 
 ### Context
-AI coding agents can generate code quickly but may introduce AI fingerprints, subtle design issues, or code that does not match project standards.
+The project used different implementation approaches across phases. Phase B was implemented using the Antigravity CLI (an AI coding agent). Phase C was implemented directly by the developer without AI tools, after reviewing and cleaning all Phase B code for AI fingerprints.
 
 ### Decision
-All code is implemented directly without AI coding agents. No AI-generated code, comments, or patterns are used.
+- Phase B code was reviewed, cleaned of AI fingerprints, and fixed where needed (commits `e9ebfa3`).
+- Phase C onward is implemented directly without AI coding agents.
+- Documentation must accurately reflect this history without concealing tool usage.
 
 ### Rationale
-- Full architectural control and code quality
-- No AI fingerprints in codebase
-- Every line of code is reviewed and understood
-- Maintains clean, hand-crafted implementation
+- Honesty about tool usage is required for hackathon integrity.
+- Phase B code passed review and was cleaned; Phase C+ follows a no-AI-tool standard.
+- The friction log documents actual build/test issues regardless of who wrote the code.
 
 ### Consequences
-- Slower development pace
-- More manual effort required
-- Higher code quality and maintainability
+- Documentation must not claim "no AI tools used" when they were.
+- Future phases must be hand-implemented with no AI fingerprints.
+- Existing Phase B code is accepted after review and cleaning.
 
 ## ADR-007: Deferred License Selection
 

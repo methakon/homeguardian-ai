@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include "catch2/catch.hpp"
 #include "core/Config.h"
 #include <nlohmann/json.hpp>
 #include <fstream>

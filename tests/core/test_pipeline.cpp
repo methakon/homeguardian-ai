@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include "catch2/catch.hpp"
 #include "core/Pipeline.h"
 #include "core/TimeWindowCorrelation.h"
 #include "core/EventValidator.h"

@@ -4,7 +4,7 @@
 
 ## Current Phase
 
-Phase C — Event Model and Pipeline
+Phase D — SQLite Persistence
 
 ## Completed Work
 
@@ -26,19 +26,22 @@ Phase C — Event Model and Pipeline
 | Pipeline | Synchronous Pipeline with bounded history, validation, correlation | 2026-10-09 |
 | Config extension | max_event_history, correlation_window_ms, alert_confidence_threshold | 2026-10-09 |
 | Application integration | Application::process_event() delegates to Pipeline | 2026-10-09 |
-| Test suite | 13 test cases, 30+ assertions, all passing | 2026-10-09 |
+| Friction log | 6 verified incidents documented | 2026-10-09 |
+| SQLite persistence | IDatabase, EventRepository, AlertRepository, SchemaManager, PersistenceManager | 2026-10-10 |
+| SQLite amalgamation | Compiled directly into project (no system dev headers required) | 2026-10-10 |
+| Test suite | 32 test cases, 99 assertions, all passing | 2026-10-10 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-Total Test time (real) =   0.24 sec
-All tests passed (30+ assertions in 13 test cases)
+Total Test time (real) =   0.23 sec
+All tests passed (99 assertions in 32 test cases)
 ```
 
 ## Current Work
 
-Phase C is complete and verified. Awaiting authorization to proceed to Phase D.
+Phase D — SQLite persistence layer. Complete and verified.
 
 ## Blockers
 
@@ -53,8 +56,10 @@ None.
 ## Next Authorized Task
 
 Phase D — Persistence:
-1. SQLite persistence for events, alerts, consent, config
-2. Retention policies with automatic data expiration
+1. SQLite persistence for events, alerts with repository interfaces
+2. Schema versioning, prepared statements, transactions
+3. Configurable retention policies
+4. Tests for restart recovery, duplicates, rollback, retention
 
 ## Resource Budget
 
@@ -70,4 +75,5 @@ Phase D — Persistence:
 - **Phase A commit:** `312cb75`
 - **Phase B commit:** `058c692`
 - **Phase B fix commit:** `e9ebfa3`
-- **Phase C commit:** pending
+- **Phase C commit:** `479dccf`
+- **Friction log commit:** `90691ef`

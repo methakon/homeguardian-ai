@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28.3)
-project(homeguardian VERSION 1.0.0 LANGUAGES CXX)
+project(homeguardian VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,17 +29,29 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# SQLite amalgamation as a C static library (no system headers needed)
+add_library(sqlite3_static STATIC
+    third_party/sqlite/sqlite3.c
+)
+target_compile_options(sqlite3_static PRIVATE -DSQLITE_OMIT_SHELL=1 -DSQLITE_OMIT_FTS3=1 -DSQLITE_OMIT_FTS4=1 -DSQLITE_OMIT_FTS5=1 -Wno-unused-parameter)
+set_target_properties(sqlite3_static PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+
+# Catch2 header-only with explicit main implementation
+add_library(catch2_main STATIC
+    third_party/catch2/src/catch_with_main.cpp
+)
+target_include_directories(catch2_main PRIVATE third_party/catch2/single_include)
+target_compile_definitions(catch2_main PRIVATE CATCH_CONFIG_MAIN)
+set_target_properties(catch2_main PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+)
+
 option(HOMEGUARDIAN_BUILD_TESTS "Build tests" ON)
 
 if(HOMEGUARDIAN_BUILD_TESTS)
     enable_testing()
-    # Fetch Catch2 v2 to support CATCH_CONFIG_MAIN
-    FetchContent_Declare(
-        Catch2
-        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-        GIT_TAG v2.13.10
-    )
-    FetchContent_MakeAvailable(Catch2)
 endif()
 
 add_executable(homeguardian
@@ -52,17 +64,60 @@ add_executable(homeguardian
     src/core/TimeWindowCorrelation.cpp
     src/core/Pipeline.cpp
     src/core/UUID.cpp
+    src/persistence/SQLiteDatabase.cpp
+    src/persistence/EventRepository.cpp
+    src/persistence/AlertRepository.cpp
+    src/persistence/SchemaManager.cpp
+    src/persistence/PersistenceManager.cpp
 )
 
-target_include_directories(homeguardian PRIVATE src)
-
+target_include_directories(homeguardian PRIVATE src third_party/sqlite)
 target_link_libraries(homeguardian PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
+    sqlite3_static
 )
 
 install(TARGETS homeguardian DESTINATION bin)
 
 if(HOMEGUARDIAN_BUILD_TESTS)
-    add_subdirectory(tests)
+    add_executable(homeguardian_tests
+        tests/core/test_config.cpp
+        tests/core/test_logger.cpp
+        tests/core/test_event.cpp
+        tests/core/test_event_validator.cpp
+        tests/core/test_simulated_event_source.cpp
+        tests/core/test_time_window_correlation.cpp
+        tests/core/test_pipeline.cpp
+        tests/core/test_alert.cpp
+        tests/persistence/test_persistence.cpp
+        ../src/core/Config.cpp
+        ../src/core/Logger.cpp
+        ../src/core/EventValidator.cpp
+        ../src/core/SimulatedEventSource.cpp
+        ../src/core/TimeWindowCorrelation.cpp
+        ../src/core/Pipeline.cpp
+        ../src/core/UUID.cpp
+        ../src/persistence/SQLiteDatabase.cpp
+        ../src/persistence/EventRepository.cpp
+        ../src/persistence/AlertRepository.cpp
+        ../src/persistence/SchemaManager.cpp
+        ../src/persistence/PersistenceManager.cpp
+    )
+
+    target_include_directories(homeguardian_tests PRIVATE
+        /home/swarna-sekhar-dhar/projects/homeguardian-ai/src
+        /home/swarna-sekhar-dhar/projects/homeguardian-ai/third_party/sqlite
+        /home/swarna-sekhar-dhar/projects/homeguardian-ai/third_party/catch2/single_include
+        /home/swarna-sekhar-dhar/projects/homeguardian-ai/third_party/catch2/single_include/catch2
+    )
+    target_link_libraries(homeguardian_tests PRIVATE
+        catch2_main
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        sqlite3_static
+    )
+
+    include(CTest)
+    add_test(NAME homeguardian_tests COMMAND homeguardian_tests)
 endif()

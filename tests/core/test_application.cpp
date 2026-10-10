@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include "catch2/catch.hpp"
 #include "core/Application.h"
 #include <thread>
 #include <chrono>
