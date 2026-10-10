@@ -47,15 +47,26 @@ Phase F2.2 — Real Android Device Backends (NDK installed; hardware testing blo
 | NDK install | NDK r26d (26.3.11579264) installed side-by-side via official Google download | 2026-10-10 |
 | Android camera backend | `backend/android/NdkCameraDevice` — NDK camera API; fail-closed; cross-compiles arm64-v8a | 2026-10-10 |
 | Android audio backend | `backend/android/AAudioCaptureDevice` — AAudio; fail-closed; cross-compiles arm64-v8a | 2026-10-10 |
-| Test suite | 85 test cases, 357 assertions, all passing | 2026-10-10 |
+| Delivery-time consent gate | `ConsentGuardedDevice::authorize_delivery()` — re-checks before every frame/sample delivery | 2026-10-10 |
+| Fake-backend mock tests | `core/FakeMediaDevice` + `test_fake_device_delivery.cpp` — 8 host cases | 2026-10-10 |
+| Defect fix | Errored device no longer resurrected to Idle; camera stop() releases handles | 2026-10-10 |
+| Test suite | 93 test cases, 424 assertions, all passing | 2026-10-10 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-All tests passed (357 assertions in 85 test cases)
+All tests passed (424 assertions in 93 test cases)
 ASan/UBSan: passed, no leaks, no sanitizer errors
+Android cross-compile (arm64-v8a/API 34): passed (static archive, not runnable)
 ```
+
+## Verification Status (separated by layer)
+
+- **Compile (Android arm64-v8a / API 34):** VERIFIED.
+- **Mock integration (host fake backend):** VERIFIED.
+- **Physical hardware:** BLOCKED — no device attached. Hardware-level consent
+  enforcement is NOT claimed.
 
 ## Current Work
 
@@ -107,3 +118,4 @@ default and none is implemented.
 - **Phase E commit:** `a472968`
 - **Phase F1 commit:** `90841e9`
 - **Phase F2.1 commit:** `e81584e`
+- **Phase F2.2 commit:** `50e43ea`

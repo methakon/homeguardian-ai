@@ -105,6 +105,13 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-03 | AAudio backend implementing IMediaDevice | F21-01, F22-01 | Cross-compiles for arm64-v8a; fail-closed until device confirmed | DONE (compile only) |
 | F22-04 | On-device lifecycle + permission tests | F22-02, F22-03 | Real permission revocation and device failure force stop | BLOCKED (no device) |
 | F22-05 | Actual capture on a physical device | F22-04 | Verified real frame/sample capture gated by consent | BLOCKED (no device) |
+| F22-06 | Delivery-time consent gate + fake-backend tests | F22-02, F22-03 | authorize_delivery() re-checks before every frame/sample; withdrawal/expiry/permission/failure stop delivery; resource cleanup on repeated start/stop/close | DONE (host mock) |
+| F22-07 | Defect fix: errored device resurrection + camera stop handle release | F22-06 | Errored device stays Error until re-init; stop() releases capture handles | DONE |
+
+Verification status is tracked separately per layer:
+- Compile (Android arm64-v8a / API 34): VERIFIED.
+- Mock integration (host fake backend): VERIFIED.
+- Physical hardware: BLOCKED (no device attached).
 
 ## Phase F — HTTP and MCP
 

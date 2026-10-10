@@ -60,6 +60,14 @@ public:
     // allowing GuardResult only when acquisition may proceed right now.
     GuardResult recheck_and_enforce(std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 
+    // The delivery gate a real backend MUST call immediately before handing a
+    // frame/sample to processing. This is the time-of-check/time-of-use closing
+    // point: it re-runs the full consent/permission/device evaluation and only
+    // returns true if the payload may be delivered right now. If it returns
+    // false the backend MUST drop the payload and must not deliver it, and the
+    // device has been forced out of capture.
+    bool authorize_delivery(std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
+
     DeviceState state() const { return device_.state(); }
     DeviceKind kind() const { return device_.kind(); }
 

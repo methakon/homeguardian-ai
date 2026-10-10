@@ -11,6 +11,8 @@ hg_asan_f21/
 hg_f1_verify/
 hg_f21_verify/
 hg_android/
+hg_asan_f22/
+hg_asan_f22b/
 
 # Log files
 homeguardian.log
@@ -58,6 +60,9 @@ test_gated_acq.db-shm
 test_guard.db
 test_guard.db-wal
 test_guard.db-shm
+test_fake_delivery.db
+test_fake_delivery.db-wal
+test_fake_delivery.db-shm
 
 # Model artifacts
 *.onnx

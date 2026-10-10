@@ -72,13 +72,8 @@ void NdkCameraDeviceImpl::start() {
 }
 
 void NdkCameraDeviceImpl::stop() noexcept {
-    if (state_ == DeviceState::Capturing) {
-        state_ = DeviceState::Stopped;
-    }
-}
-
-void NdkCameraDeviceImpl::close() noexcept {
-    // Tear down in reverse order of creation. Each pointer may be null.
+    // Release capture resources so a subsequent start() rebuilds a clean
+    // session and repeated start/stop cannot leak session/device handles.
     if (capture_session_ != nullptr) {
         ACameraCaptureSession_close(capture_session_);
         capture_session_ = nullptr;
@@ -95,6 +90,15 @@ void NdkCameraDeviceImpl::close() noexcept {
         ACameraDevice_close(camera_device_);
         camera_device_ = nullptr;
     }
+    if (state_ == DeviceState::Capturing) {
+        state_ = DeviceState::Stopped;
+    }
+}
+
+void NdkCameraDeviceImpl::close() noexcept {
+    // Tear down any remaining resources in reverse order of creation. stop()
+    // already released capture resources; close() also releases the manager.
+    stop();
     if (camera_manager_ != nullptr) {
         ACameraManager_delete(camera_manager_);
         camera_manager_ = nullptr;

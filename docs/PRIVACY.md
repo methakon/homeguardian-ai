@@ -285,23 +285,42 @@ prove real hardware enforcement.
   interface level. A real backend must deliver a frame/sample only after
   `recheck_and_enforce()` returns allowed.
 
-### Compilation vs. hardware verification
+### Delivery-time consent gate (TOCTOU)
 
-- **Compilation verified:** the backend cross-compiles for `arm64-v8a` / API 34
-  with the NDK toolchain (`-DHOMEGUARDIAN_BUILD_ANDROID_BACKEND=ON`), producing
-  `libhomeguardian_android_backend.a` whose object files carry undefined
-  references to the real NDK symbols (`ACameraManager_create`,
-  `ACameraManager_getCameraIdList`, `AAudio_createStreamBuilder`), confirming the
-  correct APIs are targeted.
-- **Hardware NOT verified:** no device is attached, so no actual capture,
-  permission-revocation, or acquisition-boundary consent enforcement has been
-  tested on hardware. Hardware-level consent enforcement is **not** claimed.
+`ConsentGuardedDevice::authorize_delivery()` is the delivery gate a real backend
+MUST call immediately before handing a frame/sample to processing. It re-runs
+the full consent/permission/device evaluation and returns true only if the
+payload may be delivered right now; on any denial it forces the device out of
+capture and the backend MUST drop the payload. This closes the
+time-of-check/time-of-use gap: authorization at `start()` is not sufficient —
+every delivery is re-authorized.
+
+### Defect found and fixed (F2.2 hardening)
+
+`recheck_and_enforce()` previously called `close()` on a device in `Error`,
+which reset it to `Idle`. A subsequent `authorize_delivery()` could then see a
+healthy `Idle` device with consent still granted and wrongly re-authorize
+delivery. Fixed: after releasing resources on error, the device is kept in
+`Error` (via `fail()`) until it is explicitly re-initialized, so an errored
+device can never be silently resurrected into a deliverable state. Proven by
+the "device failure stops delivery" test. The camera `stop()` was also fixed to
+release capture handles (session/device) rather than only transitioning state,
+so repeated start/stop cannot leak handles.
+
+### Verification status (kept strictly separate)
+
+| Layer | Status | Evidence |
+|-------|--------|----------|
+| Compile (Android, arm64-v8a / API 34) | VERIFIED | `libhomeguardian_android_backend.a` builds with NDK r26d; objects reference `ACameraManager_create`, `ACameraManager_getCameraIdList`, `AAudio_createStreamBuilder` (unresolved — a static archive, NOT a runnable app) |
+| Mock integration (host, fake backend) | VERIFIED | `test_fake_device_delivery.cpp`: delivery gate delivers only while authorized; withdrawal/expiry/permission-revocation/failure each stop delivery; repeated start/stop/close releases resources; destructor releases a capturing device |
+| Physical hardware | BLOCKED | No device attached (`adb devices` empty). Real capture, OS permission revocation, and acquisition-boundary enforcement on hardware are NOT tested. Hardware-level consent enforcement is NOT claimed. |
+
+The fake backend proves the control-flow contract a real backend must satisfy.
+It does not prove real hardware enforcement.
 
 Camera and microphone remain disabled by default (`media_capture_enabled =
-false`). The consent gate fails closed on missing/denied/withdrawn/expired
-consent, disabled config, failed profile state, or revoked OS permission; on
-withdrawal, permission revocation, device failure, or shutdown the device is
-stopped and its resources released.
+false`). `set_device_confirmed(false)` is the default on both backends, so real
+capture is never opened without a documented on-device acceptance test.
 
 ## 7. Limitations
 

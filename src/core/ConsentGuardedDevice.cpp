@@ -82,18 +82,29 @@ GuardResult ConsentGuardedDevice::recheck_and_enforce(std::chrono::system_clock:
     if (!result.allowed) {
         // Authorization or device/permission state is no longer valid: force the
         // device out of capture and release resources so no further acquisition
-        // can occur.
+        // can occur. On a device error we release resources but do NOT return
+        // the device to Idle, because an errored device must stay closed until
+        // it is explicitly re-initialized; otherwise a later check could see a
+        // healthy Idle device and wrongly re-authorize delivery.
         if (device_.state() == DeviceState::Capturing ||
             device_.state() == DeviceState::Initialized) {
             device_.stop();
         }
         if (device_.state() == DeviceState::Error) {
             device_.close();
+            device_.fail();  // keep the device in Error after releasing resources
         }
         return result;
     }
     result.explanation = "acquisition permitted";
     return result;
+}
+
+bool ConsentGuardedDevice::authorize_delivery(std::chrono::system_clock::time_point now) {
+    // Re-run the full evaluation immediately before delivery. On any denial the
+    // device is forced out of capture and the payload must be dropped.
+    GuardResult result = recheck_and_enforce(now);
+    return result.allowed;
 }
 
 } // namespace homeguardian

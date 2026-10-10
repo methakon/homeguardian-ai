@@ -127,6 +127,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_simulated_sensor.cpp
         tests/core/test_gated_acquisition.cpp
         tests/core/test_consent_guarded_device.cpp
+        tests/core/test_fake_device_delivery.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
         ../src/core/Config.cpp
