@@ -362,3 +362,29 @@ capture is never opened without a documented on-device acceptance test.
 - Schedule parsing is intentionally minimal (`daily`/`weekly`/`weekdays`/`HH:MM`)
   and time zones are a small allow-list. It is not a general cron engine.
 - The routine model does not confirm activity completion from any data source.
+
+## Ubuntu (Linux) sensor backend — privacy notes (added 2026-10-10)
+
+The Ubuntu backend adds no new data-retention surface. It reuses the same
+consent gate and delivery-boundary authorization as the Android backend:
+
+| Item | Status | Evidence |
+|---|---|---|
+| Ubuntu sensor discovery (V4L2/PipeWire metadata) | VERIFIED (non-capture) | `SensorDiscovery` enumerates device nodes and sound-server metadata only; opens no device, reads no frames/samples. |
+| Ubuntu consent enforcement (host) | VERIFIED (non-capture) | 4 host cases reuse `ConsentGuardedDevice::authorize_delivery()`: capture-disabled-by-default blocks start; withdrawal stops per-frame delivery; permission revocation stops delivery. Host only — no real sensor opened. |
+| Ubuntu camera/mic/speaker capture | NOT IMPLEMENTED | Awaiting explicit approval; no sensor has been opened. |
+
+Capture remains disabled by default; consent is rechecked immediately before
+every frame/audio-buffer delivery; withdrawal, permission revocation, or device
+error stops delivery and releases resources. No recording to disk, no uploads,
+no retention of personal media. No automatic camera/mic access at launch or
+during tests. The computer's camera and microphone have NOT been opened.
+
+## Alexa+ integration — privacy notes (added 2026-10-10)
+
+Alexa integration, if built, would be a separate authenticated client (Alexa
+custom/Smart Home skill → HTTPS endpoint → C++ service). The event pipeline
+stays independent of Alexa. The Alexa Developer Console simulator cannot reach
+the Ubuntu computer's camera or microphone. No Amazon credentials have been
+requested; none will be stored in source or Git. No Alexa+ interaction has been
+demonstrated, so no integration is claimed.

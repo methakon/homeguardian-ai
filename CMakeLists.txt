@@ -148,6 +148,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_consent_guarded_device.cpp
         tests/core/test_fake_device_delivery.cpp
         tests/core/test_camera1_adapter.cpp
+        tests/core/test_ubuntu_backend.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
         ../src/core/Config.cpp
@@ -169,6 +170,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ../src/persistence/RoutineRepository.cpp
         ../src/persistence/SchemaManager.cpp
         ../src/persistence/PersistenceManager.cpp
+        ../src/backend/linux/SensorDiscovery.cpp
     )
 
     target_include_directories(homeguardian_tests PRIVATE

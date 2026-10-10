@@ -326,6 +326,49 @@ delivery behaviour is observed on-device.
 
 ---
 
+## Incident 12: Ubuntu Sensor Backend Assessment + AVS Deprecation Finding
+
+**Date/time:** 2026-10-10 ~20:30 IST
+**Area:** Platform expansion / documentation / Alexa integration research
+
+**Expected:** Extend HomeGuardian to the Ubuntu development computer (camera via
+V4L2, mic via ALSA/PipeWire, speaker), evaluate Docker, and assess Alexa+
+integration.
+
+**Actual (non-capture):**
+- Implemented `src/backend/linux/SensorDiscovery.{h,cpp}`: non-capture
+  enumeration of V4L2 camera nodes (`/dev/video*` + sysfs name) and PipeWire
+  audio sources/sinks (via `pactl` metadata). Opens no device; reads no
+  frames/samples.
+- Added `tests/core/test_ubuntu_backend.cpp`: 4 host cases (discovery
+  well-formedness against the live host; capture-disabled-by-default blocks
+  start; withdrawal stops per-frame delivery; permission revocation stops
+  delivery), all reusing `ConsentGuardedDevice`. Host only — no sensor opened.
+- Full host suite: 103 cases / 507 assertions pass; ctest 100%.
+- Documented the Ubuntu/Android distinction, Docker trade-offs, and Alexa
+  findings in ARCHITECTURE, ROADMAP, PRIVACY.
+
+**Root cause (Alexa+):** Investigated current Alexa developer routes and found
+**AVS developer tools are no longer generally available for Alexa Built-in**;
+Amazon directs developers to the Works with Alexa program. The supported route
+is an Alexa custom/Smart Home skill → authenticated endpoint → C++ service.
+The Alexa simulator cannot access the local camera/mic. No integration built;
+no credentials requested.
+
+**Resolution:** Non-capture Ubuntu discovery + host consent tests landed
+(F22-12). Capture adapters (F22-13) remain PROPOSED and require explicit
+approval before any sensor is opened. Docker (F22-14) and Alexa (F22-15)
+documented as proposed/research-only.
+
+**Regression protection:** 4 new host tests; full host suite green.
+
+**Remaining impact:** The Ubuntu computer's camera and microphone have NOT been
+opened. Capture adapters, Docker deployment, and Alexa integration are not
+implemented and are awaiting approval / further work. No Alexa+ interaction has
+been demonstrated, so no integration is claimed.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -338,6 +381,8 @@ The following were verified to work correctly and are not friction:
 - Catch2 v2.13.10 with `CATCH_CONFIG_MAIN`
 - AddressSanitizer + UndefinedBehaviorSanitizer (clean)
 - Git push to private GitHub repository
+- Host V4L2/PipeWire/ALSA environment present (2 video nodes, PipeWire audio,
+  Docker daemon running); current user not in `video`/`audio` groups
 
 ---
 
@@ -356,7 +401,8 @@ The following were verified to work correctly and are not friction:
 | 9 | Camera test crashed process — uncaught C++ exception across JNI | Important | Resolved (`68e9360`) |
 | 10 | NDK camera enumeration returns 0 devices on MT6580 (Camera1-shim HAL) | Important | Resolved via Camera1-JNI (Incident 11) |
 | 11 | Camera1-JNI adapter implementation | — | Implemented; device capture awaiting approval (F22-11) |
+| 12 | Ubuntu backend assessment + AVS deprecation finding | — | Non-capture discovery + host tests DONE; capture/Docker/Alexa proposed |
 
-**Total verified incidents:** 11
-**Open incidents:** 1 (Incident 11 device-capture acceptance pending approval; root cause of Incident 10 resolved)
+**Total verified incidents:** 12
+**Open incidents:** 2 (Incident 11 device-capture acceptance; Incident 12 capture adapters — both pending approval; root causes resolved)
 **Resolved incidents:** 10

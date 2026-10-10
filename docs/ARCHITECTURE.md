@@ -328,3 +328,99 @@ lifecycle call and every frame/sample delivery through the consent gate.
 - Thread pool with configurable size (default: 4 threads).
 - Graceful shutdown with deterministic cleanup.
 - CPU and memory usage monitored and bounded.
+
+## Ubuntu (Linux) Sensor Backend — assessment & design (added 2026-10-10)
+
+**Status: interfaces + non-capture discovery + host tests VERIFIED; camera/audio
+capture adapters PROPOSED and NOT implemented (awaiting explicit approval).**
+
+The Ubuntu backend targets the existing development computer. It reuses the
+existing consent stack — `ConsentGate`, `ConsentGuardedDevice`,
+`IMediaDevice` — and does **not** duplicate any consent mechanism. The Android
+and Ubuntu backends are distinguished only by the device adapter that sits
+behind `IMediaDevice`; the consent boundary, event pipeline, and persistence are
+identical across platforms.
+
+Reusable components (shared with Android):
+- `IMediaDevice` — the device lifecycle contract (initialize/start/stop/close).
+- `ConsentGuardedDevice` — wraps any `IMediaDevice`; re-authorizes at the
+  delivery boundary via `authorize_delivery()` immediately before every
+  frame/sample. Withdrawal, permission revocation, or device error forces
+  capture to stop (fail-closed).
+- `ConsentGate` / `ConsentRepository` — consent evaluation and persistence.
+- The synchronous in-process event pipeline and SQLite persistence layer.
+
+Planned Ubuntu adapters (PROPOSED, not yet implemented):
+- Camera: V4L2 (`/dev/video*`) via a thin adapter behind `IMediaDevice`. Bounded
+  frame buffer; no on-disk writes; every frame re-checked at the delivery
+  boundary before processing.
+- Microphone: ALSA (`arecord`/ALSA PCM) or PipeWire (`pactl`/`libpipewire`) behind
+  `IMediaDevice`. Bounded ring buffer; re-check before every buffer delivery.
+- Speaker: PipeWire/ALSA playback adapter (output-only; no capture semantics).
+
+Implemented now (non-capture):
+- `src/backend/linux/SensorDiscovery.{h,cpp}` — `ISensorDiscovery` interface and
+  `LinuxSensorDiscovery` implementation that enumerates camera nodes
+  (`/dev/video*` + sysfs name) and audio sources/sinks (via `pactl` metadata)
+  **without opening any device**. Pure metadata; no frames or samples read.
+
+Safety invariants for the Ubuntu backend (identical to Android):
+- Capture disabled by default; requires explicit operator action.
+- Consent rechecked immediately before every frame/audio-buffer delivery.
+- On consent withdrawal, permission revocation, or device error: stop delivery
+  and release resources.
+- No recording to disk, no uploads, no retention of personal media by default.
+- No automatic camera/mic access at launch or during tests.
+
+**This assessment does not open the computer's camera or microphone.** The
+capture adapters are the next milestone and require explicit approval before the
+first activation.
+
+## Docker assessment (added 2026-10-10)
+
+**Recommendation: keep the C++ core on the host for now; defer containerizing
+sensor access.** The core event pipeline, consent gate, and SQLite persistence
+are portable and could run in a container, but the physical camera/audio access
+is the deciding factor. Docker does **not** grant hardware access automatically:
+a container would need explicit device mappings (`--device /dev/video0`), group
+membership for `video`/`audio` inside the container, and — for full PipeWire
+desktop audio — a mounted socket or `--group-add`. Privileged containers are
+avoided per policy.
+
+Security trade-offs (documented before any implementation):
+- `--device /dev/video*` exposes the raw device; a compromised container could
+  capture directly, bypassing the consent gate that lives in the process. This
+  weakens the fail-closed guarantee unless the gate remains in the capture path.
+- Audio via ALSA needs `/dev/snd` access; via PipeWire needs the user session
+  socket, which couples the container to the desktop session.
+- Recommendation: if a container is ever used for the core service, run the
+  sensor adapters on the host (or a separate privileged-exempt helper) and keep
+  the consent gate in the delivery path. No privileged containers, no broad
+  device exposure. No container deployment has been implemented.
+
+## Alexa+ integration findings (added 2026-10-10)
+
+**Status: researched, NOT integrated; no Alexa+ interaction demonstrated.**
+
+Verified findings (Amazon developer documentation, 2026):
+- **Alexa Voice Service (AVS) developer tools are no longer generally available
+  for Alexa Built-in.** Amazon directs developers to the *Works with Alexa* (WWA)
+  program for device integrations. So "build our own Alexa client on the Ubuntu
+  box via AVS" is not a currently supported route.
+- The supported route for a HomeGuardian voice interface is an **Alexa custom
+  skill** or **Smart Home skill**:
+  - Hosted via Alexa-hosted (AWS Lambda, Node.js 16.x or Python 3.8), or
+  - Self-hosted HTTPS endpoint invoked by the skill.
+  - Account linking uses OAuth 2.0 / Login with Amazon (LWA).
+  - The **Alexa Developer Console simulator** can test skill request/response
+    flows without a physical Echo device.
+- **Simulator limitation:** the Alexa simulator cannot access the Ubuntu
+  computer's physical camera or microphone. Any claim that Alexa+ controls
+  HomeGuardian sensors would require the skill backend to reach the C++ service
+  over an authenticated network interface — not local sensor access. This has not
+  been built or demonstrated.
+
+Proposed architecture (if pursued): Alexa skill → authenticated HTTPS endpoint →
+C++ HomeGuardian service (event pipeline unchanged; Alexa stays a separate,
+authenticated client). The C++ event pipeline remains independent of Alexa. No
+Amazon credentials have been requested; none will be placed in source or Git.
