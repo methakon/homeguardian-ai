@@ -132,15 +132,78 @@ is kept separate from the shipped default (`config/homeguardian.json`), which
 has capture and cloud processing disabled. A test asserts the shipped default
 keeps both disabled.
 
-## 6. Limitations
+## 6. Phase F1 — Consent-Gated Simulated Sensing
 
-- Consent is **not yet enforced** by any runtime component. There is no camera,
-  microphone, biometric, or cloud processing in Phase E. The consent model is
-  the foundation those components must consult before any sensing or inference.
+### Consent gate (`src/core/ConsentGate.{h,cpp}`)
+
+`ConsentGate` is the single decision point consulted before any protected
+acquisition or processing. It is deliberately narrow so the consent rule is
+defined in exactly one place; components must not re-implement it. Given an
+`AcquisitionRequest` (subject_scope, purpose, data_category) it returns a
+`GateDecision` and fails closed. Deny reasons, in evaluation order:
+
+1. `capture_disabled` — `media_capture_enabled` is false in configuration.
+2. `no_consent_record` — no record exists for subject+purpose.
+3. `decision_not_granted` — the latest decision for subject+purpose is denied or
+   withdrawn (a later withdrawal/denial overrides any earlier grant).
+4. `expired` — the latest decision is a grant whose `expires_at` has passed.
+5. `ambiguous` — more than one active grant exists for the same purpose.
+6. `category_missing` — the grant does not authorize the requested data category.
+7. `none` — authorized.
+
+Missing, ambiguous, expired, denied, and withdrawn authorization all fail closed.
+The gate is a pure decision function: it performs no acquisition and no side
+effects.
+
+### Gated acquisition (`src/core/ConsentGatedAcquisition.{h,cpp}`)
+
+`ConsentGatedAcquisition` wires the gate to a `SimulatedSensorSource`. On
+`acquire()` it consults the gate first; if denied it returns immediately with no
+event and the sensor is never read (`emitted_count()` unchanged). If authorized,
+it pulls the next synthetic reading. This demonstrates the control flow that a
+future real hardware boundary must follow.
+
+### Simulated sensor (`src/core/SimulatedSensorSource.{h,cpp}`)
+
+A deterministic `IEventSource` that emits synthetic observations. Every emitted
+event's payload carries `"synthetic": true` and a `sensor_kind`. It supports
+configurable observation timestamps, malformed input (array payload rejected by
+the `Event` constructor), and simulated disconnect/reconnect (while disconnected,
+`next()` yields nothing).
+
+### Threat model (Phase F1)
+
+- **Unauthorized acquisition.** Mitigated by the consent gate failing closed and
+  by the gated-acquisition path never reading the sensor on a deny. Tested for
+  denied, missing, expired, withdrawn, unknown-profile, and mismatched
+  purpose/category.
+- **Bypassing the gate.** The gate is the only path to acquisition in this phase.
+  A future hardware component must call the gate before opening any device; that
+  boundary does not exist yet.
+- **Confusing synthetic data for real data.** Every simulated event is tagged
+  `synthetic`. Tested.
+- **Withdrawal not honored.** A later withdrawal/denial for a purpose overrides
+  earlier grants because the latest `recorded_at` decision is authoritative.
+  Tested.
+- **Global kill switch.** `media_capture_enabled = false` denies all acquisition
+  regardless of consent. Tested.
+
+### Important limitation
+
+This phase proves **simulated** enforcement only. There is no real camera,
+microphone, biometric, or cloud component, so it does **not** prove enforcement
+at a real hardware boundary. No face recognition, voiceprints, health diagnosis,
+or emotion/intent inference is implemented. Camera, microphone, biometric
+processing, and cloud upload remain disabled.
+
+## 7. Limitations
+
+- Consent is enforced by the simulated gate in Phase F1, but only at a simulated
+  boundary. No real hardware component exists, so real-hardware enforcement is
+  not yet proven.
 - A stored consent record is configuration, **not** proof of legally valid
   consent.
-- No raw media, face templates, voiceprints, or secrets are stored anywhere in
-  Phase E.
+- No raw media, face templates, voiceprints, or secrets are stored anywhere.
 - Schedule parsing is intentionally minimal (`daily`/`weekly`/`weekdays`/`HH:MM`)
   and time zones are a small allow-list. It is not a general cron engine.
 - The routine model does not confirm activity completion from any data source.

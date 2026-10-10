@@ -68,6 +68,19 @@ the earlier "Sensing and Inference" plan, which is deferred to a later phase.
 | E2-04 | Audio capture + voice analysis | C-03 | Microphone input with VAD | TODO |
 | E2-05 | ONNX Runtime integration | C-03 | Load and run ONNX models | TODO |
 
+## Phase F1 — Simulated Sensing and Consent-Gated Inference
+
+Establishes the consent gate and a simulated sensor path before any real
+hardware. No real camera, microphone, biometric, or cloud processing.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| F1-01 | Simulated sensor source | E-07 | Deterministic synthetic events; tagged synthetic; configurable timestamps; malformed input; disconnect/reconnect | DONE |
+| F1-02 | Consent gate | E-02 | Single fail-closed decision point; checks profile, purpose, category, grant, expiry, withdrawal | DONE |
+| F1-03 | Consent-gated acquisition | F1-01, F1-02 | Denied requests produce no payload; authorized requests acquire; synthetic only | DONE |
+| F1-04 | Tests | F1-01–F1-03 | Granted/denied/missing/expired/withdrawn/unknown/mismatched; timestamps; malformed; reconnect; pipeline regression | DONE |
+| F1-05 | Docs | F1-01–F1-04 | Threat model, gate placement, simulated-vs-real distinction in PRIVACY/ARCHITECTURE | DONE |
+
 ## Phase F — HTTP and MCP
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |

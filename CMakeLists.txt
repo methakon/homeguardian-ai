@@ -64,6 +64,9 @@ add_executable(homeguardian
     src/core/TimeWindowCorrelation.cpp
     src/core/Pipeline.cpp
     src/core/UUID.cpp
+    src/core/ConsentGate.cpp
+    src/core/SimulatedSensorSource.cpp
+    src/core/ConsentGatedAcquisition.cpp
     src/persistence/SQLiteDatabase.cpp
     src/persistence/EventRepository.cpp
     src/persistence/AlertRepository.cpp
@@ -97,6 +100,9 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_consent.cpp
         tests/core/test_routine.cpp
         tests/core/test_config_e.cpp
+        tests/core/test_consent_gate.cpp
+        tests/core/test_simulated_sensor.cpp
+        tests/core/test_gated_acquisition.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
         ../src/core/Config.cpp
@@ -106,6 +112,9 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ../src/core/TimeWindowCorrelation.cpp
         ../src/core/Pipeline.cpp
         ../src/core/UUID.cpp
+        ../src/core/ConsentGate.cpp
+        ../src/core/SimulatedSensorSource.cpp
+        ../src/core/ConsentGatedAcquisition.cpp
         ../src/persistence/SQLiteDatabase.cpp
         ../src/persistence/EventRepository.cpp
         ../src/persistence/AlertRepository.cpp

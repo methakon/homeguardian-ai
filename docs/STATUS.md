@@ -4,7 +4,7 @@
 
 ## Current Phase
 
-Phase E — Family Profiles, Consent, Routines and Configuration
+Phase F1 — Simulated Sensing and Consent-Gated Inference
 
 ## Completed Work
 
@@ -37,19 +37,24 @@ Phase E — Family Profiles, Consent, Routines and Configuration
 | Extended result codes | Constraint subtypes distinguished (PK/UNIQUE vs FK) | 2026-10-10 |
 | Phase E configuration | media_capture_enabled/cloud_processing_enabled default OFF | 2026-10-10 |
 | Test suite | 57 test cases, 241 assertions, all passing | 2026-10-10 |
+| Simulated sensor source | `core/SimulatedSensorSource` — deterministic, synthetic-tagged, timestamps, malformed, disconnect/reconnect | 2026-10-10 |
+| Consent gate | `core/ConsentGate` — single fail-closed decision point | 2026-10-10 |
+| Consent-gated acquisition | `core/ConsentGatedAcquisition` — denied requests produce no payload | 2026-10-10 |
+| F1 tests | Consent gate (9 cases), simulated sensor (6), gated acquisition (4) | 2026-10-10 |
+| Test suite | 76 test cases, 315 assertions, all passing | 2026-10-10 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-All tests passed (241 assertions in 57 test cases)
+All tests passed (315 assertions in 76 test cases)
 ASan/UBSan: passed, no leaks, no sanitizer errors
 ```
 
 ## Current Work
 
-Phase E — Family profiles, consent, routines, and validated configuration.
-Complete and verified.
+Phase F1 — Simulated sensing and consent-gated inference. Complete and verified.
+Enforcement is demonstrated at a simulated boundary only; no real hardware exists.
 
 ## Blockers
 
@@ -85,3 +90,4 @@ default and none is implemented.
 - **Phase C commit:** `479dccf`
 - **Friction log commit:** `90691ef`
 - **Phase D commit:** `5712aac`
+- **Phase E commit:** `a472968`

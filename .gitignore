@@ -5,6 +5,8 @@ build_final/
 hg_build/
 hg_asan/
 hg_asan_e/
+hg_asan_f1/
+hg_verify/
 
 # Log files
 homeguardian.log
@@ -43,6 +45,12 @@ test_persistence.db-shm
 test_phase_e.db
 test_phase_e.db-wal
 test_phase_e.db-shm
+test_consent_gate.db
+test_consent_gate.db-wal
+test_consent_gate.db-shm
+test_gated_acq.db
+test_gated_acq.db-wal
+test_gated_acq.db-shm
 
 # Model artifacts
 *.onnx

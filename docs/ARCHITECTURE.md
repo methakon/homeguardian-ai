@@ -221,6 +221,36 @@ SQLite stores:
 - Configuration snapshots
 - Alert history
 
+## Consent-Gated Acquisition (Phase F1)
+
+All protected acquisition and processing must pass through a single consent
+decision point before any sensor is read. There is no real hardware yet; the
+gate is demonstrated against a simulated sensor.
+
+```
+AcquisitionRequest ──> ConsentGate::check() ──> GateDecision
+                          │  (fail closed)
+                          ├─ denied  ──> no acquisition, no payload
+                          └─ granted ──> SimulatedSensorSource.next() ──> synthetic Event
+```
+
+- **ConsentGate** (`src/core/ConsentGate.{h,cpp}`) — the sole decision point.
+  Checks the config kill switch (`media_capture_enabled`), the latest consent
+  decision for subject+purpose, grant status, expiry, withdrawal, and the
+  requested data category. Missing, ambiguous, expired, denied, or withdrawn
+  authorization fails closed. The rule is defined here once; components must not
+  re-implement it.
+- **ConsentGatedAcquisition** (`src/core/ConsentGatedAcquisition.{h,cpp}`) —
+  consults the gate, and only reads the simulated sensor when authorized. A
+  denied request never produces or processes a payload.
+- **SimulatedSensorSource** (`src/core/SimulatedSensorSource.{h,cpp}`) — a
+  deterministic `IEventSource` whose events are always tagged `synthetic`. A
+  future real hardware component must call the gate before opening any device.
+
+This is **simulated** enforcement only. It does not prove enforcement at a real
+hardware boundary, and no camera, microphone, biometric, or cloud processing
+exists. See `docs/PRIVACY.md` for the full threat model.
+
 ## Error Handling
 
 - All external calls use timeouts and retries with exponential backoff.
