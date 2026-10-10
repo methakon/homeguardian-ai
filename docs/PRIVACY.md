@@ -395,6 +395,25 @@ They exist only in a bounded in-memory ring during a test. The simulator must
 not be substituted for a real backend in production capture. No physical camera
 or microphone was opened, and no real sensor data was produced.
 
+### Realistic simulation — privacy notes (added 2026-10-10)
+
+The extended simulator adds only in-memory synthesis: deterministic camera
+frames, deterministic PCM test signals (noise/sine/square/silence), and
+speaker playback of already-generated payloads. All of it is synthetic and
+local:
+
+| Item | Status | Evidence |
+|---|---|---|
+| Realistic simulation tests (config/signals/speaker) | VERIFIED (non-capture) | 11 more host cases (23 total `[sim]`): dimensions + frame-size, frame-rate pacing, configurable ring capacity, stereo sizing, silence/sine/square determinism, speaker play/error/recovery, and play independent of the capture consent gate. |
+| Real sensor capture | NOT RUN | No device file opened; no hardware syscall; no media written; no network. |
+
+- Speaker `play()` is output-only and never touches the capture buffer, disk, or
+  hardware; it is not gated by the capture consent delivery boundary (it is not
+  a capture path).
+- Configurable ring capacity keeps memory bounded under overflow (test-verified).
+- No physical camera or microphone was activated; no kernel module was loaded;
+  no system permission was changed.
+
 ## Alexa+ integration — privacy notes (added 2026-10-10)
 
 Alexa integration, if built, would be a separate authenticated client (Alexa

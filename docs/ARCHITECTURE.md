@@ -509,6 +509,29 @@ backend must never be used in place of a real backend in production capture.
   synthetic streams if a future hardware-in-loop test needs a real device feed.
   Not used in this phase.
 
+**Linux-native simulation is the PRIMARY testing path** (decision, added
+2026-10-10). `SimulatedSensorBackend` is configured through a `Config` struct so
+adding options never reorders a positional constructor:
+
+- **Camera:** configurable `width`/`height`; optional `frame_rate` (frames/sec)
+  pacing via wall-clock sleep (0 = unpaced). Pacing affects timing only; frame
+  bytes remain fully deterministic.
+- **Microphone:** configurable `sample_rate`, `samples_per_buffer`, `channels`
+  (mono/stereo, 16-bit PCM interleaved), and a `TestSignal`: `noise` (existing
+  pseudo-random), `sine` (pure tone at `tone_hz`), `square`, and `silence`. The
+  deterministic waveforms let tests assert exact, known content.
+- **Speaker:** `play(payload)` models the audio **output** path only (no capture,
+  so no consent delivery gate); `inject_playback_error()` + recovery via
+  close/re-init. Playback never touches the capture buffer, disk, or hardware.
+- **Buffer:** configurable `ring_capacity` (default 256); overwrite-oldest keeps
+  memory bounded.
+
+The default test suite needs **no root, no kernel modules, no physical
+hardware**. V4L2/ALSA/PipeWire virtual devices are documented as optional future
+hardware-in-loop tools but are **not** required and are not loaded/installed.
+No physical camera or microphone is activated; the simulator never opens a real
+device.
+
 ### Capability matrix
 
 | Requirement / behavior | Simulator (host) | Docker | Real hardware |

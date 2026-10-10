@@ -470,6 +470,57 @@ $0. No physical sensor was opened.
 
 ---
 
+## Incident 15: Realistic Linux Sensor Simulation + Alexa-Demotion-to-Optional
+
+**Date/time:** 2026-10-10 ~22:40 IST
+**Area:** Simulator / test strategy / integration posture
+
+**Expected:** Linux-native simulation as the PRIMARY testing path; Alexa kept as
+an optional, additional integration-testing method (not a prerequisite for core
+functionality).
+
+**Actual:**
+- Confirmed Alexa is already isolated in `alexa_skill/` (a separate command/
+  response integration test) and demoted F22-19 from BLOCKED to OPTIONAL. No
+  Alexa hosting, skill deployment, Echo device, or Amazon account is required
+  for the core. No full Alexa skill beyond the existing prototype; no AWS
+  resources created.
+- Extended `src/backend/simulator/SimulatedSensorBackend` with a `Config` struct
+  (avoids reordering the positional constructor):
+  - Camera: configurable width/height; optional `frame_rate` pacing (wall-clock,
+    0 = unpaced); frame bytes remain deterministic.
+  - Microphone: configurable sample_rate, samples_per_buffer, channels
+    (mono/stereo 16-bit PCM interleaved), and `TestSignal`
+    (noise/sine/square/silence) with `tone_hz`.
+  - Speaker: `play()` (output-only, no capture gate), `inject_playback_error()`,
+    recovery via close/re-init; play never touches the capture buffer/disk/
+    hardware.
+  - Buffer: configurable `ring_capacity` (default 256), overwrite-oldest.
+- Added 11 host tests (23 total `[sim]`): dimensions/frame-size, frame-rate
+  pacing (loose time bound), configurable ring capacity + overflow, stereo
+  sizing, silence/sine/square determinism, speaker play/not-initialized/error/
+  recovery, and play independent of the capture consent gate.
+
+**Root cause / posture:** Linux-native simulation already validates the entire
+consent/lifecycle/delivery/bounded-buffer/shutdown surface on shared code
+paths; no privileged changes or physical hardware are needed for the default
+suite. v4l2loopback is present but not loadable without root, so virtual
+device integration stays optional and unused.
+
+**Resolution:** Realistic simulation landed (F22-20). Consent enforcement is
+unchanged — all simulated frames/samples still pass through
+`ConsentGuardedDevice::authorize_delivery()`; the simulator never activates a
+real device.
+
+**Regression protection:** 23 `[sim]` tests; full host suite green (see results
+in this commit).
+
+**Remaining impact:** The simulator does not prove real-device V4L2/ALSA/
+PipeWire correctness or real OS permission semantics. No physical camera or
+microphone was activated, no kernel module loaded, no system permission changed.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -504,8 +555,9 @@ The following were verified to work correctly and are not friction:
 | 11 | Camera1-JNI adapter implementation | — | Implemented; device capture awaiting approval (F22-11) |
 | 12 | Ubuntu backend assessment + AVS deprecation finding | — | Non-capture discovery + host tests DONE; capture/Docker/Alexa proposed |
 | 13 | Simulator-first backend + Docker fallback decision | — | Simulator landed (12 host tests); Docker deferred as unnecessary |
-| 14 | Alexa custom skill prototype + simulator endpoint requirement | — | Handler + 13 unit tests DONE; console-simulator blocked on manual deploy steps |
+| 14 | Alexa custom skill prototype + simulator endpoint requirement | — | Handler + 13 unit tests DONE; console-simulator OPTIONAL (manual deploy steps) |
+| 15 | Realistic Linux sensor simulation + Alexa demotion to optional | — | Config/signals/speaker landed (23 sim tests); Alexa optional, not a prerequisite |
 
-**Total verified incidents:** 14
-**Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 11
+**Total verified incidents:** 15
+**Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
+**Resolved incidents:** 12

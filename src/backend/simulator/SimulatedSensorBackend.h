@@ -70,9 +70,38 @@ private:
 
 class SimulatedSensorBackend : public IMediaDevice {
 public:
-    // Deterministic construction: width/height/frame_bytes for camera;
-    // sample_rate/samples_per_buffer for audio. Seed fixes the PRNG so tests
-    // are reproducible.
+    // Test-signal shapes for simulated microphone capture. `noise` is the
+    // existing pseudo-random PCM; the others are deterministic waveforms so
+    // tests can assert exact, known content (e.g. a pure tone).
+    enum class TestSignal {
+        noise,       // pseudo-random PCM (existing behavior)
+        sine,        // deterministic sine tone
+        square,      // deterministic square wave
+        silence      // all-zero samples
+    };
+
+    // Deterministic configuration. Grouped so adding options never reorders a
+    // positional constructor and breaks callers.
+    struct Config {
+        // Camera
+        int width = 64;
+        int height = 48;
+        double frame_rate = 0.0;   // frames/sec; 0 = unpaced (fastest)
+        // Audio
+        int sample_rate = 16000;
+        int samples_per_buffer = 320;
+        int channels = 1;          // 1 = mono, 2 = stereo
+        TestSignal signal = TestSignal::noise;
+        double tone_hz = 440.0;    // used by sine/square
+        // Buffer
+        size_t ring_capacity = 256;
+        // PRNG seed (fixed => reproducible)
+        uint64_t seed = 0x5EED;
+    };
+
+    // Convenience constructors. The Config-based one is canonical; the
+    // positional overload preserves the existing call sites unchanged.
+    explicit SimulatedSensorBackend(DeviceKind kind, std::string name, Config cfg);
     SimulatedSensorBackend(DeviceKind kind,
                            std::string name,
                            int width = 64,
@@ -95,7 +124,10 @@ public:
     // --- Simulation-specific controls (host tests only) ---
 
     // Generate the next synthetic payload WITHOUT delivering it. Returns the
-    // payload bytes. Deterministic for a given call sequence.
+    // payload bytes. Deterministic for a given call sequence. Honors the
+    // configured frame_rate: if > 0, this call blocks (wall-clock) so the
+    // simulated device produces frames at the requested rate. Tests that want
+    // raw speed leave frame_rate at 0.
     std::vector<uint8_t> generate_frame();
 
     // "Deliver" a payload into the bounded buffer. Callers must have already
@@ -108,6 +140,16 @@ public:
     void recover();
     bool has_error() const;
 
+    // --- Speaker (audio-output) simulation ---
+    // Playback of an already-generated payload. The speaker does not capture,
+    // so there is no consent delivery gate on play; it models the output path
+    // only. Returns true on success. If a playback error has been injected
+    // (or the device is not initialized), returns false and records the error.
+    bool play(const std::vector<uint8_t>& payload);
+    void inject_playback_error();
+    bool playing() const;
+    size_t played_count() const;
+
     // Introspection for assertions.
     int init_count() const { return init_count_; }
     int start_count() const { return start_count_; }
@@ -118,6 +160,8 @@ public:
     size_t buffer_dropped() const { return ring_.dropped(); }
     size_t buffer_capacity() const { return ring_.capacity(); }
     uint64_t sequence() const { return sequence_; }
+    // Audio payload size in bytes for the configured channels/buffer.
+    size_t audio_frame_bytes() const;
 
     ~SimulatedSensorBackend() override { close(); }
 
@@ -125,13 +169,18 @@ private:
     uint64_t next_rand();  // deterministic LCG
     void fill_camera_frame(std::vector<uint8_t>& out);
     void fill_audio_buffer(std::vector<uint8_t>& out);
+    void pace_frame();     // enforce frame_rate via wall clock
 
     DeviceKind kind_;
     std::string name_;
     int width_;
     int height_;
+    double frame_rate_;
     int sample_rate_;
     int samples_per_buffer_;
+    int channels_;
+    TestSignal signal_;
+    double tone_hz_;
     uint64_t rng_state_;
 
     mutable std::mutex m_;
@@ -139,15 +188,20 @@ private:
     bool has_error_ = false;
     bool released_ = false;
 
+    // Speaker simulation state (only meaningful for DeviceKind::audio output).
+    bool playing_ = false;
+    bool playback_error_ = false;
+    size_t played_count_ = 0;
+
     int init_count_ = 0;
     int start_count_ = 0;
     int stop_count_ = 0;
     int close_count_ = 0;
     uint64_t sequence_ = 0;
 
-    // Default bounded buffer: e.g. 256 frames/samples. Overridable is not
-    // exposed; tests can inspect capacity and drive overflow.
-    BoundedRing ring_{256};
+    // Bounded acquisition buffer (camera frames / mic samples). Capacity is
+    // configurable; overwrite-oldest keeps memory bounded.
+    BoundedRing ring_;
 };
 
 } // namespace homeguardian

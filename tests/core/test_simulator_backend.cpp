@@ -7,6 +7,9 @@
 #include "persistence/IConsentRepository.h"
 #include <atomic>
 #include <chrono>
+#include <cstring>
+#include <cstdint>
+#include <vector>
 
 using namespace homeguardian;
 
@@ -283,4 +286,178 @@ TEST_CASE("Simulator: audio payloads are PCM-sized and deterministic",
     auto p2 = sim2.generate_frame();
     REQUIRE(p1.size() == 320 * 2);  // 16-bit PCM mono
     REQUIRE(p1 == p2);
+}
+
+// ---------------------------------------------------------------------------
+// Realistic Linux sensor simulation (config, pacing, signals, speaker)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Simulator: configurable camera dimensions produce matching frame size",
+          "[sim][camera][config]") {
+    Logger::initialize("error");
+    SimulatedSensorBackend sim(DeviceKind::camera, "cam",
+                               SimulatedSensorBackend::Config{/*width*/128,
+                                                              /*height*/96});
+    auto f = sim.generate_frame();
+    REQUIRE(f.size() == static_cast<size_t>(128 * 96));
+}
+
+TEST_CASE("Simulator: frame-rate pacing produces ~requested rate (loose bound)",
+          "[sim][camera][framerate]") {
+    Logger::initialize("error");
+    // 50 fps for 10 frames should take roughly 9 intervals (~0.18s), far more
+    // than an unpaced loop. Assert a generous lower bound to avoid flakiness.
+    SimulatedSensorBackend sim(DeviceKind::camera, "cam",
+                               SimulatedSensorBackend::Config{64, 48, /*frame_rate*/50.0});
+    auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10; ++i) (void)sim.generate_frame();
+    auto dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    REQUIRE(dt >= 0.10);  // ~9 intervals at 50fps ≈ 0.18s; bound is loose
+}
+
+TEST_CASE("Simulator: configurable ring capacity bounds the buffer",
+          "[sim][bounded][config]") {
+    Logger::initialize("error");
+    SimulatedSensorBackend sim(DeviceKind::camera, "cam",
+                               SimulatedSensorBackend::Config{8, 8, 0.0, 0, 0, 1,
+                                                              SimulatedSensorBackend::TestSignal::noise,
+                                                              440.0, /*ring_capacity*/16});
+    REQUIRE(sim.buffer_capacity() == 16);
+    for (int i = 0; i < 100; ++i) {
+        auto p = sim.generate_frame();
+        sim.record_delivered(std::move(p));
+    }
+    REQUIRE(sim.buffer_size() == 16);
+    REQUIRE(sim.buffer_dropped() == 100 - 16);
+}
+
+TEST_CASE("Simulator: stereo audio doubles the payload size",
+          "[sim][audio][channels]") {
+    Logger::initialize("error");
+    SimulatedSensorBackend mono(DeviceKind::audio, "mic",
+                                SimulatedSensorBackend::Config{0, 0, 0.0, 16000, 320, /*channels*/1});
+    SimulatedSensorBackend stereo(DeviceKind::audio, "mic",
+                                  SimulatedSensorBackend::Config{0, 0, 0.0, 16000, 320, /*channels*/2});
+    REQUIRE(mono.audio_frame_bytes() == 320 * 1 * 2);
+    REQUIRE(stereo.audio_frame_bytes() == 320 * 2 * 2);
+    auto pm = mono.generate_frame();
+    auto ps = stereo.generate_frame();
+    REQUIRE(pm.size() == 320 * 1 * 2);
+    REQUIRE(ps.size() == 320 * 2 * 2);
+}
+
+TEST_CASE("Simulator: silence signal yields all-zero samples",
+          "[sim][audio][signal]") {
+    Logger::initialize("error");
+    SimulatedSensorBackend sim(DeviceKind::audio, "mic",
+                               SimulatedSensorBackend::Config{0, 0, 0.0, 16000, 320, 1,
+                                                              SimulatedSensorBackend::TestSignal::silence});
+    auto p = sim.generate_frame();
+    bool all_zero = true;
+    for (uint8_t b : p) {
+        if (b != 0) { all_zero = false; break; }
+    }
+    REQUIRE(all_zero);
+}
+
+TEST_CASE("Simulator: sine signal is deterministic and bounded",
+          "[sim][audio][signal]") {
+    Logger::initialize("error");
+    SimulatedSensorBackend::Config cfg{0, 0, 0.0, 16000, 320, 1,
+                                       SimulatedSensorBackend::TestSignal::sine, 440.0};
+    SimulatedSensorBackend a(DeviceKind::audio, "mic", cfg);
+    SimulatedSensorBackend b(DeviceKind::audio, "mic", cfg);
+    auto pa = a.generate_frame();
+    auto pb = b.generate_frame();
+    REQUIRE(pa == pb);  // deterministic
+    // Every 16-bit sample must be within the amplitude bound.
+    for (size_t i = 0; i + 1 < pa.size(); i += 2) {
+        int16_t v;
+        std::memcpy(&v, &pa[i], 2);
+        REQUIRE(v <= 12000);
+        REQUIRE(v >= -12000);
+    }
+}
+
+TEST_CASE("Simulator: square signal alternates polarity at the tone rate",
+          "[sim][audio][signal]") {
+    Logger::initialize("error");
+    // 50 Hz at 16 kHz -> 320 samples/period -> 160 samples per half cycle.
+    // Square wave should be constant within a half cycle and flip between
+    // half cycles.
+    SimulatedSensorBackend sim(DeviceKind::audio, "mic",
+                               SimulatedSensorBackend::Config{0, 0, 0.0, 16000, 320, 1,
+                                                              SimulatedSensorBackend::TestSignal::square,
+                                                              /*tone_hz*/50.0});
+    auto p = sim.generate_frame();
+    auto sample = [&](size_t idx) {
+        int16_t v;
+        std::memcpy(&v, &p[idx * 2], 2);
+        return v;
+    };
+    // Within the first half cycle (samples 0..159) sign is constant.
+    int first_sign = (sample(0) >= 0) ? 1 : -1;
+    for (size_t i = 1; i < 160; ++i) {
+        REQUIRE(((sample(i) >= 0) ? 1 : -1) == first_sign);
+    }
+    // In the next half cycle (samples 160..319) the sign has flipped.
+    REQUIRE(((sample(200) >= 0) ? 1 : -1) == -first_sign);
+}
+
+TEST_CASE("Simulator: speaker playback succeeds when initialized",
+          "[sim][speaker]") {
+    Logger::initialize("error");
+    SimulatedSensorBackend spk(DeviceKind::audio, "spk",
+                               SimulatedSensorBackend::Config{0, 0, 0.0, 16000, 320, 1,
+                                                              SimulatedSensorBackend::TestSignal::sine});
+    spk.initialize();
+    auto p = spk.generate_frame();
+    REQUIRE(spk.play(p));
+    REQUIRE(spk.playing());
+    REQUIRE(spk.played_count() == 1);
+    // Playback is output-only: it must NOT touch the capture buffer.
+    REQUIRE(spk.buffer_size() == 0);
+}
+
+TEST_CASE("Simulator: speaker playback fails when not initialized",
+          "[sim][speaker]") {
+    Logger::initialize("error");
+    SimulatedSensorBackend spk(DeviceKind::audio, "spk");
+    std::vector<uint8_t> p(8, 0);
+    REQUIRE_FALSE(spk.play(p));  // Idle -> not initialized
+    REQUIRE_FALSE(spk.playing());
+    REQUIRE(spk.played_count() == 0);
+}
+
+TEST_CASE("Simulator: injected playback error makes play fail (recoverable)",
+          "[sim][speaker][error]") {
+    Logger::initialize("error");
+    SimulatedSensorBackend spk(DeviceKind::audio, "spk");
+    spk.initialize();
+    spk.inject_playback_error();
+    std::vector<uint8_t> p(8, 0);
+    REQUIRE_FALSE(spk.play(p));
+    // Recover via close + re-init.
+    spk.close();
+    spk.initialize();
+    REQUIRE(spk.play(p));
+    REQUIRE(spk.played_count() == 1);
+}
+
+TEST_CASE("Simulator: speaker play is independent of capture consent gate",
+          "[sim][speaker][consent]") {
+    Logger::initialize("error");
+    MemRepo repo;  // no consent granted at all
+    ConsentGate gate(repo, true);
+    SimulatedSensorBackend spk(DeviceKind::audio, "spk");
+    ConsentGuardedDevice guard(spk, gate, {"harness", "sim", "audio"});
+
+    // Capture start is denied without consent...
+    REQUIRE_FALSE(guard.start());
+    // ...but playback (output) still works once the device is initialized
+    // directly, because play() is not a capture path and has no delivery gate.
+    spk.initialize();
+    std::vector<uint8_t> p(8, 0);
+    REQUIRE(spk.play(p));
+    REQUIRE(spk.played_count() == 1);
 }
