@@ -251,6 +251,42 @@ This is **simulated** enforcement only. It does not prove enforcement at a real
 hardware boundary, and no camera, microphone, biometric, or cloud processing
 exists. See `docs/PRIVACY.md` for the full threat model.
 
+## Device Interface and Lifecycle (Phase F2.1)
+
+Real camera/audio acquisition is abstracted behind `IMediaDevice`
+(`src/core/IMediaDevice.h`), which defines the lifecycle contract a real Android
+Camera2 / AAudio backend must satisfy. No hardware code exists here; mocks
+behind the interface are used to test lifecycle behavior.
+
+Device states: `Idle → Initialized → Capturing → Stopped`, with `Error` reachable
+from any state, and `close()` returning to `Idle`. `stop()` releases capture
+resources and the destructor guarantees stop()+close(), so a device is never
+left capturing.
+
+```
+IMediaDevice (interface)          ConsentGuardedDevice (wrapper)
+  initialize()  ────────────────►  gate.check() required before initialize/start
+  start()       ────────────────►  gate.check() required before start
+  stop()/close() ───────────────►  always allowed (stopping needs no consent)
+  fail()        ────────────────►  recheck_and_enforce() forces stop+close on
+                                     consent withdrawal/expiry, OS permission
+                                     revocation, or device failure
+```
+
+- **IMediaDevice** — pure virtual lifecycle: `initialize/start/stop/close/fail`,
+  `state()`, `kind()`. Deterministic resource cleanup.
+- **ConsentGuardedDevice** — wraps an `IMediaDevice` and a `ConsentGate`. Every
+  `initialize()`, `start()`, and per-acquisition `recheck_and_enforce()` calls
+  the gate first and fails closed. Withdrawal, expiry, OS permission revocation
+  (via a permission callback), device failure, and shutdown all force the device
+  out of capture and release resources, and block further acquisition.
+- **MockMediaDevice** (test-only) — records lifecycle transitions and
+  open/close counts to assert deterministic cleanup without hardware.
+
+Camera, microphone, biometric processing, and cloud upload remain disabled by
+default (`media_capture_enabled = false`). Mock tests prove lifecycle and
+consent-gating behavior only; they do **not** prove real hardware enforcement.
+
 ## Error Handling
 
 - All external calls use timeouts and retries with exponential backoff.

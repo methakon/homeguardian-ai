@@ -7,6 +7,9 @@ hg_asan/
 hg_asan_e/
 hg_asan_f1/
 hg_verify/
+hg_asan_f21/
+hg_f1_verify/
+hg_f21_verify/
 
 # Log files
 homeguardian.log
@@ -51,6 +54,9 @@ test_consent_gate.db-shm
 test_gated_acq.db
 test_gated_acq.db-wal
 test_gated_acq.db-shm
+test_guard.db
+test_guard.db-wal
+test_guard.db-shm
 
 # Model artifacts
 *.onnx

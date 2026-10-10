@@ -196,6 +196,52 @@ at a real hardware boundary. No face recognition, voiceprints, health diagnosis,
 or emotion/intent inference is implemented. Camera, microphone, biometric
 processing, and cloud upload remain disabled.
 
+## 6b. Phase F2.1 — Device Interface and Lifecycle
+
+### Interface (`src/core/IMediaDevice.h`)
+
+`IMediaDevice` is the abstraction a real camera/audio backend must implement.
+It defines explicit states (`Idle`, `Initialized`, `Capturing`, `Stopped`,
+`Error`), explicit `initialize()/start()/stop()/close()/fail()`, `state()`, and
+`kind()`. Resource cleanup is deterministic: `stop()` releases capture resources
+and the destructor guarantees stop()+close(), so a device is never left
+capturing. No hardware code lives in the interface.
+
+### Consent-guarded lifecycle (`src/core/ConsentGuardedDevice.{h,cpp}`)
+
+`ConsentGuardedDevice` wraps an `IMediaDevice` and a `ConsentGate`. Every
+`initialize()`, `start()`, and per-acquisition `recheck_and_enforce()` consults
+the gate first and fails closed. On consent withdrawal, expiry, OS permission
+revocation (a permission callback returning false), device failure, or shutdown,
+`recheck_and_enforce()` forces the device out of capture and releases resources,
+and blocks further acquisition. If authorization or configuration cannot be
+evaluated, the guard fails closed.
+
+### Android environment finding (documented assumption)
+
+- SDK present at `~/Android/Sdk`: platform `android-34`, build-tools `34.0.0`.
+- **No NDK installed** (`~/Android/Sdk/ndk` absent), no SDK CMake, and **no
+  device attached** (`adb devices` empty).
+- Consequence: the interface and lifecycle are implemented and tested with
+  in-process mocks, but real NDK Camera2 / AAudio code cannot be compiled or run
+  here. The design targets NDK API level 34 as an assumption to confirm when the
+  NDK is installed. Real-device integration is a subsequent milestone (F2.2),
+  not claimed complete.
+
+### Threat model additions (F2.1)
+
+- **Device left capturing after consent change.** `recheck_and_enforce()` forces
+  stop on withdrawal/expiry/permission-revocation/failure. Tested.
+- **Resource leak on abnormal exit.** Destructor guarantees stop()+close().
+  Tested (mock destructor; ASan clean).
+- **Capture activated without authorization.** `initialize()`/`start()` require
+  a gate pass; denied operations leave the device `Idle` with no capture. Tested.
+- **Fail-closed on unevaluable state.** Device `Error` or revoked permission
+  denies. Tested.
+
+Mock tests prove lifecycle and consent-gating behavior only. They do **not**
+prove real hardware enforcement.
+
 ## 7. Limitations
 
 - Consent is enforced by the simulated gate in Phase F1, but only at a simulated

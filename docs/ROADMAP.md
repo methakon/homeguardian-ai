@@ -81,6 +81,29 @@ hardware. No real camera, microphone, biometric, or cloud processing.
 | F1-04 | Tests | F1-01–F1-03 | Granted/denied/missing/expired/withdrawn/unknown/mismatched; timestamps; malformed; reconnect; pipeline regression | DONE |
 | F1-05 | Docs | F1-01–F1-04 | Threat model, gate placement, simulated-vs-real distinction in PRIVACY/ARCHITECTURE | DONE |
 
+## Phase F2.1 — Device Interface and Lifecycle
+
+Abstract real camera/audio behind an interface with consent-guarded lifecycle.
+No real hardware integration in this milestone (no NDK/device available).
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| F21-01 | IMediaDevice interface | F1-02 | Explicit states, start/stop, deterministic cleanup; no hardware code | DONE |
+| F21-02 | ConsentGuardedDevice | F21-01, F1-02 | Gate required before init/start/acquire; withdrawal/expiry/permission/failure/shutdown force stop+release; fail-closed | DONE |
+| F21-03 | Lifecycle tests (mock) | F21-01, F21-02 | Denied start, authorized start/stop, withdrawal, expiry, failure, permission revocation, destructor cleanup | DONE |
+| F21-04 | Docs | F21-01–F21-03 | Interface/lifecycle, Android env finding, F2.2 milestone in PRIVACY/ARCHITECTURE | DONE |
+
+## Phase F2.2 — Real Android Device Integration (subsequent milestone)
+
+Requires NDK install and a physical device. Not started; cannot be tested here.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| F22-01 | Install NDK; confirm API level | F21-04 | NDK present; target API level verified on device | TODO |
+| F22-02 | Camera2 backend implementing IMediaDevice | F21-01, F22-01 | Real frames gated by ConsentGuardedDevice | TODO |
+| F22-03 | AAudio backend implementing IMediaDevice | F21-01, F22-01 | Real samples gated by ConsentGuardedDevice | TODO |
+| F22-04 | On-device lifecycle + permission tests | F22-02, F22-03 | Real permission revocation and device failure force stop | TODO |
+
 ## Phase F — HTTP and MCP
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |

@@ -4,7 +4,7 @@
 
 ## Current Phase
 
-Phase F1 — Simulated Sensing and Consent-Gated Inference
+Phase F2.1 — Device Interface and Lifecycle (real-device integration deferred to F2.2)
 
 ## Completed Work
 
@@ -41,20 +41,24 @@ Phase F1 — Simulated Sensing and Consent-Gated Inference
 | Consent gate | `core/ConsentGate` — single fail-closed decision point | 2026-10-10 |
 | Consent-gated acquisition | `core/ConsentGatedAcquisition` — denied requests produce no payload | 2026-10-10 |
 | F1 tests | Consent gate (9 cases), simulated sensor (6), gated acquisition (4) | 2026-10-10 |
-| Test suite | 76 test cases, 315 assertions, all passing | 2026-10-10 |
+| IMediaDevice interface | `core/IMediaDevice.h` — explicit states, start/stop, deterministic cleanup; no hardware code | 2026-10-10 |
+| ConsentGuardedDevice | `core/ConsentGuardedDevice` — gate before init/start/acquire; forces stop on withdrawal/expiry/permission/failure | 2026-10-10 |
+| Lifecycle tests | 9 mock cases (denied start, authorized start/stop, withdrawal, expiry, failure, permission revocation, destructor) | 2026-10-10 |
+| Test suite | 85 test cases, 357 assertions, all passing | 2026-10-10 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-All tests passed (315 assertions in 76 test cases)
+All tests passed (357 assertions in 85 test cases)
 ASan/UBSan: passed, no leaks, no sanitizer errors
 ```
 
 ## Current Work
 
-Phase F1 — Simulated sensing and consent-gated inference. Complete and verified.
-Enforcement is demonstrated at a simulated boundary only; no real hardware exists.
+Phase F2.1 — device interface and lifecycle. Complete and verified with mocks.
+Real Android device integration (F2.2) is deferred: no NDK is installed and no
+device is attached, so real Camera2/AAudio code cannot be built or tested here.
 
 ## Blockers
 
@@ -91,3 +95,4 @@ default and none is implemented.
 - **Friction log commit:** `90691ef`
 - **Phase D commit:** `5712aac`
 - **Phase E commit:** `a472968`
+- **Phase F1 commit:** `90841e9`
