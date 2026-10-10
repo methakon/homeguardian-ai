@@ -10,6 +10,7 @@ hg_verify/
 hg_asan_f21/
 hg_f1_verify/
 hg_f21_verify/
+hg_android/
 
 # Log files
 homeguardian.log

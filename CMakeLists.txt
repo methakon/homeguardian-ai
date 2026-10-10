@@ -49,6 +49,28 @@ set_target_properties(catch2_main PROPERTIES
 )
 
 option(HOMEGUARDIAN_BUILD_TESTS "Build tests" ON)
+option(HOMEGUARDIAN_BUILD_ANDROID_BACKEND "Cross-compile Android NDK camera/audio backends (requires NDK)" OFF)
+
+if(HOMEGUARDIAN_BUILD_ANDROID_BACKEND)
+    # NDK r26d installed side-by-side under the SDK. The Android toolchain file
+    # must be supplied by the caller; this target only defines the backend
+    # library and links the NDK's camera and aaudio system libraries.
+    if(NOT ANDROID)
+        message(FATAL_ERROR "HOMEGUARDIAN_BUILD_ANDROID_BACKEND requires an Android toolchain (use the NDK's android.toolchain.cmake)")
+    endif()
+    add_library(homeguardian_android_backend STATIC
+        src/backend/android/NdkCameraDevice.cpp
+        src/backend/android/AAudioCaptureDevice.cpp
+    )
+    target_include_directories(homeguardian_android_backend PRIVATE src src/core)
+    target_compile_definitions(homeguardian_android_backend PRIVATE HOMEGUARDIAN_ANDROID=1)
+    # NDK camera and aaudio are system libraries provided by the NDK sysroot.
+    target_link_libraries(homeguardian_android_backend PRIVATE
+        camera2ndk
+        aaudio
+        mediandk
+    )
+endif()
 
 if(HOMEGUARDIAN_BUILD_TESTS)
     enable_testing()

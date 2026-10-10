@@ -287,6 +287,25 @@ Camera, microphone, biometric processing, and cloud upload remain disabled by
 default (`media_capture_enabled = false`). Mock tests prove lifecycle and
 consent-gating behavior only; they do **not** prove real hardware enforcement.
 
+### Android backends (Phase F2.2)
+
+Real camera/audio backends live in `src/backend/android/` behind `IMediaDevice`
+and are compiled only for Android (`HOMEGUARDIAN_ANDROID`,
+`-DHOMEGUARDIAN_BUILD_ANDROID_BACKEND=ON`):
+
+- `NdkCameraDevice` — NDK camera API (`ACameraManager`/`ACameraDevice`/
+  `ACameraCaptureSession`), available since API 24.
+- `AAudioCaptureDevice` — AAudio (available since API 26).
+
+Both are **fail-closed by default**: `initialize()` throws unless
+`set_device_confirmed(true)` has been called after a physical device is
+confirmed available and hardware acceptance testing has passed. No device was
+attached at authoring time, so real capture is never opened and the backends
+report `Error` rather than pretending capture works. They cross-compile for
+`arm64-v8a` / API 34 with NDK r26d; on-device capture and permission-revocation
+testing remain blocked pending hardware. `ConsentGuardedDevice` gates every
+lifecycle call and every frame/sample delivery through the consent gate.
+
 ## Error Handling
 
 - All external calls use timeouts and retries with exponential backoff.

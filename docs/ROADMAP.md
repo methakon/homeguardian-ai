@@ -93,16 +93,18 @@ No real hardware integration in this milestone (no NDK/device available).
 | F21-03 | Lifecycle tests (mock) | F21-01, F21-02 | Denied start, authorized start/stop, withdrawal, expiry, failure, permission revocation, destructor cleanup | DONE |
 | F21-04 | Docs | F21-01–F21-03 | Interface/lifecycle, Android env finding, F2.2 milestone in PRIVACY/ARCHITECTURE | DONE |
 
-## Phase F2.2 — Real Android Device Integration (subsequent milestone)
+## Phase F2.2 — Real Android Device Integration
 
-Requires NDK install and a physical device. Not started; cannot be tested here.
+Requires NDK install and a physical device. NDK installed and backends
+cross-compile; hardware acceptance testing is NOT done (no device attached).
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| F22-01 | Install NDK; confirm API level | F21-04 | NDK present; target API level verified on device | TODO |
-| F22-02 | Camera2 backend implementing IMediaDevice | F21-01, F22-01 | Real frames gated by ConsentGuardedDevice | TODO |
-| F22-03 | AAudio backend implementing IMediaDevice | F21-01, F22-01 | Real samples gated by ConsentGuardedDevice | TODO |
-| F22-04 | On-device lifecycle + permission tests | F22-02, F22-03 | Real permission revocation and device failure force stop | TODO |
+| F22-01 | Install NDK; confirm API level | F21-04 | NDK r26d installed side-by-side; API 34 assumed, device unconfirmed | DONE |
+| F22-02 | Camera2 backend implementing IMediaDevice | F21-01, F22-01 | Cross-compiles for arm64-v8a; fail-closed until device confirmed | DONE (compile only) |
+| F22-03 | AAudio backend implementing IMediaDevice | F21-01, F22-01 | Cross-compiles for arm64-v8a; fail-closed until device confirmed | DONE (compile only) |
+| F22-04 | On-device lifecycle + permission tests | F22-02, F22-03 | Real permission revocation and device failure force stop | BLOCKED (no device) |
+| F22-05 | Actual capture on a physical device | F22-04 | Verified real frame/sample capture gated by consent | BLOCKED (no device) |
 
 ## Phase F — HTTP and MCP
 

@@ -4,7 +4,7 @@
 
 ## Current Phase
 
-Phase F2.1 — Device Interface and Lifecycle (real-device integration deferred to F2.2)
+Phase F2.2 — Real Android Device Backends (NDK installed; hardware testing blocked)
 
 ## Completed Work
 
@@ -44,6 +44,9 @@ Phase F2.1 — Device Interface and Lifecycle (real-device integration deferred 
 | IMediaDevice interface | `core/IMediaDevice.h` — explicit states, start/stop, deterministic cleanup; no hardware code | 2026-10-10 |
 | ConsentGuardedDevice | `core/ConsentGuardedDevice` — gate before init/start/acquire; forces stop on withdrawal/expiry/permission/failure | 2026-10-10 |
 | Lifecycle tests | 9 mock cases (denied start, authorized start/stop, withdrawal, expiry, failure, permission revocation, destructor) | 2026-10-10 |
+| NDK install | NDK r26d (26.3.11579264) installed side-by-side via official Google download | 2026-10-10 |
+| Android camera backend | `backend/android/NdkCameraDevice` — NDK camera API; fail-closed; cross-compiles arm64-v8a | 2026-10-10 |
+| Android audio backend | `backend/android/AAudioCaptureDevice` — AAudio; fail-closed; cross-compiles arm64-v8a | 2026-10-10 |
 | Test suite | 85 test cases, 357 assertions, all passing | 2026-10-10 |
 
 ## Test Results
@@ -56,13 +59,20 @@ ASan/UBSan: passed, no leaks, no sanitizer errors
 
 ## Current Work
 
-Phase F2.1 — device interface and lifecycle. Complete and verified with mocks.
-Real Android device integration (F2.2) is deferred: no NDK is installed and no
-device is attached, so real Camera2/AAudio code cannot be built or tested here.
+Phase F2.2 — Android device backends. NDK r26d installed; NdkCameraDevice and
+AAudioCaptureDevice cross-compile for arm64-v8a / API 34 and are fail-closed by
+default. On-device capture, permission-revocation, and hardware-boundary consent
+testing are BLOCKED: no device is attached (adb empty) and API 34 is an
+unconfirmed assumption. Hardware-level consent enforcement is not claimed.
 
 ## Blockers
 
-None.
+- No Android device attached (`adb devices` empty). Hardware acceptance testing
+  (real capture, OS permission revocation, acquisition-boundary consent
+  enforcement) cannot be performed. Backends are fail-closed until a device is
+  confirmed.
+- No Java runtime and no passwordless sudo, so the official `sdkmanager` is
+  unusable; NDK was installed by direct download instead.
 
 ## Known Issues
 
@@ -96,3 +106,4 @@ default and none is implemented.
 - **Phase D commit:** `5712aac`
 - **Phase E commit:** `a472968`
 - **Phase F1 commit:** `90841e9`
+- **Phase F2.1 commit:** `e81584e`

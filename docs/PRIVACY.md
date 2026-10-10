@@ -242,6 +242,67 @@ evaluated, the guard fails closed.
 Mock tests prove lifecycle and consent-gating behavior only. They do **not**
 prove real hardware enforcement.
 
+## 6c. Phase F2.2 — Real Android Device Backends
+
+### Environment readiness (verified 2026-10-10)
+
+- Android SDK at `~/Android/Sdk`: platform `android-34`, build-tools `34.0.0`,
+  platform-tools (adb 1.0.41).
+- **NDK r26d (Pkg.Revision 26.3.11579264)** installed side-by-side under
+  `~/Android/Sdk/ndk/android-ndk-r26d` via the official Google download
+  (`dl.google.com/android/repository/android-ndk-r26d-linux.zip`). The official
+  `sdkmanager` could not be used because no Java runtime is installed and there
+  is no passwordless sudo; the direct NDK zip avoids both.
+- Toolchain: clang 17.0.2 (`toolchains/llvm/prebuilt/linux-x86_64`).
+
+### API selection (verified from NDK r26d sysroot headers)
+
+- **Camera:** NDK camera API — `ACameraManager`, `ACameraDevice`,
+  `ACameraCaptureSession` (`camera/NdkCameraManager.h` etc.). Available since
+  **API level 24**.
+- **Audio:** AAudio (`aaudio/AAudio.h`), `__INTRODUCED_IN(26)`. Available since
+  **API level 26**.
+- Both are within the assumed API 34 floor. **API 34 remains an unconfirmed
+  assumption**: no device is attached (`adb devices` is empty), so the target
+  phone model, Android version, and camera/microphone capabilities are unknown
+  and could not be established.
+
+### Backend implementation status
+
+- `src/backend/android/NdkCameraDevice.{h,cpp}` and
+  `src/backend/android/AAudioCaptureDevice.{h,cpp}` implement `IMediaDevice`
+  behind `#ifdef HOMEGUARDIAN_ANDROID`. They contain **no** frame decoding,
+  face recognition, voiceprints, or inference.
+- **Fail-closed by default.** `initialize()` requires `set_device_confirmed(true)`,
+  which must only be set after a physical device is confirmed available **and**
+  hardware acceptance testing has passed. Until then `initialize()` throws and
+  moves to `Error`, so real capture is never opened. This is deliberate: hardware
+  acceptance testing has not been performed.
+- Consent enforcement at the acquisition boundary is provided by
+  `ConsentGuardedDevice`, which calls the `ConsentGate` immediately before
+  `initialize()`, `start()`, and every per-frame/per-sample delivery
+  (`recheck_and_enforce()`), closing the time-of-check/time-of-use gap at the
+  interface level. A real backend must deliver a frame/sample only after
+  `recheck_and_enforce()` returns allowed.
+
+### Compilation vs. hardware verification
+
+- **Compilation verified:** the backend cross-compiles for `arm64-v8a` / API 34
+  with the NDK toolchain (`-DHOMEGUARDIAN_BUILD_ANDROID_BACKEND=ON`), producing
+  `libhomeguardian_android_backend.a` whose object files carry undefined
+  references to the real NDK symbols (`ACameraManager_create`,
+  `ACameraManager_getCameraIdList`, `AAudio_createStreamBuilder`), confirming the
+  correct APIs are targeted.
+- **Hardware NOT verified:** no device is attached, so no actual capture,
+  permission-revocation, or acquisition-boundary consent enforcement has been
+  tested on hardware. Hardware-level consent enforcement is **not** claimed.
+
+Camera and microphone remain disabled by default (`media_capture_enabled =
+false`). The consent gate fails closed on missing/denied/withdrawn/expired
+consent, disabled config, failed profile state, or revoked OS permission; on
+withdrawal, permission revocation, device failure, or shutdown the device is
+stopped and its resources released.
+
 ## 7. Limitations
 
 - Consent is enforced by the simulated gate in Phase F1, but only at a simulated
