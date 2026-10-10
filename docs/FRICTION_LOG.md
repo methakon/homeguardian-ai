@@ -574,6 +574,59 @@ loaded; no permission changed.
 
 ---
 
+## Incident 17: Product-Readiness Audit (stale docs + CMake portability)
+
+**Date/time:** 2026-10-11 ~03:10 IST
+**Area:** Documentation accuracy / build portability / repo hygiene
+
+**Expected:** Audit build, deps, install/config, fixtures, privacy, and docs;
+verify the documented build reproduces; fix in-scope issues.
+
+**Actual:**
+- **Reproduced the documented build** in a fresh out-of-source dir
+  (`hg_audit_build`, since removed): `cmake .. && make -j4 homeguardian_tests`
+  → **135 cases / 1472 assertions pass; ctest 100%.** First configure fetched
+  spdlog + nlohmann from GitHub (~105s) — network required once for the dep
+  cache. Existing build dirs (`hg_build`, `hg_asan`, `build`, `build_final`) were
+  NOT deleted; no concurrent clean build was run.
+- **Fixed stale README.md:** it claimed "Phase A — no application code" and a
+  nonexistent `src/` layout (`sensors/`, `inference/`, `pipeline/`, `server/`,
+  `web/`, `scripts/`, top-level `main.cpp` misplacement), and listed `libcurl`
+  and `MCP` as implemented. Corrected to the real layout, added the
+  network-once dependency note, tag-filter test commands, and an explicit
+  "no real capture" status. Alexa/MCP demoted to optional.
+- **Fixed hardcoded absolute CMake include paths**
+  (`/home/swarna-sekhar-dhar/...`) → `${CMAKE_SOURCE_DIR}` in the test target.
+  Portable now; verified by the fresh reproduction.
+- **Hardened `.gitignore`:** added `hg_*_build/` and `*.db`, `*.db-wal`,
+  `*.db-shm`, `test_*.db` (no tracked `.db` files exist; verified).
+- **Verified the app** (`homeguardian`) builds and runs a clean main loop with
+  capture disabled by default; opens no sensor, writes no media.
+- **Config audit:** `config/homeguardian.json` has `media_capture_enabled:
+  false`, `cloud_processing_enabled: false`, and a reserved `data_dir` the
+  current `Application` does not use (no privileged write path).
+
+**Test results (this commit):**
+- Fresh reproduction (`hg_audit_build`): 135 / 1472 pass; ctest 100%.
+- `hg_build`: 135 / 1472 pass.
+- `hg_asan` (ASan+UBSan, incremental rebuild): 135 / 1472 pass, zero sanitizer
+  errors.
+
+**Resolution:** Product-readiness audit landed (F22-22). Android backend, Linux
+simulator, and Alexa skill preserved and untouched. No AWS resources,
+credentials, kernel modules, permission changes, or physical sensors.
+
+**Regression protection:** Full host + sanitizer suites green across three build
+configurations.
+
+**Remaining gaps (recommendations, not defects):** (1) the `data_dir` config is
+unused — wire it into persistence or remove it when persistence is integrated
+into the app; (2) no HTTP/MCP server exists yet (proposed, not implemented);
+(3) README references `docs/DEVELOPMENT.md` (exists) — kept; (4) real-device
+capture and real OS permission semantics remain unverified (hardware-gated).
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -611,7 +664,8 @@ The following were verified to work correctly and are not friction:
 | 14 | Alexa custom skill prototype + simulator endpoint requirement | — | Handler + 13 unit tests DONE; console-simulator OPTIONAL (manual deploy steps) |
 | 15 | Realistic Linux sensor simulation + Alexa demotion to optional | — | Config/signals/speaker landed (23 sim tests); Alexa optional, not a prerequisite |
 | 16 | End-to-end Linux simulator workflow | — | 9 `[e2e]` tests; full host 135/1472 + ASan/UBSan clean; synthetic-only |
+| 17 | Product-readiness audit (stale docs + CMake portability) | — | Fixed stale README + hardcoded CMake paths; hardened .gitignore; build reproduced fresh; 135/1472 across 3 configs |
 
-**Total verified incidents:** 16
+**Total verified incidents:** 17
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 13
+**Resolved incidents:** 14

@@ -36,18 +36,19 @@ processing.
 ### Implemented
 - C++20 (g++ 13.3.0)
 - CMake 3.28.3 (build system)
-- spdlog (structured logging)
-- nlohmann/json (JSON serialization)
-- SQLite (local persistence)
-- libcurl (HTTP client)
-- Catch2 (unit testing)
+- spdlog v1.13.0 (structured logging) — fetched via CMake FetchContent
+- nlohmann/json v3.11.3 (JSON serialization) — fetched via CMake FetchContent
+- SQLite amalgamation (local persistence) — vendored in `third_party/sqlite`
+- Catch2 v2.13.10 (unit testing) — vendored in `third_party/catch2`
 
 ### Proposed (not yet implemented)
 - OpenCV (computer vision)
 - ONNX Runtime (local ML inference)
 - Boost.Beast or Drogon (HTTP server)
-- MCP Streamable HTTP (Alexa+ integration)
 - FFmpeg (media processing)
+
+> Note: the Alexa+ / MCP integration is an **optional** workstream (see
+> `alexa_skill/`); it is not a dependency of the C++ core.
 
 ## Architecture
 
@@ -58,30 +59,44 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture.
 ```
 homeguardian-ai/
 ├── CMakeLists.txt          # Root build configuration
-├── src/                    # Application source code
-│   ├── core/              # Core types, interfaces, event model
-│   ├── sensors/           # Sensor abstractions and implementations
-│   ├── inference/         # ML inference interfaces
-│   ├── pipeline/          # Event processing pipeline
-│   ├── persistence/       # SQLite storage
-│   ├── server/            # HTTP/MCP server
-│   └── main.cpp           # Application entry point
-├── tests/                  # Unit and integration tests
+├── src/
+│   ├── main.cpp            # Application entry point
+│   ├── core/               # Event model, consent gate, pipeline, rules
+│   ├── persistence/        # SQLite repositories + schema
+│   └── backend/
+│       ├── android/        # Android NDK camera/audio backends (F22)
+│       ├── linux/          # Linux sensor discovery (V4L2/PipeWire metadata)
+│       └── simulator/      # Deterministic in-process sensor simulator
+├── apk/                    # Android harness (Java + JNI + build script)
+├── alexa_skill/            # Optional Alexa custom skill (ASK SDK v2, Node.js)
+├── tests/                  # Unit, integration, and end-to-end simulator tests
 ├── docs/                   # Project documentation
 ├── config/                 # Configuration files
-├── scripts/                # Build and utility scripts
-└── web/                    # Lightweight dashboard (HTML/CSS/JS)
+└── third_party/            # Vendored SQLite amalgamation + Catch2
 ```
 
 ## Current Status
 
-**Phase A — Orchestration and repository foundation.** The repository is
-initialized with documentation. No application code has been implemented yet.
+**Simulator-first development with consent-gated acquisition.** The C++ core
+(event model, consent gate, consent-guarded device delivery boundary, event
+pipeline + time-window correlation rules, and SQLite persistence) is implemented
+and covered by the host test suite. A deterministic in-process sensor simulator
+(`src/backend/simulator`) exercises the full consent/lifecycle/delivery/
+bounded-buffer machinery on the shared code paths, and an end-to-end simulator
+workflow is tested.
 
-See [docs/STATUS.md](docs/STATUS.md) for the latest status and
-[docs/ROADMAP.md](docs/ROADMAP.md) for the implementation roadmap.
+**No real camera or microphone capture is implemented or authorized.** Capture is
+disabled by default (`media_capture_enabled: false`) and every frame/sample must
+pass the consent delivery boundary before processing. Physical-hardware capture
+remains blocked pending explicit approval. See [docs/ROADMAP.md](docs/ROADMAP.md)
+for per-layer verification status and [docs/STATUS.md](docs/STATUS.md) for the
+latest status.
 
 ## Building
+
+The project builds out-of-source. Use a build directory (do not reuse a stale
+one). On the first configure, CMake fetches spdlog and nlohmann/json from GitHub,
+so **network access is required once** to populate the dependency cache.
 
 ```bash
 mkdir build && cd build
@@ -89,11 +104,21 @@ cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ..
 make -j4
 ```
 
+This builds the `homeguardian` application and the `homeguardian_tests` target.
+To build only the tests: `make -j4 homeguardian_tests`.
+
 ## Testing
 
 ```bash
 cd build
 ctest --output-on-failure
+```
+
+To run the test binary directly with a tag filter (e.g. simulator or end-to-end):
+
+```bash
+./homeguardian_tests "[sim]"
+./homeguardian_tests "[e2e]"
 ```
 
 ## Privacy and Consent

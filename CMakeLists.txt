@@ -177,10 +177,10 @@ if(HOMEGUARDIAN_BUILD_TESTS)
     )
 
     target_include_directories(homeguardian_tests PRIVATE
-        /home/swarna-sekhar-dhar/projects/homeguardian-ai/src
-        /home/swarna-sekhar-dhar/projects/homeguardian-ai/third_party/sqlite
-        /home/swarna-sekhar-dhar/projects/homeguardian-ai/third_party/catch2/single_include
-        /home/swarna-sekhar-dhar/projects/homeguardian-ai/third_party/catch2/single_include/catch2
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/third_party/sqlite
+        ${CMAKE_SOURCE_DIR}/third_party/catch2/single_include
+        ${CMAKE_SOURCE_DIR}/third_party/catch2/single_include/catch2
     )
     target_link_libraries(homeguardian_tests PRIVATE
         catch2_main

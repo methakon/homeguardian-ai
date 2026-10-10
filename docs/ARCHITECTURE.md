@@ -574,6 +574,21 @@ delivery gate. Denied capture data never reaches the processor (asserted). This
 is a synthetic test scenario only — it does not detect real-world danger,
 identify people, or provide medically/emotionally sensitive conclusions.
 
+## Build & portability (added 2026-10-11)
+
+- **Out-of-source build** via CMake. First configure fetches spdlog v1.13.0 and
+  nlohmann/json v3.11.3 from GitHub (network required **once** to populate the
+  dependency cache); SQLite and Catch2 are vendored in `third_party/`.
+- CMake include paths use `${CMAKE_SOURCE_DIR}` (no absolute host paths), so the
+  documented `mkdir build && cd build && cmake .. && make -j4` reproduces on any
+  machine. Verified by a fresh out-of-source reproduction (135/1472 pass).
+- The `homeguardian` application builds and runs a clean main loop with capture
+  disabled by default; it opens no sensor and writes no media.
+- `config/homeguardian.json` sets `media_capture_enabled: false`,
+  `cloud_processing_enabled: false`, and a `data_dir` field. The current
+  `Application` does not open a database (the field is reserved), so no
+  privileged path is required to run.
+
 ### Capability matrix
 
 | Requirement / behavior | Simulator (host) | Docker | Real hardware |

@@ -435,6 +435,24 @@ scenario**:
   placeholders. No personal media or sensor data is produced, persisted, or
   uploaded. No physical sensor was activated.
 
+## Product-readiness audit — privacy notes (added 2026-10-11)
+
+Audited build/dependency setup, config, test fixtures, privacy guarantees, and
+documentation. Findings and their privacy impact:
+
+| Finding | Privacy impact | Resolution |
+|---|---|---|
+| README claimed "no code implemented" and a wrong `src/` layout | Misleading; could imply features not built (or hide real state) | Corrected to reflect the implemented simulator-first core; explicit "no real capture" statement |
+| README listed `libcurl` + `MCP` as implemented | Overstated capabilities | Removed from "Implemented"; Alexa/MCP documented as optional and not a core dependency |
+| Hardcoded absolute CMake include paths | Portability only (no data risk) | Replaced with `${CMAKE_SOURCE_DIR}` |
+| Test `.db` files not gitignored | Local scratch DBs could be committed | Added `*.db`, `*.db-wal`, `*.db-shm`, `test_*.db` to `.gitignore` (no tracked `.db` files exist) |
+| `data_dir` config field unused by current app | None (no privileged write) | Documented as reserved |
+
+Privacy guarantees re-verified: capture disabled by default; every frame/sample
+passes the consent delivery boundary; no disk writes, uploads, or retention in
+the simulator; no physical sensor activated. The application runs with
+`media_capture_enabled: false` and `cloud_processing_enabled: false`.
+
 ## Alexa+ integration — privacy notes (added 2026-10-10)
 
 Alexa integration, if built, would be a separate authenticated client (Alexa

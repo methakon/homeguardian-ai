@@ -15,6 +15,13 @@ hg_android27/
 hg_apk_build/
 hg_asan_f22/
 hg_asan_f22b/
+hg_*_build/
+
+# Test databases created by the host test suite
+*.db
+*.db-wal
+*.db-shm
+test_*.db
 
 # Log files
 homeguardian.log

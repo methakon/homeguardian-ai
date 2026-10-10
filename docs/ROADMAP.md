@@ -121,6 +121,7 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-19 | Alexa skill deployment + console-simulator verification | F22-18 | Deploy to Alexa-hosted skill (auto Lambda, $0); build interaction model; run text simulator; record results | OPTIONAL (manual console steps — see alexa_skill/README.md) |
 | F22-20 | Realistic Linux sensor simulation (config, signals, speaker) | F22-16 | Config struct: camera dimensions + frame-rate pacing; mic sample_rate/channels + noise/sine/square/silence signals; speaker play/error; configurable ring capacity | DONE (host, simulator) |
 | F22-21 | End-to-end Linux simulator workflow + failure/consent scenarios | F22-20 | camera+mic+speaker → consent-gated delivery → synthetic test processor → pipeline rule/alert → safe speaker response; ordering, bounded memory, cleanup; failure & consent scenarios | DONE (host, simulator) |
+| F22-22 | Product-readiness audit (build reproducibility, docs accuracy, portability) | F22-21 | Reproduced documented build in a fresh dir; fixed stale README + hardcoded CMake paths; hardened .gitignore; full regression + sanitizers green | DONE (audit) |
 
 Verification status is tracked separately per layer:
 - Compile (Android arm64-v8a/API 34): VERIFIED.
@@ -134,6 +135,7 @@ Verification status is tracked separately per layer:
 - Realistic Linux sensor simulation (config/signals/speaker): VERIFIED (11 more cases; 23 total).
 - End-to-end simulator workflow + failure/consent scenarios: VERIFIED (9 `[e2e]` cases).
 - Sanitizers (ASan+UBSan) full suite: VERIFIED clean (135 cases / 1472 assertions).
+- Documented build reproduction (fresh out-of-source dir): VERIFIED (135/1472; portable CMake).
 - Alexa custom skill handler unit tests (no deployment): VERIFIED (13 Node cases).
 - Alexa console-simulator end-to-end: OPTIONAL — requires manual console steps (F22-19).
 - Ubuntu camera/mic/speaker capture: NOT IMPLEMENTED — awaiting explicit approval.
