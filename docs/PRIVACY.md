@@ -414,6 +414,27 @@ local:
 - No physical camera or microphone was activated; no kernel module was loaded;
   no system permission was changed.
 
+### End-to-end simulator workflow — privacy notes (added 2026-10-10)
+
+The end-to-end test (`test_e2e_simulator.cpp`) uses a **synthetic test
+scenario**:
+
+| Item | Status | Evidence |
+|---|---|---|
+| End-to-end happy path + failure/consent scenarios | VERIFIED (non-capture) | 9 `[e2e]` cases / 73 assertions; ASan+UBSan clean. |
+| Real sensor capture | NOT RUN | No device file opened; no hardware syscall; no media written; no network. |
+
+- The `SyntheticTestProcessor` only ever receives payloads that already passed
+  `authorize_delivery()`. Denied capture data never reaches it (asserted in the
+  denial/withdrawal/capture-disabled/failure cases).
+- The generated response is synthetic and aggregate, explicitly labelled "not a
+  real-world alert"; it carries no sensitive family/sensor detail. Speaker
+  playback is an output path and is independent of the capture-consent gate.
+- The scenario does **not** detect real-world danger, identify people, or
+  provide medically or emotionally sensitive conclusions. All data is in-memory
+  placeholders. No personal media or sensor data is produced, persisted, or
+  uploaded. No physical sensor was activated.
+
 ## Alexa+ integration — privacy notes (added 2026-10-10)
 
 Alexa integration, if built, would be a separate authenticated client (Alexa

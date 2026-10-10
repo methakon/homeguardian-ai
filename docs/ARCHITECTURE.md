@@ -532,6 +532,48 @@ hardware-in-loop tools but are **not** required and are not loaded/installed.
 No physical camera or microphone is activated; the simulator never opens a real
 device.
 
+### End-to-end simulator workflow (added 2026-10-10)
+
+`tests/core/test_e2e_simulator.cpp` wires the existing components into one
+deterministic, automated scenario (host, non-capture):
+
+1. Initialize simulated camera, microphone, and speaker.
+2. Feed authorized synthetic frames/samples through the consent-guarded delivery
+   path (`ConsentGuardedDevice::authorize_delivery()` before each payload).
+3. Pass authorized inputs to a clearly-labelled **`SyntheticTestProcessor`** — a
+   trivial, deterministic component that only ever sees gate-authorized payloads
+   and produces observation `Event`s. It performs **no** real analysis and draws
+   **no** conclusion about people, danger, health, or emotion.
+4. Generate events via the existing `Pipeline` + `TimeWindowCorrelation` rule
+   (fires after 2 observations → `Severity::info` alert).
+5. Build a **safe response** (`build_safe_response`) — synthetic, aggregate, no
+   sensitive detail, explicitly labelled "not a real-world alert".
+6. Send the response to the simulated speaker (`play()`) and verify playback.
+7. Verify **event ordering** (delivery order preserved), **bounded memory**
+   (capture buffers ≤ capacity; bounded pipeline history), and **lifecycle
+   cleanup** (stop/close → Idle, buffers cleared, `released()`).
+
+Failure/consent scenarios (all proven fail-closed):
+- Consent **denied before initialization** → device never initialized; processor
+  never runs; no event created.
+- Consent **withdrawn between two deliveries** → the second delivery is denied
+  at the boundary and never reaches the processor.
+- **Capture disabled** (kill switch) during processing → next delivery denied
+  even with an active grant.
+- **Camera failure** → delivery stops (fail-closed); recovery via close/re-init
+  resumes delivery.
+- **Event-processing failure** (a throwing correlation rule) → the pipeline
+  surfaces the error and a healthy pipeline remains usable.
+- **Speaker playback failure** then recovery via close/re-init.
+- **Shutdown with pending buffered data** → buffers are bounded during capture
+  (overwrite-oldest) and fully released on stop/close.
+
+Privacy boundary: speaker output is **independent** of the capture-consent gate
+(playback is an output path, not capture), while all capture data must pass the
+delivery gate. Denied capture data never reaches the processor (asserted). This
+is a synthetic test scenario only — it does not detect real-world danger,
+identify people, or provide medically/emotionally sensitive conclusions.
+
 ### Capability matrix
 
 | Requirement / behavior | Simulator (host) | Docker | Real hardware |

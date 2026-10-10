@@ -150,6 +150,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_camera1_adapter.cpp
         tests/core/test_ubuntu_backend.cpp
         tests/core/test_simulator_backend.cpp
+        tests/core/test_e2e_simulator.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
         ../src/core/Config.cpp

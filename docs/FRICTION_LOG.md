@@ -521,6 +521,59 @@ microphone was activated, no kernel module loaded, no system permission changed.
 
 ---
 
+## Incident 16: End-to-End Linux Simulator Workflow
+
+**Date/time:** 2026-10-11 ~02:25 IST
+**Area:** Simulator / integration test / consent
+
+**Expected:** A deterministic end-to-end workflow using the existing simulator,
+consent guard, event pipeline, rules, and simulated speaker, plus failure and
+consent scenarios.
+
+**Actual:**
+- Added `tests/core/test_e2e_simulator.cpp` (9 cases / 73 assertions) wiring
+  existing components: simulated camera+mic+speaker → consent-gated delivery →
+  a clearly-labelled `SyntheticTestProcessor` (only sees gate-authorized
+  payloads; performs no real analysis) → `Pipeline` + `TimeWindowCorrelation`
+  rule/alert → a safe, synthetic response → simulated speaker playback →
+  ordering / bounded-memory / cleanup verification.
+- Failure/consent scenarios: consent denied before init; consent withdrawn
+  between deliveries; capture disabled during processing; camera failure +
+  recovery; event-processing failure (throwing rule surfaces, pipeline stays
+  usable); speaker playback failure + recovery; shutdown with pending buffered
+  data (bounded during capture, released on close). Denied data never reaches
+  the processor (asserted). Speaker output is independent of the capture gate.
+
+**Test results (this commit):**
+- Focused `[e2e]`: 9 cases / 73 assertions pass.
+- Full host suite: **135 cases / 1472 assertions pass; ctest 100%.**
+- ASan+UBSan full suite (`hg_asan`, incremental build — no clean rebuild):
+  **135 cases / 1472 assertions pass, zero sanitizer errors.**
+
+**Notes discovered while testing (product behavior, not defects):**
+- `ConsentGate` fails closed on **multiple active grants for the same
+  subject+purpose** (ambiguous). The E2E test therefore uses distinct purposes
+  for camera vs mic. This is the gate working as designed.
+- `Event`'s constructor rejects empty `event_id` and non-object payloads, so the
+  validator's empty-id/non-object checks are unreachable via the public
+  factory; the event-processing-failure case instead exercises a throwing
+  correlation rule.
+
+**Resolution:** E2E simulator workflow landed (F22-21). Consent enforcement
+unchanged; all capture data passes `authorize_delivery()`; the simulator never
+opens a real device.
+
+**Regression protection:** 9 new `[e2e]` tests; full host + sanitizer suites
+green.
+
+**Remaining impact:** This is a synthetic scenario — it does not detect
+real-world danger, identify people, or provide medically/emotionally sensitive
+conclusions, and it does not prove real-device V4L2/ALSA/PipeWire correctness or
+real OS permission semantics. No physical sensor was activated; no kernel module
+loaded; no permission changed.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -557,7 +610,8 @@ The following were verified to work correctly and are not friction:
 | 13 | Simulator-first backend + Docker fallback decision | — | Simulator landed (12 host tests); Docker deferred as unnecessary |
 | 14 | Alexa custom skill prototype + simulator endpoint requirement | — | Handler + 13 unit tests DONE; console-simulator OPTIONAL (manual deploy steps) |
 | 15 | Realistic Linux sensor simulation + Alexa demotion to optional | — | Config/signals/speaker landed (23 sim tests); Alexa optional, not a prerequisite |
+| 16 | End-to-end Linux simulator workflow | — | 9 `[e2e]` tests; full host 135/1472 + ASan/UBSan clean; synthetic-only |
 
-**Total verified incidents:** 15
+**Total verified incidents:** 16
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 12
+**Resolved incidents:** 13
