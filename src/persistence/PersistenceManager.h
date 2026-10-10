@@ -2,6 +2,9 @@
 
 #include "EventRepository.h"
 #include "AlertRepository.h"
+#include "ProfileRepository.h"
+#include "ConsentRepository.h"
+#include "RoutineRepository.h"
 #include "SchemaManager.h"
 #include "core/Event.h"
 #include "core/Alert.h"
@@ -40,6 +43,9 @@ public:
 
     IEventRepository& event_repo();
     IAlertRepository& alert_repo();
+    IProfileRepository& profile_repo();
+    IConsentRepository& consent_repo();
+    IRoutineRepository& routine_repo();
 
 private:
     std::string db_path_;
@@ -49,6 +55,9 @@ private:
     std::shared_ptr<SQLiteDatabase> db_;
     std::unique_ptr<EventRepository> event_repo_;
     std::unique_ptr<AlertRepository> alert_repo_;
+    std::unique_ptr<ProfileRepository> profile_repo_;
+    std::unique_ptr<ConsentRepository> consent_repo_;
+    std::unique_ptr<RoutineRepository> routine_repo_;
     std::unique_ptr<SchemaManager> schema_mgr_;
 };
 

@@ -21,12 +21,79 @@ void SchemaManager::initialize() {
             throw;
         }
     }
+    migrate();
 }
 
 void SchemaManager::migrate() {
     current_version_ = db_->get_user_version();
-    if (current_version_ < 1) {
-        initialize();
+    while (current_version_ < LATEST_VERSION) {
+        if (current_version_ == 1) {
+            migrate_v1_to_v2();
+        } else {
+            break;
+        }
+    }
+}
+
+void SchemaManager::migrate_v1_to_v2() {
+    // Additive migration: adds profiles, routines, and consent_records tables
+    // for Phase E. Existing events and alerts tables are untouched, so all
+    // prior data is preserved. The whole migration runs in a single
+    // transaction with rollback on any failure, and is safe to rerun because
+    // it only runs when user_version == 1.
+    db_->begin_transaction();
+    try {
+        db_->execute(R"(
+            CREATE TABLE IF NOT EXISTS profiles (
+                profile_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                age_band TEXT,
+                enabled INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                schema_version INTEGER NOT NULL
+            );
+        )");
+
+        db_->execute(R"(
+            CREATE TABLE IF NOT EXISTS routines (
+                routine_id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                label TEXT NOT NULL,
+                schedule TEXT,
+                time_zone TEXT,
+                enabled INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                schema_version INTEGER NOT NULL,
+                FOREIGN KEY (profile_id) REFERENCES profiles(profile_id) ON DELETE CASCADE
+            );
+        )");
+        db_->execute("CREATE INDEX IF NOT EXISTS idx_routines_profile ON routines(profile_id);");
+
+        db_->execute(R"(
+            CREATE TABLE IF NOT EXISTS consent_records (
+                consent_id TEXT PRIMARY KEY,
+                subject_scope TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                data_categories TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                recorded_at INTEGER NOT NULL,
+                expires_at INTEGER,
+                provenance TEXT NOT NULL,
+                schema_version INTEGER NOT NULL
+            );
+        )");
+        db_->execute("CREATE INDEX IF NOT EXISTS idx_consent_subject ON consent_records(subject_scope);");
+        db_->execute("CREATE INDEX IF NOT EXISTS idx_consent_purpose ON consent_records(subject_scope, purpose);");
+
+        db_->set_user_version(2);
+        db_->commit();
+        current_version_ = 2;
+    } catch (...) {
+        db_->rollback();
+        throw;
     }
 }
 

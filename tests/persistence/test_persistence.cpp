@@ -278,7 +278,7 @@ TEST_CASE("SchemaManager initialize creates tables", "[persistence][schema]") {
     SchemaManager schema(db);
     schema.initialize();
 
-    REQUIRE(schema.current_version() == 1);
+    REQUIRE(schema.current_version() == SchemaManager::LATEST_VERSION);
 
     EventRepository event_repo(db);
     AlertRepository alert_repo(db);
@@ -301,7 +301,7 @@ TEST_CASE("SchemaManager idempotent initialize", "[persistence][schema]") {
     schema.initialize();
     schema.initialize();
 
-    REQUIRE(schema.current_version() == 1);
+    REQUIRE(schema.current_version() == SchemaManager::LATEST_VERSION);
 
     db->close();
 }

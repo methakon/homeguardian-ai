@@ -5,5 +5,10 @@
     "data_dir": "/var/lib/homeguardian",
     "max_event_history": 1000,
     "correlation_window_ms": 5000,
-    "alert_confidence_threshold": 0.5
+    "alert_confidence_threshold": 0.5,
+    "media_capture_enabled": false,
+    "cloud_processing_enabled": false,
+    "consent_policy_version": "1.0.0",
+    "routine_retention_days": 730,
+    "profile_retention_days": 1825
 }

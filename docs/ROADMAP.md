@@ -39,18 +39,34 @@
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| D-01 | SQLite persistence | C-03 | Events, faces, consent, config stored and queried | TODO |
-| D-02 | Retention policies | D-01 | Automatic data expiration per configurable policies | TODO |
+| D-01 | SQLite persistence | C-03 | Events, alerts, profiles, consent, routines stored and queried | DONE |
+| D-02 | Retention policies | D-01 | Automatic data expiration per configurable policies | DONE |
 
-## Phase E — Sensing and Inference
+## Phase E — Family Profiles, Consent, Routines and Configuration
+
+This phase establishes a privacy-first, testable foundation before any camera,
+audio, or heavier AI inference is introduced. It is deliberately separate from
+the earlier "Sensing and Inference" plan, which is deferred to a later phase.
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| E-01 | Simulated event source | C-03 | Generates synthetic events for testing | TODO |
-| E-02 | Camera interface + OpenCV | C-03 | Capture frames from video source | TODO |
-| E-03 | Face analysis (OpenCV DNN) | E-02 | Face detection and emotion estimation | TODO |
-| E-04 | Audio capture + voice analysis | C-03 | Microphone input with VAD | TODO |
-| E-05 | ONNX Runtime integration | C-03 | Load and run ONNX models | TODO |
+| E-01 | Family profile model | D-01 | Versioned profile with opaque ID, display name, optional age band; no sensitive attributes | DONE |
+| E-02 | Consent model | D-01 | Explicit granted/denied/withdrawn states; default-deny; expiry; withdrawal blocks future processing | DONE |
+| E-03 | Routine model | D-01 | Versioned routine with validated schedule and time zone; configuration only | DONE |
+| E-04 | Persistence + migration | D-01 | Additive v1→v2 schema migration; FK cascade; transactional and rerunnable | DONE |
+| E-05 | Configuration | D-01 | Validated Phase E config; media capture and cloud OFF by default | DONE |
+| E-06 | Retention/export/deletion | D-01 | Documented lifecycle; profile deletion cascades to dependents; no media stored | DONE |
+| E-07 | Tests | E-01–E-06 | Profiles, consent states, routines, restart recovery, FK/uniqueness, rollback, config | DONE |
+
+## Phase E2 — Sensing and Inference (deferred)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| E2-01 | Simulated event source | C-03 | Generates synthetic events for testing | TODO |
+| E2-02 | Camera interface + OpenCV | C-03 | Capture frames from video source | TODO |
+| E2-03 | Face analysis (OpenCV DNN) | E2-02 | Face detection and emotion estimation | TODO |
+| E2-04 | Audio capture + voice analysis | C-03 | Microphone input with VAD | TODO |
+| E2-05 | ONNX Runtime integration | C-03 | Load and run ONNX models | TODO |
 
 ## Phase F — HTTP and MCP
 

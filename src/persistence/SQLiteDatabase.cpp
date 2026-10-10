@@ -33,6 +33,9 @@ void SQLiteDatabase::open(const std::string& path) {
     sqlite3_busy_timeout(db_, 5000);
     execute_locked("PRAGMA foreign_keys = ON;");
     execute_locked("PRAGMA journal_mode = WAL;");
+    // Enable extended result codes so callers can distinguish constraint
+    // subtypes (e.g. SQLITE_CONSTRAINT_PRIMARYKEY vs SQLITE_CONSTRAINT_FOREIGNKEY).
+    sqlite3_extended_result_codes(db_, 1);
 }
 
 void SQLiteDatabase::close() {

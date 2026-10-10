@@ -67,6 +67,9 @@ add_executable(homeguardian
     src/persistence/SQLiteDatabase.cpp
     src/persistence/EventRepository.cpp
     src/persistence/AlertRepository.cpp
+    src/persistence/ProfileRepository.cpp
+    src/persistence/ConsentRepository.cpp
+    src/persistence/RoutineRepository.cpp
     src/persistence/SchemaManager.cpp
     src/persistence/PersistenceManager.cpp
 )
@@ -90,7 +93,12 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_time_window_correlation.cpp
         tests/core/test_pipeline.cpp
         tests/core/test_alert.cpp
+        tests/core/test_family_profile.cpp
+        tests/core/test_consent.cpp
+        tests/core/test_routine.cpp
+        tests/core/test_config_e.cpp
         tests/persistence/test_persistence.cpp
+        tests/persistence/test_phase_e.cpp
         ../src/core/Config.cpp
         ../src/core/Logger.cpp
         ../src/core/EventValidator.cpp
@@ -101,6 +109,9 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ../src/persistence/SQLiteDatabase.cpp
         ../src/persistence/EventRepository.cpp
         ../src/persistence/AlertRepository.cpp
+        ../src/persistence/ProfileRepository.cpp
+        ../src/persistence/ConsentRepository.cpp
+        ../src/persistence/RoutineRepository.cpp
         ../src/persistence/SchemaManager.cpp
         ../src/persistence/PersistenceManager.cpp
     )
@@ -120,4 +131,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
 
     include(CTest)
     add_test(NAME homeguardian_tests COMMAND homeguardian_tests)
+    # Run from the project root so tests that read repo-relative files
+    # (e.g. config/homeguardian.json) resolve correctly under ctest.
+    set_tests_properties(homeguardian_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()

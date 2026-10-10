@@ -1,6 +1,10 @@
 # Build directories
 build/
 cmake-build-*/
+build_final/
+hg_build/
+hg_asan/
+hg_asan_e/
 
 # Log files
 homeguardian.log
@@ -36,6 +40,9 @@ homeguardian
 test_persistence.db
 test_persistence.db-wal
 test_persistence.db-shm
+test_phase_e.db
+test_phase_e.db-wal
+test_phase_e.db-shm
 
 # Model artifacts
 *.onnx

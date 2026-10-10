@@ -66,8 +66,13 @@ void AlertRepository::save(const Alert& alert) {
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
-    if (rc == SQLITE_CONSTRAINT) {
+    // With extended result codes enabled, a constraint violation surfaces as an
+    // extended SQLITE_CONSTRAINT_* code rather than the base SQLITE_CONSTRAINT.
+    if (rc == SQLITE_CONSTRAINT_PRIMARYKEY || rc == SQLITE_CONSTRAINT_UNIQUE) {
         throw DuplicateAlertException("Alert with ID '" + alert.alert_id + "' already exists");
+    }
+    if ((rc & 0xFF) == SQLITE_CONSTRAINT) {
+        throw DatabaseException("AlertRepository::save constraint failed: " + std::string(sqlite3_errmsg(raw)));
     }
     if (rc != SQLITE_DONE) {
         throw DatabaseException("AlertRepository::save failed: " + std::string(sqlite3_errmsg(raw)));

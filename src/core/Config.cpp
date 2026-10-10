@@ -24,7 +24,13 @@ void Config::load(const std::string& filepath) {
     if (j.contains("max_event_history")) max_event_history = j["max_event_history"].get<size_t>();
     if (j.contains("correlation_window_ms")) correlation_window_ms = j["correlation_window_ms"].get<int>();
     if (j.contains("alert_confidence_threshold")) alert_confidence_threshold = j["alert_confidence_threshold"].get<double>();
-    
+
+    if (j.contains("media_capture_enabled")) media_capture_enabled = j["media_capture_enabled"].get<bool>();
+    if (j.contains("cloud_processing_enabled")) cloud_processing_enabled = j["cloud_processing_enabled"].get<bool>();
+    if (j.contains("consent_policy_version")) consent_policy_version = j["consent_policy_version"].get<std::string>();
+    if (j.contains("routine_retention_days")) routine_retention_days = j["routine_retention_days"].get<int>();
+    if (j.contains("profile_retention_days")) profile_retention_days = j["profile_retention_days"].get<int>();
+
     validate();
 }
 
@@ -40,7 +46,13 @@ void Config::save(const std::string& filepath) const {
     j["max_event_history"] = max_event_history;
     j["correlation_window_ms"] = correlation_window_ms;
     j["alert_confidence_threshold"] = alert_confidence_threshold;
-    
+
+    j["media_capture_enabled"] = media_capture_enabled;
+    j["cloud_processing_enabled"] = cloud_processing_enabled;
+    j["consent_policy_version"] = consent_policy_version;
+    j["routine_retention_days"] = routine_retention_days;
+    j["profile_retention_days"] = profile_retention_days;
+
     std::ofstream file(filepath);
     if (!file.is_open()) {
         throw std::runtime_error("Could not open config file for writing: " + filepath);
@@ -67,6 +79,16 @@ void Config::validate() const {
     }
     if (alert_confidence_threshold < 0.0 || alert_confidence_threshold > 1.0) {
         throw std::invalid_argument("alert_confidence_threshold must be between 0.0 and 1.0");
+    }
+
+    if (consent_policy_version.empty()) {
+        throw std::invalid_argument("consent_policy_version must not be empty");
+    }
+    if (routine_retention_days < 0 || routine_retention_days > 36500) {
+        throw std::invalid_argument("routine_retention_days must be between 0 and 36500");
+    }
+    if (profile_retention_days < 0 || profile_retention_days > 36500) {
+        throw std::invalid_argument("profile_retention_days must be between 0 and 36500");
     }
 }
 

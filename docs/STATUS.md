@@ -1,10 +1,10 @@
 # HomeGuardian AI — Status
 
-**Last updated:** 2026-10-09
+**Last updated:** 2026-10-10
 
 ## Current Phase
 
-Phase D — SQLite Persistence
+Phase E — Family Profiles, Consent, Routines and Configuration
 
 ## Completed Work
 
@@ -29,19 +29,27 @@ Phase D — SQLite Persistence
 | Friction log | 6 verified incidents documented | 2026-10-09 |
 | SQLite persistence | IDatabase, EventRepository, AlertRepository, SchemaManager, PersistenceManager | 2026-10-10 |
 | SQLite amalgamation | Compiled directly into project (no system dev headers required) | 2026-10-10 |
-| Test suite | 32 test cases, 99 assertions, all passing | 2026-10-10 |
+| Family profile model | `core/FamilyProfile.h` — versioned, optional age band, no sensitive attributes | 2026-10-10 |
+| Consent model | `core/ConsentRecord.h` — granted/denied/withdrawn, default-deny, expiry | 2026-10-10 |
+| Routine model | `core/Routine.h` — validated schedule and time zone, configuration only | 2026-10-10 |
+| Phase E repositories | ProfileRepository, ConsentRepository, RoutineRepository | 2026-10-10 |
+| Schema migration v1→v2 | Additive, transactional, rerunnable; preserves event/alert data | 2026-10-10 |
+| Extended result codes | Constraint subtypes distinguished (PK/UNIQUE vs FK) | 2026-10-10 |
+| Phase E configuration | media_capture_enabled/cloud_processing_enabled default OFF | 2026-10-10 |
+| Test suite | 57 test cases, 241 assertions, all passing | 2026-10-10 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-Total Test time (real) =   0.23 sec
-All tests passed (99 assertions in 32 test cases)
+All tests passed (241 assertions in 57 test cases)
+ASan/UBSan: passed, no leaks, no sanitizer errors
 ```
 
 ## Current Work
 
-Phase D — SQLite persistence layer. Complete and verified.
+Phase E — Family profiles, consent, routines, and validated configuration.
+Complete and verified.
 
 ## Blockers
 
@@ -52,14 +60,13 @@ None.
 - `Logger::initialize()` is not thread-safe on first call. Acceptable for single-threaded startup; must be fixed before multi-threaded use.
 - `Application` singleton pattern prevents multiple instances. Acceptable for single-process design.
 - Pipeline is synchronous only. No async processing yet — by design for Phase C.
+- Consent records are household configuration only; they are not proof of legally valid consent and are not yet enforced by any media-processing component (none exists yet).
 
 ## Next Authorized Task
 
-Phase D — Persistence:
-1. SQLite persistence for events, alerts with repository interfaces
-2. Schema versioning, prepared statements, transactions
-3. Configurable retention policies
-4. Tests for restart recovery, duplicates, rollback, retention
+Phase E2 — Sensing and Inference (deferred): simulated event source, camera
+interface, face/voice analysis, ONNX Runtime. No media capture is enabled by
+default and none is implemented.
 
 ## Resource Budget
 
@@ -77,3 +84,4 @@ Phase D — Persistence:
 - **Phase B fix commit:** `e9ebfa3`
 - **Phase C commit:** `479dccf`
 - **Friction log commit:** `90691ef`
+- **Phase D commit:** `5712aac`

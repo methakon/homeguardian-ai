@@ -112,8 +112,13 @@ void EventRepository::save(const Event& event) {
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
 
-    if (rc == SQLITE_CONSTRAINT) {
+    // With extended result codes enabled, a constraint violation surfaces as an
+    // extended SQLITE_CONSTRAINT_* code rather than the base SQLITE_CONSTRAINT.
+    if (rc == SQLITE_CONSTRAINT_PRIMARYKEY || rc == SQLITE_CONSTRAINT_UNIQUE) {
         throw DuplicateEventException("Event with ID '" + event.get_event_id() + "' already exists");
+    }
+    if ((rc & 0xFF) == SQLITE_CONSTRAINT) {
+        throw DatabaseException("EventRepository::save constraint failed: " + std::string(sqlite3_errmsg(raw)));
     }
     if (rc != SQLITE_DONE) {
         throw DatabaseException("EventRepository::save failed: " + std::string(sqlite3_errmsg(raw)));

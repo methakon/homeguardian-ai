@@ -23,6 +23,9 @@ void PersistenceManager::open() {
 
     event_repo_ = std::make_unique<EventRepository>(db_);
     alert_repo_ = std::make_unique<AlertRepository>(db_);
+    profile_repo_ = std::make_unique<ProfileRepository>(db_);
+    consent_repo_ = std::make_unique<ConsentRepository>(db_);
+    routine_repo_ = std::make_unique<RoutineRepository>(db_);
 
     Logger::get()->info("PersistenceManager: opened database at {}", db_path_);
 }
@@ -34,6 +37,9 @@ void PersistenceManager::close() {
     }
     event_repo_.reset();
     alert_repo_.reset();
+    profile_repo_.reset();
+    consent_repo_.reset();
+    routine_repo_.reset();
     schema_mgr_.reset();
     db_.reset();
 }
@@ -113,6 +119,21 @@ IEventRepository& PersistenceManager::event_repo() {
 IAlertRepository& PersistenceManager::alert_repo() {
     if (!alert_repo_) throw DatabaseException("PersistenceManager not open");
     return *alert_repo_;
+}
+
+IProfileRepository& PersistenceManager::profile_repo() {
+    if (!profile_repo_) throw DatabaseException("PersistenceManager not open");
+    return *profile_repo_;
+}
+
+IConsentRepository& PersistenceManager::consent_repo() {
+    if (!consent_repo_) throw DatabaseException("PersistenceManager not open");
+    return *consent_repo_;
+}
+
+IRoutineRepository& PersistenceManager::routine_repo() {
+    if (!routine_repo_) throw DatabaseException("PersistenceManager not open");
+    return *routine_repo_;
 }
 
 } // namespace homeguardian
