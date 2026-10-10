@@ -53,6 +53,7 @@ Phase F2.2 — Real Android Device Backends (NDK installed; hardware testing blo
 | Confirmed device | MediaTek MT6580 "Ruby" (model string cosmetic), Android 8.1.0 / API 27, armeabi-v7a, ~962MB RAM | 2026-10-10 |
 | armeabi-v7a/API 27 build + on-device self-test | `hg_ondevice_selftest` built for device ABI/API; 17/17 non-capture checks pass on device via adb | 2026-10-10 |
 | JDK + SDK platform 27 | Temurin JDK 17 (user-writable) and SDK platform 27 / build-tools 27.0.3 installed | 2026-10-10 |
+| APK harness (non-capture) | Minimal debug-signed APK built with JDK+SDK+NDK (no Gradle); keystore outside repo; capture disabled by default | 2026-10-11 |
 | Test suite | 93 test cases, 424 assertions, all passing | 2026-10-10 |
 
 ## Test Results
@@ -73,8 +74,11 @@ On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
 - **Mock integration (host fake backend):** VERIFIED.
 - **On-device non-capture self-test (real hardware):** VERIFIED — consent gate,
   lifecycle, fail-closed guards, cleanup; no camera/mic opened.
-- **Physical hardware capture (camera/audio):** BLOCKED — needs APK harness,
-  runtime permission grants, and explicit approval. NOT claimed.
+- **APK harness (build/package only):** VERIFIED — debug-signed APK builds and
+  packages; declares only CAMERA + RECORD_AUDIO; capture disabled by default;
+  NOT installed, no permissions granted, no capture run.
+- **Physical hardware capture (camera/audio):** BLOCKED — awaits explicit
+  operator approval before the first camera/microphone activation. NOT claimed.
 
 ## Current Work
 
@@ -129,3 +133,4 @@ default and none is implemented.
 - **Phase F2.1 commit:** `e81584e`
 - **Phase F2.2 commit:** `50e43ea`
 - **F2.2 hardening commit:** `94e6714`
+- **F22-08 commit:** `2caf62e`
