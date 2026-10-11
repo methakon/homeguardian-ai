@@ -687,6 +687,65 @@ green.
 
 ---
 
+## Incident 19: ASan Build Corrupt Objects + Runtime Integration (F22-25)
+
+**Date/time:** 2026-10-11 ~11:15 IST
+**Area:** Build tooling / runtime integration
+
+**Expected:** Integrate simulator components into the running Application and
+run the full suite + sanitizers.
+
+**Actual:**
+- Added `core/SimulatorRuntime.{h,cpp}`: an in-process, simulator-only runtime
+  (in-memory consent repo + `ConsentGate`, one shared `AudioBroker`, two
+  independent `LogicalDevice` identities). No DB dependency; never opens real
+  hardware.
+- Wired it into `Application::run()`: applies config's `media_capture_enabled`
+  kill switch; when enabled, grants synthetic consent, starts the single shared
+  capture session, runs 5 deterministic media cycles (each fanning out one
+  synthetic mic payload to authorized consumers and draining the bounded
+  arbitrated speaker), and shuts down cleanly. When disabled (default), logs
+  "no media delivered" and idles. `get_simulator_runtime()` exposes it.
+- Added `tests/core/test_runtime_integration.cpp`: 7 cases / 40 assertions —
+  capture-off delivers nothing; capture-on + consent delivers to permitted
+  consumers; no-consent delivers nothing; withdrawing one consumer blocks only
+  that consumer; multi-cycle determinism + bounded memory; deterministic
+  idempotent shutdown; toggling capture off blocks delivery.
+
+**Build-tooling issue (root-certain):** the `hg_asan` incremental build produced
+**0-byte object files** for the two new translation units while `make` reported
+"Built target" (success). The subsequent link silently produced a binary missing
+the new tests (147 cases instead of 154). Diagnosed by observing
+`Permission denied` on a 0-byte binary, then `ls -la` showing 0-byte `.o` files.
+**Resolution:** removed the corrupt objects, recompiled, and relinked; verified
+non-empty object + binary sizes and re-ran. Root cause is a stale/corrupt
+incremental artifact, not a source defect. Lesson: after an incremental build,
+verify the linked binary's test count matches expectations, not just make's exit
+status.
+
+**Test results (this commit):**
+- Focused `[runtime]`: 7 cases / 40 assertions pass.
+- Full host suite (hg_build): **154 cases / 1583 assertions pass; ctest 100%.**
+- ASan+UBSan full suite (hg_asan, clean recompile of new objects): 154 / 1583
+  pass, zero sanitizer errors.
+- Application runs (simulator mode): capture-off → no media + clean shutdown;
+  capture-on → delivers to both consumers each cycle, speaker_played=10 over 5
+  cycles, queue drains to 0, clean shutdown.
+
+**Resolution:** Runtime integration landed (F22-25). Simulator-only; no physical
+sensor, no AWS, no Alexa change. Android backend and prior simulator components
+preserved.
+
+**Regression protection:** 7 new `[runtime]` tests; full host + sanitizer suites
+green across a clean recompile.
+
+**Remaining impact:** Simulator validates the running application's consent,
+fan-out, bounded-buffer, arbitration, and shutdown paths, but does NOT prove
+real V4L2/ALSA/PipeWire behavior or real OS permission semantics (hardware-
+gated). No physical sensor was activated.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -726,7 +785,8 @@ The following were verified to work correctly and are not friction:
 | 16 | End-to-end Linux simulator workflow | — | 9 `[e2e]` tests; full host 135/1472 + ASan/UBSan clean; synthetic-only |
 | 17 | Product-readiness audit (stale docs + CMake portability) | — | Fixed stale README + hardcoded CMake paths; hardened .gitignore; build reproduced fresh; 135/1472 across 3 configs |
 | 18 | Dual logical-device simulation + shared audio broker | — | 12 `[dual]` tests; full host 147/1546 + ASan/UBSan clean; simulated-only, no Alexa OS claim |
+| 19 | ASan build corrupt objects + runtime integration | — | Fixed 0-byte incremental objects; SimulatorRuntime wired into Application; 7 `[runtime]` tests; 154/1583 host + ASan/UBSan |
 
-**Total verified incidents:** 18
+**Total verified incidents:** 19
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 15
+**Resolved incidents:** 16

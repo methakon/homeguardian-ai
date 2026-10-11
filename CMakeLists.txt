@@ -109,6 +109,10 @@ add_executable(homeguardian
     src/core/SimulatedSensorSource.cpp
     src/core/ConsentGatedAcquisition.cpp
     src/core/ConsentGuardedDevice.cpp
+    src/core/SimulatorRuntime.cpp
+    src/backend/simulator/SimulatedSensorBackend.cpp
+    src/backend/simulator/LogicalDevice.cpp
+    src/backend/simulator/AudioBroker.cpp
     src/persistence/SQLiteDatabase.cpp
     src/persistence/EventRepository.cpp
     src/persistence/AlertRepository.cpp
@@ -152,6 +156,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_simulator_backend.cpp
         tests/core/test_e2e_simulator.cpp
         tests/core/test_dual_device_broker.cpp
+        tests/core/test_runtime_integration.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
         ../src/core/Config.cpp
@@ -165,6 +170,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ../src/core/SimulatedSensorSource.cpp
         ../src/core/ConsentGatedAcquisition.cpp
         ../src/core/ConsentGuardedDevice.cpp
+        ../src/core/SimulatorRuntime.cpp
         ../src/persistence/SQLiteDatabase.cpp
         ../src/persistence/EventRepository.cpp
         ../src/persistence/AlertRepository.cpp

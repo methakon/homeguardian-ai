@@ -55,9 +55,10 @@ Current test coverage:
 - Ubuntu backend: sensor discovery metadata; consent enforcement on the shared gate
 - Dual-device + audio broker: device independence, shared-source fan-out, per-consumer consent denial/withdrawal, bounded speaker queue, arbitration, playback recovery, shutdown
 - End-to-end simulator: camera/mic/speaker → consent-gated delivery → synthetic processor → pipeline rule/alert → safe speaker response; failure and consent scenarios
+- Runtime integration: SimulatorRuntime driven by Application::run() — capture-off delivers no media; capture-on + consent delivers to permitted consumers; per-consumer withdrawal; determinism + bounded memory; idempotent shutdown; capture toggle
 
-Run a focused group with a tag filter, e.g. `./homeguardian_tests "[sim]"`,
-`"[dual]"`, or `"[e2e]"`. Full suite: `ctest --output-on-failure`.
+Run a focused group with a tag filter, e.g. `./homeguardian_tests "[runtime]"`,
+`"[sim]"`, `"[dual]"`, or `"[e2e]"`. Full suite: `ctest --output-on-failure`.
 
 ## Coding Standards
 

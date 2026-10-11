@@ -64,17 +64,20 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Product-readiness audit | Fixed stale README, hardcoded CMake paths → `${CMAKE_SOURCE_DIR}`, hardened .gitignore; documented build reproduced fresh | 2026-10-11 |
 | Alexa custom skill prototype | `alexa_skill/` — ASK SDK v2 handler + 13 Node unit tests (optional, separate from core; no deployment) | 2026-10-10 |
 | Test suite | 147 test cases, 1546 assertions, all passing | 2026-10-11 |
+| Runtime integration | `core/SimulatorRuntime` wired into `Application::run()` — the running app exercises the consent gate, shared audio broker, event pipeline, and clean shutdown; 7 runtime integration tests | 2026-10-11 |
+| Test suite | 154 test cases, 1583 assertions, all passing | 2026-10-11 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-All tests passed (1546 assertions in 147 test cases)
-Focused: [sim] 24 cases / 915 assertions; [dual] 12 / 74; [e2e] 9 / 73 — all pass
+All tests passed (1583 assertions in 154 test cases)
+Focused: [runtime] 7 cases / 40 assertions; [sim] 24 / 915; [dual] 12 / 74; [e2e] 9 / 73 — all pass
 ASan/UBSan full suite: passed, no leaks, no sanitizer errors
 Android cross-compile (arm64-v8a/API 34): passed (static archive, not runnable)
 Android cross-compile (armeabi-v7a/API 27): passed (on-device self-test binary)
 On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
+Application run (simulator mode): capture-off delivers no media + clean shutdown; capture-on delivers to permitted consumers, bounded speaker, clean shutdown
 ```
 
 ## Verification Status (separated by layer)
