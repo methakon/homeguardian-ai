@@ -69,9 +69,15 @@ Run a focused group with a tag filter, e.g. `./homeguardian_tests "[audit]"`,
 suite: `ctest --output-on-failure`.
 
 The Alexa skill tests run with Node's built-in runner:
-`cd alexa_skill && npm test` (runs `test/handler.test.js` for the skill handlers
-and `test/contract.test.js` for the integration-contract adapter boundary; both
-use mock clients, no deployment).
+`cd alexa_skill && npm test` (runs `test/handler.test.js` for the skill handlers,
+`test/contract.test.js` for the integration-contract adapter boundary,
+`test/integration.test.js` for process-boundary tests against the real compiled
+`hg_alexa_bridge`, and `test/restart.test.js` for restart/degraded cases; all use
+mock/test-only credentials, no deployment).
+
+The integration/restart tests require the bridge to be built first:
+`cmake --build hg_build --target hg_alexa_bridge`. A reproducible walkthrough is
+in `docs/demo_alexa_integration.sh`.
 
 A reproducible simulator demonstration of the running app is in
 `docs/DEMO_SIMULATOR.md`.

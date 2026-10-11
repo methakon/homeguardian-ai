@@ -74,6 +74,8 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 200 test cases, 1753 assertions, all passing | 2026-10-11 |
 | Runtime readiness v3 | `core/AlexaContract` (versioned, authenticated, read-only integration contract + auth boundary; 14 contract tests) + Node adapter tests (12); SQLite integrity/migration tests (7); privacy/consent regression tests (7); plus P1 rule-specific clearing (3) and P2 scheduled retention (4) landed this cycle | 2026-10-11 |
 | Test suite | 235 test cases, 1925 assertions, all passing | 2026-10-11 |
+| Runtime readiness v4 | `hg_alexa_bridge` (local NDJSON stdio bridge over the real AlexaContract) + Node process-boundary integration tests (14) and restart tests (4) driving the actual compiled C++ binary; reproducible demo `docs/demo_alexa_integration.sh`; no network/deploy | 2026-10-11 |
+| Test suite | 235 test cases, 1928 assertions, all passing; Node 43/43 (13 handler + 12 contract + 14 integration + 4 restart) | 2026-10-11 |
 
 ## Test Results
 
@@ -88,7 +90,8 @@ On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
 Application run (simulator mode): capture-off → no media/no alerts + final_state=Stopped; capture-on → authorized observations through Pipeline, 1 alert delivered + persisted + 8 dedup-suppressed, pipeline_history=10, bounded speaker, final_state=Stopped
 Restart: same audit DB, 2nd process reports historical_alerts=1 (distinguishable from current-process alerts)
 Alexa contract: 14 C++ contract tests + 12 Node adapter tests pass (mock clients, no deploy); LIVE integration NOT tested (needs deployed authenticated endpoint) — documented as pending
-Release reproduction: fresh out-of-source build (existing dep cache) → 235/1925, new tests included
+Local process-boundary integration: hg_alexa_bridge (NDJSON stdio over the REAL AlexaContract) driven by Node — 14 integration + 4 restart cases against the actual compiled binary; reproducible demo docs/demo_alexa_integration.sh; no network listener, no deploy
+Release reproduction: fresh out-of-source build (existing dep cache) → 235/1928 + bridge, new tests included
 ```
 
 ## Verification Status (separated by layer)

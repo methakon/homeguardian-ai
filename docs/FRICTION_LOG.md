@@ -982,9 +982,92 @@ The following were verified to work correctly and are not friction:
 | 22 | Runtime readiness v2 — durable audit + observability | — | PersistenceAudit (alert metadata via existing SQLite, historical-vs-current, retention, fail-safe degraded) + RuntimeStatus (bounded privacy-safe counters); 10 audit/status cases; 200/1753 host + ASan/UBSan; release reproduction |
 | 23 | Runtime readiness v3 — integration contract, storage integrity, privacy | — | AlexaContract (versioned, authenticated, read-only contract; 14 C++ + 12 Node adapter cases, NOT deployed); SQLite integrity/migration/retention/recovery (7 cases); privacy/consent regression (7 cases); P1 rule-specific clearing; P2 scheduled retention; 235/1925 host + ASan/UBSan; release reproduction |
 
-**Total verified incidents:** 23
+**Total verified incidents:** 24
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 20
+**Resolved incidents:** 21
+
+---
+
+## Incident 24: Runtime Readiness v4 — Local End-to-End Integration Proof (F22-30)
+
+**Date/time:** 2026-10-11 ~21:30 IST
+**Area:** Alexa integration / process boundary / restart
+
+**Expected:** Prove the JavaScript adapter and the actual C++ AlexaContract
+interoperate across a real local process boundary — not just separate unit
+tests and hand-written mocks. Simulator-only; no deployment.
+
+**Actual:**
+- Added `src/bridge/hg_alexa_bridge.cpp` + CMake target `hg_alexa_bridge`: a
+  small LOCAL-ONLY executable exposing the REAL `AlexaContract` over newline-
+  delimited JSON (NDJSON) stdio. No network listener. Each request line is
+  parsed/handled by `AlexaContract::parse` + `handle` (shared validation, version
+  gating, fail-closed auth). Status/alert data come from the real
+  `RuntimeStatus` + `PersistenceAudit`.
+- Added `alexa_skill/test/integration.test.js`: 14 process-boundary cases that
+  SPAWN the actual compiled binary (argument array, no shell; output bound;
+  timeout kill) and exercise authenticated status/alert_summary, missing/invalid/
+  expired/unauthorized credentials, malformed JSON, unknown field, oversized
+  request, unsupported version, unsupported (mutating) operations, multi-request
+  ordering, and clean exit.
+- Added `alexa_skill/test/restart.test.js`: 4 cases driving real processes —
+  run the actual app to produce a synthetic alert into a temp DB, start a fresh
+  bridge against the same data and verify the historical alert is visible; a
+  fresh bridge reports zero; a missing credentials file fails closed; bad usage
+  exits 2.
+- Added `docs/demo_alexa_integration.sh`: reproducible demo (authenticated
+  status + alert-summary, a rejected request, an unavailable/forbidden response),
+  isolated temp workspace, test-only credentials, cleanup on exit.
+- Wired all four Node test files into `npm test`.
+
+**Decisions (documented, not defects):**
+- Chose NDJSON stdio over a local HTTP server: no existing architecture requires
+  a listener, and stdio avoids network/permission surface. Documented.
+- The bridge does not call `Application::run()` (which blocks in the main loop);
+  it builds a read-only status view over the real `RuntimeStatus` +
+  `PersistenceAudit`, so availability reflects real persistence health without
+  duplicating lifecycle logic. Capture stays disabled.
+- Live Alexa-to-application integration remains NOT deployed/tested (needs an
+  authenticated endpoint) — documented as PENDING. No claim of live integration.
+
+**Friction encountered:**
+- First bridge build failed to link (undefined Application/PersistenceAudit
+  symbols) because the target compiled only its own TU. Fixed by compiling the
+  real core sources into the bridge target (no new library, no duplicated logic).
+- First smoke test returned `unavailable` for status/alert_summary because the
+  provider checked `Application::state()`, which stays `Constructed` when
+  `run()` is not called (no public setter). Fixed by basing availability on real
+  persistence health (the bridge is the live view) rather than the unstarted
+  main-loop state.
+
+**Test results (this cycle):**
+- Node process-boundary: `integration.test.js` 14/14, `restart.test.js` 4/4.
+- Node full (`npm test`): **43/43** (13 handler + 12 contract + 14 integration +
+  4 restart).
+- C++ full host suite (hg_build): **235 cases / 1928 assertions pass; ctest
+  100%.** (No new C++ test cases; the bridge is exercised via Node.)
+- ASan+UBSan full suite: 235 cases, zero sanitizer errors.
+- Release reproduction: fresh out-of-source build (existing dep cache) →
+  app + tests + bridge build clean; fresh-repro suite 235/1928; bridge smoke
+  against the fresh binary returns real state + fail-closed auth.
+- Demo: `docs/demo_alexa_integration.sh` runs end-to-end (authenticated status +
+  alert-summary, unauthorized, forbidden, unavailable), exit 0, temp workspace
+  removed.
+
+**Resolution:** Runtime readiness v4 landed (F22-30). Simulator-only; no
+physical sensor, no AWS, no Alexa deploy, no network listener. Android backend,
+simulator, and Alexa skill preserved. Temp release-verify dir removed; existing
+build dirs intact.
+
+**Regression protection:** 18 new Node cases (14 integration + 4 restart) drive
+the real compiled binary; full C++ host + sanitizer suites green; demo
+reproducible.
+
+**Remaining impact:** Live Alexa integration, real filesystem-exhaustion
+behavior, and real V4L2/ALSA/PipeWire capture remain unverified (hardware-/
+deployment-gated). No physical sensor was activated. The Node integration tests
+prove the JS↔C++ boundary over stdio; they do not prove a deployed HTTPS
+endpoint.
 
 ---
 

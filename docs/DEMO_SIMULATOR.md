@@ -148,6 +148,15 @@ activate a sensor.
 **This is NOT a live Alexa integration.** A real end-to-end test requires a
 deployed, authenticated endpoint and is documented as pending.
 
+For a full local end-to-end walkthrough that starts the real C++ bridge and
+drives it with NDJSON requests (authenticated status + alert-summary, a rejected
+request, and a graceful unavailable response), run:
+
+```bash
+cmake --build hg_build --target hg_alexa_bridge
+bash docs/demo_alexa_integration.sh
+```
+
 ---
 
 ## Alert policy (summary)

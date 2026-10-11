@@ -544,6 +544,27 @@ observability without any new capture or retention surface:
 - **No raw audio/video/biometric data is persisted** by the contract or the
   audit layer; the Alert schema has no media/payload field (tested).
 
+## Local process-boundary bridge — privacy notes (added 2026-10-11)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Process-boundary integration tests | VERIFIED (non-capture, local) | 14 `integration.test.js` + 4 `restart.test.js` cases drive the actual compiled `hg_alexa_bridge` |
+| Live Alexa-to-application integration | NOT TESTED | Requires a deployed authenticated endpoint — documented as PENDING; no deployment performed |
+
+- **No network listener:** the bridge is stdin/stdout only; nothing binds a
+  port. It cannot be reached beyond the local process that spawns it.
+- **No shell injection:** the Node client spawns the bridge with an argument
+  ARRAY (no shell interpolation). Requests/responses are size-bounded; the
+  client kills the child on timeout and enforces an output bound.
+- **Test-only credentials:** generated per-run into a temp file, kept out of
+  version control, and removed in cleanup. The credential value is never logged
+  or echoed. A client-supplied identity is never trusted as proof.
+- **Read-only:** the bridge only serves `status` and `alert_summary`; it cannot
+  enable capture, grant consent, change config, or activate a sensor.
+- **Restart safety:** capture authorization and consent are per-process and
+  fail closed; the bridge reports only the real `RuntimeStatus` +
+  `PersistenceAudit` state. No raw media is persisted.
+
 ## Product-readiness audit — privacy notes (added 2026-10-11)
 
 Audited build/dependency setup, config, test fixtures, privacy guarantees, and

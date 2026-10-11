@@ -136,6 +136,47 @@ target_link_libraries(homeguardian PRIVATE
 
 install(TARGETS homeguardian DESTINATION bin)
 
+# Local-only NDJSON stdio bridge that exposes the real AlexaContract to the
+# JavaScript adapter. No network listener; stdin/stdout only. Used by the
+# local end-to-end integration tests and demo (F22-30).
+add_executable(hg_alexa_bridge
+    src/bridge/hg_alexa_bridge.cpp
+    src/core/AlexaContract.cpp
+    src/core/Application.cpp
+    src/core/PersistenceAudit.cpp
+    src/core/AlertPolicy.cpp
+    src/core/RuntimeStatus.cpp
+    src/core/Pipeline.cpp
+    src/core/TimeWindowCorrelation.cpp
+    src/core/EventValidator.cpp
+    src/core/SimulatorRuntime.cpp
+    src/core/ConsentGate.cpp
+    src/core/ConsentGatedAcquisition.cpp
+    src/core/ConsentGuardedDevice.cpp
+    src/core/SimulatedEventSource.cpp
+    src/core/SimulatedSensorSource.cpp
+    src/core/Config.cpp
+    src/core/Logger.cpp
+    src/core/UUID.cpp
+    src/backend/simulator/SimulatedSensorBackend.cpp
+    src/backend/simulator/LogicalDevice.cpp
+    src/backend/simulator/AudioBroker.cpp
+    src/persistence/SQLiteDatabase.cpp
+    src/persistence/EventRepository.cpp
+    src/persistence/AlertRepository.cpp
+    src/persistence/ProfileRepository.cpp
+    src/persistence/ConsentRepository.cpp
+    src/persistence/RoutineRepository.cpp
+    src/persistence/SchemaManager.cpp
+    src/persistence/PersistenceManager.cpp
+)
+target_include_directories(hg_alexa_bridge PRIVATE src third_party/sqlite)
+target_link_libraries(hg_alexa_bridge PRIVATE
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    sqlite3_static
+)
+
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
         tests/core/test_config.cpp
