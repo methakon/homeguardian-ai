@@ -982,9 +982,79 @@ The following were verified to work correctly and are not friction:
 | 22 | Runtime readiness v2 — durable audit + observability | — | PersistenceAudit (alert metadata via existing SQLite, historical-vs-current, retention, fail-safe degraded) + RuntimeStatus (bounded privacy-safe counters); 10 audit/status cases; 200/1753 host + ASan/UBSan; release reproduction |
 | 23 | Runtime readiness v3 — integration contract, storage integrity, privacy | — | AlexaContract (versioned, authenticated, read-only contract; 14 C++ + 12 Node adapter cases, NOT deployed); SQLite integrity/migration/retention/recovery (7 cases); privacy/consent regression (7 cases); P1 rule-specific clearing; P2 scheduled retention; 235/1925 host + ASan/UBSan; release reproduction |
 
-**Total verified incidents:** 24
+**Total verified incidents:** 25
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 21
+**Resolved incidents:** 22
+
+---
+
+## Incident 25: Security Readiness v5 — Deployment Review of the Alexa Boundary (F22-31)
+
+**Date/time:** 2026-10-11 ~23:10 IST
+**Area:** Security / deployment readiness / Alexa boundary
+
+**Expected:** Evidence-based deployment-readiness and security review of the
+read-only Alexa contract + local bridge, building on v4. Determine what a future
+authenticated HTTPS endpoint would require, without deploying it.
+
+**Actual:**
+- Performed a security review (authn/authz, request/process bounds, persistence/
+  privacy, build/supply-chain). Full report: `docs/SECURITY_READINESS_V5.md`.
+- **Fixed LOW-1:** `hg_alexa_bridge` read `config_path` from argv but never
+  loaded it, so `capture_enabled` always reflected the `RuntimeStatus` default
+  (false) even with a capture-on config (verified by running the binary). Fixed
+  to load the real config and reflect the actual kill-switch state; a config
+  load failure fails safe (capture reported disabled, bridge keeps serving).
+  This is a read-only reflection — the bridge still cannot enable capture.
+- Added 6 C++ `[alexa]` security-regression cases (nesting bomb, non-object
+  top-level, trailing data, wrong field types, client-supplied identity claims
+  ignored, credential never in response) and 2 Node integration cases (config
+  capture-state reflection + config-load-failure fail-safe).
+
+**Verified controls (evidence in the report):** fail-closed auth (missing/
+invalid/expired/unknown → unauthorized); authenticated-but-unauthorized →
+forbidden; client-supplied identity claims ignored; read-only ops only (no
+mutation path); request size bound; malformed/oversized/nested/trailing-data
+rejected; no credential leak in output; no network listener; no shell execution
+(argument-array spawn); bounded process lifetime + clean exit; restart does not
+restore consent/capture; historical ≠ current alerts; summaries only (no raw
+media/PII); build hygiene (`-Wall -Wextra -Wpedantic`, C++20, Release); no
+install hooks; no committed secrets/keys/db/binaries.
+
+**Unverified / blockers (B1–B5):** no real authentication mechanism (test
+verifier only); no TLS termination; no rate limiting/concurrency control; no
+secret management/rotation; no health endpoint/supervision. Real disk-full,
+real hardware capture, and live Alexa integration remain unverified.
+
+**Recommendation:** HTTPS endpoint = **CONDITIONAL GO**, blocked pending B1–B5.
+The domain contract is deployment-ready behind an HTTP adapter; transport/auth/
+operational controls do not exist yet. The local stdio bridge must NOT be
+network-exposed.
+
+**Test results (this cycle):**
+- C++ full host suite (hg_build): **241 cases / 1960 assertions pass; ctest
+  100%.**
+- ASan+UBSan (hg_asan, stale objects removed + clean recompile, sizes verified):
+  241 cases, zero sanitizer errors. (Note: a transient parallel-build error
+  occurred after removing an object mid-build; a clean rebuild succeeded.)
+- Node full (`npm test`): **45/45** (13 handler + 12 contract + 16 integration +
+  4 restart).
+- Fresh release build (existing dep cache): app + tests + bridge clean; suite
+  241/1960; `[alexa]` group present in the fresh binary.
+- Secret/artifact scan: clean.
+
+**Resolution:** Security readiness v5 landed (F22-31). Simulator-only; no
+physical sensor, no cloud, no endpoint deployed, no credentials created. Temp
+release-verify dir removed; existing build dirs intact.
+
+**Regression protection:** 8 new cases (6 C++ `[alexa]` + 2 Node integration)
+plus the LOW-1 fix; full host + sanitizer suites green; fresh release build
+green.
+
+**Remaining impact:** The local stdio bridge is safe for its single-client,
+process-spawned purpose but is not a deployable network service. B1–B5 must be
+implemented and tested before any HTTPS exposure. No physical sensor was
+activated.
 
 ---
 

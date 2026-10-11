@@ -79,6 +79,11 @@ The integration/restart tests require the bridge to be built first:
 `cmake --build hg_build --target hg_alexa_bridge`. A reproducible walkthrough is
 in `docs/demo_alexa_integration.sh`.
 
+A deployment-readiness and security review of the Alexa boundary is in
+`docs/SECURITY_READINESS_V5.md` (threat model, verified controls, proposed HTTPS
+deployment boundary, and a CONDITIONAL GO recommendation). The local stdio
+bridge is NOT a deployed HTTPS service.
+
 A reproducible simulator demonstration of the running app is in
 `docs/DEMO_SIMULATOR.md`.
 

@@ -25,6 +25,7 @@
 #include "core/Alert.h"
 #include "core/AppState.h"
 #include "core/Application.h"
+#include "core/Config.h"
 #include "core/PersistenceAudit.h"
 #include "core/RuntimeStatus.h"
 
@@ -129,18 +130,18 @@ private:
 // (degraded) — matching the contract's fail-closed availability rule.
 class AppStatusProvider : public IAlexaStatusProvider {
 public:
-    AppStatusProvider(Application& app, PersistenceAudit* audit)
-        : app_(app), audit_(audit) {}
+    AppStatusProvider(Application& app, PersistenceAudit* audit, bool capture_enabled)
+        : app_(app), audit_(audit), capture_enabled_(capture_enabled) {}
 
     AlexaStatusSnapshot snapshot() const override {
         AlexaStatusSnapshot s;
-        RuntimeStatus& st = app_.get_status();
         // The bridge is a live local view of the real application. It does not
         // drive Application::run() (which blocks), so availability is based on
         // the REAL persistence health + the bridge being live, not on the
-        // app's unstarted main-loop state. Capture reflects the real config.
+        // app's unstarted main-loop state. Capture reflects the REAL config
+        // kill switch loaded at startup (fail-safe: false if config failed).
         s.state = "Running";
-        s.capture_enabled = st.capture_enabled.load();
+        s.capture_enabled = capture_enabled_;
         bool persistence_ok = (audit_ != nullptr) && audit_->healthy();
         s.available = persistence_ok;
         if (audit_) {
@@ -168,6 +169,7 @@ public:
 private:
     Application& app_;
     PersistenceAudit* audit_;
+    bool capture_enabled_;
 };
 
 json response_to_json(const AlexaResponse& r) {
@@ -195,6 +197,19 @@ int main(int argc, char* argv[]) {
     const std::string config_path = argv[1];
     const std::string creds_path = argv[2];
 
+    // Load the real configuration so the status view reflects the ACTUAL
+    // capture kill-switch state (not just the RuntimeStatus default). A config
+    // load failure is non-fatal for a read-only bridge: capture stays reported
+    // as disabled (fail-safe) and the bridge keeps serving.
+    bool capture_enabled = false;
+    try {
+        Config cfg;
+        cfg.load(config_path);
+        capture_enabled = cfg.media_capture_enabled;
+    } catch (const std::exception&) {
+        capture_enabled = false;  // fail-safe: never imply capture is on
+    }
+
     // Start the real application lifecycle (simulator mode). Capture stays
     // disabled unless the config enables it; this bridge only READS state.
     // Application::run() blocks in the main loop, which we do not want here, so
@@ -215,7 +230,7 @@ int main(int argc, char* argv[]) {
     }
 
     FileCredentialVerifier verifier = FileCredentialVerifier::load(creds_path);
-    AppStatusProvider provider(app, audit);
+    AppStatusProvider provider(app, audit, capture_enabled);
 
     std::ios::sync_with_stdio(false);
     std::string line;

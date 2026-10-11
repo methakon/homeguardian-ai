@@ -263,3 +263,51 @@ test('clean exit on shutdown control line and EOF', async () => {
     assert.equal(code, 0);
   } finally { teardown(); }
 });
+
+test('status reflects the real config capture kill-switch (read-only)', async () => {
+  setup();
+  try {
+    // Write a capture-ENABLED config copy; the bridge must REPORT it truthfully
+    // but still only serve reads (it cannot enable capture itself).
+    const cfg = JSON.parse(fs.readFileSync(CONFIG, 'utf8'));
+    cfg.media_capture_enabled = true;
+    const onConfig = path.join(tmpDir, 'on.json');
+    fs.writeFileSync(onConfig, JSON.stringify(cfg));
+
+    const res = await new Promise((resolve, reject) => {
+      const child = spawn(BRIDGE, [onConfig, credsPath], { cwd: auditDir, stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      let settled = false;
+      const timer = setTimeout(() => { if (!settled) { settled = true; child.kill('SIGKILL'); reject(new Error('timeout')); } }, 15000);
+      child.stdout.on('data', (d) => { out += d.toString(); });
+      child.on('close', () => { if (settled) return; settled = true; clearTimeout(timer); resolve(JSON.parse(out.trim().split('\n')[0])); });
+      child.stdin.write(body('status', 'tok-full') + '\n');
+      child.stdin.write('shutdown\n');
+      child.stdin.end();
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.capture_enabled, true);  // reflects real config, read-only
+  } finally { teardown(); }
+});
+
+test('config load failure fails safe (capture reported disabled, still serves)', async () => {
+  setup();
+  try {
+    // Point the bridge at a missing config file. It must NOT crash and must
+    // fail safe: capture reported disabled, status still served.
+    const missing = path.join(tmpDir, 'no-such-config.json');
+    const child = spawn(BRIDGE, [missing, credsPath], { cwd: auditDir, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timeout')); }, 15000);
+      child.stdout.on('data', (d) => { out += d.toString(); });
+      child.on('close', () => { clearTimeout(timer); resolve(); });
+      child.stdin.write(body('status', 'tok-full') + '\n');
+      child.stdin.write('shutdown\n');
+      child.stdin.end();
+    });
+    const res = JSON.parse(out.trim().split('\n')[0]);
+    assert.equal(res.ok, true);
+    assert.equal(res.capture_enabled, false);  // fail-safe
+  } finally { teardown(); }
+});

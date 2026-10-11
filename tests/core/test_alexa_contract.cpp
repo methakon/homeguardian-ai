@@ -76,6 +76,14 @@ std::string valid_body(const std::string& op, const std::string& token) {
            "\",\"credential\":\"" + token + "\"}";
 }
 
+// A request body that additionally asserts client-supplied identity/permission
+// fields. These are UNKNOWN fields and must be rejected as malformed.
+std::string spoofed_body(const std::string& op, const std::string& token) {
+    return std::string("{\"version\":1,\"operation\":\"") + op +
+           "\",\"credential\":\"" + token +
+           "\",\"principal\":\"admin\",\"allow_status\":true,\"is_admin\":true}";
+}
+
 // Extract the error from a parse result (assumes parse failed).
 AlexaError parse_error(const std::string& body) {
     auto r = AlexaContract::parse(body);
@@ -299,4 +307,88 @@ TEST_CASE("Alexa: contract exposes no mutating operation",
     REQUIRE(parse_error(valid_body("grant_consent", "tok-full")) == AlexaError::malformed);
     REQUIRE(parse_error(valid_body("set_config", "tok-full")) == AlexaError::malformed);
     REQUIRE(parse_error(valid_body("activate_sensor", "tok-full")) == AlexaError::malformed);
+}
+
+// --- F22-31 security-review regression cases ---
+
+TEST_CASE("Alexa: deeply nested JSON within the size bound is rejected",
+          "[alexa][safety]") {
+    // A nesting bomb under the 4KB request bound must not crash or hang; the
+    // contract rejects it as malformed.
+    Logger::initialize("error");
+    std::string nested = "{\"version\":1,\"operation\":\"status\",\"credential\":\"t\",\"x\":";
+    nested += std::string(1500, '[');
+    nested += std::string(1500, ']');
+    nested += "}";
+    REQUIRE(nested.size() <= ALEXA_MAX_REQUEST_BYTES);
+    REQUIRE(parse_error(nested) == AlexaError::malformed);
+}
+
+TEST_CASE("Alexa: non-object JSON top level is rejected",
+          "[alexa][safety]") {
+    Logger::initialize("error");
+    REQUIRE(parse_error("[1,2,3]") == AlexaError::malformed);
+    REQUIRE(parse_error("\"a string\"") == AlexaError::malformed);
+    REQUIRE(parse_error("42") == AlexaError::malformed);
+    REQUIRE(parse_error("null") == AlexaError::malformed);
+}
+
+TEST_CASE("Alexa: trailing data after a JSON object is rejected",
+          "[alexa][safety]") {
+    Logger::initialize("error");
+    REQUIRE(parse_error(valid_body("status", "t") + " garbage") == AlexaError::malformed);
+    REQUIRE(parse_error(valid_body("status", "t") + valid_body("status", "t")) ==
+            AlexaError::malformed);
+}
+
+TEST_CASE("Alexa: wrong field types are rejected (malformed)",
+          "[alexa][safety]") {
+    Logger::initialize("error");
+    // operation not a string.
+    REQUIRE(parse_error("{\"version\":1,\"operation\":123,\"credential\":\"t\"}") ==
+            AlexaError::malformed);
+    // credential not a string.
+    REQUIRE(parse_error("{\"version\":1,\"operation\":\"status\",\"credential\":123}") ==
+            AlexaError::malformed);
+    // credential empty.
+    REQUIRE(parse_error("{\"version\":1,\"operation\":\"status\",\"credential\":\"\"}") ==
+            AlexaError::malformed);
+    // request_id wrong type.
+    REQUIRE(parse_error("{\"version\":1,\"operation\":\"status\",\"credential\":\"t\","
+                        "\"request_id\":5}") == AlexaError::malformed);
+}
+
+TEST_CASE("Alexa: client-supplied identity/authorization claims are ignored",
+          "[alexa][safety]") {
+    // A request that tries to assert its own principal or permissions must be
+    // rejected as malformed (unknown fields) — authorization comes only from
+    // the verifier, never from the request body.
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    // Unknown identity/permission fields => malformed, before any auth.
+    REQUIRE(parse_error(spoofed_body("status", "tok-noperm")) == AlexaError::malformed);
+    // Even a well-formed request from a no-permission principal is forbidden.
+    auto r = AlexaContract::handle(parse_ok(valid_body("status", "tok-noperm")), v, p, now);
+    REQUIRE_FALSE(r.ok);
+    REQUIRE(r.error == AlexaError::forbidden);
+}
+
+TEST_CASE("Alexa: credential value never appears in the response",
+          "[alexa][safety]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    // Serialize a response and confirm the credential token is absent.
+    auto r = AlexaContract::handle(parse_ok(valid_body("status", "tok-full")), v, p, now);
+    REQUIRE(r.ok);
+    // The response struct has no field carrying the credential; assert the
+    // error message and state strings don't contain the token.
+    std::string msg = AlexaContract::error_message(r.error);
+    REQUIRE(msg.find("tok-full") == std::string::npos);
+    REQUIRE(r.state.find("tok-full") == std::string::npos);
 }

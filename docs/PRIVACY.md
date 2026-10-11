@@ -564,6 +564,12 @@ observability without any new capture or retention surface:
 - **Restart safety:** capture authorization and consent are per-process and
   fail closed; the bridge reports only the real `RuntimeStatus` +
   `PersistenceAudit` state. No raw media is persisted.
+- **Capture-state reflection (added 2026-10-11):** the bridge loads the real
+  config and reports the actual `media_capture_enabled` kill-switch state
+  (read-only). A config load failure fails safe — capture is reported disabled.
+  Reporting capture state is not enabling capture; the bridge has no mutation
+  path. Verified by `integration.test.js` (capture-on config → `capture_enabled:
+  true`; missing config → `false`, still serving).
 
 ## Product-readiness audit — privacy notes (added 2026-10-11)
 

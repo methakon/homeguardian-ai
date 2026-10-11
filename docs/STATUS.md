@@ -76,6 +76,8 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 235 test cases, 1925 assertions, all passing | 2026-10-11 |
 | Runtime readiness v4 | `hg_alexa_bridge` (local NDJSON stdio bridge over the real AlexaContract) + Node process-boundary integration tests (14) and restart tests (4) driving the actual compiled C++ binary; reproducible demo `docs/demo_alexa_integration.sh`; no network/deploy | 2026-10-11 |
 | Test suite | 235 test cases, 1928 assertions, all passing; Node 43/43 (13 handler + 12 contract + 14 integration + 4 restart) | 2026-10-11 |
+| Security readiness v5 | Deployment-readiness & security review of the Alexa boundary; fixed LOW-1 (bridge now reflects real config capture state, fail-safe); +6 C++ `[alexa]` security-regression cases +2 Node integration cases; report `docs/SECURITY_READINESS_V5.md`; HTTPS endpoint = CONDITIONAL GO (blocked on real authn/TLS/rate-limit/secrets) | 2026-10-11 |
+| Test suite | 241 test cases, 1960 assertions, all passing; Node 45/45 (13 handler + 12 contract + 16 integration + 4 restart) | 2026-10-11 |
 
 ## Test Results
 
@@ -90,8 +92,9 @@ On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
 Application run (simulator mode): capture-off → no media/no alerts + final_state=Stopped; capture-on → authorized observations through Pipeline, 1 alert delivered + persisted + 8 dedup-suppressed, pipeline_history=10, bounded speaker, final_state=Stopped
 Restart: same audit DB, 2nd process reports historical_alerts=1 (distinguishable from current-process alerts)
 Alexa contract: 14 C++ contract tests + 12 Node adapter tests pass (mock clients, no deploy); LIVE integration NOT tested (needs deployed authenticated endpoint) — documented as pending
-Local process-boundary integration: hg_alexa_bridge (NDJSON stdio over the REAL AlexaContract) driven by Node — 14 integration + 4 restart cases against the actual compiled binary; reproducible demo docs/demo_alexa_integration.sh; no network listener, no deploy
-Release reproduction: fresh out-of-source build (existing dep cache) → 235/1928 + bridge, new tests included
+Local process-boundary integration: hg_alexa_bridge (NDJSON stdio over the REAL AlexaContract) driven by Node — 16 integration + 4 restart cases against the actual compiled binary; reproducible demo docs/demo_alexa_integration.sh; no network listener, no deploy
+Security review v5: docs/SECURITY_READINESS_V5.md — fail-closed auth, read-only ops, no credential leak, no network listener, no shell exec, bounded lifetime all VERIFIED; HTTPS endpoint CONDITIONAL GO (blocked on real authn/TLS/rate-limit/secrets)
+Release reproduction: fresh out-of-source build (existing dep cache) → 241/1960 + bridge, new tests included
 ```
 
 ## Verification Status (separated by layer)
