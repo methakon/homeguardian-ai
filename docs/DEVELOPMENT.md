@@ -63,9 +63,15 @@ Current test coverage:
 - RuntimeStatus: bounded privacy-safe counters (state, capture, media auth/denied, events processed/rejected/failed, alerts gen/delivered/suppressed, queue depth/overflow, persistence health); reset per process
 
 Run a focused group with a tag filter, e.g. `./homeguardian_tests "[audit]"`,
-`"[status]"`, `"[alertpolicy]"`, `"[lifecycle]"`, `"[hardening]"`,
+`"[status]"`, `"[alertpolicy]"`, `"[clearing]"`, `"[retention]"`, `"[alexa]"`,
+`"[integrity]"`, `"[privacy]"`, `"[lifecycle]"`, `"[hardening]"`,
 `"[event2alert]"`, `"[runtime]"`, `"[sim]"`, `"[dual]"`, or `"[e2e]"`. Full
 suite: `ctest --output-on-failure`.
+
+The Alexa skill tests run with Node's built-in runner:
+`cd alexa_skill && npm test` (runs `test/handler.test.js` for the skill handlers
+and `test/contract.test.js` for the integration-contract adapter boundary; both
+use mock clients, no deployment).
 
 A reproducible simulator demonstration of the running app is in
 `docs/DEMO_SIMULATOR.md`.

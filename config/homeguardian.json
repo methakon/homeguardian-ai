@@ -10,5 +10,6 @@
     "cloud_processing_enabled": false,
     "consent_policy_version": "1.0.0",
     "routine_retention_days": 730,
-    "profile_retention_days": 1825
+    "profile_retention_days": 1825,
+    "alert_retention_days": 30
 }

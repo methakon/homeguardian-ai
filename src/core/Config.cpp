@@ -30,6 +30,7 @@ void Config::load(const std::string& filepath) {
     if (j.contains("consent_policy_version")) consent_policy_version = j["consent_policy_version"].get<std::string>();
     if (j.contains("routine_retention_days")) routine_retention_days = j["routine_retention_days"].get<int>();
     if (j.contains("profile_retention_days")) profile_retention_days = j["profile_retention_days"].get<int>();
+    if (j.contains("alert_retention_days")) alert_retention_days = j["alert_retention_days"].get<int>();
 
     validate();
 }
@@ -52,6 +53,7 @@ void Config::save(const std::string& filepath) const {
     j["consent_policy_version"] = consent_policy_version;
     j["routine_retention_days"] = routine_retention_days;
     j["profile_retention_days"] = profile_retention_days;
+    j["alert_retention_days"] = alert_retention_days;
 
     std::ofstream file(filepath);
     if (!file.is_open()) {
@@ -89,6 +91,9 @@ void Config::validate() const {
     }
     if (profile_retention_days < 0 || profile_retention_days > 36500) {
         throw std::invalid_argument("profile_retention_days must be between 0 and 36500");
+    }
+    if (alert_retention_days < 0 || alert_retention_days > 36500) {
+        throw std::invalid_argument("alert_retention_days must be between 0 and 36500");
     }
 }
 

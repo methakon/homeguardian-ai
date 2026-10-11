@@ -67,6 +67,49 @@ size_t PersistenceAudit::prune_older_than(std::chrono::system_clock::time_point 
     }
 }
 
+size_t PersistenceAudit::prune_older_than_age(std::chrono::system_clock::duration max_age,
+                                               std::chrono::system_clock::time_point now) {
+    // max_age <= 0 means "keep forever": no pruning.
+    if (max_age <= std::chrono::system_clock::duration::zero()) {
+        return 0;
+    }
+    auto cutoff = now - max_age;
+    return prune_older_than(cutoff);
+}
+
+size_t PersistenceAudit::maybe_prune_retention(std::chrono::system_clock::duration max_age,
+                                               std::chrono::system_clock::duration interval,
+                                               std::chrono::system_clock::time_point now) {
+    // Bounded periodic retention: prune at most once per `interval`, never on
+    // every call. Returns the number deleted (0 when not due, disabled, or on
+    // failure). The last-prune timestamp is recorded so the scheduler does not
+    // re-prune on every main-loop tick.
+    if (max_age <= std::chrono::system_clock::duration::zero()) {
+        return 0;  // retention disabled (keep forever)
+    }
+    std::lock_guard<std::mutex> lk(m_);
+    if (closed_) {
+        // Cannot prune after close: treat as a failure (degraded), not a silent
+        // success, and do not throw.
+        healthy_.store(false);
+        return 0;
+    }
+    if (last_retention_prune_.has_value()) {
+        auto since = now - *last_retention_prune_;
+        if (since >= std::chrono::system_clock::duration::zero() && since < interval) {
+            return 0;  // not due yet
+        }
+    }
+    last_retention_prune_ = now;
+    auto cutoff = now - max_age;
+    try {
+        return alert_repo_->delete_older_than(cutoff);
+    } catch (const std::exception&) {
+        healthy_.store(false);
+        return 0;
+    }
+}
+
 void PersistenceAudit::close() {
     std::lock_guard<std::mutex> lk(m_);
     if (closed_) return;

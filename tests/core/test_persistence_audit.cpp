@@ -177,6 +177,107 @@ TEST_CASE("Audit: schema migration creates the expected tables",
     cleanup_db(db);
 }
 
+// ---------------------------------------------------------------------------
+// Retention scheduling (P2): age-based prune + bounded periodic scheduler.
+// ---------------------------------------------------------------------------
+
+// Write an alert whose detected_at is `age` in the past, by inserting directly
+// through the repository with a back-dated timestamp.
+void write_alert_aged(PersistenceAudit& audit, const std::string& id,
+                      std::chrono::system_clock::duration age) {
+    Alert a = make_alert(id);
+    auto ts = std::chrono::system_clock::now() - age;
+    Alert backdated(a.alert_id, a.severity, a.message, a.contributing_event_ids,
+                    ts, a.confidence, a.rule_name, a.details);
+    REQUIRE(audit.record_alert(backdated));
+}
+
+TEST_CASE("Audit: prune_older_than_age removes only alerts past the age window",
+          "[audit][retention]") {
+    Logger::initialize("error");
+    std::string db = temp_db("age");
+    {
+        PersistenceAudit audit(db);
+        // One alert 10 days old, one alert 1 hour old. Retention window = 7 days.
+        write_alert_aged(audit, "old", std::chrono::hours(24) * 10);
+        write_alert_aged(audit, "new", std::chrono::hours(1));
+        REQUIRE(audit.total_alert_count() == 2);
+
+        size_t removed = audit.prune_older_than_age(std::chrono::hours(24) * 7);
+        REQUIRE(removed == 1);            // only the 10-day-old one
+        REQUIRE(audit.total_alert_count() == 1);
+        REQUIRE(audit.alerts().find_by_id("new").has_value());  // newer preserved
+        REQUIRE_FALSE(audit.alerts().find_by_id("old").has_value());
+    }
+    cleanup_db(db);
+}
+
+TEST_CASE("Audit: retention disabled (max_age<=0) keeps records forever",
+          "[audit][retention]") {
+    Logger::initialize("error");
+    std::string db = temp_db("keep");
+    {
+        PersistenceAudit audit(db);
+        write_alert_aged(audit, "very-old", std::chrono::hours(24) * 36500);
+        REQUIRE(audit.total_alert_count() == 1);
+        // max_age == 0 -> keep forever: no pruning.
+        REQUIRE(audit.prune_older_than_age(std::chrono::system_clock::duration::zero()) == 0);
+        REQUIRE(audit.total_alert_count() == 1);
+    }
+    cleanup_db(db);
+}
+
+TEST_CASE("Audit: periodic retention prunes at most once per interval",
+          "[audit][retention]") {
+    Logger::initialize("error");
+    std::string db = temp_db("interval");
+    {
+        PersistenceAudit audit(db);
+        auto now = std::chrono::system_clock::now();
+        auto day = std::chrono::hours(24);
+        auto max_age = day * 7;
+        auto interval = std::chrono::minutes(10);
+
+        // First call: not yet pruned -> prunes (old alert removed).
+        write_alert_aged(audit, "old", day * 10);
+        size_t r1 = audit.maybe_prune_retention(max_age, interval, now);
+        REQUIRE(r1 == 1);
+        REQUIRE(audit.total_alert_count() == 0);
+
+        // Add another old alert, call again within the interval -> NOT pruned
+        // (scheduler is bounded: no prune on every call).
+        write_alert_aged(audit, "old2", day * 10);
+        auto soon = now + std::chrono::minutes(5);  // within 10-min interval
+        size_t r2 = audit.maybe_prune_retention(max_age, interval, soon);
+        REQUIRE(r2 == 0);
+        REQUIRE(audit.total_alert_count() == 1);    // still present, not yet due
+
+        // Call after the interval elapses -> prunes.
+        auto later = now + std::chrono::minutes(11);
+        size_t r3 = audit.maybe_prune_retention(max_age, interval, later);
+        REQUIRE(r3 == 1);
+        REQUIRE(audit.total_alert_count() == 0);
+    }
+    cleanup_db(db);
+}
+
+TEST_CASE("Audit: periodic retention failure degrades status without corruption",
+          "[audit][retention][failure]") {
+    Logger::initialize("error");
+    std::string db = temp_db("retfail");
+    {
+        PersistenceAudit audit(db);
+        REQUIRE(audit.record_alert(make_alert("a-1")));
+        audit.close();  // force subsequent writes/deletes to fail
+        // Pruning after close fails safely: returns 0, marks degraded, no throw.
+        size_t r = audit.maybe_prune_retention(std::chrono::hours(24), std::chrono::minutes(1),
+                                                std::chrono::system_clock::now());
+        REQUIRE(r == 0);
+        REQUIRE_FALSE(audit.healthy());
+    }
+    cleanup_db(db);
+}
+
 // ===========================================================================
 // RuntimeStatus
 // ===========================================================================

@@ -80,6 +80,20 @@ int Application::run(const std::string& config_path) {
         status_.persistence_healthy.store(true);
         Logger::get()->info("Persistence ready. historical_alerts={}",
                             persistence_->historical_alert_count());
+
+        // --- Startup retention: prune alerts older than the configured window
+        // once, before serving. alert_retention_days == 0 keeps records
+        // forever (retention disabled). This bounds the audit DB on every
+        // start; the main loop then re-prunes at most once per interval.
+        if (config_.alert_retention_days > 0) {
+            size_t pruned = persistence_->prune_older_than_age(
+                std::chrono::hours(24) * config_.alert_retention_days);
+            if (pruned > 0) {
+                Logger::get()->info("Startup retention pruned {} old alert(s) "
+                                    "(retention_days={})",
+                                    pruned, config_.alert_retention_days);
+            }
+        }
     } catch (const std::exception& e) {
         persistence_.reset();
         status_.persistence_healthy.store(false);
@@ -161,8 +175,19 @@ int Application::run(const std::string& config_path) {
     status_.app_state = AppState::Running;
     Logger::get()->info("Entering main loop... status: {}", status_.summary());
 
+    // Bounded periodic retention: re-prune at most once per this interval, not
+    // on every 100ms tick (avoids excessive DB writes). alert_retention_days ==
+    // 0 disables periodic pruning (keep forever).
+    constexpr auto kRetentionInterval = std::chrono::minutes(10);
     while (!shutdown_flag_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (persistence_ && config_.alert_retention_days > 0) {
+            size_t pruned = persistence_->maybe_prune_retention(
+                std::chrono::hours(24) * config_.alert_retention_days, kRetentionInterval);
+            if (pruned > 0) {
+                Logger::get()->info("Periodic retention pruned {} old alert(s)", pruned);
+            }
+        }
     }
 
     // --- Deterministic shutdown (idempotent) ---
@@ -228,8 +253,16 @@ void Application::process_event(const Event& event) {
         }
     } else {
         // No alert this cycle: the rule's condition may have cleared. Re-arm
-        // each tracked rule so its next alert is treated as a fresh condition.
-        alert_policy_->mark_condition_cleared("sim-presence");
+        // EVERY registered rule so each rule's next alert is treated as a
+        // fresh condition. We clear per registered rule name (derived from the
+        // pipeline) rather than a hardcoded name, so adding rules needs no
+        // change here. mark_condition_cleared only affects that rule's own
+        // cooldown state; unrelated active conditions on other rules are
+        // re-armed the same way and each is independently re-delivered on its
+        // next firing.
+        for (const auto& rule_name : pipeline_->rule_names()) {
+            alert_policy_->mark_condition_cleared(rule_name);
+        }
     }
 }
 

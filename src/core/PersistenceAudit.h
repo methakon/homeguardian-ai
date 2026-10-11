@@ -77,6 +77,24 @@ public:
     // number deleted. On failure returns 0 and marks degraded.
     size_t prune_older_than(std::chrono::system_clock::time_point cutoff);
 
+    // Retention by age window: prune alerts older than `max_age` relative to
+    // `now`. Convenience wrapper over prune_older_than used by the scheduled
+    // retention lifecycle. `max_age <= 0` means keep forever (no pruning).
+    // Returns the number deleted; on failure returns 0 and marks degraded.
+    size_t prune_older_than_age(std::chrono::system_clock::duration max_age,
+                                std::chrono::system_clock::time_point now =
+                                    std::chrono::system_clock::now());
+
+    // Bounded periodic retention: prune alerts older than `max_age` at most
+    // once per `interval` (relative to `now`). Returns the number deleted; 0
+    // when retention is disabled (max_age <= 0), not yet due, or on failure.
+    // This is the production scheduling entry point — it never prunes on every
+    // main-loop tick.
+    size_t maybe_prune_retention(std::chrono::system_clock::duration max_age,
+                                 std::chrono::system_clock::duration interval,
+                                 std::chrono::system_clock::time_point now =
+                                     std::chrono::system_clock::now());
+
     // Health / counters.
     bool healthy() const { return healthy_.load(); }
     uint64_t write_failures() const { return write_failures_.load(); }
@@ -94,6 +112,9 @@ private:
 
     std::chrono::system_clock::time_point process_start_;
     size_t historical_count_ = 0;
+
+    // Timestamp of the last retention prune (bounded periodic scheduling).
+    std::optional<std::chrono::system_clock::time_point> last_retention_prune_;
 
     std::atomic<bool> healthy_{true};
     std::atomic<uint64_t> write_failures_{0};

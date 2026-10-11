@@ -62,4 +62,13 @@ std::optional<Alert> Pipeline::process(const Event& event) {
     return std::nullopt;
 }
 
+std::vector<std::string> Pipeline::rule_names() const {
+    std::vector<std::string> names;
+    names.reserve(rules_.size());
+    for (const auto& rule : rules_) {
+        if (rule) names.push_back(rule->name());
+    }
+    return names;
+}
+
 } // namespace homeguardian

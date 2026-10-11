@@ -518,6 +518,32 @@ observability without any new capture or retention surface:
   is synthetic; the alert is a synthetic presence notice, not a danger
   detection. No physical sensor was activated.
 
+## Integration contract + consent verification (added 2026-10-11)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Alexa contract + auth-boundary tests | VERIFIED (non-capture, local) | 14 C++ `[alexa]` + 12 Node adapter cases; fail-closed auth; read-only ops only |
+| SQLite integrity/migration/retention tests | VERIFIED (non-capture) | 7 `[integrity]` cases (v1→v2 preserves alerts/ids/indexes; rollback; idempotent; reopen; corrupt-file preserved) |
+| Privacy/consent regression tests | VERIFIED (non-capture) | 7 `[privacy]` cases (capture-off, withdrawal, unauthorized-observation-blocked, restart-no-restore, metadata-only, counter semantics, retention) |
+| Live Alexa-to-application integration | NOT TESTED | Requires a deployed authenticated endpoint — documented as PENDING; no deployment performed |
+
+- **Contract cannot mutate:** the only operations are `status` and
+  `alert_summary` (reads). No operation enables capture, grants consent, changes
+  configuration, or activates a sensor (tested: `enable_capture`/`grant_consent`/
+  `set_config`/`activate_sensor` are rejected as malformed).
+- **Authorization is fail-closed:** missing/invalid/expired credentials →
+  `unauthorized`; authenticated-but-not-permitted → `forbidden`; degraded app →
+  `unavailable`. A client-supplied identity is never trusted as proof.
+- **No sensitive data in responses:** only state, capture flag, aggregate alert
+  count/highest severity, and capped alert ids. No media payloads, secrets,
+  personal identifiers, filesystem paths, or internal diagnostics. Error
+  messages are generic.
+- **Consent is per-process and fails closed on restart:** capture authorization
+  and consent live only in the running process; a restart starts capture-disabled
+  with no consent (tested).
+- **No raw audio/video/biometric data is persisted** by the contract or the
+  audit layer; the Alert schema has no media/payload field (tested).
+
 ## Product-readiness audit — privacy notes (added 2026-10-11)
 
 Audited build/dependency setup, config, test fixtures, privacy guarantees, and

@@ -120,6 +120,34 @@ timeout 4 ./build/homeguardian /tmp/hg_on.json   # -> historical_alerts=1
 To start fresh, remove the audit DB (`rm -f homeguardian_audit.db*`). No raw
 media is persisted; only alert metadata.
 
+**Retention:** with the default `alert_retention_days=30`, the app prunes alerts
+older than 30 days once at startup and at most once per 10 minutes while
+running (bounded — never per tick). Set `alert_retention_days: 0` to keep
+forever. Pruning removes only expired rows; newer records are preserved.
+
+## 8. Alexa integration contract (local, not deployed)
+
+The application exposes a versioned, authenticated, READ-ONLY contract for a
+future Alexa adapter (`src/core/AlexaContract.*`). It is exercised entirely
+locally with mock clients — no endpoint, no AWS, no credentials:
+
+```bash
+# C++ contract tests (fail-closed auth, read-only ops, no mutation)
+./homeguardian_tests "[alexa]"
+
+# Node adapter boundary tests (mirror the same semantics)
+cd alexa_skill && npm test
+```
+
+The contract accepts only `status` and `alert_summary` reads. Missing/invalid/
+expired credentials fail closed (`unauthorized`); an authenticated principal
+without permission for the operation gets `forbidden`; a degraded app returns
+`unavailable`. It cannot enable capture, grant consent, change config, or
+activate a sensor.
+
+**This is NOT a live Alexa integration.** A real end-to-end test requires a
+deployed, authenticated endpoint and is documented as pending.
+
 ---
 
 ## Alert policy (summary)

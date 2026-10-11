@@ -749,3 +749,79 @@ sample. Observability output cannot grant consent or enable capture.
 Both are wired into `Application`: persistence opens at startup (degraded on
 failure), delivered alerts are persisted, and the status summary is logged when
 entering the main loop and at clean shutdown.
+
+## Alexa integration contract (added 2026-10-11)
+
+`AlexaContract` (`src/core/AlexaContract.{h,cpp}`) defines the application-facing
+contract for a future Alexa adapter. It is pure domain logic — no network, no
+AWS, no deployed endpoint, no credentials.
+
+- **Versioned, read-only schema:** contract version 1; operations `status` and
+  `alert_summary` only. There is deliberately NO operation that enables capture,
+  grants consent, changes config, or activates a sensor.
+- **Authentication boundary:** authorization requires a verifiable credential
+  checked by an injected `IAlexaCredentialVerifier`. A client-supplied identity
+  is NEVER trusted as proof. Missing/invalid/expired credentials fail closed
+  with `unauthorized`; an authenticated principal not permitted for the specific
+  operation gets `forbidden`. The contract never carries real credentials — the
+  production verifier would validate a signed request/account-linking token.
+- **Validation:** request bodies are bounded (≤4KB), must be a JSON object with
+  only known fields; unknown fields, unknown operations, malformed JSON, and
+  unsupported versions are rejected (never silently coerced).
+- **Responses:** only approved, non-sensitive summary fields (state, capture
+  flag, aggregate alert count/highest severity, capped alert ids). No media
+  payloads, secrets, personal identifiers, filesystem paths, or internal
+  diagnostics. Errors are generic (`error_message`).
+- **Availability:** a degraded/unavailable application fails closed
+  (`unavailable`) rather than returning stale/partial state.
+- **Tested locally** with mock clients and deterministic fixtures: 14 C++
+  contract cases (`tests/core/test_alexa_contract.cpp`) + 12 Node adapter cases
+  (`alexa_skill/test/contract.test.js`) mirroring the same semantics.
+- **NOT deployed:** a live Alexa-to-application integration requires a deployed,
+  authenticated endpoint and is documented as pending. No claim of live
+  integration is made.
+
+## SQLite integrity and migration (verified 2026-10-11)
+
+Reuses the existing `SQLiteDatabase` + `SchemaManager` + repositories. Verified
+via `tests/persistence/test_integrity.cpp` (temporary databases only):
+
+- **Migration v1→v2** is additive: alert metadata and identifiers, events,
+  indexes (`idx_alerts_severity`, `idx_alerts_detected_at`), and the primary-key
+  constraint are preserved. `user_version` advances 1→2.
+- **Repeat migration is idempotent** (3× re-open preserves data).
+- **Interrupted/failed migration rolls back** within a transaction: partial v2
+  tables are undone and `user_version` stays 1; a later real migration succeeds.
+- **Retention** (`delete_older_than`) removes only expired alerts; newer and
+  unrelated-table records are preserved.
+- **Reopen after clean shutdown** returns persisted data.
+- **Write after close fails loudly** (throws) — never reports silent success.
+- **Corrupt/unsupported DB file** causes open/initialize to throw and the file
+  is preserved (never silently deleted or reset).
+
+## Privacy and consent guarantees (verified 2026-10-11)
+
+`tests/core/test_privacy_consent.cpp` proves, on the components the running
+Application uses: capture-disabled startup delivers no media despite grants;
+withdrawn consent blocks only the affected consumer; unauthorized observations
+never reach the event sink/pipeline; a restart (fresh runtime) does not restore
+capture authorization (capture + consent are per-process, fail-closed);
+persisted alerts contain only documented metadata fields (no audio/video/
+payload/biometric keys); per-process status counters start at zero while audit
+history persists separately and is reported as `historical`; retention removes
+only expired alerts and preserves newer records.
+
+## Rule-specific condition clearing + scheduled retention (added 2026-10-11)
+
+- **P1:** `Application::process_event` re-arms AlertPolicy per REGISTERED rule
+  name via `Pipeline::rule_names()` (derived from `ICorrelationRule::name()`),
+  never a hardcoded literal — so adding rules needs no change. Covered by
+  `[clearing]` tests (multi-rule independence, idempotent repeat, unknown-rule
+  no-op).
+- **P2:** configurable `alert_retention_days` (validated 0–36500; 0 = keep
+  forever). `Application` prunes once at startup and at most once per 10-minute
+  interval in the main loop via `PersistenceAudit::maybe_prune_retention`
+  (bounded — never per-tick). Covered by `[retention]` tests (age window,
+  disabled, interval-bounded, failure-degrades). NOTE: retention bounds logical
+  row count; the SQLite file's physical size is not shrunk (no VACUUM — deleted
+  pages may remain allocated).

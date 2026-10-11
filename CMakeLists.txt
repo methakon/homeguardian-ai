@@ -113,6 +113,7 @@ add_executable(homeguardian
     src/core/AlertPolicy.cpp
     src/core/PersistenceAudit.cpp
     src/core/RuntimeStatus.cpp
+    src/core/AlexaContract.cpp
     src/backend/simulator/SimulatedSensorBackend.cpp
     src/backend/simulator/LogicalDevice.cpp
     src/backend/simulator/AudioBroker.cpp
@@ -164,8 +165,11 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_alert_policy.cpp
         tests/core/test_runtime_hardening.cpp
         tests/core/test_persistence_audit.cpp
+        tests/core/test_alexa_contract.cpp
+        tests/core/test_privacy_consent.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
+        tests/persistence/test_integrity.cpp
         ../src/core/Config.cpp
         ../src/core/Logger.cpp
         ../src/core/EventValidator.cpp
@@ -181,6 +185,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ../src/core/AlertPolicy.cpp
         ../src/core/PersistenceAudit.cpp
         ../src/core/RuntimeStatus.cpp
+        ../src/core/AlexaContract.cpp
         ../src/persistence/SQLiteDatabase.cpp
         ../src/persistence/EventRepository.cpp
         ../src/persistence/AlertRepository.cpp

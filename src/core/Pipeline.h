@@ -19,6 +19,11 @@ public:
     void set_max_history_size(size_t max_size);
     void clear_history();
 
+    // Names of the registered correlation rules, in registration order. Used by
+    // lifecycle/notification code (e.g. re-arming AlertPolicy per rule) so it
+    // never hardcodes a specific rule name.
+    std::vector<std::string> rule_names() const;
+
 private:
     std::vector<std::shared_ptr<ICorrelationRule>> rules_;
     std::optional<std::chrono::milliseconds> correlation_window_;

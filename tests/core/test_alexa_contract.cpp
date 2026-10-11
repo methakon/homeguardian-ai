@@ -1,0 +1,302 @@
+#include "catch2/catch.hpp"
+#include "core/AlexaContract.h"
+#include "core/Logger.h"
+#include <chrono>
+#include <string>
+#include <variant>
+
+using namespace homeguardian;
+
+// ---------------------------------------------------------------------------
+// AlexaContract: versioned, authenticated, read-only integration contract.
+// Deterministic, local, no network/AWS/credentials. Simulator-only.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A deterministic credential verifier driven by a table of known tokens.
+// It NEVER trusts a client-supplied identity: a token is only accepted if it
+// matches a known entry AND is not expired at `now`.
+class FakeVerifier : public IAlexaCredentialVerifier {
+public:
+    struct Entry {
+        std::string token;
+        std::string principal;
+        bool allow_status = false;
+        bool allow_alert_summary = false;
+        std::chrono::system_clock::time_point expires_at{};
+    };
+
+    void add(Entry e) { entries_.push_back(std::move(e)); }
+
+    AlexaAuthContext verify(const std::string& credential,
+                            std::chrono::system_clock::time_point now) const override {
+        AlexaAuthContext ctx;  // defaults: authenticated=false
+        for (const auto& e : entries_) {
+            if (e.token == credential) {
+                if (now < e.expires_at) {
+                    ctx.authenticated = true;
+                    ctx.principal = e.principal;
+                    ctx.allow_status = e.allow_status;
+                    ctx.allow_alert_summary = e.allow_alert_summary;
+                }
+                return ctx;  // known token: authorized only if not expired
+            }
+        }
+        return ctx;  // unknown token: fail closed
+    }
+
+private:
+    std::vector<Entry> entries_;
+};
+
+// A deterministic status provider with a configurable snapshot.
+class FakeProvider : public IAlexaStatusProvider {
+public:
+    AlexaStatusSnapshot snap;
+    AlexaStatusSnapshot snapshot() const override { return snap; }
+};
+
+FakeVerifier make_verifier(std::chrono::system_clock::time_point base) {
+    FakeVerifier v;
+    auto far_future = base + std::chrono::hours(24 * 365);
+    // Full-access token.
+    v.add({"tok-full", "alexa-user", true, true, far_future});
+    // Status-only token.
+    v.add({"tok-status", "alexa-user", true, false, far_future});
+    // No-permission token (authenticated but forbidden everywhere).
+    v.add({"tok-noperm", "alexa-user", false, false, far_future});
+    // Expired token.
+    v.add({"tok-expired", "alexa-user", true, true, base - std::chrono::hours(1)});
+    return v;
+}
+
+std::string valid_body(const std::string& op, const std::string& token) {
+    return std::string("{\"version\":1,\"operation\":\"") + op +
+           "\",\"credential\":\"" + token + "\"}";
+}
+
+// Extract the error from a parse result (assumes parse failed).
+AlexaError parse_error(const std::string& body) {
+    auto r = AlexaContract::parse(body);
+    REQUIRE(std::holds_alternative<AlexaError>(r));
+    return std::get<AlexaError>(r);
+}
+
+// Parse a body that is expected to succeed, returning the request.
+AlexaRequest parse_ok(const std::string& body) {
+    auto r = AlexaContract::parse(body);
+    REQUIRE(std::holds_alternative<AlexaRequest>(r));
+    return std::get<AlexaRequest>(r);
+}
+
+}  // namespace
+
+// --- 1. Valid authenticated read-only status request ---
+TEST_CASE("Alexa: valid authenticated status request returns read-only state",
+          "[alexa][contract]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    p.snap.state = "Running";
+    p.snap.capture_enabled = false;
+
+    auto parsed = AlexaContract::parse(valid_body("status", "tok-full"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE(resp.ok);
+    REQUIRE(resp.error == AlexaError::none);
+    REQUIRE(resp.state == "Running");
+    REQUIRE_FALSE(resp.capture_enabled);
+}
+
+// --- 2. Valid authenticated alert-summary request ---
+TEST_CASE("Alexa: valid authenticated alert_summary returns aggregate only",
+          "[alexa][contract]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    p.snap.state = "Running";
+    p.snap.alert_count = 2;
+    p.snap.highest_severity = "warning";
+    p.snap.alert_ids = {"a-1", "a-2"};
+
+    auto parsed = AlexaContract::parse(valid_body("alert_summary", "tok-full"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE(resp.ok);
+    REQUIRE(resp.alert_count == 2);
+    REQUIRE(resp.highest_severity == "warning");
+    REQUIRE(resp.alert_ids.size() == 2);
+}
+
+TEST_CASE("Alexa: alert_summary caps returned ids and handles empty result",
+          "[alexa][contract]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+
+    // Empty: safe response, no crash.
+    p.snap.alert_count = 0;
+    p.snap.highest_severity = "";
+    auto r0 = AlexaContract::handle(parse_ok(valid_body("alert_summary", "tok-full")),
+                                    v, p, now);
+    REQUIRE(r0.ok);
+    REQUIRE(r0.alert_count == 0);
+    REQUIRE(r0.highest_severity.empty());
+    REQUIRE(r0.alert_ids.empty());
+
+    // Over-cap: ids are truncated to ALEXA_MAX_ALERTS_RETURNED.
+    for (size_t i = 0; i < ALEXA_MAX_ALERTS_RETURNED + 3; ++i) {
+        p.snap.alert_ids.push_back("id-" + std::to_string(i));
+    }
+    p.snap.alert_count = p.snap.alert_ids.size();
+    auto rc = AlexaContract::handle(parse_ok(valid_body("alert_summary", "tok-full")),
+                                    v, p, now);
+    REQUIRE(rc.ok);
+    REQUIRE(rc.alert_ids.size() == ALEXA_MAX_ALERTS_RETURNED);
+}
+
+// --- 3. Missing and invalid authentication ---
+TEST_CASE("Alexa: missing credential is rejected at parse (malformed)",
+          "[alexa][auth]") {
+    Logger::initialize("error");
+    REQUIRE(parse_error("{\"version\":1,\"operation\":\"status\"}") == AlexaError::malformed);
+}
+
+TEST_CASE("Alexa: invalid credential fails closed with unauthorized",
+          "[alexa][auth]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    auto parsed = AlexaContract::parse(valid_body("status", "tok-bogus"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE_FALSE(resp.ok);
+    REQUIRE(resp.error == AlexaError::unauthorized);
+}
+
+TEST_CASE("Alexa: expired credential fails closed with unauthorized",
+          "[alexa][auth]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    auto parsed = AlexaContract::parse(valid_body("status", "tok-expired"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE_FALSE(resp.ok);
+    REQUIRE(resp.error == AlexaError::unauthorized);
+}
+
+// --- 4. Unauthorized operation or identity ---
+TEST_CASE("Alexa: authenticated but unauthorized operation is forbidden",
+          "[alexa][auth]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    // tok-status may read status but NOT alert_summary.
+    auto parsed = AlexaContract::parse(valid_body("alert_summary", "tok-status"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE_FALSE(resp.ok);
+    REQUIRE(resp.error == AlexaError::forbidden);
+}
+
+TEST_CASE("Alexa: authenticated principal with no permissions is forbidden",
+          "[alexa][auth]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    auto parsed = AlexaContract::parse(valid_body("status", "tok-noperm"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE_FALSE(resp.ok);
+    REQUIRE(resp.error == AlexaError::forbidden);
+}
+
+// --- 5. Malformed and oversized requests ---
+TEST_CASE("Alexa: malformed bodies are rejected",
+          "[alexa][malformed]") {
+    Logger::initialize("error");
+    REQUIRE(parse_error("") == AlexaError::malformed);                       // empty
+    REQUIRE(parse_error("not json") == AlexaError::malformed);               // not JSON
+    REQUIRE(parse_error("[]") == AlexaError::malformed);                     // not object
+    REQUIRE(parse_error("{\"version\":1}") == AlexaError::malformed);        // no op/cred
+    REQUIRE(parse_error("{\"version\":\"1\",\"operation\":\"status\","
+                        "\"credential\":\"t\"}") == AlexaError::malformed);  // version type
+    REQUIRE(parse_error("{\"version\":1,\"operation\":\"enable_capture\","
+                        "\"credential\":\"t\"}") == AlexaError::malformed);  // unknown op
+    REQUIRE(parse_error("{\"version\":1,\"operation\":\"status\","
+                        "\"credential\":\"t\",\"extra\":1}") == AlexaError::malformed);  // unknown field
+    REQUIRE(parse_error("{\"version\":1,\"operation\":\"status\","
+                        "\"credential\":\"\"}") == AlexaError::malformed);   // empty cred
+}
+
+TEST_CASE("Alexa: oversized request is rejected without parsing",
+          "[alexa][malformed]") {
+    Logger::initialize("error");
+    std::string big(ALEXA_MAX_REQUEST_BYTES + 1, 'x');
+    REQUIRE(parse_error(big) == AlexaError::malformed);
+}
+
+// --- 6. Unsupported contract version ---
+TEST_CASE("Alexa: unsupported version is rejected distinctly",
+          "[alexa][version]") {
+    Logger::initialize("error");
+    REQUIRE(parse_error("{\"version\":2,\"operation\":\"status\","
+                        "\"credential\":\"t\"}") == AlexaError::unsupported_version);
+    REQUIRE(parse_error("{\"version\":0,\"operation\":\"status\","
+                        "\"credential\":\"t\"}") == AlexaError::unsupported_version);
+}
+
+// --- 7. Application unavailable or degraded ---
+TEST_CASE("Alexa: application unavailable fails closed",
+          "[alexa][availability]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = false;  // degraded
+    auto parsed = AlexaContract::parse(valid_body("status", "tok-full"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE_FALSE(resp.ok);
+    REQUIRE(resp.error == AlexaError::unavailable);
+}
+
+// --- 8. Safe response when no alerts exist (covered above) + error messages ---
+TEST_CASE("Alexa: error messages are generic and leak no internals",
+          "[alexa][errors]") {
+    Logger::initialize("error");
+    std::string m = AlexaContract::error_message(AlexaError::unauthorized);
+    // No paths, no stack details, no field names, no "token"/"credential".
+    REQUIRE(m.find("/") == std::string::npos);
+    REQUIRE(m.find("token") == std::string::npos);
+    REQUIRE(m.find("credential") == std::string::npos);
+    REQUIRE(m.find("sqlite") == std::string::npos);
+    REQUIRE_FALSE(m.empty());
+}
+
+TEST_CASE("Alexa: contract exposes no mutating operation",
+          "[alexa][safety]") {
+    // The only accepted operations are reads; anything else is malformed.
+    Logger::initialize("error");
+    REQUIRE(parse_error(valid_body("enable_capture", "tok-full")) == AlexaError::malformed);
+    REQUIRE(parse_error(valid_body("grant_consent", "tok-full")) == AlexaError::malformed);
+    REQUIRE(parse_error(valid_body("set_config", "tok-full")) == AlexaError::malformed);
+    REQUIRE(parse_error(valid_body("activate_sensor", "tok-full")) == AlexaError::malformed);
+}

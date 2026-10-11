@@ -980,7 +980,88 @@ The following were verified to work correctly and are not friction:
 | 20 | Runtime event-to-alert integration | — | Authorized observations → process_event → Pipeline → alert; 9 `[event2alert]` tests; 163/1617 host + ASan/UBSan; running app fires 9 synthetic alerts |
 | 21 | Runtime hardening v1 — AlertPolicy + lifecycle | — | Alert dedup/cooldown/re-arm + AppState lifecycle + config fail-closed; 33 hardening cases; 190/1712 host + ASan/UBSan; demo docs/DEMO_SIMULATOR.md |
 | 22 | Runtime readiness v2 — durable audit + observability | — | PersistenceAudit (alert metadata via existing SQLite, historical-vs-current, retention, fail-safe degraded) + RuntimeStatus (bounded privacy-safe counters); 10 audit/status cases; 200/1753 host + ASan/UBSan; release reproduction |
+| 23 | Runtime readiness v3 — integration contract, storage integrity, privacy | — | AlexaContract (versioned, authenticated, read-only contract; 14 C++ + 12 Node adapter cases, NOT deployed); SQLite integrity/migration/retention/recovery (7 cases); privacy/consent regression (7 cases); P1 rule-specific clearing; P2 scheduled retention; 235/1925 host + ASan/UBSan; release reproduction |
 
-**Total verified incidents:** 22
+**Total verified incidents:** 23
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 19
+**Resolved incidents:** 20
+
+---
+
+## Incident 23: Runtime Readiness v3 — Integration Contract, Storage Integrity & Privacy (F22-29)
+
+**Date/time:** 2026-10-11 ~19:45 IST
+**Area:** Alexa integration contract / SQLite integrity / privacy & consent
+
+**Expected:** Verify three boundaries — the Alexa skill's interface to the
+application, SQLite schema compatibility/integrity/retention/recovery, and
+privacy/consent guarantees across lifecycle transitions and restart. Reuse
+existing abstractions; simulator-only; no deployment.
+
+**Actual:**
+- Added `core/AlexaContract.{h,cpp}`: a versioned (v1), authenticated,
+  READ-ONLY integration contract. Operations: `status`, `alert_summary` only —
+  no operation can enable capture, grant consent, change config, or activate a
+  sensor. Auth boundary via injected `IAlexaCredentialVerifier`; a
+  client-supplied identity is never trusted. Fail-closed: missing/invalid/
+  expired → `unauthorized`; authenticated-not-permitted → `forbidden`; degraded
+  app → `unavailable`. Bounded requests (≤4KB), known-fields-only, unsupported
+  version rejected. Responses carry only non-sensitive summary fields; errors
+  are generic.
+- Added `alexa_skill/test/contract.test.js`: 12 Node adapter-boundary cases with
+  a mock client mirroring the C++ contract semantics (no deploy). Wired into
+  `npm test`. Existing 13 skill-handler tests unchanged and still pass.
+- Added `tests/persistence/test_integrity.cpp`: 7 `[integrity]` cases — v1→v2
+  migration preserves alert metadata/ids/events/indexes + PK constraint; repeat
+  migration idempotent; failed migration rolls back (version stays 1); reopen
+  after clean shutdown; retention deletes only expired (newer + unrelated-table
+  kept); write-after-close fails loudly; corrupt DB file preserved not deleted.
+- Added `tests/core/test_privacy_consent.cpp`: 7 `[privacy]` cases —
+  capture-disabled delivers no media despite grants; withdrawal blocks only the
+  affected consumer; unauthorized observations never reach the event sink;
+  restart does not restore capture authorization; persisted alerts contain only
+  documented metadata (no audio/video/payload/biometric); per-process counters
+  start at zero while audit history persists as `historical`; retention removes
+  only expired alerts.
+- Also landed this cycle (from the P1–P5 task): P1 rule-specific condition
+  clearing via `Pipeline::rule_names()` (no hardcoded `"sim-presence"`; 3
+  `[clearing]` tests) and P2 scheduled retention via configurable
+  `alert_retention_days` + `PersistenceAudit::maybe_prune_retention` (4
+  `[retention]` tests; startup prune + bounded 10-min periodic prune).
+
+**Decisions (documented, not defects):**
+- Live Alexa-to-application integration is NOT tested: it requires a deployed,
+  authenticated endpoint. Documented as PENDING. No claim of live integration.
+- Storage-write failure is simulated by a closed DB (documented as distinct
+  from real filesystem exhaustion). No real disk-full is simulated.
+- Retention bounds logical row count; the SQLite file's physical size is not
+  shrunk (no VACUUM — deleted pages may remain allocated). Reported separately
+  per the milestone note.
+
+**Build-tooling note:** followed the established ASan protocol — removed stale
+objects for changed/new TUs in `hg_asan`, recompiled, verified non-empty
+object/binary sizes, then ran. `std::variant` has no `operator*`; added a
+`parse_ok` test helper instead of dereferencing.
+
+**Test results (this cycle):**
+- Focused: `[alexa]` 14/70, `[integrity]` 7/39, `[clearing]` 3/17,
+  `[retention]` 7/34, `[privacy]` 16/66 — all pass. Node: contract 12/12,
+  handler 13/13.
+- Full host suite (hg_build): **235 cases / 1925 assertions pass; ctest 100%.**
+- ASan+UBSan full suite (hg_asan, clean recompile, sizes verified): 235 cases,
+  zero sanitizer errors.
+- Release reproduction: fresh out-of-source build (existing dep cache) →
+  235/1925, new groups confirmed present in the fresh binary.
+- Simulator demo: capture-off → no media/alerts + final_state=Stopped;
+  capture-on → alert generated + persisted + 8 dedup-suppressed, final_state=Stopped.
+
+**Resolution:** Runtime readiness v3 landed (F22-29). Simulator-only; no
+physical sensor, no AWS, no Alexa deploy. Android backend, simulator, and Alexa
+skill preserved. Temp release-verify dir removed; existing build dirs intact.
+
+**Regression protection:** 35 new C++ cases + 12 Node adapter cases; full host +
+sanitizer suites green across a clean recompile and a fresh release build.
+
+**Remaining impact:** Live Alexa integration, real filesystem-exhaustion
+behavior, and real V4L2/ALSA/PipeWire capture remain unverified (hardware-/
+deployment-gated). No physical sensor was activated.

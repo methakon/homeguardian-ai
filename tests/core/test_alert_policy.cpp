@@ -239,3 +239,78 @@ TEST_CASE("AlertPolicy: repeated runs with identical inputs are deterministic",
     auto b = run_once();
     REQUIRE(a == b);
 }
+
+TEST_CASE("AlertPolicy: clearing one rule does not disturb another rule's cooldown",
+          "[alertpolicy][clearing]") {
+    // P1 regression: mark_condition_cleared is rule-specific. Clearing rule A
+    // must re-arm A only; rule B's independent active cooldown stays suppressed
+    // until its own cooldown/condition dictates.
+    Logger::initialize("error");
+    auto clock = make_shared_clock();
+    AlertPolicy policy(std::chrono::milliseconds(60000), 256,
+                       [clock] { return clock->operator()(); });
+    bool sup = false;
+
+    // Rule A and rule B both fire (first occurrence -> delivered).
+    REQUIRE(policy.admit(make_alert("rule-a", Severity::info, "a"), sup));
+    REQUIRE(policy.admit(make_alert("rule-b", Severity::info, "b"), sup));
+
+    // Both are active and within cooldown -> repeated firings suppressed.
+    REQUIRE_FALSE(policy.admit(make_alert("rule-a", Severity::info, "a"), sup));
+    REQUIRE_FALSE(policy.admit(make_alert("rule-b", Severity::info, "b"), sup));
+
+    // Clear ONLY rule A. B is untouched.
+    policy.mark_condition_cleared("rule-a");
+
+    // Rule A re-arms: next firing is a fresh condition -> delivered.
+    REQUIRE(policy.admit(make_alert("rule-a", Severity::info, "a"), sup));
+
+    // Rule B is still within its cooldown -> still suppressed (NOT cleared).
+    REQUIRE_FALSE(policy.admit(make_alert("rule-b", Severity::info, "b"), sup));
+    REQUIRE(sup);
+
+    // Advance past cooldown: B re-notifies on its own terms.
+    clock->advance_ms(60001);
+    REQUIRE(policy.admit(make_alert("rule-b", Severity::info, "b"), sup));
+}
+
+TEST_CASE("AlertPolicy: repeated clear of the same rule is idempotent",
+          "[alertpolicy][clearing]") {
+    Logger::initialize("error");
+    auto clock = make_shared_clock();
+    AlertPolicy policy(std::chrono::milliseconds(60000), 256,
+                       [clock] { return clock->operator()(); });
+    bool sup = false;
+
+    REQUIRE(policy.admit(make_alert("r", Severity::info, "m"), sup));
+    REQUIRE_FALSE(policy.admit(make_alert("r", Severity::info, "m"), sup));
+
+    // Clearing multiple times has no additional effect and does not crash.
+    policy.mark_condition_cleared("r");
+    policy.mark_condition_cleared("r");
+    policy.mark_condition_cleared("r");
+
+    // First post-clear firing delivered; the immediately following one (still
+    // active, within cooldown) suppressed again.
+    REQUIRE(policy.admit(make_alert("r", Severity::info, "m"), sup));
+    REQUIRE_FALSE(policy.admit(make_alert("r", Severity::info, "m"), sup));
+}
+
+TEST_CASE("AlertPolicy: clearing an unknown or no-active rule is a safe no-op",
+          "[alertpolicy][clearing]") {
+    Logger::initialize("error");
+    auto clock = make_shared_clock();
+    AlertPolicy policy(std::chrono::milliseconds(60000), 256,
+                       [clock] { return clock->operator()(); });
+    bool sup = false;
+
+    // No alert ever seen: clearing any name must not throw or alter state.
+    REQUIRE_NOTHROW(policy.mark_condition_cleared("never-seen"));
+    REQUIRE(policy.tracked_keys() == 0);
+
+    // Unknown-name clear on a tracked rule leaves the rule's state intact:
+    // its repeated firing is still suppressed.
+    REQUIRE(policy.admit(make_alert("r", Severity::info, "m"), sup));
+    REQUIRE_NOTHROW(policy.mark_condition_cleared("some-other-rule"));
+    REQUIRE_FALSE(policy.admit(make_alert("r", Severity::info, "m"), sup));
+}
