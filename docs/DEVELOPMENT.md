@@ -48,6 +48,16 @@ Current test coverage:
 - TimeWindowCorrelation: fires, insufficient, outside window
 - Pipeline: no alert, alert generation, history bounds
 - Alert: creation, JSON round-trip
+- Persistence: SQLite repositories, schema migration, constraint error subtypes
+- Consent: ConsentRecord model, gate decisions, fail-closed evaluation
+- ConsentGuardedDevice: gate before init/start/acquire; withdrawal/expiry/permission/failure force stop; delivery-time authorize_delivery
+- Simulator: deterministic camera frames + PCM mic samples; bounded ring; Config (dimensions, frame-rate, channels, noise/sine/square/silence); speaker play/error/recovery
+- Ubuntu backend: sensor discovery metadata; consent enforcement on the shared gate
+- Dual-device + audio broker: device independence, shared-source fan-out, per-consumer consent denial/withdrawal, bounded speaker queue, arbitration, playback recovery, shutdown
+- End-to-end simulator: camera/mic/speaker → consent-gated delivery → synthetic processor → pipeline rule/alert → safe speaker response; failure and consent scenarios
+
+Run a focused group with a tag filter, e.g. `./homeguardian_tests "[sim]"`,
+`"[dual]"`, or `"[e2e]"`. Full suite: `ctest --output-on-failure`.
 
 ## Coding Standards
 

@@ -1,10 +1,12 @@
 # HomeGuardian AI — Status
 
-**Last updated:** 2026-10-10
+**Last updated:** 2026-10-11
 
 ## Current Phase
 
-Phase F2.2 — Real Android Device Backends (NDK installed; hardware testing blocked)
+Simulator-first development — deterministic in-process sensor simulator,
+dual-device shared audio broker, and consent-gated acquisition. Real camera/
+microphone capture remains BLOCKED pending explicit operator approval.
 
 ## Completed Work
 
@@ -55,13 +57,21 @@ Phase F2.2 — Real Android Device Backends (NDK installed; hardware testing blo
 | JDK + SDK platform 27 | Temurin JDK 17 (user-writable) and SDK platform 27 / build-tools 27.0.3 installed | 2026-10-10 |
 | APK harness (non-capture) | Minimal debug-signed APK built with JDK+SDK+NDK (no Gradle); keystore outside repo; capture disabled by default | 2026-10-11 |
 | Test suite | 93 test cases, 424 assertions, all passing | 2026-10-10 |
+| Simulator-first backend | `backend/simulator/SimulatedSensorBackend` — deterministic camera frames + PCM mic samples; bounded ring; Config struct (dimensions, frame-rate, channels, test signals) | 2026-10-10 |
+| Linux sensor discovery | `backend/linux/SensorDiscovery` — V4L2 + PipeWire metadata enumeration; opens no device | 2026-10-10 |
+| End-to-end simulator workflow | `test_e2e_simulator.cpp` — camera/mic/speaker → consent-gated delivery → synthetic processor → pipeline rule/alert → safe speaker response; failure & consent scenarios | 2026-10-10 |
+| Dual logical-device + shared audio broker | `backend/simulator/LogicalDevice` + `AudioBroker` — two independent logical devices share ONE mic (single capture) with per-consumer consent fan-out and ONE bounded arbitrated speaker | 2026-10-11 |
+| Product-readiness audit | Fixed stale README, hardcoded CMake paths → `${CMAKE_SOURCE_DIR}`, hardened .gitignore; documented build reproduced fresh | 2026-10-11 |
+| Alexa custom skill prototype | `alexa_skill/` — ASK SDK v2 handler + 13 Node unit tests (optional, separate from core; no deployment) | 2026-10-10 |
+| Test suite | 147 test cases, 1546 assertions, all passing | 2026-10-11 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-All tests passed (424 assertions in 93 test cases)
-ASan/UBSan: passed, no leaks, no sanitizer errors
+All tests passed (1546 assertions in 147 test cases)
+Focused: [sim] 24 cases / 915 assertions; [dual] 12 / 74; [e2e] 9 / 73 — all pass
+ASan/UBSan full suite: passed, no leaks, no sanitizer errors
 Android cross-compile (arm64-v8a/API 34): passed (static archive, not runnable)
 Android cross-compile (armeabi-v7a/API 27): passed (on-device self-test binary)
 On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
@@ -72,11 +82,17 @@ On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
 - **Compile (Android arm64-v8a / API 34):** VERIFIED.
 - **Compile (Android armeabi-v7a / API 27):** VERIFIED.
 - **Mock integration (host fake backend):** VERIFIED.
+- **Linux simulator (consent, lifecycle, delivery, bounded buffers, dual-device,
+  shared audio broker, e2e):** VERIFIED — deterministic, host-only; NO physical
+  sensor opened.
+- **Documented build reproduction (fresh out-of-source dir):** VERIFIED.
 - **On-device non-capture self-test (real hardware):** VERIFIED — consent gate,
   lifecycle, fail-closed guards, cleanup; no camera/mic opened.
 - **APK harness (build/package only):** VERIFIED — debug-signed APK builds and
   packages; declares only CAMERA + RECORD_AUDIO; capture disabled by default;
   NOT installed, no permissions granted, no capture run.
+- **Real V4L2/ALSA/PipeWire capture or OS permission semantics:** NOT VERIFIED —
+  simulator-only; requires physical hardware or a root-loaded virtual device.
 - **Physical hardware capture (camera/audio):** BLOCKED — awaits explicit
   operator approval before the first camera/microphone activation. NOT claimed.
 
