@@ -4,32 +4,13 @@
 #include "Pipeline.h"
 #include "SimulatorRuntime.h"
 #include "AlertPolicy.h"
+#include "PersistenceAudit.h"
+#include "RuntimeStatus.h"
+#include "AppState.h"
 #include <atomic>
 #include <memory>
 
 namespace homeguardian {
-
-// Explicit application lifecycle state (observable, testable).
-enum class AppState {
-    Constructed,   // created, not started
-    Starting,      // run() in progress before the main loop
-    Running,       // main loop active
-    Stopping,      // shutdown requested
-    Stopped,       // cleanly exited
-    Failed         // startup or runtime failure; not healthy
-};
-
-inline const char* app_state_to_string(AppState s) {
-    switch (s) {
-        case AppState::Constructed: return "Constructed";
-        case AppState::Starting: return "Starting";
-        case AppState::Running: return "Running";
-        case AppState::Stopping: return "Stopping";
-        case AppState::Stopped: return "Stopped";
-        case AppState::Failed: return "Failed";
-    }
-    return "Unknown";
-}
 
 class Application {
 public:
@@ -48,6 +29,8 @@ public:
     // Simulator runtime accessors (simulator-only; never opens real hardware).
     SimulatorRuntime& get_simulator_runtime();
     AlertPolicy& get_alert_policy();
+    PersistenceAudit* get_persistence();   // nullptr if persistence unavailable
+    RuntimeStatus& get_status();
 
     // Lifecycle status + control (simulator-only; no hardware enable path).
     AppState state() const;
@@ -62,6 +45,8 @@ private:
     std::unique_ptr<Pipeline> pipeline_;
     std::unique_ptr<SimulatorRuntime> simulator_;
     std::unique_ptr<AlertPolicy> alert_policy_;
+    std::unique_ptr<PersistenceAudit> persistence_;   // may be null (degraded)
+    RuntimeStatus status_;
     static Application* instance_;
 };
 

@@ -127,6 +127,7 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-25 | Runtime integration: wire simulator into the running application | F22-24 | SimulatorRuntime + Application::run() drive the consent gate, shared audio broker, event pipeline, and clean shutdown; 7 runtime integration tests; simulator-only | DONE (app lifecycle) |
 | F22-26 | Runtime event-to-alert integration | F22-25 | Authorized synthetic observations routed through Application::process_event → Pipeline validation + TimeWindowCorrelation + alert; 9 event-to-alert tests; capture-off/withdrawal/missing-consent produce no events | DONE (app event path) |
 | F22-27 | Runtime hardening v1 (alert policy, lifecycle, config, stress) | F22-26 | AlertPolicy dedup/cooldown/re-arm (injectable clock, bounded); explicit AppState lifecycle + partial-startup cleanup; config fail-closed; 27 hardening tests; reproducible demo | DONE (app hardening) |
+| F22-28 | Runtime readiness v2 (durable audit + observability + restart) | F22-27 | PersistenceAudit (alert metadata via existing SQLite, historical-vs-current, retention, fail-safe degraded) + RuntimeStatus (bounded privacy-safe counters); restart distinguishability verified; release reproduction | DONE (app readiness) |
 
 Verification status is tracked separately per layer:
 - Compile (Android arm64-v8a/API 34): VERIFIED.
@@ -145,6 +146,7 @@ Verification status is tracked separately per layer:
 - Runtime integration (running Application drives the simulator): VERIFIED (7 `[runtime]` cases; capture-off delivers no media + clean shutdown; capture-on delivers to permitted consumers, bounded speaker).
 - Runtime event-to-alert (authorized observations → process_event → Pipeline → alert): VERIFIED (9 `[event2alert]` cases; capture-off/withdrawal/missing-consent produce no events; running app fires 9 synthetic alerts with pipeline_history=10).
 - Runtime hardening v1 (alert dedup/cooldown, lifecycle, config fail-closed, stress): VERIFIED (11 `[alertpolicy]` + 17 `[lifecycle]` + 5 `[hardening]` cases; reproducible demo `docs/DEMO_SIMULATOR.md`).
+- Runtime readiness v2 (durable alert audit via existing SQLite, observability counters, restart distinguishability, retention, fail-safe degraded): VERIFIED (7 `[audit]` + 3 `[status]` cases; fresh out-of-source release reproduction).
 - Alexa custom skill handler unit tests (no deployment): VERIFIED (13 Node cases).
 - Alexa console-simulator end-to-end: OPTIONAL — requires manual console steps (F22-19).
 - Ubuntu camera/mic/speaker capture: NOT IMPLEMENTED — awaiting explicit approval.

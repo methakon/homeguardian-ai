@@ -483,6 +483,41 @@ surface; they operate on synthetic alerts and simulator state only:
   detection. No raw audio/video/biometric data is persisted. No physical sensor
   was activated.
 
+## Durable audit + observability — privacy notes (added 2026-10-11)
+
+`PersistenceAudit` and `RuntimeStatus` add durable metadata audit and bounded
+observability without any new capture or retention surface:
+
+| Item | Status | Evidence |
+|---|---|---|
+| Audit + observability tests | VERIFIED (non-capture) | 10 cases (`[audit]` 7, `[status]` 3); ASan/UBSan clean. |
+| Real sensor capture | NOT RUN | No device file opened; no hardware syscall; no media written; no network. |
+
+**Persisted fields (approved metadata only), in the existing `alerts` table:**
+
+| Field | Purpose | Retention / deletion |
+|---|---|---|
+| alert_id | stable identifier | deleted by `prune_older_than` (age-based) |
+| severity, message | alert classification | same |
+| contributing_event_ids | correlation/audit trail | same |
+| detected_at (timestamp) | when the alert fired | same (drives retention) |
+| confidence | rule confidence | same |
+| rule_name | which rule fired | same |
+| details (JSON) | rule metadata (window, contributing events) | same |
+
+- **Never persisted:** raw audio/video, biometric data, media payloads,
+  unnecessary personal identifiers, or consent-as-authorization. Consent lives
+  only in the in-memory gate and fails closed after restart.
+- **Retention:** age-based via `prune_older_than` (transactional; preserves
+  newer/unrelated records). Tested.
+- **Observability:** `RuntimeStatus` logs only counts/states (no media, secrets,
+  credentials, or personal data), one summary line per cycle (not per sample),
+  and cannot grant consent or enable capture. Counters reset per process and are
+  never mistaken for durable audit history.
+- **Logs/records cannot be mistaken for physical sensor activation:** all media
+  is synthetic; the alert is a synthetic presence notice, not a danger
+  detection. No physical sensor was activated.
+
 ## Product-readiness audit — privacy notes (added 2026-10-11)
 
 Audited build/dependency setup, config, test fixtures, privacy guarantees, and

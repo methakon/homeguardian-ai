@@ -59,10 +59,13 @@ Current test coverage:
 - Event-to-alert: authorized synthetic observations → Application::process_event() → Pipeline validation + TimeWindowCorrelation + alert; capture-off/withdrawal/missing-consent produce no events; invalid/future-timestamp events rejected without corrupting pipeline state
 - AlertPolicy: dedup/cooldown/re-arm keyed by rule+severity; injectable clock; bounded retained state; first occurrence always delivered; unrelated keys independent
 - Lifecycle/hardening: idempotent start/shutdown; partial-startup cleanup; capture kill-switch toggle; bounded event/alert history; consent withdraw/restore cycles; config fail-closed; deterministic repeated runs
+- PersistenceAudit: durable alert metadata via existing SQLite (AlertRepository); historical-vs-current-process distinguishability; retention (delete_older_than); fail-safe degraded on write failure; corrupt DB throws (no silent success)
+- RuntimeStatus: bounded privacy-safe counters (state, capture, media auth/denied, events processed/rejected/failed, alerts gen/delivered/suppressed, queue depth/overflow, persistence health); reset per process
 
-Run a focused group with a tag filter, e.g. `./homeguardian_tests "[alertpolicy]"`,
-`"[lifecycle]"`, `"[hardening]"`, `"[event2alert]"`, `"[runtime]"`, `"[sim]"`,
-`"[dual]"`, or `"[e2e]"`. Full suite: `ctest --output-on-failure`.
+Run a focused group with a tag filter, e.g. `./homeguardian_tests "[audit]"`,
+`"[status]"`, `"[alertpolicy]"`, `"[lifecycle]"`, `"[hardening]"`,
+`"[event2alert]"`, `"[runtime]"`, `"[sim]"`, `"[dual]"`, or `"[e2e]"`. Full
+suite: `ctest --output-on-failure`.
 
 A reproducible simulator demonstration of the running app is in
 `docs/DEMO_SIMULATOR.md`.

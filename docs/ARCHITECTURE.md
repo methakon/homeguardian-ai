@@ -706,3 +706,46 @@ components so the runtime never reports healthy while half-initialized.
 `is_healthy()` is true only while cleanly `Running`/`Stopping`, never `Failed`.
 Shutdown is idempotent and clears bounded queues. A reproducible demonstration is
 in `docs/DEMO_SIMULATOR.md`.
+
+## Runtime readiness: durable audit + observability (added 2026-10-11)
+
+**`PersistenceAudit`** (`src/core/PersistenceAudit.{h,cpp}`) durably records
+**delivered alert metadata** using the EXISTING SQLite layer (`SQLiteDatabase` +
+`SchemaManager` + `AlertRepository`) — no parallel storage engine. The `alerts`
+table already stores only metadata (alert_id, severity, message,
+contributing_event_ids, detected_at, confidence, rule_name, details JSON).
+
+- **What persists:** delivered alert records only. **What never persists:** raw
+  audio/video, biometric data, media payloads, or unnecessary personal
+  identifiers. Consent is never persisted as permanent authorization — consent
+  lives only in the in-memory gate and fails closed after restart.
+- **Restart semantics:** alerts written before the current process's start are
+  "historical"; the class records the process start and exposes
+  `historical_alert_count()` so historical and current-process alerts are
+  distinguishable. Verified by running the actual executable twice against one
+  DB (run 2 reports `historical_alerts=1`).
+- **AlertPolicy dedup/cooldown state is intentionally NOT persisted** (documented
+  decision): the simulator-only lifecycle treats each process start as a fresh
+  condition; persisting cooldown would add complexity with no concrete
+  requirement.
+- **Failure handling:** a write failure is caught, counted, and surfaced as
+  DEGRADED (`persist=DEGRADED`, `persist_fail>0`) — it never reports success when
+  a write failed and never corrupts runtime state. A corrupt/unsupported DB file
+  causes the open to throw (caller runs degraded); the file is never silently
+  deleted.
+- **Retention:** `prune_older_than(cutoff)` deletes alerts older than a cutoff,
+  transactionally, preserving newer/unrelated records.
+
+**`RuntimeStatus`** (`src/core/RuntimeStatus.{h,cpp}`) provides bounded,
+privacy-safe in-memory counters that RESET per process: app state, capture
+kill-switch, media authorized/denied, events processed/rejected/failed, alerts
+generated/delivered/suppressed, persist-failed, speaker queue depth/overflow/
+played, startups/clean-shutdowns/recoveries. These are deliberately separate
+from durable audit metadata so a counter can never be mistaken for audit
+history. The summary line logs only counts/states — never media payloads,
+secrets, credentials, or personal data — and emits one line per cycle, not per
+sample. Observability output cannot grant consent or enable capture.
+
+Both are wired into `Application`: persistence opens at startup (degraded on
+failure), delivered alerts are persisted, and the status summary is logged when
+entering the main loop and at clean shutdown.

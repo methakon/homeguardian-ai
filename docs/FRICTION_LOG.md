@@ -871,6 +871,72 @@ Real device behavior and OS permission semantics remain unverified
 
 ---
 
+## Incident 22: Runtime Readiness v2 — Durable Audit + Observability (F22-28)
+
+**Date/time:** 2026-10-11 ~17:35 IST
+**Area:** Persistence / observability / restart semantics
+
+**Expected:** Make the simulator-first runtime more observable, recoverable, and
+privacy-conscious, reusing the existing SQLite persistence layer. Persist only
+approved metadata; no parallel storage engine.
+
+**Actual:**
+- Added `core/PersistenceAudit.{h,cpp}`: durable audit of DELIVERED alert
+  metadata via the EXISTING `SQLiteDatabase` + `SchemaManager` +
+  `AlertRepository` (no parallel engine). Historical-vs-current-process
+  distinguishability via a recorded process-start time; age-based retention
+  (`prune_older_than`, transactional); fail-safe degraded on write failure;
+  corrupt DB open throws (caller runs degraded, file not deleted).
+- Added `core/RuntimeStatus.{h,cpp}`: bounded, privacy-safe in-memory counters
+  (reset per process) + a single-line summary with no media/secrets/PII.
+- Extracted `AppState` into `core/AppState.h` to break a circular include
+  (`RuntimeStatus.h` ↔ `Application.h`).
+- Wired both into `Application`: persistence opens at startup (degraded on
+  failure), delivered alerts are persisted, status counters updated, summary
+  logged at main-loop entry and clean shutdown.
+- Added `tests/core/test_persistence_audit.cpp`: 7 `[audit]` + 3 `[status]` cases
+  (persist+count, metadata-only, historical-vs-current, retention, write-failure
+  degradation, corrupt-DB safety, schema, bounded counters, privacy-safe summary,
+  degraded summary).
+
+**Decisions (documented, not defects):**
+- AlertPolicy dedup/cooldown state is intentionally NOT persisted: the
+  simulator-only lifecycle treats each process start as a fresh condition;
+  persisting cooldown has no concrete requirement and would add complexity.
+- Consent is never persisted as authorization; it fails closed after restart.
+- `record_alert` after `close()` is treated as a write failure (degraded), not a
+  silent success.
+
+**Build-tooling note:** the `Clock`-copy and non-movable-`AlertPolicy` issues
+from Incident 21 did not recur. Followed the established protocol: removed stale
+objects for changed TUs in `hg_asan`, recompiled, and verified non-empty
+object/binary sizes before running.
+
+**Test results (this commit):**
+- Focused: `[audit]` 7/28, `[status]` 3/13 — all pass.
+- Full host suite (hg_build): **200 cases / 1753 assertions pass; ctest 100%.**
+- ASan+UBSan full suite (hg_asan, stale objects removed + clean recompile; sizes
+  verified): 200 cases pass, zero sanitizer errors.
+- Release reproduction: fresh out-of-source build (existing dep cache) → 200/1753,
+  new tests confirmed present in the fresh binary.
+- Running app: capture-on → `Persistence ready. historical_alerts=0`, alert
+  generated + persisted, status summary logged, `final_state=Stopped`. Restart
+  (same DB) → `historical_alerts=1` (distinguishable). Capture-off → no media,
+  no alerts, `final_state=Stopped`.
+
+**Resolution:** Runtime readiness v2 landed (F22-28). Simulator-only; no physical
+sensor, no AWS, no Alexa change. Android backend, simulator, and Alexa skill
+preserved. Temp release-verify dir removed; existing build dirs intact.
+
+**Regression protection:** 10 new `[audit]`/`[status]` tests; full host +
+sanitizer suites green across a clean recompile.
+
+**Remaining impact:** Persisted data is alert metadata only — no raw media,
+biometrics, or consent-as-authorization. Real device behavior and OS permission
+semantics remain unverified (hardware-gated). No physical sensor was activated.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -913,7 +979,8 @@ The following were verified to work correctly and are not friction:
 | 19 | ASan build corrupt objects + runtime integration | — | Fixed 0-byte incremental objects; SimulatorRuntime wired into Application; 7 `[runtime]` tests; 154/1583 host + ASan/UBSan |
 | 20 | Runtime event-to-alert integration | — | Authorized observations → process_event → Pipeline → alert; 9 `[event2alert]` tests; 163/1617 host + ASan/UBSan; running app fires 9 synthetic alerts |
 | 21 | Runtime hardening v1 — AlertPolicy + lifecycle | — | Alert dedup/cooldown/re-arm + AppState lifecycle + config fail-closed; 33 hardening cases; 190/1712 host + ASan/UBSan; demo docs/DEMO_SIMULATOR.md |
+| 22 | Runtime readiness v2 — durable audit + observability | — | PersistenceAudit (alert metadata via existing SQLite, historical-vs-current, retention, fail-safe degraded) + RuntimeStatus (bounded privacy-safe counters); 10 audit/status cases; 200/1753 host + ASan/UBSan; release reproduction |
 
-**Total verified incidents:** 21
+**Total verified incidents:** 22
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 18
+**Resolved incidents:** 19

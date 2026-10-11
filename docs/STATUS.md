@@ -70,18 +70,22 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 163 test cases, 1617 assertions, all passing | 2026-10-11 |
 | Runtime hardening v1 | `core/AlertPolicy` (dedup/cooldown/re-arm, injectable clock, bounded); explicit `AppState` lifecycle + partial-startup cleanup; 27 hardening tests; reproducible demo `docs/DEMO_SIMULATOR.md` | 2026-10-11 |
 | Test suite | 190 test cases, 1712 assertions, all passing | 2026-10-11 |
+| Runtime readiness v2 | `core/PersistenceAudit` (durable alert metadata via existing SQLite, historical-vs-current distinguishability, retention, fail-safe degraded) + `core/RuntimeStatus` (bounded privacy-safe counters); restart distinguishability verified; 10 audit/status tests | 2026-10-11 |
+| Test suite | 200 test cases, 1753 assertions, all passing | 2026-10-11 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-All tests passed (1712 assertions in 190 test cases)
-Focused: [alertpolicy] 11 / 45; [lifecycle] 17 / 107; [hardening] 5 / 13; [event2alert] 9 / 34; [runtime] 7 / 40; [sim] 24 / 915; [dual] 12 / 74; [e2e] 9 / 73 — all pass
+All tests passed (1753 assertions in 200 test cases)
+Focused: [audit] 7 / 28; [status] 3 / 13; [alertpolicy] 11 / 45; [lifecycle] 17 / 107; [hardening] 5 / 13; [event2alert] 9 / 34; [runtime] 7 / 40; [sim] 24 / 915; [dual] 12 / 74; [e2e] 9 / 73 — all pass
 ASan/UBSan full suite: passed, no leaks, no sanitizer errors
 Android cross-compile (arm64-v8a/API 34): passed (static archive, not runnable)
 Android cross-compile (armeabi-v7a/API 27): passed (on-device self-test binary)
 On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
-Application run (simulator mode): capture-off → no media/no alerts + final_state=Stopped; capture-on → authorized observations through Pipeline, 1 alert delivered + 8 dedup-suppressed, pipeline_history=10, bounded speaker, final_state=Stopped
+Application run (simulator mode): capture-off → no media/no alerts + final_state=Stopped; capture-on → authorized observations through Pipeline, 1 alert delivered + persisted + 8 dedup-suppressed, pipeline_history=10, bounded speaker, final_state=Stopped
+Restart: same audit DB, 2nd process reports historical_alerts=1 (distinguishable from current-process alerts)
+Release reproduction: fresh out-of-source build (existing dep cache) → 200/1753, new tests included
 ```
 
 ## Verification Status (separated by layer)

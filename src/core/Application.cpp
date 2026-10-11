@@ -45,11 +45,16 @@ Application::~Application() {
     if (simulator_) {
         simulator_->shutdown();
     }
+    if (persistence_) {
+        persistence_->close();
+    }
     instance_ = nullptr;
 }
 
 int Application::run(const std::string& config_path) {
     app_state_ = AppState::Starting;
+    status_.app_state = AppState::Starting;
+    status_.startups.fetch_add(1);
 
     // --- Startup phase 1: config (fail-closed; invalid config => Failed) ---
     try {
@@ -58,13 +63,30 @@ int Application::run(const std::string& config_path) {
         Logger::initialize("info");
         Logger::get()->critical("Failed to load config: {}", e.what());
         app_state_ = AppState::Failed;
+        status_.app_state = AppState::Failed;
         return 1;
     }
 
     Logger::initialize(config_.log_level);
     Logger::get()->info("Starting HomeGuardian AI Application...");
 
-    // --- Startup phase 2: components (with cleanup on partial failure) ---
+    // --- Startup phase 2a: persistence (degraded on failure, not fatal) ---
+    // Open the audit database. If it cannot be opened/initialized, run DEGRADED
+    // (persistence_ == nullptr, status.persistence_healthy == false) rather than
+    // failing the whole startup. Persistence is metadata-only; its absence does
+    // not affect consent or capture safety.
+    try {
+        persistence_ = std::make_unique<PersistenceAudit>("homeguardian_audit.db");
+        status_.persistence_healthy.store(true);
+        Logger::get()->info("Persistence ready. historical_alerts={}",
+                            persistence_->historical_alert_count());
+    } catch (const std::exception& e) {
+        persistence_.reset();
+        status_.persistence_healthy.store(false);
+        Logger::get()->warn("Persistence unavailable — running degraded: {}", e.what());
+    }
+
+    // --- Startup phase 2b: components (with cleanup on partial failure) ---
     try {
         pipeline_->set_max_history_size(config_.max_event_history);
 
@@ -72,12 +94,15 @@ int Application::run(const std::string& config_path) {
         // honors it exactly like a real backend would: when false, NO media is
         // delivered. Configuration cannot silently grant consent.
         simulator_->set_media_capture_enabled(config_.media_capture_enabled);
+        status_.capture_enabled.store(config_.media_capture_enabled);
     } catch (const std::exception& e) {
         // Partial startup failure: tear down anything already started so the
         // runtime never reports healthy while components are half-initialized.
         Logger::get()->critical("Startup failed: {} — cleaning up", e.what());
         simulator_->shutdown();
+        if (persistence_) persistence_->close();
         app_state_ = AppState::Failed;
+        status_.app_state = AppState::Failed;
         return 1;
     }
 
@@ -91,7 +116,8 @@ int Application::run(const std::string& config_path) {
     // --- Simulator demonstration: bounded, deterministic ---
     // When capture is enabled AND synthetic consent is present, run a bounded
     // set of media cycles exercising consent, fan-out, pipeline, alert policy,
-    // bounded speaker, and clean shutdown. When disabled (default), no media.
+    // durable audit, bounded speaker, and clean shutdown. When disabled
+    // (default), no media.
     if (config_.media_capture_enabled) {
         // Synthetic grants for both consumers (simulator test consent only).
         simulator_->grant_consent(SimulatorRuntime::enabled_device_id(), "sim_alexa_enabled");
@@ -107,6 +133,9 @@ int Application::run(const std::string& config_path) {
         const int kSimulatorCycles = 5;
         for (int i = 0; i < kSimulatorCycles && !shutdown_flag_; ++i) {
             int delivered = simulator_->tick();
+            status_.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
+            status_.speaker_queue_depth.store(simulator_->speaker_queue_size());
+            status_.speaker_played.store(simulator_->speaker_played_count());
             Logger::get()->info("Simulator cycle {}: delivered={} blocked={} "
                                 "speaker_played={} pipeline_history={} "
                                 "alerts_delivered={} alerts_suppressed={}",
@@ -129,7 +158,8 @@ int Application::run(const std::string& config_path) {
 
     // --- Main loop ---
     app_state_ = AppState::Running;
-    Logger::get()->info("Entering main loop...");
+    status_.app_state = AppState::Running;
+    Logger::get()->info("Entering main loop... status: {}", status_.summary());
 
     while (!shutdown_flag_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -137,12 +167,16 @@ int Application::run(const std::string& config_path) {
 
     // --- Deterministic shutdown (idempotent) ---
     app_state_ = AppState::Stopping;
+    status_.app_state = AppState::Stopping;
     simulator_->shutdown();       // stops capture, clears bounded queue, releases speaker
     alert_policy_->reset();
+    if (persistence_) persistence_->close();
     app_state_ = AppState::Stopped;
+    status_.app_state = AppState::Stopped;
+    status_.clean_shutdowns.fetch_add(1);
 
-    Logger::get()->info("Main loop exited cleanly. final_state={}",
-                        app_state_to_string(app_state_.load()));
+    Logger::get()->info("Main loop exited cleanly. final_state={} status: {}",
+                        app_state_to_string(app_state_.load()), status_.summary());
     Logger::get()->flush();
     return 0;
 }
@@ -151,6 +185,7 @@ void Application::request_shutdown() {
     shutdown_flag_ = true;
     if (app_state_.load() == AppState::Running) {
         app_state_ = AppState::Stopping;
+        status_.app_state = AppState::Stopping;
     }
     if (auto logger = Logger::get()) {
         logger->info("Shutdown requested.");
@@ -158,17 +193,37 @@ void Application::request_shutdown() {
 }
 
 void Application::process_event(const Event& event) {
+    status_.events_processed.fetch_add(1);
     if (!pipeline_) return;
-    auto alert = pipeline_->process(event);
+    std::optional<Alert> alert;
+    try {
+        alert = pipeline_->process(event);
+    } catch (const std::exception& e) {
+        // Processing failure: count it, keep running, do not corrupt state.
+        status_.events_failed.fetch_add(1);
+        Logger::get()->warn("Event processing failed: {}", e.what());
+        return;
+    }
     if (alert) {
+        status_.alerts_generated.fetch_add(1);
         // Apply the deduplication/cooldown policy. Unrelated alerts (different
         // rule/severity) are delivered independently; repeated duplicates for
         // the same active condition are suppressed per the documented policy.
         bool suppressed = false;
         bool deliver = alert_policy_->admit(*alert, suppressed);
         if (deliver) {
+            status_.alerts_delivered.fetch_add(1);
             Logger::get()->warn("Alert generated: {}", alert->message);
+            // Durable audit (metadata only). A write failure degrades status
+            // but never throws or corrupts runtime state.
+            if (persistence_) {
+                if (!persistence_->record_alert(*alert)) {
+                    status_.alerts_persist_failed.fetch_add(1);
+                    status_.persistence_healthy.store(false);
+                }
+            }
         } else if (suppressed) {
+            status_.alerts_suppressed.fetch_add(1);
             Logger::get()->info("Alert suppressed (dedup/cooldown): {}", alert->message);
         }
     } else {
@@ -188,6 +243,14 @@ SimulatorRuntime& Application::get_simulator_runtime() {
 
 AlertPolicy& Application::get_alert_policy() {
     return *alert_policy_;
+}
+
+PersistenceAudit* Application::get_persistence() {
+    return persistence_.get();
+}
+
+RuntimeStatus& Application::get_status() {
+    return status_;
 }
 
 AppState Application::state() const {

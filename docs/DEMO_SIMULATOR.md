@@ -92,6 +92,34 @@ Every run above ends with `final_state=Stopped`, `queue=0` (speaker queue
 drained/cleared), and bounded `pipeline_history`. The shutdown path is
 idempotent and covered by `[lifecycle]` and `[hardening]` tests.
 
+## 7. Durable audit + observability
+
+The running app logs a privacy-safe status summary when entering the main loop
+and at clean shutdown, e.g.:
+
+```
+state=Running capture=on persist=ok media_auth=10 media_denied=0 events_proc=10
+events_rej=0 events_fail=0 alerts_gen=9 alerts_deliv=1 alerts_supp=8
+persist_fail=0 spk_depth=0 spk_overflow=0 spk_played=10 startups=1
+clean_shutdowns=1 recoveries=0
+```
+
+Delivered alerts are persisted (metadata only) to `homeguardian_audit.db` via
+the existing SQLite layer. **Restart distinguishability:** run the capture-on
+demo twice against the same database — the second run logs
+`Persistence ready. historical_alerts=1`, showing prior-process alerts are
+distinguishable from current-process ones.
+
+```bash
+# First run
+timeout 4 ./build/homeguardian /tmp/hg_on.json   # -> historical_alerts=0
+# Second run (same DB)
+timeout 4 ./build/homeguardian /tmp/hg_on.json   # -> historical_alerts=1
+```
+
+To start fresh, remove the audit DB (`rm -f homeguardian_audit.db*`). No raw
+media is persisted; only alert metadata.
+
 ---
 
 ## Alert policy (summary)
