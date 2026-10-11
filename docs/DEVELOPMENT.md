@@ -84,6 +84,15 @@ A deployment-readiness and security review of the Alexa boundary is in
 deployment boundary, and a CONDITIONAL GO recommendation). The local stdio
 bridge is NOT a deployed HTTPS service.
 
+Authentication and secret management (B1+B4) are implemented in
+`core/AlexaCredentialStore.{h,cpp}`: real bearer-token verification with
+expiry/revocation, constant-time comparison, 0600 secure-file loading,
+fail-closed behavior, and no mock fallback. The bridge selects the secure store
+with `HG_BRIDGE_SECURE_CREDS=1` (a load failure exits 3, never serving with a
+weaker verifier); the default local verifier is for development/tests only.
+Tests: `homeguardian_tests "[creds]"` (14 cases) and the secure-mode cases in
+`integration.test.js`. Report: `docs/SECURITY_READINESS_V6.md`.
+
 A reproducible simulator demonstration of the running app is in
 `docs/DEMO_SIMULATOR.md`.
 

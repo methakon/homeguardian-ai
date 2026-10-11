@@ -982,9 +982,85 @@ The following were verified to work correctly and are not friction:
 | 22 | Runtime readiness v2 — durable audit + observability | — | PersistenceAudit (alert metadata via existing SQLite, historical-vs-current, retention, fail-safe degraded) + RuntimeStatus (bounded privacy-safe counters); 10 audit/status cases; 200/1753 host + ASan/UBSan; release reproduction |
 | 23 | Runtime readiness v3 — integration contract, storage integrity, privacy | — | AlexaContract (versioned, authenticated, read-only contract; 14 C++ + 12 Node adapter cases, NOT deployed); SQLite integrity/migration/retention/recovery (7 cases); privacy/consent regression (7 cases); P1 rule-specific clearing; P2 scheduled retention; 235/1925 host + ASan/UBSan; release reproduction |
 
-**Total verified incidents:** 25
+**Total verified incidents:** 26
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 22
+**Resolved incidents:** 23
+
+---
+
+## Incident 26: Security Readiness v6 — Authentication & Secret Management (F22-32)
+
+**Date/time:** 2026-10-12 ~01:50 IST
+**Area:** Security / authentication / secret management
+
+**Expected:** Implement blockers B1 (real credential verification) and B4
+(secret management) from `docs/SECURITY_READINESS_V5.md`, isolated, before any
+HTTP endpoint. Simulator-only; no production credentials.
+
+**Identity-flow decision:** the repo documents the intended production flow as
+Alexa account linking via OAuth 2.0 / Login with Amazon (`docs/ARCHITECTURE.md`).
+Validating a real LWA token needs an LWA client id/secret (Amazon credentials),
+which are prohibited here. So the LWA provider is NOT implemented; instead the
+provider-independent verification/security layer is implemented, with a future
+LWA/signed-request verifier slotting into the unchanged
+`IAlexaCredentialVerifier` interface.
+
+**Actual:**
+- Added `core/AlexaCredentialStore.{h,cpp}`: real bearer-token verifier +
+  secure secret loader. Fail-closed on missing/unreadable/malformed/
+  insecurely-permissioned file, unknown/expired/revoked token (all failure
+  modes indistinguishable). Constant-time byte comparison (accumulate XOR, no
+  early exit; length mismatch fails immediately). Secure-file load requires a
+  regular file, 0600, owned by the current euid; any deviation → load fails,
+  store empty, every verify unauthorized. Secret values never logged/returned;
+  load-failure reason is generic (no path/value). Runtime in-memory `revoke()`.
+- Wired into `hg_alexa_bridge`: `HG_BRIDGE_SECURE_CREDS=1` selects the secure
+  store (load failure → exit 3, never serving with a weaker verifier); default
+  remains the local dev/test verifier. Mode chosen explicitly via env var, never
+  silently. No permissive fallback.
+- Added `tests/core/test_alexa_credentials.cpp`: 14 `[creds]` cases (0600 load,
+  broad-perms rejected, missing/malformed/non-object/empty-token rejected,
+  valid/unknown/expired/revoked, runtime revoke, constant-time equality, no
+  fallback, contract+store authn-then-authz).
+- Added 5 secure-mode Node integration cases (0600 auth, revoked→unauthorized,
+  expired→unauthorized, 0644→exit 3 no-serve, no token in stderr).
+
+**Decisions (documented):**
+- No custom crypto / no new dependency (milestone prohibits both; OpenSSL dev
+  headers absent on host). Constant-time byte equality implemented directly.
+- Persistent revocation/rotation and secret issuance are OPERATIONAL procedures
+  (re-provision the file out-of-band), not runtime features.
+- `add_for_testing` normalizes a zero/epoch expiry to "never" so fixtures need
+  not set max(); this keeps the test path consistent with the file loader.
+
+**Friction encountered:** first `[creds]` run failed one case because a
+default-constructed `expires_at` (epoch) read as already-expired via
+`add_for_testing`. Fixed by normalizing zero/epoch expiry to max() in
+`add_for_testing`.
+
+**Test results (this cycle):**
+- C++ full host suite (hg_build): **255 cases / 2004 assertions pass; ctest
+  100%.**
+- ASan+UBSan (hg_asan, cmake reconfigure + stale objects removed + clean
+  recompile, sizes verified): 255 cases, zero sanitizer errors.
+- Node full (`npm test`): **50/50** (13 handler + 12 contract + 21 integration +
+  4 restart).
+- Fresh release build (existing dep cache): app + tests + bridge clean; suite
+  255/2004; `[creds]` present in the fresh binary.
+- Secret/artifact scan: clean; no stray credential/db files.
+
+**Resolution:** Security readiness v6 landed (F22-32). Simulator-only; no
+endpoint, no cloud, no production credentials, no physical sensor. LWA provider
+NOT implemented (needs Amazon creds). Build dirs intact; temp release dir
+removed.
+
+**Regression protection:** 14 `[creds]` + 5 secure-mode Node cases; full host +
+sanitizer suites green across clean recompile and fresh release build.
+
+**Remaining impact:** B2 (TLS), B3 (rate limiting), B5 (health/supervision)
+still open; the next local-only HTTP-adapter stage is CONDITIONAL on those.
+Real disk-full, real hardware capture, and live Alexa integration remain
+unverified. No physical sensor was activated.
 
 ---
 

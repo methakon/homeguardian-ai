@@ -571,6 +571,27 @@ observability without any new capture or retention surface:
   path. Verified by `integration.test.js` (capture-on config → `capture_enabled:
   true`; missing config → `false`, still serving).
 
+## Credential handling — privacy notes (added 2026-10-12)
+
+- **Secrets never logged/returned:** `AlexaCredentialStore` never logs, echoes,
+  or returns token values; load-failure reasons are generic (no path/value).
+  Verified by `integration.test.js` "secure mode: no credential leak in stderr"
+  and `[creds]` cases.
+- **Secure provisioning:** the credential file must be owner-only (0600),
+  owned by the current uid, a regular file. Broader permissions, foreign
+  ownership, missing/malformed content → fail closed (store empty; every verify
+  unauthorized). Verified by `[creds]` permission/malformed/missing cases and
+  the `0644 → exit 3` integration case.
+- **Fail-closed, no mock fallback:** if the secure store fails to load, the
+  bridge exits (code 3) rather than serving with a weaker verifier. Unknown,
+  expired, and revoked tokens are indistinguishable to the caller.
+- **Test fixtures are synthetic and isolated:** created per-run in a temp dir
+  and removed in cleanup; never committed. Production secrets live outside Git
+  and ordinary config at a runtime-supplied path.
+- **Authentication never grants consent or enables capture:** the store only
+  authenticates and returns read permissions; authorization is separate
+  (contract-level). No mutating operation exists.
+
 ## Product-readiness audit — privacy notes (added 2026-10-11)
 
 Audited build/dependency setup, config, test fixtures, privacy guarantees, and

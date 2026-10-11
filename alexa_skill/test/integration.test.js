@@ -311,3 +311,99 @@ test('config load failure fails safe (capture reported disabled, still serves)',
     assert.equal(res.capture_enabled, false);  // fail-safe
   } finally { teardown(); }
 });
+
+// --- secure credential mode (HG_BRIDGE_SECURE_CREDS=1) ---
+
+// Spawn the bridge in secure-creds mode with a 0600 credential file.
+function runSecureBridge(credsObj, requestLines, { mode = 0o600, timeoutMs = 15000 } = {}) {
+  return new Promise((resolve, reject) => {
+    // Write the credential file with the requested mode.
+    const bodyText = JSON.stringify(credsObj);
+    fs.writeFileSync(credsPath, bodyText);
+    fs.chmodSync(credsPath, mode);
+    const child = spawn(BRIDGE, [CONFIG, credsPath], {
+      cwd: auditDir,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: Object.assign({}, process.env, { HG_BRIDGE_SECURE_CREDS: '1' }),
+    });
+    let out = '';
+    let err = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGKILL');
+      reject(new Error('bridge timed out'));
+    }, timeoutMs);
+    child.stdout.on('data', (d) => { out += d.toString(); });
+    child.stderr.on('data', (d) => { err += d.toString(); });
+    child.on('error', (e) => { if (!settled) { settled = true; clearTimeout(timer); reject(e); } });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const lines = out.split('\n').filter((l) => l.trim()).map((l) => {
+        try { return JSON.parse(l); } catch { return { __raw: l }; }
+      });
+      resolve({ lines, code, stderr: err });
+    });
+    for (const line of requestLines) child.stdin.write(line + '\n');
+    child.stdin.write('shutdown\n');
+    child.stdin.end();
+  });
+}
+
+const SECURE_CREDS = {
+  'tok-full': { principal: 'tester', allow_status: true, allow_alert_summary: true, expires_at_ms: 0, revoked: false },
+  'tok-status': { principal: 'tester', allow_status: true, allow_alert_summary: false, expires_at_ms: 0, revoked: false },
+  'tok-revoked': { principal: 'tester', allow_status: true, allow_alert_summary: true, expires_at_ms: 0, revoked: true },
+  'tok-expired': { principal: 'tester', allow_status: true, allow_alert_summary: true, expires_at_ms: 1000, revoked: false },
+};
+
+test('secure mode: 0600 credential file authenticates', async () => {
+  setup();
+  try {
+    const { lines, code } = await runSecureBridge(SECURE_CREDS, [body('status', 'tok-full')]);
+    assert.equal(lines[0].ok, true);
+    assert.equal(code, 0);
+  } finally { teardown(); }
+});
+
+test('secure mode: revoked token fails closed', async () => {
+  setup();
+  try {
+    const { lines } = await runSecureBridge(SECURE_CREDS, [body('status', 'tok-revoked')]);
+    assert.equal(lines[0].ok, false);
+    assert.equal(lines[0].error, 'unauthorized');
+  } finally { teardown(); }
+});
+
+test('secure mode: expired token fails closed', async () => {
+  setup();
+  try {
+    const { lines } = await runSecureBridge(SECURE_CREDS, [body('status', 'tok-expired')]);
+    assert.equal(lines[0].ok, false);
+    assert.equal(lines[0].error, 'unauthorized');
+  } finally { teardown(); }
+});
+
+test('secure mode: too-broad credential file is rejected (exit 3, no serve)', async () => {
+  setup();
+  try {
+    // 0644 file -> store refuses to load; bridge exits 3 and serves nothing.
+    const { lines, code } = await runSecureBridge(SECURE_CREDS, [body('status', 'tok-full')], { mode: 0o644 });
+    assert.equal(code, 3);
+    assert.equal(lines.length, 0);  // no responses served
+  } finally { teardown(); }
+});
+
+test('secure mode: no credential leak in stderr', async () => {
+  setup();
+  try {
+    const { stderr } = await runSecureBridge(SECURE_CREDS, [body('status', 'tok-full')]);
+    // Token values must never appear in any diagnostic output.
+    for (const tok of Object.keys(SECURE_CREDS)) {
+      assert.ok(!stderr.includes(tok), 'token leaked in stderr');
+    }
+  } finally { teardown(); }
+});

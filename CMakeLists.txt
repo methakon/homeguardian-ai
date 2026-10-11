@@ -114,6 +114,7 @@ add_executable(homeguardian
     src/core/PersistenceAudit.cpp
     src/core/RuntimeStatus.cpp
     src/core/AlexaContract.cpp
+    src/core/AlexaCredentialStore.cpp
     src/backend/simulator/SimulatedSensorBackend.cpp
     src/backend/simulator/LogicalDevice.cpp
     src/backend/simulator/AudioBroker.cpp
@@ -142,6 +143,7 @@ install(TARGETS homeguardian DESTINATION bin)
 add_executable(hg_alexa_bridge
     src/bridge/hg_alexa_bridge.cpp
     src/core/AlexaContract.cpp
+    src/core/AlexaCredentialStore.cpp
     src/core/Application.cpp
     src/core/PersistenceAudit.cpp
     src/core/AlertPolicy.cpp
@@ -207,6 +209,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_runtime_hardening.cpp
         tests/core/test_persistence_audit.cpp
         tests/core/test_alexa_contract.cpp
+        tests/core/test_alexa_credentials.cpp
         tests/core/test_privacy_consent.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
@@ -227,6 +230,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ../src/core/PersistenceAudit.cpp
         ../src/core/RuntimeStatus.cpp
         ../src/core/AlexaContract.cpp
+        ../src/core/AlexaCredentialStore.cpp
         ../src/persistence/SQLiteDatabase.cpp
         ../src/persistence/EventRepository.cpp
         ../src/persistence/AlertRepository.cpp

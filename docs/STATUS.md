@@ -78,6 +78,8 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 235 test cases, 1928 assertions, all passing; Node 43/43 (13 handler + 12 contract + 14 integration + 4 restart) | 2026-10-11 |
 | Security readiness v5 | Deployment-readiness & security review of the Alexa boundary; fixed LOW-1 (bridge now reflects real config capture state, fail-safe); +6 C++ `[alexa]` security-regression cases +2 Node integration cases; report `docs/SECURITY_READINESS_V5.md`; HTTPS endpoint = CONDITIONAL GO (blocked on real authn/TLS/rate-limit/secrets) | 2026-10-11 |
 | Test suite | 241 test cases, 1960 assertions, all passing; Node 45/45 (13 handler + 12 contract + 16 integration + 4 restart) | 2026-10-11 |
+| Security readiness v6 | `core/AlexaCredentialStore` (real bearer-token verification: expiry/revocation, constant-time compare, 0600 secure-file load, fail-closed, no mock fallback; B1+B4); bridge `HG_BRIDGE_SECURE_CREDS` mode; 14 `[creds]` + 5 secure-mode Node cases; report `docs/SECURITY_READINESS_V6.md` | 2026-10-12 |
+| Test suite | 255 test cases, 2004 assertions, all passing; Node 50/50 (13 handler + 12 contract + 21 integration + 4 restart) | 2026-10-12 |
 
 ## Test Results
 
