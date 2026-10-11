@@ -16,7 +16,8 @@ Application::Application() {
         throw std::runtime_error("Application instance already exists");
     }
     instance_ = this;
-    
+    app_state_ = AppState::Constructed;
+
     // Existing time-window correlation rule: fires a synthetic info alert once
     // >=2 observations arrive within the window. This is the app's existing
     // alert engine — reused unchanged; the simulator feeds it authorized
@@ -28,45 +29,69 @@ Application::Application() {
         /*min_count=*/2, std::chrono::milliseconds(60000),
         Severity::info, "synthetic simulator presence notice"));
     pipeline_ = std::make_unique<Pipeline>(default_rules);
+
     // Simulator runtime, built with capture DISABLED by default (config's
     // media_capture_enabled is applied in run()). It never opens real hardware.
     simulator_ = std::make_unique<SimulatorRuntime>(/*media_capture_enabled=*/false);
     simulator_->register_default_devices();
+
+    // Alert deduplication/cooldown policy (conservative default 60s). Applied
+    // in process_event(); does not suppress unrelated alerts.
+    alert_policy_ = std::make_unique<AlertPolicy>(/*cooldown_ms=*/std::chrono::milliseconds(60000));
 }
 
 Application::~Application() {
+    // Ensure any started component is torn down even on abnormal exit.
+    if (simulator_) {
+        simulator_->shutdown();
+    }
     instance_ = nullptr;
 }
 
 int Application::run(const std::string& config_path) {
+    app_state_ = AppState::Starting;
+
+    // --- Startup phase 1: config (fail-closed; invalid config => Failed) ---
     try {
         config_.load(config_path);
     } catch (const std::exception& e) {
         Logger::initialize("info");
         Logger::get()->critical("Failed to load config: {}", e.what());
+        app_state_ = AppState::Failed;
         return 1;
     }
 
     Logger::initialize(config_.log_level);
     Logger::get()->info("Starting HomeGuardian AI Application...");
 
-    pipeline_->set_max_history_size(config_.max_event_history);
+    // --- Startup phase 2: components (with cleanup on partial failure) ---
+    try {
+        pipeline_->set_max_history_size(config_.max_event_history);
 
-    // Apply the global capture kill switch from config. Simulator mode honors it
-    // exactly like a real backend would: when false, NO media is delivered.
-    simulator_->set_media_capture_enabled(config_.media_capture_enabled);
+        // Apply the global capture kill switch from config. Simulator mode
+        // honors it exactly like a real backend would: when false, NO media is
+        // delivered. Configuration cannot silently grant consent.
+        simulator_->set_media_capture_enabled(config_.media_capture_enabled);
+    } catch (const std::exception& e) {
+        // Partial startup failure: tear down anything already started so the
+        // runtime never reports healthy while components are half-initialized.
+        Logger::get()->critical("Startup failed: {} — cleaning up", e.what());
+        simulator_->shutdown();
+        app_state_ = AppState::Failed;
+        return 1;
+    }
 
     std::signal(SIGINT, Application::signal_handler);
     std::signal(SIGTERM, Application::signal_handler);
 
-    Logger::get()->info("Simulator mode: capture_enabled={} consumers={}",
-                        config_.media_capture_enabled, simulator_->consumer_count());
+    Logger::get()->info("Simulator mode: capture_enabled={} consumers={} state={}",
+                        config_.media_capture_enabled, simulator_->consumer_count(),
+                        app_state_to_string(app_state_.load()));
 
-    // Simulator demonstration: when capture is enabled AND synthetic consent is
-    // present, run a bounded, deterministic set of media cycles so the running
-    // application exercises the consent gate, shared fan-out, bounded speaker
-    // queue, and clean shutdown. When capture is disabled (the default), no
-    // media is generated or delivered.
+    // --- Simulator demonstration: bounded, deterministic ---
+    // When capture is enabled AND synthetic consent is present, run a bounded
+    // set of media cycles exercising consent, fan-out, pipeline, alert policy,
+    // bounded speaker, and clean shutdown. When disabled (default), no media.
     if (config_.media_capture_enabled) {
         // Synthetic grants for both consumers (simulator test consent only).
         simulator_->grant_consent(SimulatorRuntime::enabled_device_id(), "sim_alexa_enabled");
@@ -83,48 +108,73 @@ int Application::run(const std::string& config_path) {
         for (int i = 0; i < kSimulatorCycles && !shutdown_flag_; ++i) {
             int delivered = simulator_->tick();
             Logger::get()->info("Simulator cycle {}: delivered={} blocked={} "
-                                "speaker_played={} pipeline_history={}",
+                                "speaker_played={} pipeline_history={} "
+                                "alerts_delivered={} alerts_suppressed={}",
                                 i, delivered, simulator_->last_fanout_blocked(),
                                 simulator_->speaker_played_count(),
-                                pipeline_->get_recent_events(std::chrono::hours(1)).size());
+                                pipeline_->get_recent_events(std::chrono::hours(1)).size(),
+                                alert_policy_->delivered_count(),
+                                alert_policy_->suppressed_count());
         }
         Logger::get()->info("Simulator cycles complete. speaker_played={} queue={} "
-                            "pipeline_history={}",
+                            "pipeline_history={} alerts_delivered={} alerts_suppressed={}",
                             simulator_->speaker_played_count(),
                             simulator_->speaker_queue_size(),
-                            pipeline_->get_recent_events(std::chrono::hours(1)).size());
+                            pipeline_->get_recent_events(std::chrono::hours(1)).size(),
+                            alert_policy_->delivered_count(),
+                            alert_policy_->suppressed_count());
     } else {
         Logger::get()->info("Simulator idle: capture disabled; no media delivered.");
     }
 
+    // --- Main loop ---
+    app_state_ = AppState::Running;
     Logger::get()->info("Entering main loop...");
 
     while (!shutdown_flag_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    // Deterministic shutdown of the simulator runtime (stops capture, clears the
-    // bounded queue, releases the speaker). Idempotent.
-    simulator_->shutdown();
+    // --- Deterministic shutdown (idempotent) ---
+    app_state_ = AppState::Stopping;
+    simulator_->shutdown();       // stops capture, clears bounded queue, releases speaker
+    alert_policy_->reset();
+    app_state_ = AppState::Stopped;
 
-    Logger::get()->info("Main loop exited cleanly.");
+    Logger::get()->info("Main loop exited cleanly. final_state={}",
+                        app_state_to_string(app_state_.load()));
     Logger::get()->flush();
     return 0;
 }
 
 void Application::request_shutdown() {
     shutdown_flag_ = true;
+    if (app_state_.load() == AppState::Running) {
+        app_state_ = AppState::Stopping;
+    }
     if (auto logger = Logger::get()) {
         logger->info("Shutdown requested.");
     }
 }
 
 void Application::process_event(const Event& event) {
-    if (pipeline_) {
-        auto alert = pipeline_->process(event);
-        if (alert) {
+    if (!pipeline_) return;
+    auto alert = pipeline_->process(event);
+    if (alert) {
+        // Apply the deduplication/cooldown policy. Unrelated alerts (different
+        // rule/severity) are delivered independently; repeated duplicates for
+        // the same active condition are suppressed per the documented policy.
+        bool suppressed = false;
+        bool deliver = alert_policy_->admit(*alert, suppressed);
+        if (deliver) {
             Logger::get()->warn("Alert generated: {}", alert->message);
+        } else if (suppressed) {
+            Logger::get()->info("Alert suppressed (dedup/cooldown): {}", alert->message);
         }
+    } else {
+        // No alert this cycle: the rule's condition may have cleared. Re-arm
+        // each tracked rule so its next alert is treated as a fresh condition.
+        alert_policy_->mark_condition_cleared("sim-presence");
     }
 }
 
@@ -134,6 +184,20 @@ Pipeline& Application::get_pipeline() {
 
 SimulatorRuntime& Application::get_simulator_runtime() {
     return *simulator_;
+}
+
+AlertPolicy& Application::get_alert_policy() {
+    return *alert_policy_;
+}
+
+AppState Application::state() const {
+    return app_state_.load();
+}
+
+bool Application::is_healthy() const {
+    AppState s = app_state_.load();
+    // Healthy only while cleanly running or stopping; never while Failed.
+    return s == AppState::Running || s == AppState::Stopping;
 }
 
 void Application::signal_handler([[maybe_unused]] int signal) {

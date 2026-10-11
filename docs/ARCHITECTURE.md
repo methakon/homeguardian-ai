@@ -669,3 +669,40 @@ frames.
 gated by the capture-consent boundary (it is not acquisition); capture fan-out
 IS gated per consumer. Everything is the deterministic in-process simulator — no
 physical microphone/speaker/camera, no AWS, no Alexa OS, no credentials.
+
+## Runtime hardening: alert policy + lifecycle (added 2026-10-11)
+
+**`AlertPolicy`** (`src/core/AlertPolicy.{h,cpp}`) is a small, deterministic
+notification layer applied to alerts the existing Pipeline/rules produce. It does
+not replace the correlation engine; it governs *how often* a repeated firing is
+surfaced:
+
+- **Identity** = `rule_name` + `severity`. Different keys are tracked and
+  delivered independently (never suppressed against each other).
+- **First occurrence** for a key is always delivered.
+- **Cooldown** (default 60s, configurable): repeat firings for the same active
+  condition within cooldown are suppressed and counted.
+- **Re-arm**: after cooldown expires the next firing re-notifies; if the
+  condition clears (a cycle yields no alert for that key) the next firing is a
+  fresh condition and is delivered immediately.
+- **Bounded**: retained dedup state is capped (oldest evicted); history is
+  bounded. An injectable clock makes cooldown/re-arm deterministic in tests; a
+  backward-moving clock cannot extend a cooldown.
+
+Rationale: a `TimeWindowCorrelation` rule fires on **every** evaluation where the
+trigger holds, so N observations for one continuous condition yield up to N-1
+alerts — correct rule behavior, but noisy. `AlertPolicy` collapses that to one
+notification per active condition with a re-notification interval, without hiding
+the first occurrence or any materially new (different-key) alert. It is a
+notification policy, **not** a safety detector; a suppressed duplicate is still
+an active condition. The alert is a synthetic presence notice, never a real-world
+danger detection.
+
+**Application lifecycle** (`AppState`): `Constructed → Starting → Running →
+Stopping → Stopped`, with `Failed` for config/startup errors. `run()` applies the
+config kill switch (capture disabled by default; configuration cannot silently
+grant consent), and on partial startup failure tears down already-started
+components so the runtime never reports healthy while half-initialized.
+`is_healthy()` is true only while cleanly `Running`/`Stopping`, never `Failed`.
+Shutdown is idempotent and clears bounded queues. A reproducible demonstration is
+in `docs/DEMO_SIMULATOR.md`.

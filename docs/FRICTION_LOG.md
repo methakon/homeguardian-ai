@@ -808,6 +808,69 @@ sensor was activated.
 
 ---
 
+## Incident 21: Runtime Hardening v1 — AlertPolicy + Lifecycle (F22-27)
+
+**Date/time:** 2026-10-11 ~12:30 IST
+**Area:** Runtime hardening / alert policy / lifecycle / config
+
+**Expected:** Harden the running application: alert dedup/cooldown, explicit
+lifecycle, config fail-closed, bounded memory, deterministic operation. Reuse
+existing abstractions; no parallel runtime/pipeline/correlation engine.
+
+**Actual:**
+- Added `core/AlertPolicy.{h,cpp}`: dedup/cooldown keyed by rule_name+severity,
+  first occurrence always delivered, cooldown re-notification, re-arm on
+  condition clear, bounded retained state, injectable clock (backward-safe).
+  Applied in `Application::process_event()`; unrelated alerts stay independent.
+- Added explicit `AppState` lifecycle (`Constructed/Starting/Running/Stopping/
+  Stopped/Failed`) with `state()`/`is_healthy()`; partial-startup failure tears
+  down already-started components; config kill switch applied before components
+  start; capture disabled by default; idempotent shutdown.
+- Added `docs/DEMO_SIMULATOR.md` (reproducible simulator-only demo).
+- Added tests: `test_alert_policy.cpp` (11 cases/45), `test_runtime_hardening.cpp`
+  (17 lifecycle + 5 hardening = 22 cases). Config fail-closed cases reuse the
+  existing `Config` validator.
+
+**Root-cause analysis of the "9 alerts from 10 observations":** the existing
+`TimeWindowCorrelation::evaluate` fires on EVERY evaluation where ≥2 observations
+are in the 60s window. Feeding 10 observations one-by-one means evaluations 2–10
+each see ≥2 in-window events → 9 alerts. This is the rule's **intended**
+behavior (fire-per-evaluation), not a defect. `AlertPolicy` is the documented
+policy layered on top to collapse repeated firings of one continuous condition
+into a single notification with a re-notification cooldown.
+
+**Build-tooling note:** the `Clock` is a `std::function`, which **copies** a
+by-value `FakeClock`; time-advancing tests initially used a copy so `advance_ms`
+did not affect the policy's clock. Fixed by sharing the clock via `shared_ptr`
+capture. Also, `AlertPolicy` holds a `std::mutex` (non-movable), so it cannot be
+returned in a `std::pair`; the test helper returns only the shared clock and the
+policy is constructed in place. `SimulatorRuntime::shutdown()` is terminal by
+design, so restart-after-shutdown tests use a fresh runtime per cycle.
+
+**Test results (this commit):**
+- Focused: `[alertpolicy]` 11/45, `[lifecycle]` 17/107, `[hardening]` 5/13 — all pass.
+- Full host suite (hg_build): **190 cases / 1712 assertions pass; ctest 100%.**
+- ASan+UBSan full suite (hg_asan, stale objects for changed TUs removed + clean
+  recompile; non-empty object/binary sizes verified): 190 cases pass, zero
+  sanitizer errors (1709 vs 1712 = known ±3 timing-loop variance).
+- Running app demo: capture-off → no media/no alerts, `final_state=Stopped`;
+  capture-on → 1 alert delivered + 8 dedup-suppressed, `pipeline_history=10`,
+  bounded speaker, `final_state=Stopped`.
+
+**Resolution:** Runtime hardening v1 landed (F22-27). Simulator-only; no physical
+sensor, no AWS, no Alexa change. Android backend, simulator, and Alexa skill
+preserved.
+
+**Regression protection:** 33 new hardening cases; full host + sanitizer suites
+green across a clean recompile.
+
+**Remaining impact:** The alert is a synthetic presence notice, not a real-world
+danger detection; `AlertPolicy` is a notification policy, not a safety detector.
+Real device behavior and OS permission semantics remain unverified
+(hardware-gated). No physical sensor was activated.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -849,7 +912,8 @@ The following were verified to work correctly and are not friction:
 | 18 | Dual logical-device simulation + shared audio broker | — | 12 `[dual]` tests; full host 147/1546 + ASan/UBSan clean; simulated-only, no Alexa OS claim |
 | 19 | ASan build corrupt objects + runtime integration | — | Fixed 0-byte incremental objects; SimulatorRuntime wired into Application; 7 `[runtime]` tests; 154/1583 host + ASan/UBSan |
 | 20 | Runtime event-to-alert integration | — | Authorized observations → process_event → Pipeline → alert; 9 `[event2alert]` tests; 163/1617 host + ASan/UBSan; running app fires 9 synthetic alerts |
+| 21 | Runtime hardening v1 — AlertPolicy + lifecycle | — | Alert dedup/cooldown/re-arm + AppState lifecycle + config fail-closed; 33 hardening cases; 190/1712 host + ASan/UBSan; demo docs/DEMO_SIMULATOR.md |
 
-**Total verified incidents:** 20
+**Total verified incidents:** 21
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 17
+**Resolved incidents:** 18

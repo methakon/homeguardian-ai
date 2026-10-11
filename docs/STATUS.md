@@ -68,18 +68,20 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 154 test cases, 1583 assertions, all passing | 2026-10-11 |
 | Event-to-alert integration | `SimulatorRuntime` routes AUTHORIZED synthetic observations through `Application::process_event()` → Pipeline validation + TimeWindowCorrelation + alert; 9 event-to-alert tests; capture-off/withdrawal/missing-consent produce no events | 2026-10-11 |
 | Test suite | 163 test cases, 1617 assertions, all passing | 2026-10-11 |
+| Runtime hardening v1 | `core/AlertPolicy` (dedup/cooldown/re-arm, injectable clock, bounded); explicit `AppState` lifecycle + partial-startup cleanup; 27 hardening tests; reproducible demo `docs/DEMO_SIMULATOR.md` | 2026-10-11 |
+| Test suite | 190 test cases, 1712 assertions, all passing | 2026-10-11 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-All tests passed (1617 assertions in 163 test cases)
-Focused: [event2alert] 9 cases / 34 assertions; [runtime] 7 / 40; [sim] 24 / 915; [dual] 12 / 74; [e2e] 9 / 73 — all pass
+All tests passed (1712 assertions in 190 test cases)
+Focused: [alertpolicy] 11 / 45; [lifecycle] 17 / 107; [hardening] 5 / 13; [event2alert] 9 / 34; [runtime] 7 / 40; [sim] 24 / 915; [dual] 12 / 74; [e2e] 9 / 73 — all pass
 ASan/UBSan full suite: passed, no leaks, no sanitizer errors
 Android cross-compile (arm64-v8a/API 34): passed (static archive, not runnable)
 Android cross-compile (armeabi-v7a/API 27): passed (on-device self-test binary)
 On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
-Application run (simulator mode): capture-off delivers no media + no alerts + clean shutdown; capture-on routes authorized observations through the Pipeline → 9 synthetic alerts, pipeline_history=10, bounded speaker, clean shutdown
+Application run (simulator mode): capture-off → no media/no alerts + final_state=Stopped; capture-on → authorized observations through Pipeline, 1 alert delivered + 8 dedup-suppressed, pipeline_history=10, bounded speaker, final_state=Stopped
 ```
 
 ## Verification Status (separated by layer)

@@ -57,9 +57,15 @@ Current test coverage:
 - End-to-end simulator: camera/mic/speaker → consent-gated delivery → synthetic processor → pipeline rule/alert → safe speaker response; failure and consent scenarios
 - Runtime integration: SimulatorRuntime driven by Application::run() — capture-off delivers no media; capture-on + consent delivers to permitted consumers; per-consumer withdrawal; determinism + bounded memory; idempotent shutdown; capture toggle
 - Event-to-alert: authorized synthetic observations → Application::process_event() → Pipeline validation + TimeWindowCorrelation + alert; capture-off/withdrawal/missing-consent produce no events; invalid/future-timestamp events rejected without corrupting pipeline state
+- AlertPolicy: dedup/cooldown/re-arm keyed by rule+severity; injectable clock; bounded retained state; first occurrence always delivered; unrelated keys independent
+- Lifecycle/hardening: idempotent start/shutdown; partial-startup cleanup; capture kill-switch toggle; bounded event/alert history; consent withdraw/restore cycles; config fail-closed; deterministic repeated runs
 
-Run a focused group with a tag filter, e.g. `./homeguardian_tests "[event2alert]"`,
-`"[runtime]"`, `"[sim]"`, `"[dual]"`, or `"[e2e]"`. Full suite: `ctest --output-on-failure`.
+Run a focused group with a tag filter, e.g. `./homeguardian_tests "[alertpolicy]"`,
+`"[lifecycle]"`, `"[hardening]"`, `"[event2alert]"`, `"[runtime]"`, `"[sim]"`,
+`"[dual]"`, or `"[e2e]"`. Full suite: `ctest --output-on-failure`.
+
+A reproducible simulator demonstration of the running app is in
+`docs/DEMO_SIMULATOR.md`.
 
 ## Coding Standards
 

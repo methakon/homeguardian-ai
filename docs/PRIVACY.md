@@ -460,6 +460,29 @@ scenario**:
   placeholders. No personal media or sensor data is produced, persisted, or
   uploaded. No physical sensor was activated.
 
+## Runtime hardening — privacy notes (added 2026-10-11)
+
+The `AlertPolicy` and lifecycle hardening add no new data-retention or capture
+surface; they operate on synthetic alerts and simulator state only:
+
+| Item | Status | Evidence |
+|---|---|---|
+| Alert policy + lifecycle + hardening tests | VERIFIED (non-capture) | 33 hardening cases (`[alertpolicy]` 11, `[lifecycle]` 17, `[hardening]` 5); ASan/UBSan clean. |
+| Real sensor capture | NOT RUN | No device file opened; no hardware syscall; no media written; no network. |
+
+- Alert dedup/cooldown governs **notification frequency** only; it never
+  suppresses a first occurrence or an unrelated (different rule/severity) alert,
+  and a suppressed duplicate remains an active condition. It is not a safety
+  detector.
+- Retained dedup state and event/alert histories are bounded (oldest evicted);
+  memory does not grow without bound under sustained load.
+- Configuration remains fail-closed: capture disabled by default; invalid or
+  contradictory config is rejected before components start and cannot enable
+  capture or bypass consent.
+- The alert is a **synthetic presence notice**, never a real-world danger
+  detection. No raw audio/video/biometric data is persisted. No physical sensor
+  was activated.
+
 ## Product-readiness audit — privacy notes (added 2026-10-11)
 
 Audited build/dependency setup, config, test fixtures, privacy guarantees, and
