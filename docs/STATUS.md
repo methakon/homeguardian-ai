@@ -66,18 +66,20 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 147 test cases, 1546 assertions, all passing | 2026-10-11 |
 | Runtime integration | `core/SimulatorRuntime` wired into `Application::run()` — the running app exercises the consent gate, shared audio broker, event pipeline, and clean shutdown; 7 runtime integration tests | 2026-10-11 |
 | Test suite | 154 test cases, 1583 assertions, all passing | 2026-10-11 |
+| Event-to-alert integration | `SimulatorRuntime` routes AUTHORIZED synthetic observations through `Application::process_event()` → Pipeline validation + TimeWindowCorrelation + alert; 9 event-to-alert tests; capture-off/withdrawal/missing-consent produce no events | 2026-10-11 |
+| Test suite | 163 test cases, 1617 assertions, all passing | 2026-10-11 |
 
 ## Test Results
 
 ```
 100% tests passed, 0 tests failed out of 1
-All tests passed (1583 assertions in 154 test cases)
-Focused: [runtime] 7 cases / 40 assertions; [sim] 24 / 915; [dual] 12 / 74; [e2e] 9 / 73 — all pass
+All tests passed (1617 assertions in 163 test cases)
+Focused: [event2alert] 9 cases / 34 assertions; [runtime] 7 / 40; [sim] 24 / 915; [dual] 12 / 74; [e2e] 9 / 73 — all pass
 ASan/UBSan full suite: passed, no leaks, no sanitizer errors
 Android cross-compile (arm64-v8a/API 34): passed (static archive, not runnable)
 Android cross-compile (armeabi-v7a/API 27): passed (on-device self-test binary)
 On-device non-capture self-test (real hardware): 17/17 PASS, exit 0
-Application run (simulator mode): capture-off delivers no media + clean shutdown; capture-on delivers to permitted consumers, bounded speaker, clean shutdown
+Application run (simulator mode): capture-off delivers no media + no alerts + clean shutdown; capture-on routes authorized observations through the Pipeline → 9 synthetic alerts, pipeline_history=10, bounded speaker, clean shutdown
 ```
 
 ## Verification Status (separated by layer)

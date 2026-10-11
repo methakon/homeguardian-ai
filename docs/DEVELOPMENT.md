@@ -56,9 +56,10 @@ Current test coverage:
 - Dual-device + audio broker: device independence, shared-source fan-out, per-consumer consent denial/withdrawal, bounded speaker queue, arbitration, playback recovery, shutdown
 - End-to-end simulator: camera/mic/speaker → consent-gated delivery → synthetic processor → pipeline rule/alert → safe speaker response; failure and consent scenarios
 - Runtime integration: SimulatorRuntime driven by Application::run() — capture-off delivers no media; capture-on + consent delivers to permitted consumers; per-consumer withdrawal; determinism + bounded memory; idempotent shutdown; capture toggle
+- Event-to-alert: authorized synthetic observations → Application::process_event() → Pipeline validation + TimeWindowCorrelation + alert; capture-off/withdrawal/missing-consent produce no events; invalid/future-timestamp events rejected without corrupting pipeline state
 
-Run a focused group with a tag filter, e.g. `./homeguardian_tests "[runtime]"`,
-`"[sim]"`, `"[dual]"`, or `"[e2e]"`. Full suite: `ctest --output-on-failure`.
+Run a focused group with a tag filter, e.g. `./homeguardian_tests "[event2alert]"`,
+`"[runtime]"`, `"[sim]"`, `"[dual]"`, or `"[e2e]"`. Full suite: `ctest --output-on-failure`.
 
 ## Coding Standards
 

@@ -157,6 +157,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         tests/core/test_e2e_simulator.cpp
         tests/core/test_dual_device_broker.cpp
         tests/core/test_runtime_integration.cpp
+        tests/core/test_event_to_alert.cpp
         tests/persistence/test_persistence.cpp
         tests/persistence/test_phase_e.cpp
         ../src/core/Config.cpp

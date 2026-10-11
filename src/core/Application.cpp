@@ -1,7 +1,9 @@
 #include "Application.h"
 #include "Logger.h"
+#include "TimeWindowCorrelation.h"
 #include <thread>
 #include <chrono>
+#include <memory>
 #include <stdexcept>
 #include <csignal>
 
@@ -15,7 +17,16 @@ Application::Application() {
     }
     instance_ = this;
     
+    // Existing time-window correlation rule: fires a synthetic info alert once
+    // >=2 observations arrive within the window. This is the app's existing
+    // alert engine — reused unchanged; the simulator feeds it authorized
+    // observations only. It is a SYNTHETIC test alert, never a real-world
+    // danger claim.
     std::vector<std::shared_ptr<ICorrelationRule>> default_rules;
+    default_rules.push_back(std::make_shared<TimeWindowCorrelation>(
+        "sim-presence", std::vector<EventType>{EventType::observation},
+        /*min_count=*/2, std::chrono::milliseconds(60000),
+        Severity::info, "synthetic simulator presence notice"));
     pipeline_ = std::make_unique<Pipeline>(default_rules);
     // Simulator runtime, built with capture DISABLED by default (config's
     // media_capture_enabled is applied in run()). It never opens real hardware.
@@ -60,19 +71,28 @@ int Application::run(const std::string& config_path) {
         // Synthetic grants for both consumers (simulator test consent only).
         simulator_->grant_consent(SimulatorRuntime::enabled_device_id(), "sim_alexa_enabled");
         simulator_->grant_consent(SimulatorRuntime::assistant_device_id(), "sim_alexa_assistant");
+
+        // Route every AUTHORIZED synthetic observation through the real
+        // application event path: process_event() -> Pipeline validation +
+        // correlation + alert. Denied/withdrawn consumers never reach this sink.
+        simulator_->set_event_sink([this](const Event& ev) { this->process_event(ev); });
+
         simulator_->start();
 
         const int kSimulatorCycles = 5;
         for (int i = 0; i < kSimulatorCycles && !shutdown_flag_; ++i) {
             int delivered = simulator_->tick();
             Logger::get()->info("Simulator cycle {}: delivered={} blocked={} "
-                                "speaker_played={}",
+                                "speaker_played={} pipeline_history={}",
                                 i, delivered, simulator_->last_fanout_blocked(),
-                                simulator_->speaker_played_count());
+                                simulator_->speaker_played_count(),
+                                pipeline_->get_recent_events(std::chrono::hours(1)).size());
         }
-        Logger::get()->info("Simulator cycles complete. speaker_played={} queue={}",
+        Logger::get()->info("Simulator cycles complete. speaker_played={} queue={} "
+                            "pipeline_history={}",
                             simulator_->speaker_played_count(),
-                            simulator_->speaker_queue_size());
+                            simulator_->speaker_queue_size(),
+                            pipeline_->get_recent_events(std::chrono::hours(1)).size());
     } else {
         Logger::get()->info("Simulator idle: capture disabled; no media delivered.");
     }

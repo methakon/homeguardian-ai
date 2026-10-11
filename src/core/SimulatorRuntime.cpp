@@ -102,6 +102,10 @@ void SimulatorRuntime::withdraw_consent(const std::string& consumer_id,
         "withdraw-" + purpose, "harness", purpose, "sim-1.0.0", "simulator_runtime"));
 }
 
+void SimulatorRuntime::set_event_sink(std::function<void(const Event&)> sink) {
+    event_sink_ = std::move(sink);
+}
+
 void SimulatorRuntime::set_media_capture_enabled(bool enabled) {
     // Rebuild the gate so the global kill switch takes effect immediately.
     media_capture_enabled_ = enabled;
@@ -144,38 +148,46 @@ int SimulatorRuntime::tick() {
     }
 
     int delivered = 0;
-    // For each consumer that received media this cycle, record an observation
-    // and enqueue a synthetic response. delivered_count reflects per-consumer
-    // authorization at the boundary.
+    // For each consumer that received media this cycle, build an authorized
+    // synthetic observation, record it on the logical device (bounded), route it
+    // through the event sink (Application::process_event -> Pipeline), and
+    // enqueue a synthetic speaker response. Denied/withdrawn consumers produce
+    // no event and never reach the pipeline.
     const std::string ids[2] = {kLogicalDeviceAlexaEnabled, kLogicalDeviceAlexaAssistant};
     for (const auto& id : ids) {
-        size_t before = broker_->delivered_count(id);
-        // The broker already fanned out; delivered_count was incremented for
-        // authorized consumers. Detect this consumer's authorization by whether
-        // its count advanced relative to a prior snapshot is not available here,
-        // so we ask the gate directly for a deterministic per-consumer decision
-        // consistent with the fan-out.
+        // Ask the gate directly for a deterministic per-consumer decision
+        // consistent with the fan-out above.
         auto req = request_for(id);
         auto decision = gate_->check({"harness", req.purpose, req.data_category});
         if (decision.authorized) {
             delivered++;
-            // Record a synthetic observation on the logical device (bounded).
+            // Build the synthetic observation (a valid Event: non-empty id +
+            // source + object payload).
             Event ev = Event::create_observation(
                 "sim-obs-" + std::to_string(seq_) + "-" + id, id,
                 {{"scenario", "SYNTHETIC_SIMULATOR_ONLY"},
                  {"consumer", id},
                  {"audio_bytes", static_cast<uint64_t>(payload.size())},
                  {"note", "synthetic; not a real-world detection"}});
+
+            // Route the AUTHORIZED observation through the real application
+            // event path (validation + Pipeline correlation + alert). Only
+            // authorized observations reach here; the sink is the integration
+            // boundary and performs no capture of its own.
+            if (event_sink_) {
+                event_sink_(ev);
+            }
+
+            // Record the same observation on the logical device (bounded).
             if (id == kLogicalDeviceAlexaEnabled && enabled_device_) {
-                enabled_device_->record_event(std::move(ev));
+                enabled_device_->record_event(ev);
             } else if (id == kLogicalDeviceAlexaAssistant && assistant_device_) {
-                assistant_device_->record_event(std::move(ev));
+                assistant_device_->record_event(ev);
             }
             // Enqueue a synthetic response for the arbitrated speaker. The queue
             // is bounded; on overflow the new response is rejected (back-pressure).
             std::vector<uint8_t> resp(32, 0);
             broker_->enqueue_speaker(id, std::move(resp));
-            (void)before;
         }
     }
 

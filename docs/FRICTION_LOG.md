@@ -746,6 +746,68 @@ gated). No physical sensor was activated.
 
 ---
 
+## Incident 20: Runtime Event-to-Alert Integration (F22-26)
+
+**Date/time:** 2026-10-11 ~11:25 IST
+**Area:** Runtime integration / event pipeline / alerts
+
+**Expected:** Connect the simulator runtime to the application event pipeline so
+AUTHORIZED synthetic observations pass through `Application::process_event()`,
+validation, correlation, and alert generation in the running application.
+
+**Actual:**
+- Added an event sink to `SimulatorRuntime` (`set_event_sink`). `tick()` now
+  routes each AUTHORIZED synthetic observation through the sink. `Application::
+  run()` wires the sink to `process_event()`, so observations flow through the
+  real Pipeline (validation + history + TimeWindowCorrelation + alert). No
+  parallel event engine or duplicate correlation logic was added — the existing
+  Pipeline and rule are reused unchanged.
+- Added the app's correlation rule in `Application`'s constructor
+  (`TimeWindowCorrelation`, min_count=2, 60s window, synthetic info alert), so
+  the running app produces a deterministic synthetic alert once ≥2 authorized
+  observations arrive.
+- Added `tests/core/test_event_to_alert.cpp`: 9 cases / 34 assertions —
+  authorized observations reach the pipeline and fire the rule; a single
+  observation does not (no false alert); valid events pass validation and fire
+  on min-count; a future-timestamp event is rejected by the validator without
+  corrupting pipeline state; capture-disabled startup, missing consent, and
+  consent withdrawal produce no events; repeated runs are deterministic;
+  shutdown discards pending work.
+
+**Test results (this commit):**
+- Focused `[event2alert]`: 9 cases / 34 assertions pass.
+- Full host suite (hg_build): **163 cases / 1617 assertions pass; ctest 100%.**
+- ASan+UBSan full suite (hg_asan, stale objects for changed TUs removed +
+  clean recompile; non-empty object/binary sizes verified): 163 cases pass,
+  zero sanitizer errors (assertion count 1614 vs host 1617 = the known ±3
+  timing-loop variance, not a failure).
+- Running application (simulator mode): capture-on → 9 synthetic alerts logged,
+  `pipeline_history=10`, bounded speaker, clean shutdown; capture-off → 0 alerts,
+  no media, clean shutdown.
+
+**Notes (behavior, not defects):**
+- The `Event` constructor forbids empty id / source / non-object payload, so the
+  validator's rejection path for those is unreachable via public factories; the
+  invalid-event test instead exercises the validator's future-timestamp rule,
+  which `Pipeline::process` honors by returning nullopt without mutating history.
+- A second valid observation within the window correctly fires the rule — the
+  earlier draft test asserted "no alert" for two valid events, which was wrong.
+
+**Resolution:** Runtime event-to-alert integration landed (F22-26). Simulator-
+only; no physical sensor, no AWS, no Alexa change. Android backend, simulator,
+and Alexa skill preserved.
+
+**Regression protection:** 9 new `[event2alert]` tests; full host + sanitizer
+suites green across a clean recompile.
+
+**Remaining impact:** This proves the running application's event→alert path on
+synthetic data. It does NOT claim real-world detection: the alert is a synthetic
+presence notice, not a danger inference. Real V4L2/ALSA/PipeWire behavior and
+real OS permission semantics remain unverified (hardware-gated). No physical
+sensor was activated.
+
+---
+
 ## Non-Issues (Verified Working)
 
 The following were verified to work correctly and are not friction:
@@ -786,7 +848,8 @@ The following were verified to work correctly and are not friction:
 | 17 | Product-readiness audit (stale docs + CMake portability) | — | Fixed stale README + hardcoded CMake paths; hardened .gitignore; build reproduced fresh; 135/1472 across 3 configs |
 | 18 | Dual logical-device simulation + shared audio broker | — | 12 `[dual]` tests; full host 147/1546 + ASan/UBSan clean; simulated-only, no Alexa OS claim |
 | 19 | ASan build corrupt objects + runtime integration | — | Fixed 0-byte incremental objects; SimulatorRuntime wired into Application; 7 `[runtime]` tests; 154/1583 host + ASan/UBSan |
+| 20 | Runtime event-to-alert integration | — | Authorized observations → process_event → Pipeline → alert; 9 `[event2alert]` tests; 163/1617 host + ASan/UBSan; running app fires 9 synthetic alerts |
 
-**Total verified incidents:** 19
+**Total verified incidents:** 20
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 16
+**Resolved incidents:** 17

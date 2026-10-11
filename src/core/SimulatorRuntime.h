@@ -24,11 +24,13 @@
 #include "backend/simulator/LogicalDevice.h"
 #include "core/ConsentGate.h"
 #include "core/ConsentRecord.h"
+#include "core/Event.h"
 #include "persistence/IConsentRepository.h"
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -98,6 +100,13 @@ public:
     // Set the global capture kill switch at runtime (capture-disabled mode).
     void set_media_capture_enabled(bool enabled);
 
+    // Install an event sink: each time tick() produces an AUTHORIZED synthetic
+    // observation, it is passed to this callback (e.g. Application::process_event
+    // -> Pipeline). Only authorized observations reach the sink; denied/withdrawn
+    // consumers never produce events. Default sink discards (records only on the
+    // logical device). Pass nullptr to clear.
+    void set_event_sink(std::function<void(const Event&)> sink);
+
     // Start the single shared capture session (idempotent-guarded).
     void start();
 
@@ -143,6 +152,7 @@ private:
     bool started_ = false;
     bool shut_down_ = false;
     uint64_t seq_ = 0;
+    std::function<void(const Event&)> event_sink_;
 };
 
 } // namespace homeguardian

@@ -125,6 +125,7 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-23 | Dual logical-device simulation over a shared Ubuntu audio broker | F22-22 | Two independent logical devices (simulated_alexa_enabled_device, simulated_alexa_assistant); one shared mic fan-out with per-consumer consent; bounded arbitrated speaker output; failure/consent/shutdown scenarios | DONE (host, simulator) |
 | F22-24 | Product-readiness + reproducibility audit | F22-23 | Reproduced documented build; refreshed STATUS/DEVELOPMENT; full regression + sanitizers green | DONE (audit) |
 | F22-25 | Runtime integration: wire simulator into the running application | F22-24 | SimulatorRuntime + Application::run() drive the consent gate, shared audio broker, event pipeline, and clean shutdown; 7 runtime integration tests; simulator-only | DONE (app lifecycle) |
+| F22-26 | Runtime event-to-alert integration | F22-25 | Authorized synthetic observations routed through Application::process_event → Pipeline validation + TimeWindowCorrelation + alert; 9 event-to-alert tests; capture-off/withdrawal/missing-consent produce no events | DONE (app event path) |
 
 Verification status is tracked separately per layer:
 - Compile (Android arm64-v8a/API 34): VERIFIED.
@@ -141,6 +142,7 @@ Verification status is tracked separately per layer:
 - Documented build reproduction (fresh out-of-source dir): VERIFIED (135/1472; portable CMake).
 - Dual logical-device + shared audio broker simulation: VERIFIED (12 `[dual]` cases).
 - Runtime integration (running Application drives the simulator): VERIFIED (7 `[runtime]` cases; capture-off delivers no media + clean shutdown; capture-on delivers to permitted consumers, bounded speaker).
+- Runtime event-to-alert (authorized observations → process_event → Pipeline → alert): VERIFIED (9 `[event2alert]` cases; capture-off/withdrawal/missing-consent produce no events; running app fires 9 synthetic alerts with pipeline_history=10).
 - Alexa custom skill handler unit tests (no deployment): VERIFIED (13 Node cases).
 - Alexa console-simulator end-to-end: OPTIONAL — requires manual console steps (F22-19).
 - Ubuntu camera/mic/speaker capture: NOT IMPLEMENTED — awaiting explicit approval.
