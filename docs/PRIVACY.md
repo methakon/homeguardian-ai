@@ -592,6 +592,27 @@ observability without any new capture or retention surface:
   authenticates and returns read permissions; authorization is separate
   (contract-level). No mutating operation exists.
 
+## Loopback HTTP adapter — privacy notes (added 2026-10-12)
+
+- **Loopback only:** the adapter binds `127.0.0.1` exclusively and refuses to
+  serve on any other address. No LAN/public/wildcard bind path exists.
+- **No TLS:** a loopback HTTP listener is not end-to-end TLS. Controlled local
+  development use only; any non-local deployment requires authenticated HTTPS
+  with a reviewed TLS termination design (not implemented).
+- **No token leakage:** tokens appear only in the `Authorization` header, are
+  forwarded to the real C++ credential store, and never appear in responses,
+  the `/health` body, stdout, or stderr. Verified by `http_adapter.test.js`.
+- **No persistence:** no request data or raw media is written to disk by the
+  adapter or the underlying bridge.
+- **Read-only:** the adapter requests only `status`/`alert_summary`, derived
+  from the allowlisted route — never from client input. It cannot grant consent,
+  enable capture, activate sensors, or change configuration.
+- **Generic auth failures:** 401 never distinguishes missing vs invalid vs
+  expired vs revoked. Rate limiting and concurrency bounds prevent floods.
+- **Genuine Alexa identity verification is NOT implemented** (LWA/OAuth provider
+  pending — needs Amazon credentials); the adapter verifies local bearer tokens
+  only.
+
 ## Product-readiness audit — privacy notes (added 2026-10-11)
 
 Audited build/dependency setup, config, test fixtures, privacy guarantees, and

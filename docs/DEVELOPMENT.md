@@ -93,6 +93,17 @@ weaker verifier); the default local verifier is for development/tests only.
 Tests: `homeguardian_tests "[creds]"` (14 cases) and the secure-mode cases in
 `integration.test.js`. Report: `docs/SECURITY_READINESS_V6.md`.
 
+A local-only loopback HTTP adapter (`src/bridge/hg_http_adapter.js`) exposes the
+real C++ boundary over HTTP on `127.0.0.1` only, using the Node stdlib `http`
+module (no new dependency). It enforces method/route allowlists, size/timeout/
+concurrency limits, rate limiting, and generic authentication failures, and
+never logs or returns tokens. Run it for development with:
+`HG_BRIDGE_SECURE_CREDS=1 node src/bridge/hg_http_adapter.js --bridge
+hg_build/hg_alexa_bridge --config config/homeguardian.json --creds <creds.json>
+--port 0`. Tests: `node --test test/http_adapter.test.js` (18 cases). **It is
+NOT TLS and NOT production** — loopback development use only; see
+`docs/HTTP_ADAPTER_V7.md`.
+
 A reproducible simulator demonstration of the running app is in
 `docs/DEMO_SIMULATOR.md`.
 

@@ -982,9 +982,83 @@ The following were verified to work correctly and are not friction:
 | 22 | Runtime readiness v2 — durable audit + observability | — | PersistenceAudit (alert metadata via existing SQLite, historical-vs-current, retention, fail-safe degraded) + RuntimeStatus (bounded privacy-safe counters); 10 audit/status cases; 200/1753 host + ASan/UBSan; release reproduction |
 | 23 | Runtime readiness v3 — integration contract, storage integrity, privacy | — | AlexaContract (versioned, authenticated, read-only contract; 14 C++ + 12 Node adapter cases, NOT deployed); SQLite integrity/migration/retention/recovery (7 cases); privacy/consent regression (7 cases); P1 rule-specific clearing; P2 scheduled retention; 235/1925 host + ASan/UBSan; release reproduction |
 
-**Total verified incidents:** 26
+**Total verified incidents:** 27
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 23
+**Resolved incidents:** 24
+
+---
+
+## Incident 27: HTTP Adapter v7 — Local-Only Loopback Adapter (F22-33)
+
+**Date/time:** 2026-10-12 ~02:20 IST
+**Area:** Alexa integration / local HTTP adapter / transport security
+
+**Expected:** Build a local-only HTTP adapter around the existing AlexaContract
+and AlexaCredentialStore with transport-level protections and regression tests.
+Development/integration milestone, NOT production.
+
+**Actual:**
+- Added `src/bridge/hg_http_adapter.js`: a loopback-only HTTP front-end that
+  binds `127.0.0.1` exclusively (asserts bound address; exits if not loopback)
+  and forwards each request to the REAL compiled `hg_alexa_bridge` over NDJSON
+  stdio. Uses the Node **stdlib `http` module — no new dependency**. No auth/
+  authorization logic duplicated (all in the C++ contract + credential store).
+- Transport controls: method allowlist (GET/OPTIONS), route allowlist
+  (/status, /alert_summary, /health), body/header size bounds, request/header/
+  keep-alive/bridge-call timeouts, concurrency cap (8), fixed-window rate limit
+  (30 req/IP/10s, table bounded 1024), content-type allowlist, strict single
+  `Bearer <token>` parse, generic 401 (never reveals why), graceful SIGINT/
+  SIGTERM shutdown, no disk persistence, no shell (argument-array spawn).
+- Added `alexa_skill/test/http_adapter.test.js`: 18 cases — authorized status/
+  alert_summary; missing/invalid/expired/revoked → 401; authenticated-but-
+  unauthorized → 403; wrong method → 405; unknown route → 404; invalid content
+  type → 415; ambiguous/malformed Authorization → generic 401 (no token leak);
+  oversized headers rejected + server survives; rate limiting (some 429, some
+  200, server responsive); /health minimal state (no token/path); loopback-only
+  (TCP connect to LAN IP fails); no token leakage; graceful SIGTERM exit;
+  multiple sequential requests.
+- Wired into `npm test`.
+
+**Decisions (documented):**
+- Chose Node stdlib `http` over adding cpp-httplib or hand-writing a parser:
+  the milestone prohibits silently adding an unreviewed dependency and
+  hand-writing a fragile parser. cpp-httplib was evaluated and deliberately NOT
+  added.
+- The adapter does NOT call TLS; loopback HTTP is not end-to-end TLS. Documented
+  as controlled-development-only; non-local deployment requires reviewed HTTPS.
+- Node's HTTP server de-dupes the Authorization header at the parser level
+  (keeping the first), so a literal duplicate does not reach the handler as
+  ambiguous. The real control is the adapter's strict single-token parse, tested
+  directly against ambiguous/malformed values.
+
+**Friction encountered:** first duplicate-header test expected 400 but Node
+keeps the first Authorization value (→ 200 for a clean token); also a
+whitespace-only case legitimately normalizes to a valid token. Reworked the test
+to assert the actual control (strict parse → generic 401) and removed the
+whitespace-only false case.
+
+**Test results (this cycle):**
+- HTTP adapter: **18/18**.
+- Node full (`npm test`): **68/68** (13 handler + 12 contract + 21 integration +
+  4 restart + 18 http_adapter).
+- C++ full host suite (hg_build): **255 cases / 2004 assertions; ctest 100%.**
+  (No new C++; the adapter is exercised via Node against the real binary.)
+- ASan/UBSan: 255 cases, zero sanitizer errors.
+- Fresh out-of-source release build (existing dep cache): app + tests + bridge
+  clean; suite 255/2004.
+
+**Resolution:** HTTP adapter v7 landed (F22-33). Simulator-only; loopback-only,
+no public/LAN listener, no cloud, no TLS, no physical sensor. Existing stdio
+bridge and all interfaces preserved. Build dirs intact; temp release dir
+removed.
+
+**Regression protection:** 18 new Node cases drive the real compiled bridge over
+real HTTP (auth matrix, routes, rate limit, loopback bind, shutdown, no-leak).
+
+**Remaining impact:** NOT TLS, NOT production. Non-local exposure is NO-GO
+pending B2 (TLS), real LWA/OAuth identity validation, secret rotation
+operations, production-scale rate limiting, and supervision. Genuine Alexa
+identity verification remains unimplemented. No physical sensor was activated.
 
 ---
 

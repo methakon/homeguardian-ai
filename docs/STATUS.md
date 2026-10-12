@@ -80,6 +80,8 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 241 test cases, 1960 assertions, all passing; Node 45/45 (13 handler + 12 contract + 16 integration + 4 restart) | 2026-10-11 |
 | Security readiness v6 | `core/AlexaCredentialStore` (real bearer-token verification: expiry/revocation, constant-time compare, 0600 secure-file load, fail-closed, no mock fallback; B1+B4); bridge `HG_BRIDGE_SECURE_CREDS` mode; 14 `[creds]` + 5 secure-mode Node cases; report `docs/SECURITY_READINESS_V6.md` | 2026-10-12 |
 | Test suite | 255 test cases, 2004 assertions, all passing; Node 50/50 (13 handler + 12 contract + 21 integration + 4 restart) | 2026-10-12 |
+| HTTP adapter v7 | `src/bridge/hg_http_adapter.js` (local-only loopback HTTP adapter over the real C++ bridge; stdlib `http`, no new dependency; method/route allowlists, size/timeout/concurrency limits, rate limiting, generic auth failures, graceful shutdown); 18 `http_adapter` Node tests; report `docs/HTTP_ADAPTER_V7.md`; NOT TLS, NOT production | 2026-10-12 |
+| Test suite | 255 test cases, 2004 assertions, all passing; Node 68/68 (13 handler + 12 contract + 21 integration + 4 restart + 18 http_adapter) | 2026-10-12 |
 
 ## Test Results
 
