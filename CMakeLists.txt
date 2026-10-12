@@ -181,68 +181,68 @@ target_link_libraries(hg_alexa_bridge PRIVATE
 
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
-        tests/core/test_config.cpp
-        tests/core/test_logger.cpp
-        tests/core/test_event.cpp
-        tests/core/test_event_validator.cpp
-        tests/core/test_simulated_event_source.cpp
-        tests/core/test_time_window_correlation.cpp
-        tests/core/test_pipeline.cpp
-        tests/core/test_alert.cpp
-        tests/core/test_family_profile.cpp
-        tests/core/test_consent.cpp
-        tests/core/test_routine.cpp
-        tests/core/test_config_e.cpp
-        tests/core/test_consent_gate.cpp
-        tests/core/test_simulated_sensor.cpp
-        tests/core/test_gated_acquisition.cpp
-        tests/core/test_consent_guarded_device.cpp
-        tests/core/test_fake_device_delivery.cpp
-        tests/core/test_camera1_adapter.cpp
-        tests/core/test_ubuntu_backend.cpp
-        tests/core/test_simulator_backend.cpp
-        tests/core/test_e2e_simulator.cpp
-        tests/core/test_dual_device_broker.cpp
-        tests/core/test_runtime_integration.cpp
-        tests/core/test_event_to_alert.cpp
-        tests/core/test_alert_policy.cpp
-        tests/core/test_runtime_hardening.cpp
-        tests/core/test_persistence_audit.cpp
-        tests/core/test_alexa_contract.cpp
-        tests/core/test_alexa_credentials.cpp
-        tests/core/test_privacy_consent.cpp
-        tests/persistence/test_persistence.cpp
-        tests/persistence/test_phase_e.cpp
-        tests/persistence/test_integrity.cpp
-        ../src/core/Config.cpp
-        ../src/core/Logger.cpp
-        ../src/core/EventValidator.cpp
-        ../src/core/SimulatedEventSource.cpp
-        ../src/core/TimeWindowCorrelation.cpp
-        ../src/core/Pipeline.cpp
-        ../src/core/UUID.cpp
-        ../src/core/ConsentGate.cpp
-        ../src/core/SimulatedSensorSource.cpp
-        ../src/core/ConsentGatedAcquisition.cpp
-        ../src/core/ConsentGuardedDevice.cpp
-        ../src/core/SimulatorRuntime.cpp
-        ../src/core/AlertPolicy.cpp
-        ../src/core/PersistenceAudit.cpp
-        ../src/core/RuntimeStatus.cpp
-        ../src/core/AlexaContract.cpp
-        ../src/core/AlexaCredentialStore.cpp
-        ../src/persistence/SQLiteDatabase.cpp
-        ../src/persistence/EventRepository.cpp
-        ../src/persistence/AlertRepository.cpp
-        ../src/persistence/ProfileRepository.cpp
-        ../src/persistence/ConsentRepository.cpp
-        ../src/persistence/RoutineRepository.cpp
-        ../src/persistence/SchemaManager.cpp
-        ../src/persistence/PersistenceManager.cpp
-        ../src/backend/linux/SensorDiscovery.cpp
-        ../src/backend/simulator/SimulatedSensorBackend.cpp
-        ../src/backend/simulator/LogicalDevice.cpp
-        ../src/backend/simulator/AudioBroker.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_config.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_logger.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_event.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_event_validator.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_simulated_event_source.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_time_window_correlation.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_pipeline.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_alert.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_family_profile.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_consent.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_routine.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_config_e.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_consent_gate.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_simulated_sensor.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_gated_acquisition.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_consent_guarded_device.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_fake_device_delivery.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_camera1_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_ubuntu_backend.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_simulator_backend.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_e2e_simulator.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_dual_device_broker.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_runtime_integration.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_event_to_alert.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_alert_policy.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_runtime_hardening.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_persistence_audit.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_alexa_contract.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_alexa_credentials.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_consent.cpp
+        ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
+        ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
+        ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Config.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Logger.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/EventValidator.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SimulatedEventSource.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/TimeWindowCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ConsentGate.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SimulatedSensorSource.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ConsentGatedAcquisition.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ConsentGuardedDevice.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SimulatorRuntime.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AlertPolicy.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/PersistenceAudit.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/RuntimeStatus.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AlexaContract.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AlexaCredentialStore.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/SQLiteDatabase.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/EventRepository.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/AlertRepository.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/ProfileRepository.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/ConsentRepository.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/RoutineRepository.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/SchemaManager.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/PersistenceManager.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/SensorDiscovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/simulator/SimulatedSensorBackend.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/simulator/LogicalDevice.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/simulator/AudioBroker.cpp
     )
 
     target_include_directories(homeguardian_tests PRIVATE
@@ -263,4 +263,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
     # Run from the project root so tests that read repo-relative files
     # (e.g. config/homeguardian.json) resolve correctly under ctest.
     set_tests_properties(homeguardian_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    # Also expose the source dir so tests that read repo-relative files work
+    # when the binary is run directly from an out-of-source build directory.
+    set_tests_properties(homeguardian_tests PROPERTIES ENVIRONMENT "HG_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
 endif()

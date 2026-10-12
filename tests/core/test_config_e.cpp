@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 
 using namespace homeguardian;
 using json = nlohmann::json;
@@ -82,8 +84,16 @@ TEST_CASE("Config Phase E loading and saving round trip", "[config]") {
 
 TEST_CASE("Shipped default config has media capture and cloud disabled", "[config][privacy]") {
     // The repository's committed default configuration must not enable capture
-    // or cloud processing.
-    std::ifstream f("config/homeguardian.json");
+    // or cloud processing. Resolve the path robustly so the test passes
+    // regardless of the working directory (ctest sets the repo root, but a
+    // direct binary run from an out-of-source build dir must also work).
+    std::string cfg_path = "config/homeguardian.json";
+    if (!std::ifstream(cfg_path).is_open()) {
+        // Fall back to a path relative to the source tree.
+        const char* src_dir = std::getenv("HG_SOURCE_DIR");
+        if (src_dir) cfg_path = std::string(src_dir) + "/config/homeguardian.json";
+    }
+    std::ifstream f(cfg_path);
     REQUIRE(f.is_open());
     json j;
     f >> j;

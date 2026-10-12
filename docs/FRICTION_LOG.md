@@ -982,9 +982,121 @@ The following were verified to work correctly and are not friction:
 | 22 | Runtime readiness v2 — durable audit + observability | — | PersistenceAudit (alert metadata via existing SQLite, historical-vs-current, retention, fail-safe degraded) + RuntimeStatus (bounded privacy-safe counters); 10 audit/status cases; 200/1753 host + ASan/UBSan; release reproduction |
 | 23 | Runtime readiness v3 — integration contract, storage integrity, privacy | — | AlexaContract (versioned, authenticated, read-only contract; 14 C++ + 12 Node adapter cases, NOT deployed); SQLite integrity/migration/retention/recovery (7 cases); privacy/consent regression (7 cases); P1 rule-specific clearing; P2 scheduled retention; 235/1925 host + ASan/UBSan; release reproduction |
 
-**Total verified incidents:** 27
+**Total verified incidents:** 28
 **Open incidents:** 3 (Incident 11 device-capture; Incident 12 capture adapters; Incident 14 console-simulator deploy [optional] — all pending manual/approval steps; root causes resolved)
-**Resolved incidents:** 24
+**Resolved incidents:** 25
+
+---
+
+## Incident 28: Hackathon P0 — Honest README + Simulated Alexa+ Web Demo (F22-35)
+
+**Date/time:** 2026-10-12 ~13:20 IST
+**Area:** Hackathon submission readiness / web demo / build reproducibility
+
+**Expected:** Implement P0 from the AmazonAppDev 2026 compliance audit
+(`docs/AMAZONAPPDEV2026_FINAL_AUDIT.md`): correct README overclaims, build a
+simulated Alexa+ web experience on the real backend, and make the demo
+reproducible from a clean clone. LICENSE deliberately NOT added (not approved).
+
+**Actual:**
+- **P0-1 README corrected.** Removed the false claims "Alexa+ … with MCP
+  integration" and "Ring integration" (neither exists — verified by code
+  search). Added an explicit "What is implemented vs simulated vs planned"
+  section, a hackathon banner stating this is a simulated Alexa+ experience
+  (no MCP, no live Amazon identity, no physical sensor), and accurate build/
+  test commands including `hg_alexa_bridge`.
+- **P0-3 simulated Alexa+ web experience.** Added:
+  - `src/bridge/hg_alexa_bridge.cpp`: a `run_scenario [cycles]` control line
+    that runs the REAL synthetic household scenario through the REAL
+    Application pipeline (SimulatorRuntime → event sink → Pipeline →
+    correlation → AlertPolicy) and persists the delivered alert to the same
+    audit DB the status provider reads. No second event engine; no physical
+    sensor. Logger initialized at `critical` so stdout carries only NDJSON
+    (previously a `warn`-level alert line interleaved with the protocol and
+    broke machine parsing).
+  - `src/bridge/hg_demo_server.js`: a loopback-only static server + JSON proxy
+    (Node stdlib only, no new dependency) exposing `/api/status`,
+    `/api/run-scenario`, `/api/health` and serving `src/web/`.
+  - `src/web/index.html`: a polished single-page UI with branding, a prominent
+    "simulated" banner, live status/capture state, a Run-scenario button,
+    suggested-question chips, an alert timeline, loading/empty/error states,
+    and a privacy explainer. All values are read from the backend.
+  - `demo.sh`: one-command startup (builds the bridge if needed, generates
+    isolated 0600 test credentials in a temp dir, runs from that dir so the
+    SQLite DB never lands in the repo, prints the URL, cleans up on exit).
+  - `config/homeguardian.demo.json`: capture-on demo config (default stays off).
+  - `docs/DEMO_WEB.md`: walkthrough, expected output, troubleshooting, and a
+    suggested <3-minute video script.
+- **P0-4 reproducibility.** Fixed two real bugs found by building out-of-source
+  in `/tmp`:
+  1. The `homeguardian_tests` CMake target used `../src/...` relative paths,
+     which only resolve when the build dir is a direct child of the source
+     tree. Converted all 62 to `${CMAKE_SOURCE_DIR}`-absolute.
+  2. `test_config_e.cpp` "Shipped default config…" read
+     `config/homeguardian.json` relative to the CWD, so it failed for any
+     direct binary run outside the repo root (pre-existing; reproduces in
+     `hg_build`). Now resolves via a new `HG_SOURCE_DIR` env var that ctest
+     sets.
+- Added `alexa_skill/test/web_demo.test.js` (8 cases) and wired all six Node
+  test files into `npm test`.
+
+**Decisions (documented):**
+- **No LICENSE file created** — MIT was not approved. The repo is already
+  PUBLIC with `licenseInfo: null`; this remains the top submission blocker and
+  is a user-only task.
+- Repository visibility was inspected read-only (`gh repo view` → PUBLIC) and
+  **not changed**.
+- The web demo reuses the existing C++ backend and contract; it does not
+  duplicate consent/security logic, bypass the contract, or touch SQLite
+  directly.
+
+**Friction encountered:**
+- The first scenario run reported `events_processed: 0` with capture on: the
+  bridge's `SimulatorRuntime` is constructed disabled by `Application`'s
+  constructor, so its internal gate never saw the config. Fixed by calling
+  `sim.set_media_capture_enabled(true)` in the scenario (mirroring
+  `Application::run()`).
+- `run_scenario` then aborted with "Logger not initialized" because
+  `process_event` logs. Fixed with `Logger::initialize("critical")`.
+- Alerts were generated but `alert_count` stayed 0: `process_event` persists
+  only when `Application::run()` has set up persistence, which the bridge never
+  calls. Fixed by persisting the delivered alert explicitly in the scenario.
+- A `warn`-level log line interleaved with NDJSON on stdout, so the demo server
+  parsed `bad_output`. Fixed by the `critical` log level plus a defensive
+  non-JSON-line filter in the demo server.
+- The fresh out-of-source build initially failed (the two bugs above); after
+  the fixes a build in `/tmp` passes 255/2001 + ctest 100%, and the web demo
+  ran end-to-end on that fresh binary.
+
+**Test results (this cycle):**
+- C++ full host suite (hg_build): **255 cases / 2001 assertions pass; ctest
+  100%.** (Passes from the repo root AND from a non-root CWD with
+  `HG_SOURCE_DIR` set — the isolation bug is fixed.)
+- ASan/UBSan (hg_asan, cmake reconfigure + stale objects removed + clean
+  recompile): 255 cases, zero sanitizer errors.
+- Node full (`npm test`): **76/76** (13 handler + 12 contract + 21 integration +
+  4 restart + 18 http_adapter + 8 web_demo).
+- Fresh out-of-source build in `/tmp/hg_fresh` (existing dep cache): configure,
+  build, and suite all pass (255/2004 with `HG_SOURCE_DIR`, ctest 100%); the
+  web demo on that fresh binary reported 10 events, 9 alerts, 1 delivered,
+  8 suppressed, and a persisted `sim-alert-0`.
+- Manual launch of `bash demo.sh` verified: server ready, loopback reachable,
+  **LAN IP refused** (loopback-only confirmed), UI served (HTTP 200).
+- Secret/artifact scan: clean; no stray DB/log files in the repo.
+
+**Resolution:** Hackathon P0-1, P0-3, P0-4 landed (F22-35). Simulator-only;
+loopback-only; no cloud, no physical sensor, no Alexa deploy, no visibility
+change. Build dirs preserved; temp build dir removed.
+
+**Regression protection:** 8 new `web_demo` Node cases (scenario, status,
+capture-off fail-closed, UI served, path traversal, minimal health, loopback
+bind, graceful shutdown) plus the two build-isolation fixes; full host +
+sanitizer suites green across a clean recompile and a fresh out-of-source
+build.
+
+**Remaining impact:** P0-2 (LICENSE) is still open pending user approval, and
+the repo is public without one. Devpost submission, the demo video, and product
+feedback remain user-only tasks. No physical sensor was activated.
 
 ---
 

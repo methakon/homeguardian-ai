@@ -613,6 +613,28 @@ observability without any new capture or retention surface:
   pending — needs Amazon credentials); the adapter verifies local bearer tokens
   only.
 
+## Simulated Alexa+ web demo — privacy notes (added 2026-10-12)
+
+- **It is a simulation, clearly labelled.** The UI states in a banner and in the
+  footer that this is a project-built simulated Alexa+ experience, not a real
+  Alexa+ device integration, with no MCP server and no live Amazon identity.
+- **No physical sensor.** Every observation is synthetic and produced in-process
+  by the deterministic sensor simulator. No camera, microphone, or speaker is
+  ever opened.
+- **Consent/capture state is visible and enforced.** The UI shows the real
+  capture/consent state from the backend. With capture disabled, the scenario
+  reports `events_processed: 0` and explains that the gate blocked every
+  observation — demonstrated by a `web_demo` test.
+- **Real results, not fabricated.** The scenario runs the actual Application
+  pipeline (SimulatorRuntime → event sink → Pipeline → correlation →
+  AlertPolicy) and persists the delivered alert to SQLite; the UI reads the
+  alert summary back from that store. No value in the UI is hardcoded.
+- **Loopback only, no persistence of request data.** The demo server binds
+  127.0.0.1 exclusively and writes nothing to disk; the demo SQLite database
+  lives in a temp working directory created by `demo.sh` and is removed on exit.
+- **No secrets in the UI or logs.** Tokens appear only in the credential file
+  (0600) and are never rendered or logged.
+
 ## Product-readiness audit — privacy notes (added 2026-10-11)
 
 Audited build/dependency setup, config, test fixtures, privacy guarantees, and

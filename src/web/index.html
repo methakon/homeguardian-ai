@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HomeGuardian AI — Simulated Alexa+ Experience</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #2a3441;
+    --text: #e6edf3; --muted: #8b98a5; --accent: #4f9cf9; --accent2: #2f6fd0;
+    --ok: #3fb950; --warn: #d29922; --danger: #f85149; --chip: #22303f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.5;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 24px 20px 64px; }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .logo { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display:flex; align-items:center; justify-content:center; font-size: 22px; }
+  h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .banner {
+    margin: 14px 0 20px; padding: 10px 14px; border-radius: 10px; font-size: 13px;
+    background: #1a2230; border: 1px solid var(--border); color: var(--muted);
+  }
+  .banner b { color: var(--warn); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
+  .status-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .status-row:last-child { border-bottom: none; }
+  .pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--chip); border: 1px solid var(--border); }
+  .pill.on { color: var(--ok); border-color: #234d2c; }
+  .pill.off { color: var(--muted); }
+  .pill.warn { color: var(--warn); border-color: #4a3d1a; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); padding: 9px 14px; transition: background .15s;
+  }
+  button:hover:not(:disabled) { background: #26314a; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent2); border-color: var(--accent); font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: var(--accent); }
+  .chat { display: flex; flex-direction: column; gap: 10px; height: 340px; overflow-y: auto; padding: 4px; }
+  .msg { max-width: 85%; padding: 9px 13px; border-radius: 14px; font-size: 14px; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--accent2); }
+  .msg.bot { align-self: flex-start; background: var(--panel2); border: 1px solid var(--border); }
+  .msg.sys { align-self: center; background: transparent; color: var(--muted); font-size: 12px; text-align:center; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { font-size: 12px; padding: 6px 11px; border-radius: 999px; background: var(--chip); border: 1px solid var(--border); color: var(--text); }
+  .chip:hover { background: #2b3b50; }
+  .timeline { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
+  .alert { background: var(--panel2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 9px 12px; font-size: 13px; }
+  .alert .id { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
+  .alert.info { border-left-color: var(--accent); }
+  .alert.warning { border-left-color: var(--warn); }
+  .alert.critical { border-left-color: var(--danger); }
+  .empty { color: var(--muted); font-size: 13px; font-style: italic; padding: 8px 0; }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 4px; }
+  .metric { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; text-align: center; }
+  .metric .n { font-size: 22px; font-weight: 700; }
+  .metric .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .err { color: var(--danger); font-size: 13px; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">🏠</div>
+    <div>
+      <h1>HomeGuardian AI</h1>
+      <div class="sub">Simulated Alexa+ experience — household safety &amp; wellbeing</div>
+    </div>
+  </header>
+
+  <div class="banner">
+    <b>⚠ Simulated demo.</b> This is a project-built simulation of an Alexa+ conversational
+    experience, running entirely on your machine. It is <b>not</b> a real Alexa+ device integration
+    and uses <b>no live Amazon identity</b>. All household observations are <b>synthetic</b> — no
+    physical camera or microphone is ever activated. Responses are grounded in the real HomeGuardian
+    backend running locally.
+  </div>
+
+  <div class="grid">
+    <!-- Status -->
+    <div class="card">
+      <h2>System status</h2>
+      <div id="status"><div class="empty">Loading…</div></div>
+      <div class="metrics" id="metrics"></div>
+      <div class="controls">
+        <button class="primary" id="runBtn">▶ Run synthetic scenario</button>
+        <button id="refreshBtn">↻ Refresh status</button>
+        <button id="resetBtn">⟲ Reset demo data</button>
+      </div>
+    </div>
+
+    <!-- Conversational -->
+    <div class="card">
+      <h2>Ask HomeGuardian</h2>
+      <div class="chat" id="chat"></div>
+      <div class="chips" id="chips"></div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:16px;">
+    <!-- Alert timeline -->
+    <div class="card">
+      <h2>Alert timeline <span class="pill" id="alertCount">0</span></h2>
+      <div class="timeline" id="alerts"><div class="empty">No alerts yet. Run the synthetic scenario to generate one.</div></div>
+    </div>
+
+    <!-- Privacy / how it works -->
+    <div class="card">
+      <h2>How this works &amp; your privacy</h2>
+      <div style="font-size:13px; color:var(--muted);">
+        <p><b style="color:var(--text)">Consent-first.</b> The synthetic living-room sensor only
+        produces observations while capture is enabled <i>and</i> consent is granted. Withdraw
+        either and the gate blocks all delivery — nothing reaches the event pipeline.</p>
+        <p><b style="color:var(--text)">Local &amp; private.</b> Everything runs on this machine.
+        No cloud, no network calls, no raw audio/video. Only alert <i>metadata</i> (id, severity,
+        rule, timestamp) is stored, in a local SQLite database.</p>
+        <p><b style="color:var(--text)">Real backend.</b> Observations flow through the actual C++
+        event pipeline: validation → time-window correlation → alert dedup/cooldown → durable
+        persistence. The numbers below come from that running code, not from this page.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    HomeGuardian AI — hackathon demo · simulated Alexa+ experience · synthetic data only ·
+    <span id="footNote"></span>
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const chat = $('chat');
+
+const SUGGESTED = [
+  "What's the home status?",
+  "Is everything okay?",
+  "Any alerts?",
+  "Is capture enabled?",
+  "What can you do?",
+];
+
+function addMsg(role, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + role;
+  d.textContent = text;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+  return d;
+}
+
+function renderChips() {
+  const box = $('chips');
+  box.innerHTML = '';
+  for (const q of SUGGESTED) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.textContent = q;
+    b.onclick = () => ask(q);
+    box.appendChild(b);
+  }
+}
+
+function sevClass(s) { return s === 'critical' ? 'critical' : s === 'warning' ? 'warning' : 'info'; }
+
+function renderStatus(status, summary) {
+  const el = $('status');
+  if (!status || !status.ok) {
+    el.innerHTML = '<div class="err">Backend unavailable — is the bridge running?</div>';
+    return;
+  }
+  const capOn = status.capture_enabled;
+  el.innerHTML = `
+    <div class="status-row"><span>Application state</span><span class="pill on">${status.state || 'Running'}</span></div>
+    <div class="status-row"><span>Capture / consent</span><span class="pill ${capOn ? 'on' : 'off'}">${capOn ? 'Enabled (synthetic)' : 'Disabled'}</span></div>
+    <div class="status-row"><span>Mode</span><span class="pill warn">Simulated</span></div>`;
+
+  // Metrics from the last scenario run (real backend counters).
+  const m = window.__lastScenario;
+  const metrics = $('metrics');
+  if (m && m.ok) {
+    metrics.innerHTML = `
+      <div class="metric"><div class="n">${m.events_processed}</div><div class="l">Events</div></div>
+      <div class="metric"><div class="n">${m.alerts_delivered}</div><div class="l">Alerts</div></div>
+      <div class="metric"><div class="n">${m.alerts_suppressed}</div><div class="l">Suppressed</div></div>`;
+  } else {
+    metrics.innerHTML = `<div class="metric"><div class="n">—</div><div class="l">Run scenario</div></div>`;
+  }
+}
+
+function renderAlerts(summary) {
+  const el = $('alerts');
+  const count = (summary && summary.alert_count) || 0;
+  $('alertCount').textContent = count;
+  if (!summary || !summary.ok || count === 0 || !summary.alert_ids || summary.alert_ids.length === 0) {
+    el.innerHTML = '<div class="empty">No alerts yet. Run the synthetic scenario to generate one.</div>';
+    return;
+  }
+  el.innerHTML = '';
+  for (const id of summary.alert_ids) {
+    const d = document.createElement('div');
+    d.className = 'alert ' + sevClass(summary.highest_severity);
+    d.innerHTML = `<div>synthetic simulator presence notice</div><div class="id">${id} · rule sim-presence · severity ${summary.highest_severity || 'info'}</div>`;
+    el.appendChild(d);
+  }
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/api/status');
+    const j = await r.json();
+    renderStatus(j.status, j.summary);
+    renderAlerts(j.summary);
+  } catch (e) {
+    renderStatus(null, null);
+  }
+}
+
+async function runScenario() {
+  const btn = $('runBtn');
+  btn.disabled = true;
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner"></span> Running…';
+  addMsg('sys', 'Running synthetic household observation scenario…');
+  try {
+    const r = await fetch('/api/run-scenario?cycles=5');
+    const j = await r.json();
+    window.__lastScenario = j.scenario;
+    renderStatus(j.status, j.summary);
+    renderAlerts(j.summary);
+    if (j.scenario && j.scenario.ok) {
+      const s = j.scenario;
+      if (s.capture_enabled) {
+        addMsg('bot', `Scenario complete. Processed ${s.events_processed} synthetic observations, generated ${s.alerts_generated} alerts, delivered ${s.alerts_delivered} (${s.alerts_suppressed} duplicates suppressed by the cooldown policy).`);
+      } else {
+        addMsg('bot', 'Capture is disabled by configuration, so the consent gate blocked every observation. No events reached the pipeline — this is the fail-closed behaviour working as intended. Enable capture in the demo config to run the scenario.');
+      }
+    } else {
+      addMsg('bot', 'The backend could not run the scenario. Please check that the bridge is running.');
+    }
+  } catch (e) {
+    addMsg('bot', 'Sorry, the backend was unavailable. Please try again.');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+// Conversational layer: grounded in real /api/status results.
+async function ask(question) {
+  addMsg('user', question);
+  const thinking = addMsg('bot', '…');
+  let j;
+  try {
+    const r = await fetch('/api/status');
+    j = await r.json();
+  } catch (e) {
+    thinking.textContent = 'Sorry, I could not reach the HomeGuardian backend.';
+    return;
+  }
+  const status = j.status || {};
+  const summary = j.summary || {};
+  const q = question.toLowerCase();
+  let answer;
+  if (!status.ok) {
+    answer = 'The HomeGuardian backend is currently unavailable.';
+  } else if (q.includes('capture') || q.includes('consent') || q.includes('sensor')) {
+    answer = status.capture_enabled
+      ? 'Capture is enabled for the synthetic sensor, and consent is granted — but this is simulated, and no physical camera or microphone is active.'
+      : 'Capture is disabled and no consent is granted, so no observations are being collected. This is the privacy-safe default.';
+  } else if (q.includes('alert') || q.includes('okay') || q.includes('everything')) {
+    const n = summary.alert_count || 0;
+    answer = n === 0
+      ? 'There are no active alerts right now. Run the synthetic scenario to generate one.'
+      : `There ${n === 1 ? 'is' : 'are'} ${n} alert${n === 1 ? '' : 's'} on record, highest severity ${summary.highest_severity || 'info'}.`;
+  } else if (q.includes('status') || q.includes('home')) {
+    answer = `HomeGuardian is ${status.state || 'running'}. Capture is ${status.capture_enabled ? 'enabled (synthetic)' : 'disabled'}, and there ${ (summary.alert_count||0) === 1 ? 'is' : 'are'} ${summary.alert_count || 0} alert${(summary.alert_count||0) === 1 ? '' : 's'}.`;
+  } else if (q.includes('what can you') || q.includes('help')) {
+    answer = 'I can report the home status, the alert summary, and the capture/consent state. I can also run a synthetic household observation scenario. This is a simulated Alexa+ experience for demonstration.';
+  } else {
+    answer = `I can help with the home status, alerts, and capture state. Right now HomeGuardian is ${status.state || 'running'} with ${summary.alert_count || 0} alert${(summary.alert_count||0) === 1 ? '' : 's'}.`;
+  }
+  thinking.textContent = answer;
+  renderAlerts(summary);
+}
+
+async function resetDemo() {
+  if (!confirm('Reset the demo alert history? This deletes only the local demo database (homeguardian_bridge_audit.db) and leaves all other files untouched.')) return;
+  addMsg('sys', 'Reset requested — delete the demo database from the demo work directory and restart the demo to start fresh.');
+}
+
+$('runBtn').onclick = runScenario;
+$('refreshBtn').onclick = refresh;
+$('resetBtn').onclick = resetDemo;
+renderChips();
+addMsg('sys', 'Simulated Alexa+ experience ready. Ask a question or run the synthetic scenario.');
+$('footNote').textContent = 'synthetic data only · local loopback only';
+refresh();
+</script>
+</body>
+</html>

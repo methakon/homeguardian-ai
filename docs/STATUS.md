@@ -82,6 +82,8 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 255 test cases, 2004 assertions, all passing; Node 50/50 (13 handler + 12 contract + 21 integration + 4 restart) | 2026-10-12 |
 | HTTP adapter v7 | `src/bridge/hg_http_adapter.js` (local-only loopback HTTP adapter over the real C++ bridge; stdlib `http`, no new dependency; method/route allowlists, size/timeout/concurrency limits, rate limiting, generic auth failures, graceful shutdown); 18 `http_adapter` Node tests; report `docs/HTTP_ADAPTER_V7.md`; NOT TLS, NOT production | 2026-10-12 |
 | Test suite | 255 test cases, 2004 assertions, all passing; Node 68/68 (13 handler + 12 contract + 21 integration + 4 restart + 18 http_adapter) | 2026-10-12 |
+| Hackathon P0 | README corrected (removed false MCP/Ring claims; documented implemented vs simulated vs planned); simulated Alexa+ web experience (`src/web/` + `src/bridge/hg_demo_server.js` + `demo.sh` + `config/homeguardian.demo.json`); bridge `run_scenario` mode (real pipeline → real alerts → durable persistence); 8 `web_demo` Node tests; fixed CMake out-of-source path bug + test CWD-isolation bug; `docs/DEMO_WEB.md` | 2026-10-12 |
+| Test suite | 255 test cases, 2001 assertions, all passing; Node 76/76 (13 handler + 12 contract + 21 integration + 4 restart + 18 http_adapter + 8 web_demo) | 2026-10-12 |
 
 ## Test Results
 
@@ -97,6 +99,8 @@ Application run (simulator mode): capture-off → no media/no alerts + final_sta
 Restart: same audit DB, 2nd process reports historical_alerts=1 (distinguishable from current-process alerts)
 Alexa contract: 14 C++ contract tests + 12 Node adapter tests pass (mock clients, no deploy); LIVE integration NOT tested (needs deployed authenticated endpoint) — documented as pending
 Local process-boundary integration: hg_alexa_bridge (NDJSON stdio over the REAL AlexaContract) driven by Node — 16 integration + 4 restart cases against the actual compiled binary; reproducible demo docs/demo_alexa_integration.sh; no network listener, no deploy
+Simulated Alexa+ web experience (hackathon P0): `bash demo.sh` builds the bridge and serves a loopback-only web UI that drives the REAL backend (consent gate → event pipeline → correlation → alert dedup → SQLite persistence); `run_scenario` bridge mode produces real alerts; 8 `web_demo` Node cases; `docs/DEMO_WEB.md`. Simulated only — no Alexa device, no MCP, no live Amazon identity, no physical sensor
+Clean-clone reproducibility (hackathon P0): fixed the tests-target `../src/...` relative paths (now `${CMAKE_SOURCE_DIR}` absolute) so an out-of-source build from ANY directory configures and builds; fixed a test that read `config/homeguardian.json` relative to CWD (now resolves via `HG_SOURCE_DIR`). Verified: fresh build in `/tmp` → 255/2001 + ctest 100%, and the web demo ran end-to-end on the fresh binary
 Security review v5: docs/SECURITY_READINESS_V5.md — fail-closed auth, read-only ops, no credential leak, no network listener, no shell exec, bounded lifetime all VERIFIED; HTTPS endpoint CONDITIONAL GO (blocked on real authn/TLS/rate-limit/secrets)
 Release reproduction: fresh out-of-source build (existing dep cache) → 241/1960 + bridge, new tests included
 ```

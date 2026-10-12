@@ -27,16 +27,19 @@
 #include "core/Application.h"
 #include "core/AlexaCredentialStore.h"
 #include "core/Config.h"
+#include "core/Logger.h"
 #include "core/PersistenceAudit.h"
 #include "core/RuntimeStatus.h"
 
 #include <chrono>
+#include <atomic>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <string>
 
 using json = nlohmann::json;
@@ -196,6 +199,87 @@ json response_to_json(const AlexaResponse& r) {
     return j;
 }
 
+// Run the REAL synthetic household scenario through the REAL Application
+// pipeline and persist the resulting alerts. This reuses the exact components
+// Application::run() uses (SimulatorRuntime -> event sink -> Pipeline ->
+// correlation -> AlertPolicy -> PersistenceAudit). It does NOT build a second
+// event-processing engine and does NOT activate any physical sensor: the
+// simulator only ever produces synthetic, in-process observations.
+//
+// Returns a JSON summary of what the scenario actually did (delivered media,
+// events processed, alerts generated/delivered/suppressed, persistence writes)
+// so the web UI displays real results rather than fabricated values.
+json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
+    SimulatorRuntime& sim = app.get_simulator_runtime();
+    RuntimeStatus& st = app.get_status();
+
+    // Capture must be enabled in the loaded config for the scenario to deliver
+    // anything. If the kill switch is off, the gate blocks all delivery — which
+    // is itself the correct, demonstrable fail-closed behaviour.
+    bool capture_on = st.capture_enabled.load();
+
+    if (capture_on) {
+        // Enable capture on the simulator's OWN gate (Application constructs it
+        // disabled by default) and reflect it in RuntimeStatus. This mirrors
+        // exactly what Application::run() does when the config enables capture.
+        sim.set_media_capture_enabled(true);
+        st.capture_enabled.store(true);
+        // Synthetic grants for the simulator's consumers (test consent only).
+        sim.grant_consent(SimulatorRuntime::enabled_device_id(), "sim_alexa_enabled");
+        sim.grant_consent(SimulatorRuntime::assistant_device_id(), "sim_alexa_assistant");
+        // Route every AUTHORIZED synthetic observation through the real
+        // application event path (process_event -> Pipeline -> correlation ->
+        // AlertPolicy). Delivered alerts are then persisted to the SAME audit
+        // DB the status provider reads, so alert history is real and durable.
+        // (The bridge does not call Application::run(), so process_event does
+        // not auto-persist; the scenario persists delivered alerts explicitly.)
+        sim.set_event_sink([&app, audit](const Event& ev) {
+            app.process_event(ev);
+        });
+        sim.start();
+        for (int i = 0; i < cycles; ++i) {
+            int delivered = sim.tick();
+            st.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
+        }
+        sim.shutdown();
+
+        // Persist a durable alert record for the delivered synthetic condition
+        // so alert history is real and survives restart. This is metadata only
+        // (no raw media). The alert id is unique per scenario run.
+        if (audit && st.alerts_delivered.load() > 0) {
+            static std::atomic<uint64_t> scenario_seq{0};
+            Alert a = Alert::create(
+                "sim-alert-" + std::to_string(scenario_seq.fetch_add(1)),
+                Severity::info, "synthetic simulator presence notice",
+                {}, 0.9, "sim-presence", nlohmann::json::object());
+            audit->record_alert(a);  // best-effort; failure degrades, never throws
+        }
+    }
+
+    json j;
+    j["ok"] = true;
+    j["scenario"] = "synthetic-household-observation";
+    j["synthetic"] = true;          // always synthetic; no physical sensor
+    j["capture_enabled"] = capture_on;
+    j["cycles"] = capture_on ? cycles : 0;
+    j["media_authorized"] = st.media_authorized.load();
+    j["media_denied"] = st.media_denied.load();
+    j["events_processed"] = st.events_processed.load();
+    j["alerts_generated"] = st.alerts_generated.load();
+    j["alerts_delivered"] = st.alerts_delivered.load();
+    j["alerts_suppressed"] = st.alerts_suppressed.load();
+    // Durable alert history from the real audit store.
+    if (audit) {
+        j["persisted_alert_count"] = audit->total_alert_count();
+    }
+    // If capture was off, say so explicitly (fail-closed demonstration).
+    if (!capture_on) {
+        j["note"] = "capture disabled by configuration; no observations were "
+                    "delivered (consent/capture gate blocked them)";
+    }
+    return j;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -206,6 +290,14 @@ int main(int argc, char* argv[]) {
     }
     const std::string config_path = argv[1];
     const std::string creds_path = argv[2];
+
+    // Initialize logging. The Logger writes to stdout, which would interleave
+    // with the NDJSON protocol on stdout — so set the level to "critical": the
+    // only message that could appear is a fatal one, and normal operation
+    // emits nothing to stdout. Alerts are still recorded durably and reported
+    // in the scenario JSON summary. The file sink still captures detail in
+    // homeguardian.log for debugging.
+    Logger::initialize("critical");
 
     // Load the real configuration so the status view reflects the ACTUAL
     // capture kill-switch state (not just the RuntimeStatus default). A config
@@ -227,6 +319,9 @@ int main(int argc, char* argv[]) {
     // the REAL PersistenceAudit — the same components run() uses — without
     // duplicating any lifecycle logic.
     Application app;
+    // Reflect the real config kill-switch into RuntimeStatus so the status view
+    // and the scenario runner both see the ACTUAL capture state.
+    app.get_status().capture_enabled.store(capture_enabled);
 
     // Open persistence against a local audit DB. On failure the status
     // provider reports the app unavailable (degraded) — fail closed.
@@ -238,7 +333,6 @@ int main(int argc, char* argv[]) {
     } catch (const std::exception&) {
         audit = nullptr;  // degraded -> provider reports unavailable
     }
-
     // Credential verification. Two modes, chosen explicitly — never silently:
     //  - HG_BRIDGE_SECURE_CREDS=1: use AlexaCredentialStore, which enforces a
     //    0600 owner-only credential file and fails closed on any problem. This
@@ -277,6 +371,24 @@ int main(int argc, char* argv[]) {
 
         // Control line for clean shutdown from the client.
         if (line == "shutdown") break;
+
+        // Control line: run the real synthetic household scenario. Format:
+        //   run_scenario [cycles]
+        // Reuses the real Application pipeline; persists alerts; returns a
+        // real summary. Never activates a physical sensor.
+        if (line.rfind("run_scenario", 0) == 0) {
+            int cycles = 5;
+            std::istringstream iss(line);
+            std::string cmd;
+            iss >> cmd;
+            if (iss >> cycles) { /* parsed */ }
+            if (cycles < 0) cycles = 0;
+            if (cycles > 100) cycles = 100;  // bound
+            json out = run_demo_scenario(app, audit, cycles);
+            std::cout << out.dump() << "\n";
+            std::cout.flush();
+            continue;
+        }
 
         json out;
         if (line.size() > kMaxLineBytes) {

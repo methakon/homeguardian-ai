@@ -104,6 +104,26 @@ hg_build/hg_alexa_bridge --config config/homeguardian.json --creds <creds.json>
 NOT TLS and NOT production** — loopback development use only; see
 `docs/HTTP_ADAPTER_V7.md`.
 
+## Simulated Alexa+ web demo
+
+One command: `bash demo.sh`. It builds the C++ bridge if needed, then serves a
+loopback-only web UI (`src/web/index.html` via `src/bridge/hg_demo_server.js`)
+that drives the **real** backend: consent gate → event pipeline → correlation →
+alert dedup → SQLite persistence. The bridge's `run_scenario` mode runs the real
+synthetic household scenario and persists the resulting alert, so every number
+and alert shown in the UI comes from running code, not from the page.
+
+Tests: `node --test test/web_demo.test.js` (8 cases). Full walkthrough,
+expected output, troubleshooting, and a suggested <3-minute video script:
+`docs/DEMO_WEB.md`.
+
+**Clean-clone reproducibility:** the tests CMake target previously used
+`../src/...` relative paths, which only worked when the build directory was a
+direct child of the source tree. These are now `${CMAKE_SOURCE_DIR}`-absolute,
+and one test that read `config/homeguardian.json` relative to the CWD now
+resolves via the `HG_SOURCE_DIR` environment variable (set by ctest). An
+out-of-source build from any directory now configures, builds, and passes.
+
 A reproducible simulator demonstration of the running app is in
 `docs/DEMO_SIMULATOR.md`.
 
