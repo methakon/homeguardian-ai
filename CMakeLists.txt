@@ -114,6 +114,10 @@ add_executable(homeguardian
     src/core/PersistenceAudit.cpp
     src/core/RuntimeStatus.cpp
     src/core/AlexaContract.cpp
+    src/core/Observation.cpp
+    src/core/AnomalyDetector.cpp
+    src/core/FusionEngine.cpp
+    src/core/SyntheticActivityDetector.cpp
     src/core/AlexaCredentialStore.cpp
     src/backend/simulator/SimulatedSensorBackend.cpp
     src/backend/simulator/LogicalDevice.cpp
@@ -211,6 +215,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_alexa_contract.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_alexa_credentials.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_consent.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_detection.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -231,6 +236,10 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/RuntimeStatus.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AlexaContract.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AlexaCredentialStore.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Observation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnomalyDetector.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/FusionEngine.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SyntheticActivityDetector.cpp
         ${CMAKE_SOURCE_DIR}/src/persistence/SQLiteDatabase.cpp
         ${CMAKE_SOURCE_DIR}/src/persistence/EventRepository.cpp
         ${CMAKE_SOURCE_DIR}/src/persistence/AlertRepository.cpp

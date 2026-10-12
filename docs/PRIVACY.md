@@ -681,3 +681,41 @@ the C++ process or any sensor:
   produced or retained.
 - The Alexa simulator cannot reach the Ubuntu computer's physical sensors; no
   physical camera or microphone was opened.
+
+## Detection layer — privacy notes (added 2026-10-12)
+
+The observation/inference layer (`Observation`, `AnomalyDetector`, `FusionEngine`,
+`SyntheticActivityDetector`) was built under the following privacy boundaries,
+each enforced by code and tests:
+
+- **No raw media, ever.** An `Observation` carries only bounded, validated
+  feature data (numeric features, booleans, quality/confidence scores). It never
+  carries raw audio, raw video, facial embeddings, biometric templates, or
+  transcripts. A test asserts the serialized payload contains no
+  `audio`/`video`/`embedding`/`transcript` keys.
+- **Synthetic provenance is explicit and default.** Every observation produced in
+  this build is `Provenance::synthetic`; the `real` variant is reserved and
+  unused. No physical camera, microphone, or speaker is activated, and no OS
+  permission is requested.
+- **No covert identification or tracking.** The detector stores only bounded
+  numeric baselines keyed by a caller-supplied string — never identities, faces,
+  or behavioural profiles. It does not learn new authorization rules.
+- **Consent boundary unchanged.** The detection layer sits *downstream* of the
+  `ConsentGate`/`ConsentGuardedDevice` delivery boundary and does not bypass it.
+  With capture disabled or consent withdrawn, no observation reaches the pipeline.
+  (The synthetic detector can still be invoked in tests/demo to produce an
+  Observation object, but that is a pure in-memory computation, not sensor
+  acquisition — the media-delivery boundary is what consent governs.)
+- **No sensitive logging.** Detector reasons are bounded, non-sensitive strings
+  (numbers and thresholds). No credentials, media paths, or personal data.
+- **Explainability, not verdict.** `AnomalyDetector` and `FusionEngine` surface
+  statistical deviations and detector agreement as *candidates for review*. They
+  never assert a fall, illness, emergency, medical condition, emotional state,
+  intent, or honesty. The existing `AlertPolicy` remains the sole authority that
+  turns a condition into an alert.
+
+**Data handling summary for the detection layer:** only numeric features and
+derived statistics are retained, in bounded, size-capped structures (rolling
+windows and a capped key table). Nothing is persisted to the audit database
+beyond the resulting `Event`/`Alert` (which is alert *metadata* only). Nothing is
+uploaded or transmitted off-host.

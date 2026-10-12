@@ -861,3 +861,85 @@ and exercise the full request/response path.
 **Tests:** `alexa_skill/test/integration.test.js` (14 process-boundary cases) and
 `alexa_skill/test/restart.test.js` (4 restart/degraded cases) drive the actual
 compiled binary. **Demo:** `docs/demo_alexa_integration.sh`.
+
+## Observation and inference data flow (added 2026-10-12)
+
+A detection layer was added on top of the existing event pipeline. It reuses
+that pipeline; it does **not** add a second event-processing engine.
+
+```
+ detector (SyntheticActivityDetector)
+        |  produces
+        v
+   Observation ──to_event()──► Event (EventType::inference) ──► Pipeline
+        |                                                          |
+        |  provenance / detector_id / model_id / status             v
+        |  carried in payload + processing_metadata        EventValidator
+        |                                                          |
+        v                                                          v
+  AnomalyDetector ◄── numeric feature per (source, key)      Correlation
+  FusionEngine    ◄── multiple Observations (timestamped)         |
+        |                                                          v
+        └──────────── explainable result ────────────►  AlertPolicy ─► Alert ─► Persistence
+```
+
+**Observation model** (`src/core/Observation.{h,cpp}`): a thin, validated wrapper
+that adds what `Event` does not express — **provenance** (synthetic vs real),
+**detector/model identity**, and an explicit **status**
+(detected / not_detected / unavailable / inconclusive). It carries only bounded,
+validated feature data (≤32 keys, ≤2 KB serialized, note ≤256 chars); never raw
+media, embeddings, or transcripts. `to_event()` emits a standard
+`EventType::inference` event so all downstream logic is unchanged.
+
+**AnomalyDetector** (`src/core/AnomalyDetector.{h,cpp}`): a pure-C++ statistical
+detector — rolling window, running mean/stddev, configurable z-score threshold,
+a warm-up period (first `min_samples` samples only build the baseline), a
+missing-observation check (surfaces a sensor gone quiet), and bounded memory
+(≤`max_window` samples/key, ≤`max_keys` keys). Every flag carries a
+human-readable reason (baseline, sample, z-score, threshold) — i.e. explainable.
+It makes **no** medical/safety/behavioural claim; deviations are candidates for
+review.
+
+**FusionEngine** (`src/core/FusionEngine.{h,cpp}`): combines timestamped
+Observations conservatively — confidence propagation (agreement raises it,
+conflict and unusable inputs lower it; never exceeds mean input confidence), an
+explicit time window (stale inputs excluded), and conflict handling (disagreement
+yields `inconclusive`, never a silent winner). `unavailable` inputs never count
+as evidence of presence.
+
+**SyntheticActivityDetector** (`src/core/SyntheticActivityDetector.{h,cpp}`): a
+deterministic synthetic detector that classifies a bounded numeric energy into a
+`DetectorStatus`, producing `Provenance::synthetic` Observations. It reads no
+camera/mic/file; it exists to exercise the framework end-to-end and feed the
+demo. Out-of-range or near-threshold inputs are reported `inconclusive`, never
+fabricated as detections.
+
+### Capability matrix (added 2026-10-12)
+
+| Capability | Status | Notes |
+|---|---|---|
+| Observation model + pipeline integration | **Implemented (synthetic)** | `Observation::to_event()` → existing `Event` pipeline; 275th test-case area |
+| Explainable statistical anomaly detection | **Implemented (synthetic)** | z-score baselines, warm-up, missing-observation, bounded memory |
+| Multimodal fusion (confidence/conflict) | **Implemented (synthetic)** | agreement/conflict/unavailable/stale handling, propagated confidence |
+| Synthetic activity detector | **Implemented (synthetic)** | deterministic, no I/O, feeds demo + tests |
+| Real face/pose/lip inference | **Deferred** | requires OpenCV/ONNX/MediaPipe — none installed; 8 GB host; not safe to add this stage |
+| Real audio VAD/event detection | **Deferred** | same: no audio ML stack installed |
+| Lip-reading / transcription | **Deferred** | no offline model with a compatible license present |
+
+Real face/pose/lip/voice inference is deferred with a precise reason: no OpenCV,
+ONNX Runtime, MediaPipe, torch, or cv2 is installed on this 8 GB host, and the
+project policy forbids pulling a large ML stack without a licensing/build/memory
+review. The statistical observation/fusion framework that *would consume* those
+detectors is implemented and tested now, so a future detector plugs straight in.
+
+**Measured performance** (this host, `-O2`, Release-equivalent):
+`SyntheticActivityDetector::detect` ≈ 0.84 µs/op (~1.19M ops/sec);
+`AnomalyDetector::record` ≈ 0.84 µs/op (~1.19M ops/sec); peak RSS ≈ 4 MB. These
+are sub-microsecond, no-ML operations that fit the low-memory Android device
+budget with no model download.
+
+**Tests:** `tests/core/test_detection.cpp` — 20 cases / 67 assertions covering
+valid input, malformed/oversized payloads, unavailable/inconclusive/conflicting
+inputs, stale windows, bounded keys/windows, no-raw-media-in-payload, and Event
+pipeline integration. Full suite: **275 cases / 2071 assertions**, CTest 100%,
+Node 76/76.

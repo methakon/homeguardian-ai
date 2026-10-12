@@ -1480,3 +1480,33 @@ sanitizer suites green across a clean recompile and a fresh release build.
 **Remaining impact:** Live Alexa integration, real filesystem-exhaustion
 behavior, and real V4L2/ALSA/PipeWire capture remain unverified (hardware-/
 deployment-gated). No physical sensor was activated.
+
+## Detection framework build failure — aggregate-init default argument (2026-10-12)
+
+**Symptom:** After adding `Observation`, `AnomalyDetector`, `FusionEngine`, and
+`SyntheticActivityDetector`, `make homeguardian` failed with:
+`error: default member initializer for '…::Config::min_quality' required before
+the end of its enclosing class`.
+
+**Root cause:** A constructor default argument of the form
+`explicit Foo(Config cfg = Config{})` (and `= Config()`) is parsed in the
+enclosing class scope, where the *nested* `Config`'s default member initializers
+are not yet usable. This is the known C++ aggregate-init / default-argument
+ordering restriction (ill-formed: NSDMIs not yet complete in the class's own
+default argument). It is not a missing-semicolon or a member-ordering bug — the
+struct was already declared above the constructor.
+
+**Fix:** Give each nested `Config` an explicit `Config() = default;` and expose a
+`static Config defaults() { return Config{}; }`; use
+`explicit Foo(Config cfg = defaults())`. `defaults()` is a member function
+evaluated at call time, after the class is complete, so it sidesteps the
+restriction cleanly and is self-documenting.
+
+**Evidence:** After the change, `make -j4 homeguardian homeguardian_tests` built
+clean (exit 0, no warnings), and the full suite passed (275 cases / 2071
+assertions; ctest 100%; Node 76/76).
+
+**Lesson:** When a class exposes a nested `Config` used as a constructor default
+argument, prefer a `static defaults()` helper over inline `Config{}`/`Config()`
+default arguments — the inline form trips the NSDMI completeness rule on some
+GCC versions.

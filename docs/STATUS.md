@@ -1,6 +1,6 @@
 # HomeGuardian AI — Status
 
-**Last updated:** 2026-10-11
+**Last updated:** 2026-10-12
 
 ## Current Phase
 
@@ -26,6 +26,11 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Event source | IEventSource interface + SimulatedEventSource for testing | 2026-10-09 |
 | Correlation rules | ICorrelationRule interface + TimeWindowCorrelation implementation | 2026-10-09 |
 | Pipeline | Synchronous Pipeline with bounded history, validation, correlation | 2026-10-09 |
+| Detection: Observation model | `src/core/Observation.{h,cpp}` — provenance/detector/status; converts to Event, reuses pipeline | 2026-10-12 |
+| Detection: AnomalyDetector | `src/core/AnomalyDetector.{h,cpp}` — explainable z-score baselines, warm-up, missing-observation, bounded | 2026-10-12 |
+| Detection: FusionEngine | `src/core/FusionEngine.{h,cpp}` — confidence propagation, conflict->inconclusive, time window | 2026-10-12 |
+| Detection: SyntheticActivityDetector | `src/core/SyntheticActivityDetector.{h,cpp}` — deterministic synthetic detector, no I/O | 2026-10-12 |
+| Detection tests | `tests/core/test_detection.cpp` — 20 cases / 67 assertions; full suite 275/2071 | 2026-10-12 |
 | Config extension | max_event_history, correlation_window_ms, alert_confidence_threshold | 2026-10-09 |
 | Application integration | Application::process_event() delegates to Pipeline | 2026-10-09 |
 | Friction log | 6 verified incidents documented | 2026-10-09 |

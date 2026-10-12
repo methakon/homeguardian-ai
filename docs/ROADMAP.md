@@ -195,3 +195,26 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 | H-02 | Emergency workflow | G-02 | Configurable escalation: notify → call → emergency services | TODO |
 | H-03 | Privacy audit | D-01 | All data access logged; consent enforcement verified | TODO |
 | H-04 | Security review | All | Input validation, injection prevention, access control | TODO |
+
+## Phase L — Observation and inference framework (added 2026-10-12)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| L-01 | Observation model (provenance, detector/model id, explicit status) | Event model | Validates; converts to `EventType::inference`; bounded payload | DONE |
+| L-02 | Explainable anomaly detection | L-01 | z-score baselines, warm-up, missing-observation, bounded memory, reason on every flag | DONE |
+| L-03 | Multimodal fusion | L-01 | Confidence propagation, conflict→inconclusive, time window, unavailable handling | DONE |
+| L-04 | Synthetic activity detector | L-01 | Deterministic, no I/O, out-of-range→inconclusive, feeds demo/tests | DONE |
+| L-05 | Detection test coverage | L-01..L-04 | 20 cases / 67 assertions; full suite 275/2071; ctest 100%; Node 76/76 | DONE |
+| L-06 | Real face/pose visual inference | OpenCV/ONNX/MediaPipe (none installed) | Actual inference on a real/fixture image | DEFERRED — no ML stack on 8 GB host; pulling one needs licensing/build/memory review |
+| L-07 | Real audio VAD / event detection | audio ML stack (none installed) | VAD + input-quality checks on synthetic PCM | DEFERRED — same |
+| L-08 | Lip-reading | offline model + compatible license (none present) | No fabricated transcripts | DEFERRED — no suitable offline model present |
+
+**Blocked / deferred rationale (L-06..L-08):** no OpenCV, ONNX Runtime,
+MediaPipe, torch, or cv2 is installed on this 8 GB machine. Adding one requires
+the licensing / binary-size / memory / build-impact review that project policy
+mandates before any large ML dependency. The consuming framework (observation
+model, anomaly detection, fusion) is implemented and tested now so a real
+detector plugs in without touching the pipeline.
+
+**Not in scope / never:** covert identity recognition, continuous personal
+tracking, behavioural profiling, or learning new authorization rules.

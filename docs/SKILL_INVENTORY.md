@@ -339,3 +339,51 @@ The gaps are primarily in:
 - Privacy/consent engineering
 
 For gaps, rely on official library documentation and implement from first principles.
+
+---
+
+## Verification addendum (2026-10-12)
+
+The detection-relevant skills listed above were **re-inspected against the
+actual installed skill directories** for this stage. Findings:
+
+**Every detection skill is guidance-only.** Each of the following contains a
+single `SKILL.md` and **no scripts, models, or executable code**:
+
+- `face-reading` — references OpenCV (guidance only)
+- `facial-expression-recognition` — references TensorFlow (guidance only)
+- `lip-reading` — references MediaPipe/TensorFlow/Torch (guidance only)
+- `body-posture-recognition` — references MediaPipe (guidance only)
+- `sign-language-recognition` — references MediaPipe/TensorFlow/Torch (guidance only)
+- `voice-analysis` — references TensorFlow (guidance only)
+- `behavior-change-detection`, `intent-recognition`, `remote-vital-signs`,
+  `thermal-emotion-detection`, `multimodal-affective-computing`,
+  `animal-language-recognition` — guidance only, no external ML named
+
+None of these can be run as a detector, and none ships a model.
+
+**No ML runtime is installed on this host.** Verified by probe:
+OpenCV 4 (absent), ONNX Runtime (absent), MediaPipe (absent), Python `cv2`
+(absent), Python `mediapipe` (absent), Python `torch` (absent). Host has 8 GB
+RAM. Therefore **real** face/pose/lip/voice inference is **not** implementable
+this stage without introducing a large, un-reviewed ML dependency — which
+project policy forbids without a licensing/build/memory review.
+
+**What was actually implemented** (from these skills' *guidance*, as real,
+testable, dependency-free C++ — see `docs/ARCHITECTURE.md` capability matrix):
+
+- `behavior-change-detection` guidance → **`AnomalyDetector`**: explainable
+  z-score change detection with baselines, warm-up, and missing-observation
+  handling (pure C++).
+- `multimodal-affective-computing` fusion guidance → **`FusionEngine`**:
+  confidence-propagating, conflict-aware, time-windowed fusion (pure C++).
+- The observation/provenance/status model from the detection skills' shared
+  assumptions → **`Observation`** + **`SyntheticActivityDetector`**.
+
+**Decision recorded:** the consuming framework (observation model, anomaly
+detection, fusion) is built and tested now so a future real detector (once a
+licensed, low-memory, offline model is approved) plugs straight into the
+existing pipeline. No guidance-only skill is described as an executable
+detector, and no detector is claimed until actual inference runs on a real or
+clearly identified fixture — which is why all implemented detectors are
+explicitly labeled **synthetic**.

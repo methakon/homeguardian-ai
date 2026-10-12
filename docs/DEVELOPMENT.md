@@ -192,3 +192,23 @@ Missing values fall back to documented defaults.
 4. Add tests under `tests/<module>/`
 5. Register in `CMakeLists.txt`
 6. Update this guide and `docs/ARCHITECTURE.md`
+
+## Detection layer (added 2026-10-12)
+
+Source under `src/core/`:
+- `Observation.{h,cpp}` — provenance/detector/status model; `to_event()` → Event.
+- `AnomalyDetector.{h,cpp}` — explainable statistical anomalies.
+- `FusionEngine.{h,cpp}` — confidence-propagating, conflict-aware fusion.
+- `SyntheticActivityDetector.{h,cpp}` — deterministic synthetic detector.
+
+Tests: `tests/core/test_detection.cpp`. Run the detection group with:
+`hg_build/homeguardian_tests "[detection]"`.
+
+All four are registered in `CMakeLists.txt` (both the `homeguardian` and
+`homeguardian_tests` targets). No new third-party dependency was introduced —
+the layer is pure C++ standard library.
+
+Note on the nested-`Config` default-argument pattern: constructors use a
+`static Config defaults()` helper rather than an inline `Config{}` default
+argument (see `docs/FRICTION_LOG.md`, 2026-10-12). Follow this pattern for any
+new class exposing a nested config with a default constructor argument.
