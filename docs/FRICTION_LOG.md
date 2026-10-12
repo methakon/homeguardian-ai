@@ -1510,3 +1510,47 @@ assertions; ctest 100%; Node 76/76).
 argument, prefer a `static defaults()` helper over inline `Config{}`/`Config()`
 default arguments — the inline form trips the NSDMI completeness rule on some
 GCC versions.
+
+## Stale ASan build reported pre-v8 counts (2026-10-12, v9 stabilization)
+
+**Symptom:** During the v9 stabilization pass, `hg_asan/homeguardian_tests`
+reported **255 cases / 2004 assertions** while the current source (`hg_build`)
+reported **275 / 2071**. The sanitizer binary had not been reconfigured after the
+v8 detection work, so it was testing stale object code.
+
+**Root cause:** incremental build directories are not auto-reconfigured when new
+source files are added to `CMakeLists.txt`; `hg_asan` predated the v8 detection
+sources.
+
+**Fix / procedure:** reconfigure and clean-recompile the sanitizer build from
+current source before trusting its result:
+`cd hg_asan && cmake . && make -j4 homeguardian_tests`, then run with
+`HG_SOURCE_DIR=<repo>` set. After reconfirmation the ASan/UBSan suite passes on
+current source (275/2071, zero sanitizer errors).
+
+**Lesson:** before citing a sanitizer (or any non-default build-dir) result,
+reconfigure it from current source and confirm the case count matches the
+primary build; otherwise the result describes old code.
+
+## Direct out-of-source run needs HG_SOURCE_DIR (2026-10-12, v9 stabilization)
+
+**Symptom:** running a freshly built `homeguardian_tests` **directly** from an
+out-of-source build dir (e.g. `/tmp/hg_v9`) failed one case:
+`test_config_e.cpp:97` — "Shipped default config has media capture and cloud
+disabled" — `REQUIRE(f.is_open())` failed because `config/homeguardian.json`
+was not found relative to the build dir and `HG_SOURCE_DIR` was unset.
+
+**Root cause:** that test resolves the shipped config relative to CWD, then falls
+back to the `HG_SOURCE_DIR` environment variable. `ctest` sets `HG_SOURCE_DIR`
+(test property), so the documented `ctest` path passes; a bare binary run from an
+arbitrary out-of-source dir does not.
+
+**Resolution (no code change needed):** this is an invocation detail, not a
+source defect. Verified: `ctest` in the fresh build passes 275/2071, and a
+direct run passes 275/2071 once `HG_SOURCE_DIR=<repo>` is exported.
+
+**Documented for reproducibility:** the reliable commands are
+`ctest --test-dir <build>` (sets HG_SOURCE_DIR automatically) or
+`HG_SOURCE_DIR=<repo> <build>/homeguardian_tests`. Recorded in
+`docs/DEVELOPMENT.md` so a judge reproducing results from a clean clone uses the
+working path.

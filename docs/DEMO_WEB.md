@@ -124,7 +124,7 @@ A tight script that fits the time limit and shows the product working:
 | 1:00–1:20 | Alert timeline + ask "Is everything okay?" | "The alert is persisted with its id, rule, and severity. The answer comes from the real backend, not from the page." |
 | 1:20–1:45 | Ask "Is capture enabled?"; run scenario again | "Consent-first: if capture or consent is withdrawn, the gate blocks everything and nothing reaches the pipeline." |
 | 1:45–2:10 | Privacy card | "Local-first, no cloud, no raw media — only alert metadata is stored." |
-| 2:10–2:40 | Terminal: `npm test` / test counts scrolling | "255 C++ test cases, 68 Node tests, ASan/UBSan clean, fresh-build reproducible." |
+| 2:10–2:40 | Terminal: `npm test` / test counts scrolling | "275 C++ test cases, 76 Node tests, ASan/UBSan clean, fresh-build reproducible." |
 | 2:40–3:00 | Close | "This is a simulated Alexa+ experience built on a real, tested backend. Thank you." |
 
 **Recording tips:** 1080p, show the terminal command and the browser side by

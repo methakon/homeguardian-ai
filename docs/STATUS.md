@@ -89,6 +89,8 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 255 test cases, 2004 assertions, all passing; Node 68/68 (13 handler + 12 contract + 21 integration + 4 restart + 18 http_adapter) | 2026-10-12 |
 | Hackathon P0 | README corrected (removed false MCP/Ring claims; documented implemented vs simulated vs planned); simulated Alexa+ web experience (`src/web/` + `src/bridge/hg_demo_server.js` + `demo.sh` + `config/homeguardian.demo.json`); bridge `run_scenario` mode (real pipeline → real alerts → durable persistence); 8 `web_demo` Node tests; fixed CMake out-of-source path bug + test CWD-isolation bug; `docs/DEMO_WEB.md` | 2026-10-12 |
 | Test suite | 255 test cases, 2001 assertions, all passing; Node 76/76 (13 handler + 12 contract + 21 integration + 4 restart + 18 http_adapter + 8 web_demo) | 2026-10-12 |
+| Detection framework (v8) | Observation model, AnomalyDetector, FusionEngine, SyntheticActivityDetector; suite now 275 cases / 2071 assertions; Node 76/76 | 2026-10-12 |
+| Stabilization pass (v9) | Verified 275/2071, ctest 100%, Node 76/76, fresh out-of-source build green, ASan reconfirmed on current source (275/2071, zero sanitizer errors), demo loopback+scenario OK, persistence-after-restart OK | 2026-10-12 |
 
 ## Test Results
 

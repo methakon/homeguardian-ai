@@ -212,3 +212,15 @@ Note on the nested-`Config` default-argument pattern: constructors use a
 `static Config defaults()` helper rather than an inline `Config{}` default
 argument (see `docs/FRICTION_LOG.md`, 2026-10-12). Follow this pattern for any
 new class exposing a nested config with a default constructor argument.
+
+## Running tests reproducibly (added 2026-10-12, v9)
+
+Use one of these so the shipped-config test resolves the repo root correctly:
+
+- Preferred: `ctest --test-dir <build>` — sets `HG_SOURCE_DIR` automatically.
+- Direct binary run: `HG_SOURCE_DIR=<repo-root> <build>/homeguardian_tests`.
+
+A bare `<build>/homeguardian_tests` run from an out-of-source dir without
+`HG_SOURCE_DIR` fails one config-path test (see `docs/FRICTION_LOG.md`,
+2026-10-12). After any new source files are added, reconfigure every build dir
+you cite (`cmake . && make`) — incremental dirs do not auto-pick up new sources.
