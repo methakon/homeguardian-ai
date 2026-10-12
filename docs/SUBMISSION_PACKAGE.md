@@ -66,7 +66,7 @@ see the consent gate refuse to deliver anything once capture is turned off.
 |---|---|---|
 | Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter, synthetic detection + fusion stage (activity-energy detector, explainable anomaly detection, confidence-aware fusion — all synthetic, now exercised in the demo scenario) | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference (face/pose/lip/voice), a real Alexa+ MCP server, Amazon Login with Amazon account linking, Ring integration |
 
-**Testing.** 275 C++ test cases (2,071 assertions), 76 Node tests, ASan/UBSan
+**Testing.** 275 C++ test cases (2,074 assertions), 76 Node tests, ASan/UBSan
 clean, and a reproducible out-of-source build — all green at submission.
 
 ---
