@@ -195,7 +195,13 @@ HomeGuardian AI is designed with privacy as a core principle:
 
 ## License
 
-License to be selected. See [docs/DECISIONS.md](docs/DECISIONS.md).
+HomeGuardian AI's original source code is released under the **MIT License**.
+See [LICENSE](LICENSE) for the full text.
+
+Bundled and fetched third-party components retain their own licenses and are
+not relicensed under MIT (SQLite — public domain; Catch2 — Boost Software
+License 1.0; spdlog and nlohmann/json — MIT; ask-sdk-core and ask-sdk-model —
+Apache License 2.0). See the notice at the end of [LICENSE](LICENSE).
 
 ## Contributing
 
