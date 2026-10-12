@@ -108,9 +108,20 @@ physical sensor was used, or that detection accuracy was measured on real data.
   - [ ] Disable desktop notifications; mute non-essential apps.
 - **During:** narrate from the script; pause briefly after each state change so
   the numbers are readable; keep the cursor movements deliberate.
+- **If the demo fails mid-recording:** stop, fix offline, re-record the affected
+  section (do not narrate over an error). Quick recovery:
+  - *"Backend unavailable" / bridge not starting* → the bridge binary is stale;
+    rebuild it: `cmake --build hg_build --target hg_alexa_bridge`, then re-run
+    `bash demo.sh`.
+  - *Port in use* → set a free port: `HG_DEMO_PORT=8199 bash demo.sh`.
+  - *Scenario shows 0 events* → you are on the capture-off config; use
+    `config/homeguardian.demo.json` (the `demo.sh` default).
+  - Full troubleshooting table: `docs/DEMO_WEB.md` §4.
 - **After:**
   - [ ] Watch the full playback — confirm audio is clear and every number shown
-    matches the expected output in `docs/DEMO_WEB.md`.
+    matches the expected output in `docs/DEMO_WEB.md` (scenario: **15 events
+    processed, 14 alerts generated, 1 delivered, 13 suppressed, 1 persisted**;
+    detection stage: 4 detected / 1 inconclusive, fusion verdict `detected`).
   - [ ] Confirm the video is **publicly accessible** on YouTube or Vimeo and is
     under three minutes.
   - [ ] Copy the final video URL into the Devpost submission.
