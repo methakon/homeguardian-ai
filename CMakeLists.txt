@@ -154,6 +154,10 @@ add_executable(hg_alexa_bridge
     src/core/RuntimeStatus.cpp
     src/core/Pipeline.cpp
     src/core/TimeWindowCorrelation.cpp
+    src/core/Observation.cpp
+    src/core/AnomalyDetector.cpp
+    src/core/FusionEngine.cpp
+    src/core/SyntheticActivityDetector.cpp
     src/core/EventValidator.cpp
     src/core/SimulatorRuntime.cpp
     src/core/ConsentGate.cpp

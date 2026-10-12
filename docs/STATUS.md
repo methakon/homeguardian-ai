@@ -91,6 +91,7 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Test suite | 255 test cases, 2001 assertions, all passing; Node 76/76 (13 handler + 12 contract + 21 integration + 4 restart + 18 http_adapter + 8 web_demo) | 2026-10-12 |
 | Detection framework (v8) | Observation model, AnomalyDetector, FusionEngine, SyntheticActivityDetector; suite now 275 cases / 2071 assertions; Node 76/76 | 2026-10-12 |
 | Stabilization pass (v9) | Verified 275/2071, ctest 100%, Node 76/76, fresh out-of-source build green, ASan reconfirmed on current source (275/2071, zero sanitizer errors), demo loopback+scenario OK, persistence-after-restart OK | 2026-10-12 |
+| Demo completion (v10) | Wired v8 detection/fusion framework into the demo scenario: SyntheticActivityDetector + FusionEngine now run in run_demo_scenario, feed inference events through the EXISTING pipeline, and surface a synthetic detection block in the scenario JSON + web UI. Fail-closed capture-off path unchanged (detection absent, events=0). Added detection sources to hg_alexa_bridge target. Suite 275/2071; Node 76/76; ctest 100% | 2026-10-12 |
 
 ## Test Results
 

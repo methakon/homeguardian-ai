@@ -1554,3 +1554,39 @@ direct run passes 275/2071 once `HG_SOURCE_DIR=<repo>` is exported.
 `HG_SOURCE_DIR=<repo> <build>/homeguardian_tests`. Recorded in
 `docs/DEVELOPMENT.md` so a judge reproducing results from a clean clone uses the
 working path.
+
+## Demo bypassed the v8 detection framework (2026-10-12, v10)
+
+**Symptom:** Runtime Readiness v8 built and tested `Observation`,
+`AnomalyDetector`, `FusionEngine`, and `SyntheticActivityDetector`, but the demo
+journey (`run_demo_scenario` in `src/bridge/hg_alexa_bridge.cpp`) fed simulator
+events straight into the pipeline and never invoked the detection layer. From a
+judge's perspective the v8 code was unreachable dead code — the
+`Observation -> Detection/Fusion -> Event pipeline` link was severed.
+
+**Fix:** `run_demo_scenario` now runs `SyntheticActivityDetector` + `FusionEngine`
+over a deterministic energy sequence (incl. one near-threshold value that
+correctly resolves to `inconclusive`, not a fabricated detection), feeds each
+resulting Observation through the EXISTING pipeline via `to_event()` ->
+`process_event()` (no second event engine), and emits a `detection` summary block
+(provenance, detector/model id, detected/not_detected/inconclusive counts, fusion
+verdict/confidence/reason) that the web UI renders, clearly labelled synthetic.
+The detection stage runs only when capture is enabled, so the fail-closed
+capture-off path is unchanged (events_processed=0, no detection block).
+
+**Build gotcha:** the four detection sources were registered in the
+`homeguardian` and `homeguardian_tests` CMake targets in v8 but NOT in the
+separate `hg_alexa_bridge` target, so the bridge initially failed to link
+(`undefined reference to SyntheticActivityDetector::detect` /
+`Observation::validate` / `Observation::to_event` / `FusionEngine::fuse`). Fixed
+by adding the four sources to the `hg_alexa_bridge` target and reconfiguring.
+
+**Verified:** demo scenario now reports events_processed=15 (10 simulator + 5
+detection), detection block with 4 detected / 1 inconclusive, fusion verdict
+`detected` (confidence 0.75, 4 contributing); capture-off run reports
+capture_enabled=false, events_processed=0, detection absent; C++ 275/2071;
+Node 76/76; ctest 100%.
+
+**Lesson:** when a new module is added, register its sources in EVERY target
+that references it (app, tests, and any separate bridge/executable targets), and
+confirm the demo path actually exercises it rather than only its unit tests.

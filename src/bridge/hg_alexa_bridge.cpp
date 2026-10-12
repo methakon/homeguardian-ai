@@ -30,6 +30,9 @@
 #include "core/Logger.h"
 #include "core/PersistenceAudit.h"
 #include "core/RuntimeStatus.h"
+#include "core/Observation.h"
+#include "core/SyntheticActivityDetector.h"
+#include "core/FusionEngine.h"
 
 #include <chrono>
 #include <atomic>
@@ -217,6 +220,7 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
     // anything. If the kill switch is off, the gate blocks all delivery — which
     // is itself the correct, demonstrable fail-closed behaviour.
     bool capture_on = st.capture_enabled.load();
+    json detection_summary = nlohmann::json();  // populated by the detection stage
 
     if (capture_on) {
         // Enable capture on the simulator's OWN gate (Application constructs it
@@ -254,6 +258,57 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
                 {}, 0.9, "sim-presence", nlohmann::json::object());
             audit->record_alert(a);  // best-effort; failure degrades, never throws
         }
+
+        // --- Detection / fusion stage (Runtime Readiness v8 framework) ---
+        // Exercise the REAL detection path that the demo otherwise bypassed:
+        // SyntheticActivityDetector produces Observations (provenance=synthetic,
+        // explicit detected/not_detected/inconclusive status), FusionEngine
+        // combines them with confidence propagation + conflict handling, and
+        // each Observation flows through the EXISTING event pipeline via
+        // to_event() -> process_event(). No second event engine, no physical
+        // sensor, no raw media. This closes the Observation -> Detection/Fusion
+        // -> Event pipeline link in the demo journey.
+        //
+        // The energy sequence is deterministic so the demo and tests are stable.
+        // It deliberately includes an inconclusive value (near threshold) and
+        // exercises fusion conflict handling so unavailable/inconclusive inputs
+        // are never asserted as detections.
+        SyntheticActivityDetector detector;
+        FusionEngine fusion;
+        std::vector<Observation> observations;
+        std::vector<double> energies = {0.8, 0.75, 0.52, 0.82, 0.78};
+        int det_detected = 0, det_not = 0, det_inconclusive = 0;
+        for (size_t i = 0; i < energies.size(); ++i) {
+            Observation o = detector.detect(
+                "det-obs-" + std::to_string(i), energies[i]);
+            o.validate();
+            observations.push_back(o);
+            switch (o.status) {
+                case DetectorStatus::detected: ++det_detected; break;
+                case DetectorStatus::not_detected: ++det_not; break;
+                default: ++det_inconclusive; break;  // inconclusive / unavailable
+            }
+            // Feed each observation through the REAL pipeline (same path the
+            // simulator events take). Inference events are counted and
+            // correlated by the existing rules; they never fabricate a
+            // detection — the detector's own status governs that.
+            app.process_event(o.to_event());
+        }
+        FusionResult fr = fusion.fuse(observations);
+
+        json det;
+        det["detector_id"] = detector.config().detector_id;
+        det["model_id"] = detector.config().model_id;
+        det["provenance"] = provenance_to_string(Provenance::synthetic);
+        det["observations"] = observations.size();
+        det["detected"] = det_detected;
+        det["not_detected"] = det_not;
+        det["inconclusive"] = det_inconclusive;
+        det["fusion_verdict"] = fusion_verdict_to_string(fr.verdict);
+        det["fusion_confidence"] = fr.confidence;
+        det["fusion_contributing"] = fr.contributing;
+        det["fusion_reason"] = fr.reason;
+        detection_summary = det;  // attached to the summary JSON below
     }
 
     json j;
@@ -271,6 +326,11 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
     // Durable alert history from the real audit store.
     if (audit) {
         j["persisted_alert_count"] = audit->total_alert_count();
+    }
+    // Detection / fusion summary (only present when the detection stage ran,
+    // i.e. capture was on). Absent when capture is off (fail-closed).
+    if (!detection_summary.is_null()) {
+        j["detection"] = detection_summary;
     }
     // If capture was off, say so explicitly (fail-closed demonstration).
     if (!capture_on) {

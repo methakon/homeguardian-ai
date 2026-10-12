@@ -60,7 +60,7 @@ The page has four areas:
 | Step | Action | Expected result |
 |---|---|---|
 | 1 | Open the URL | Status shows **Running**, capture **Enabled (synthetic)**, mode **Simulated**. A banner explains this is a simulation. |
-| 2 | Click **▶ Run synthetic scenario** | Status updates: **10 events processed**, **9 alerts generated**, **1 delivered**, **8 suppressed** (dedup/cooldown). The alert timeline shows one alert (`sim-alert-N`, rule `sim-presence`, severity `info`). |
+| 2 | Click **▶ Run synthetic scenario** | Status updates: **15 events processed** (10 simulator + 5 detection-stage observations), **14 alerts generated**, **1 delivered**, **13 suppressed** (dedup/cooldown). The chat also reports the synthetic detection stage (detector `activity-energy`, N detected / inconclusive, fusion verdict). The alert timeline shows one alert (`sim-alert-N`, rule `sim-presence`, severity `info`). |
 | 3 | Ask **"Is everything okay?"** | "There is 1 alert on record, highest severity info." (Counts come from the real backend.) |
 | 4 | Ask **"Is capture enabled?"** | "Capture is enabled for the synthetic sensor, and consent is granted — but this is simulated, and no physical camera or microphone is active." |
 | 5 | Click **▶ Run synthetic scenario** again | A second alert is appended; the earlier alert is still listed (durable history). |
@@ -120,7 +120,7 @@ A tight script that fits the time limit and shows the product working:
 |---|---|---|
 | 0:00–0:15 | Terminal: `bash demo.sh`, browser opens | "HomeGuardian AI — a privacy-first home safety system. This is a simulated Alexa+ experience running entirely locally." |
 | 0:15–0:35 | The UI: banner, status card | "Status is Running, capture is enabled for a synthetic sensor. No physical camera or microphone is ever activated." |
-| 0:35–1:00 | Click **Run synthetic scenario** | "Two synthetic observations arrive, the correlation rule fires, and an alert is generated. Note 9 generated, 1 delivered, 8 suppressed by the cooldown policy." |
+| 0:35–1:00 | Click **Run synthetic scenario** | "Two synthetic observations arrive and a detection stage classifies them — some detected, one near the threshold reported as inconclusive. The correlation rule fires and an alert is generated. Note 14 generated, 1 delivered, 13 suppressed by the cooldown policy." |
 | 1:00–1:20 | Alert timeline + ask "Is everything okay?" | "The alert is persisted with its id, rule, and severity. The answer comes from the real backend, not from the page." |
 | 1:20–1:45 | Ask "Is capture enabled?"; run scenario again | "Consent-first: if capture or consent is withdrawn, the gate blocks everything and nothing reaches the pipeline." |
 | 1:45–2:10 | Privacy card | "Local-first, no cloud, no raw media — only alert metadata is stored." |

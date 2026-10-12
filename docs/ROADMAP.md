@@ -218,3 +218,10 @@ detector plugs in without touching the pipeline.
 
 **Not in scope / never:** covert identity recognition, continuous personal
 tracking, behavioural profiling, or learning new authorization rules.
+
+### Phase L — demo integration (added 2026-10-12, v10)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| L-09 | Wire detection/fusion into the demo journey | L-01..L-05 | run_demo_scenario runs SyntheticActivityDetector + FusionEngine, feeds inference events through the existing pipeline, and surfaces a synthetic detection block in the scenario JSON + web UI; fail-closed capture-off path unchanged | DONE |
+| L-10 | Keep detection behind the consent gate | L-09 | capture-off => detection stage does not run, events_processed=0, no detection block | DONE (verified) |

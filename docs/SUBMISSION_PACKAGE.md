@@ -64,7 +64,7 @@ see the consent gate refuse to deliver anything once capture is turned off.
 
 | Implemented and tested | Simulated (this demo) | Planned (not built) |
 |---|---|---|
-| Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference, a real Alexa+ MCP server, Amazon Login with Amazon account linking, Ring integration |
+| Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter, synthetic detection + fusion stage (activity-energy detector, explainable anomaly detection, confidence-aware fusion — all synthetic, now exercised in the demo scenario) | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference (face/pose/lip/voice), a real Alexa+ MCP server, Amazon Login with Amazon account linking, Ring integration |
 
 **Testing.** 275 C++ test cases (2,071 assertions), 76 Node tests, ASan/UBSan
 clean, and a reproducible out-of-source build — all green at submission.
@@ -81,7 +81,7 @@ expected outputs.
 |---|---|---|
 | **0:00–0:15** | Terminal: `bash demo.sh`; browser opens to the URL | "HomeGuardian AI is a privacy-first home safety system. This is a simulated Alexa+ experience that runs entirely on my machine." |
 | **0:15–0:35** | The web UI: the yellow banner, then the status card | "Note the banner — this is a simulation. No physical camera or microphone is ever activated. Status is Running, capture is enabled for a synthetic sensor." |
-| **0:35–1:00** | Click **▶ Run synthetic scenario** | "Two synthetic observations arrive. The correlation rule fires and an alert is generated. Look at the counters: ten events processed, nine alerts generated — but only one delivered, eight suppressed by the cooldown policy." |
+| **0:35–1:00** | Click **▶ Run synthetic scenario** | "Two synthetic observations arrive, and a detection stage classifies them — some detected, one near the threshold reported as inconclusive rather than fabricated. The correlation rule fires and an alert is generated. Look at the counters: fifteen events processed, fourteen alerts generated — but only one delivered, thirteen suppressed by the cooldown policy." |
 | **1:00–1:20** | Alert timeline, then ask **"Is everything okay?"** | "The alert is persisted with its id, rule, and severity. And the answer comes from the real backend, not from the web page." |
 | **1:20–1:45** | Ask **"Is capture enabled?"**; click **Run synthetic scenario** again | "Consent-first. If capture or consent is withdrawn, the gate blocks everything and nothing reaches the pipeline — I can demonstrate that with the capture-off config." |
 | **1:45–2:05** | Run the scenario against `config/homeguardian.json` (capture off) — show `events_processed: 0` | "Zero events. The consent gate refused every observation. That fail-closed behaviour is the core privacy guarantee." |
