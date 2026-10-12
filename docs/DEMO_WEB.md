@@ -77,15 +77,20 @@ To show that a disabled capture switch blocks all observations, restart the
 demo against the default (capture-off) config:
 
 ```bash
-HG_DEMO_PORT=8199 node src/bridge/hg_demo_server.js \
-  --bridge hg_build/hg_alexa_bridge \
-  --config config/homeguardian.json \
-  --creds <creds.json> --port 8199 --token demo-token
+hg_build/hg_alexa_bridge --http \
+  config/homeguardian.json \
+  <creds.json> --port 8199 --token demo-token
 ```
 
 Running the scenario then reports `events_processed: 0` and explains that the
 consent/capture gate blocked every observation. (`demo.sh` uses
 `config/homeguardian.demo.json`, which enables capture so the scenario runs.)
+
+> **Native, no Node.js.** The demo is a single C++ process
+> (`hg_alexa_bridge --http`) that serves the embedded dashboard and the JSON API
+> over loopback. The historical Node server (`src/bridge/hg_demo_server.js`) is
+> kept only as a reference for footprint comparison and is not required
+> (`HG_DEMO_LEGACY_NODE=1 bash demo.sh` to use it).
 
 ---
 

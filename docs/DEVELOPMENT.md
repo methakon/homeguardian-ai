@@ -243,3 +243,59 @@ Tests: `tests/core/test_privacy_audit.cpp`. Run with:
 Sources are registered in all three CMake targets (`homeguardian`,
 `homeguardian_tests`, `hg_alexa_bridge`) — remember to add new core sources to the
 bridge target too (see `docs/FRICTION_LOG.md`, 2026-10-12).
+
+## Native demo (no Node.js) — build & run (added 2026-10-13, v14)
+
+The demo now runs as ONE native C++ process. `bash demo.sh` builds
+`hg_alexa_bridge` if needed and starts it in HTTP mode; Node.js is not required.
+
+Manual run:
+```
+# 1. build
+cmake -S . -B hg_build -DCMAKE_BUILD_TYPE=Release && cmake --build hg_build --target hg_alexa_bridge -j4
+# 2. creds (synthetic, local only)
+cat > /tmp/creds.json <<'JSON'
+{"demo-token":{"principal":"demo","allow_status":true,"allow_alert_summary":true,"expires_at_ms":0,"revoked":false}}
+JSON
+# 3. serve (loopback only; port 0 = ephemeral, prints "DEMO_READY <port>")
+hg_build/hg_alexa_bridge --http config/homeguardian.demo.json /tmp/creds.json --port 0 --token demo-token
+```
+Routes: `/`, `/index.html`, `/api/health`, `/api/status`, `/api/run-scenario?cycles=N` (GET only).
+
+The dashboard is embedded at configure time from `src/web/index.html`
+(`cmake/hg_web_assets.h.in` -> `generated/hg_web_assets.h`). **Re-run `cmake` after
+editing the HTML** so the embedded copy refreshes.
+
+Legacy Node demo server (historical reference / A-B benchmark only):
+`HG_DEMO_LEGACY_NODE=1 bash demo.sh`.
+
+Footprint benchmark: `bash scripts/bench_demo.sh` (native vs legacy Node).
+
+Tests: `HG_SOURCE_DIR=<repo> hg_build/homeguardian_tests "[nativehttp]"` (18 cases).
+
+## Footprint benchmark results (2026-10-13, measured)
+
+`bash scripts/bench_demo.sh` (native vs legacy Node, same workload). Native
+measured with a **Release** build (`-DCMAKE_BUILD_TYPE=Release`); a Debug build
+is ~25.8 MB and has different RSS, so compare like-for-like
+(`HG_BRIDGE_PATH=<release-binary>`).
+
+| Metric | Native (Release) | Legacy Node | Notes |
+|---|---|---|---|
+| Idle RSS | **~6.4 MB** | ~49 MB | node ~7.7× heavier |
+| Peak RSS (after scenario) | **~6.9 MB** | ~57 MB | node ~8.3× heavier |
+| CPU% (idle-ish sample) | **~0.5** | ~21 | |
+| Runtime processes | **1** | 2+ (node + spawned bridge/request) | |
+| Binary / deployed size | **3.1 MB** (Release) | node runtime + 7 KB script + C++ bridge | |
+| Runtime dependencies | libc/libstdc++/libm/libgcc (ldd) | a full Node.js runtime | |
+| `/api/health` latency | avg ~0.0 ms, max ~0.4 ms | avg ~0.0 ms, max ~7 ms | |
+| `/api/status` latency | avg ~0.0 ms, max ~0.5 ms | avg ~0.3 ms, max ~12 ms | |
+| `/api/run-scenario` | ~0.05–0.18 s | ~0.007–0.016 s | **node faster here — see below** |
+| Dashboard files at runtime | 0 (embedded) | 1 (served from disk) | |
+
+**Honest caveat:** for `GET /api/run-scenario` the native in-process server
+measured **slower** than the legacy per-request child process in this
+environment. The cause was not isolated in this pass and is a documented
+follow-up. Native wins decisively on memory, CPU, process count, dependency
+surface, and self-containment; latency for the read routes (`/health`,
+`/status`) is equal or better.

@@ -1590,3 +1590,81 @@ Node 76/76; ctest 100%.
 **Lesson:** when a new module is added, register its sources in EVERY target
 that references it (app, tests, and any separate bridge/executable targets), and
 confirm the demo path actually exercises it rather than only its unit tests.
+
+## v14 native HTTP demo: foundation review and integration defects (2026-10-13)
+
+**Context.** Branch `h04/native-http-low-footprint` was created off v13
+(`7c3c323`) carrying one foundation commit `6a996daf`
+("feat(native-http): add bounded loopback C++ HTTP transport foundation"),
+adding `src/bridge/NativeHttp.h` (174 lines) only. (Reported context: an earlier
+attempt to write the file via the GitHub web UI did not land; the commit is the
+first successful recording of the foundation. No compiler/test failure is
+claimed for that attempt — it is not observable from the repository.) The
+foundation was treated as an unverified starting point, not a finished or
+security-reviewed component.
+
+**Review outcome (foundation):** it compiles clean (`-std=c++20 -Wall -Wextra`,
+no warnings) and was a reasonable skeleton — loopback bind, GET-only, bounded
+input, timeouts, reject-body/framing headers. But it was **not** ready to use as
+is. Defects found and fixed (all recorded in `docs/SECURITY_READINESS_V8.md` §6):
+
+1. **Unvalidated `Host`.** Any `Host` was accepted. A malicious page that
+   rebinds a name to 127.0.0.1 could drive the API (DNS-rebinding). Fixed: the
+   `Host` value must be a loopback authority (`127.0.0.1[:port]` / `localhost[:port]`).
+2. **No cross-site guard on the state-advancing route.** `GET
+   /api/run-scenario` has a side effect and was reachable from a cross-site
+   request (the response is CORS-blocked, but the side effect fires). Fixed: a
+   non-loopback `Origin` is rejected (403).
+3. **No security headers on the HTML.** Added CSP, `X-Frame-Options: DENY`,
+   `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy`.
+4. **Shutdown could not unblock `accept()`.** `signal()` installs handlers with
+   SA_RESTART by default, so a blocking `accept()` is auto-restarted. Fixed with a
+   1 s listener timeout + an atomic stop flag (async-signal-safe).
+
+**Integration defects (found by running the native server, not just building):**
+
+5. **Second scenario run delivered nothing (0 events).** The legacy demo spawned
+   a *fresh bridge process per request*, so per-run state was implicitly fresh.
+   A single long-lived native process exposed three latent issues:
+   - `SimulatorRuntime::shutdown()` and `AudioBroker::shutdown()` permanently
+     latch a `shutdown_` flag; `start()`/`start_capture()` then refuse.
+   - `SimulatorRuntime::grant_consent()` was **not idempotent**: the scenario
+     re-granted on every run, creating two active grants for the same
+     subject+purpose. The gate *correctly* fails closed on that
+     (`DenyReason::ambiguous`), so run #2 delivered 0 events — a real, silent
+     failure (no exception, no error string).
+   **Root cause evidenced:** run #1 = 15 events; run #2/#3 = 5 events (detection
+   only, 0 simulator events).
+   **Fix:** (a) `SimulatorRuntime::reset_for_reuse()` clears the runtime shutdown
+   latch between runs; (b) `grant_consent()` is now idempotent — it mirrors the
+   gate's "latest decision governs" rule and does not append a duplicate grant
+   when an active grant already exists (an explicit re-grant after a withdrawal
+   still appends). Plus a per-run reset of `RuntimeStatus` counters,
+   `AlertPolicy`, and pipeline history so each run reports its own numbers
+   (matching the documented demo). **Result:** runs #1/#2/#3 = 15/14/1/13 each,
+   persisted alert count 1→2→3 (durable history grows), as documented.
+6. **A scenario error could take down the server.** `sim.start()`/`tick()` were
+   not guarded; an exception would propagate out of the HTTP loop and terminate
+   the process. Fixed: the scenario is wrapped; a failure is reported in the JSON
+   (`error: simulator_unavailable`) and the server stays up.
+7. **Test-harness bug (not product).** The first native-HTTP tests asserted a
+   handler call count on a by-value functor; `std::function` **copies** the
+   callable, so the counter never advanced (4 spurious failures). Fixed by
+   sharing the counter by reference. Recorded so the trap is not repeated.
+
+**Footprint observation (honest, not a win):** for `GET /api/run-scenario` the
+native in-process server measured **slower** (≈46–116 ms) than the legacy model's
+per-request child (~12.5 ms warm) in this environment, despite the native server
+being far lighter in memory/CPU/processes. The cause was not isolated in this
+pass and is left as a documented follow-up (likely per-run backend re-init: the
+scenario rebuilds the broker via `set_media_capture_enabled` and re-runs
+SQLite writes each call). Native wins clearly on idle RSS (~6.4 MB Release / ~7 MB Debug vs ~49 MB),
+peak RSS (~6.9 MB / ~7.3 MB vs ~57 MB), CPU (~0.5 vs ~21), process count (1 vs
+2+), binary size (3.1 MB Release vs the Node runtime), and dependency surface.
+The native binary referenced in the earlier Debug-dir measurement is ~25.8 MB;
+compare like-for-like with a Release build (`scripts/bench_demo.sh`).
+
+**Regression coverage:** 18 new `[nativehttp]` adversarial cases (framing,
+Host/Origin, method, traversal, cycles bounds, smuggling headers, security
+headers, handler-not-reached on rejection), plus the existing H-03/privacy and
+detection suites. Full suite 304 cases / 2217 assertions; ASan/UBSan clean.

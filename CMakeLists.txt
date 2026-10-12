@@ -11,6 +11,13 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
 
+# Embed the dashboard HTML (single source of truth: src/web/index.html) so the
+# native demo binary is self-contained (no Node.js, no web-server file at
+# runtime). @ONLY leaves the CSS at-rules (@media/@keyframes) untouched.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html" HG_DASHBOARD_HTML)
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/hg_web_assets.h.in"
+               "${CMAKE_CURRENT_BINARY_DIR}/generated/hg_web_assets.h" @ONLY)
+
 include(FetchContent)
 
 # Fetch spdlog
@@ -182,7 +189,7 @@ add_executable(hg_alexa_bridge
     src/persistence/SchemaManager.cpp
     src/persistence/PersistenceManager.cpp
 )
-target_include_directories(hg_alexa_bridge PRIVATE src third_party/sqlite)
+target_include_directories(hg_alexa_bridge PRIVATE src third_party/sqlite ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(hg_alexa_bridge PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
@@ -222,6 +229,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_alexa_credentials.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_consent.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_audit.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_native_http.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp

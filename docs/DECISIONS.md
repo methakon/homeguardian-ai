@@ -163,3 +163,40 @@ License selection deferred until the project approaches release.
 ### Consequences
 - Cannot accept external contributions until license is selected
 - Repository should not be published without a license
+
+## D-native-http: one native C++ process for the demo (2026-10-13, v14)
+
+**Context.** The demo ran as two processes: a Node.js HTTP server
+(`src/bridge/hg_demo_server.js`) that proxied to the C++ bridge over NDJSON,
+spawning a fresh bridge child per request. Goal: eliminate Node from the final
+demo/runtime, keep one process, minimise RAM/CPU/footprint.
+
+**Decision.** Add a native HTTP mode to the existing bridge binary
+(`hg_alexa_bridge --http …`) that serves the dashboard and the JSON API over
+loopback, reusing the SAME `Application`, `AlexaContract`, verifier, and
+`PersistenceAudit` as every other path. The dashboard HTML is **embedded** at
+build time (CMake `configure_file`) so the binary is self-contained.
+
+**Rationale.**
+- No duplicated backend logic (the scenario/status code is shared verbatim).
+- One process, no Node runtime dependency, no per-request child spawn.
+- The existing NDJSON stdio mode is preserved unchanged for the Node tests and
+  process-boundary proofs.
+- Embedding the dashboard removes a runtime web-server file dependency and any
+  request-time filesystem path (no traversal surface).
+
+**Consequences / semantics preserved.**
+- `--http` mode is GET-only and loopback-only; `run-scenario` is the only
+  state-advancing route (bounded ≤100 cycles); capture/consent/config stay
+  read-only.
+- **Per-run reset**: because one process now serves repeated scenario runs, the
+  scenario resets per-run state (counters, alert policy, pipeline history,
+  runtime/simulator latches) so each run behaves like the legacy fresh-process
+  run. This is a deliberate demo-control-plane decision (simulator-only).
+- The legacy Node demo server is **retained as a historical reference**
+  (`HG_DEMO_LEGACY_NODE=1` in `demo.sh`) for A/B footprint comparison only; it is
+  no longer the default and is not required to run the demo.
+
+**Not adopted:** an external HTTP framework/library. The surface is a bounded
+loopback demo subset; a reviewed server stack + TLS is required only for
+non-local/production use (see `docs/SECURITY_READINESS_V8.md`).

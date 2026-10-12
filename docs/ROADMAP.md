@@ -194,7 +194,7 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 | H-01 | Fall detection pipeline | E-02, E-03 | Pose-based fall detection with configurable sensitivity | TODO |
 | H-02 | Emergency workflow | G-02 | Configurable escalation: notify → call → emergency services | TODO |
 | H-03 | Privacy audit | D-01 | All data access logged; consent enforcement verified | DONE |
-| H-04 | Security review | All | Input validation, injection prevention, access control | TODO |
+| H-04 | Security review | All | Input validation, injection prevention, access control | DONE (native HTTP transport reviewed + hardened; see docs/SECURITY_READINESS_V8.md) |
 
 ## Phase L — Observation and inference framework (added 2026-10-12)
 
@@ -243,3 +243,15 @@ consent-gated data-access decisions.
 demo/API. Durable database persistence of audit entries (via the existing SQLite
 layer) is a deliberate follow-up and is not required by the H-03 acceptance
 criteria; the structured logger already emits a durable record.
+
+## Phase N — Native HTTP demo transport (added 2026-10-13, v14)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| N-01 | Review the committed `NativeHttp.h` foundation | — | Compiles clean; framing/size/timeout/method/route review; defects corrected before use | DONE (4 defects fixed) |
+| N-02 | Native integration into the C++ bridge | N-01 | `hg_alexa_bridge --http` serves `/`, `/index.html`, `/api/health`, `/api/status`, `/api/run-scenario` using the real backend + SQLite; API contracts preserved | DONE |
+| N-03 | Embed the dashboard; drop the Node runtime dependency | N-02 | HTML embedded via CMake; `demo.sh` starts ONE native process; Node not invoked | DONE |
+| N-04 | Per-run semantics for a single long-lived process | N-02 | Repeated scenario runs each deliver a fresh alert and grow durable history (matches legacy per-process behavior) | DONE |
+| N-05 | H-04 security review + adversarial tests | N-02 | Input validation, Host/Origin enforcement, CSP, resource limits; 18 `[nativehttp]` cases incl. handler-not-reached-on-rejection | DONE |
+| N-06 | Footprint benchmark (native vs legacy Node) | N-03 | Measured RSS/CPU/startup/latency/process count/deps via `scripts/bench_demo.sh`; recorded (incl. the unflattering run-scenario latency) | DONE |
+| N-07 | Legacy Node adapter retained as reference | N-03 | `src/bridge/hg_demo_server.js` kept; `HG_DEMO_LEGACY_NODE=1` path; not required by default | DONE |

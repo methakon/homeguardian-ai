@@ -34,9 +34,12 @@
 #include "core/SyntheticActivityDetector.h"
 #include "core/FusionEngine.h"
 #include "core/PrivacyAuditLog.h"
+#include "bridge/NativeHttp.h"
+#include "hg_web_assets.h"
 
 #include <chrono>
 #include <atomic>
+#include <csignal>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -45,6 +48,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 using json = nlohmann::json;
 using namespace homeguardian;
@@ -223,6 +227,17 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
     bool capture_on = st.capture_enabled.load();
     json detection_summary = nlohmann::json();  // populated by the detection stage
     PrivacyAuditLog privacy_audit;              // H-03: consent-decision audit
+    std::string scenario_error;                 // non-empty if the sim could not run
+
+    // Fresh-run semantics. The legacy demo spawned a NEW bridge process per
+    // scenario run, so each run reported its own counters and delivered its own
+    // alert. A single long-lived native process must preserve that user-visible
+    // behavior, so reset the per-run state here (simulator-only; never touches
+    // the config kill-switch, consent grants, or the durable audit DB).
+    st.reset_counters();
+    app.get_alert_policy().reset();
+    app.get_pipeline().clear_history();
+    sim.reset_for_reuse();
 
     if (capture_on) {
         // Enable capture on the simulator's OWN gate (Application constructs it
@@ -245,12 +260,26 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
         // H-03 privacy audit: record every per-consumer delivery decision made
         // during the scenario (metadata only; never changes delivery).
         sim.set_privacy_audit(&privacy_audit);
-        sim.start();
-        for (int i = 0; i < cycles; ++i) {
-            int delivered = sim.tick();
-            st.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
+        // A scenario must never take down the server: a failed start/tick is
+        // reported, not thrown. (The runtime re-arms on the next run.)
+        bool sim_started = true;
+        std::string sim_error;
+        try {
+            sim.start();
+        } catch (const std::exception& e) {
+            sim_started = false;
+            sim_error = e.what();
+        }
+        if (sim_started) {
+            for (int i = 0; i < cycles; ++i) {
+                int delivered = sim.tick();
+                st.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
+            }
         }
         sim.shutdown();
+        if (!sim_started && !sim_error.empty()) {
+            scenario_error = sim_error;  // surfaced in the summary; generic text
+        }
 
         // Persist a durable alert record for the delivered synthetic condition
         // so alert history is real and survives restart. This is metadata only
@@ -356,19 +385,96 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
         j["note"] = "capture disabled by configuration; no observations were "
                     "delivered (consent/capture gate blocked them)";
     }
+    if (!scenario_error.empty()) {
+        j["error"] = "simulator_unavailable";
+        j["detail"] = scenario_error;  // generic; no paths/tokens/PII
+    }
     return j;
+}
+
+// Build a contract response for `op` using the SAME parsed/handled path the
+// NDJSON bridge uses (never a fabricated object). The token is JSON-escaped.
+json contract_call(const std::string& token, const char* op,
+                   IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider) {
+    json jr;
+    jr["version"] = 1;
+    jr["operation"] = op;
+    jr["credential"] = token;
+    auto parsed = AlexaContract::parse(jr.dump());
+    if (std::holds_alternative<AlexaError>(parsed)) {
+        json o;
+        o["ok"] = false;
+        o["error"] = error_code(std::get<AlexaError>(parsed));
+        return o;
+    }
+    return response_to_json(
+        AlexaContract::handle(std::get<AlexaRequest>(parsed), verifier, provider));
+}
+
+// Native (Node-free) HTTP demo mode. Serves the embedded dashboard and a
+// read-only JSON API over 127.0.0.1 using the SAME Application, contract,
+// verifier and persistence as every other path. It does not duplicate the event
+// pipeline and does not synthesize data: /api/status and /api/run-scenario read
+// real backend + SQLite state. Simulator-only. Returns a process exit code.
+int run_http_mode(Application& app, PersistenceAudit* audit,
+                  IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider,
+                  const std::string& token, uint16_t port) {
+    auto handler = [&](std::string_view op, unsigned cycles) -> std::string {
+        json out;
+        if (op == "status") {
+            out["status"] = contract_call(token, "status", verifier, provider);
+            out["summary"] = contract_call(token, "alert_summary", verifier, provider);
+        } else if (op == "scenario") {
+            out["scenario"] = run_demo_scenario(app, audit, static_cast<int>(cycles));
+            out["status"] = contract_call(token, "status", verifier, provider);
+            out["summary"] = contract_call(token, "alert_summary", verifier, provider);
+        } else {
+            out["ok"] = false;
+            out["error"] = "unknown_operation";
+        }
+        return out.dump();
+    };
+    // Clean shutdown: the handler sets a stop flag; accept() poll-wakes on its
+    // 1s listener timeout, so no signals are needed to unblock it. Setting an
+    // atomic flag is async-signal-safe.
+    std::signal(SIGINT, [](int) { hg_native_http::request_shutdown(); });
+    std::signal(SIGTERM, [](int) { hg_native_http::request_shutdown(); });
+    const int rc = hg_native_http::serve(port, homeguardian::kDashboardHtml, handler);
+    return rc == 4 ? 0 : rc;  // 4 = clean shutdown requested
 }
 
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    // Usage: hg_alexa_bridge <config.json> <credentials.json>
-    if (argc < 3) {
-        std::cerr << "usage: hg_alexa_bridge <config.json> <credentials.json>\n";
+    // Usage:
+    //   hg_alexa_bridge <config.json> <credentials.json>
+    //       NDJSON over stdin/stdout (existing contract path; used by tests).
+    //   hg_alexa_bridge --http <config.json> <credentials.json>
+    //                    [--port N] [--token T]
+    //       Native loopback HTTP demo (serves the embedded dashboard + JSON API).
+    bool http_mode = false;
+    int base = 1;
+    if (argc >= 2 && std::string(argv[1]) == "--http") {
+        http_mode = true;
+        base = 2;
+    }
+    if (argc < base + 2) {
+        std::cerr << "usage: hg_alexa_bridge [--http] <config.json> <credentials.json>"
+                     " [--port N] [--token T]\n";
         return 2;
     }
-    const std::string config_path = argv[1];
-    const std::string creds_path = argv[2];
+    const std::string config_path = argv[base];
+    const std::string creds_path = argv[base + 1];
+    uint16_t http_port = 0;             // 0 = ephemeral
+    std::string http_token = "demo-token";
+    for (int i = base + 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--port" && i + 1 < argc) {
+            http_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (a == "--token" && i + 1 < argc) {
+            http_token = argv[++i];
+        }
+    }
 
     // Initialize logging. The Logger writes to stdout, which would interleave
     // with the NDJSON protocol on stdout — so set the level to "critical": the
@@ -438,6 +544,12 @@ int main(int argc, char* argv[]) {
             FileCredentialVerifier::load(creds_path));
     }
     AppStatusProvider provider(app, audit, capture_enabled);
+
+    // Native HTTP demo mode: serve the loopback dashboard + JSON API and return
+    // when shutdown is requested. Otherwise fall through to the NDJSON loop.
+    if (http_mode) {
+        return run_http_mode(app, audit, *verifier, provider, http_token, http_port);
+    }
 
     std::ios::sync_with_stdio(false);
     std::string line;

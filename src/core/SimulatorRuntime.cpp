@@ -2,6 +2,7 @@
 
 #include "backend/simulator/LogicalDevice.h"
 
+#include <algorithm>
 #include <string>
 
 namespace homeguardian {
@@ -87,6 +88,23 @@ void SimulatorRuntime::grant_consent(const std::string& consumer_id,
                                      const std::string& purpose) {
     (void)consumer_id;  // consent is keyed by purpose; id is for API clarity
     if (shut_down_) return;
+    // Idempotent grant: mirror the gate's "the latest decision governs" rule.
+    // Saving a second grant for an already-granted subject+purpose would create
+    // two active grants, which the gate correctly rejects as `ambiguous` (fail
+    // closed) — that must never be caused by simply re-granting the same
+    // consent. A withdrawal recorded after an earlier grant is the latest
+    // decision, so an explicit re-grant then still appends a fresh grant.
+    auto existing = repo_.find_by_purpose("harness", purpose);
+    if (!existing.empty()) {
+        std::sort(existing.begin(), existing.end(),
+                  [](const ConsentRecord& a, const ConsentRecord& b) {
+                      return a.get_recorded_at() < b.get_recorded_at();
+                  });
+        const auto& latest = existing.back();
+        if (latest.get_decision() == ConsentDecision::granted &&
+            latest.is_active(std::chrono::system_clock::now()))
+            return;  // already granted and active — no-op
+    }
     // Synthetic grant. Provenance marks it as a simulator test grant, never a
     // real user consent record.
     repo_.save(ConsentRecord::create_granted(
@@ -221,6 +239,13 @@ void SimulatorRuntime::shutdown() {
     if (assistant_device_) assistant_device_->close();
     started_ = false;
     shut_down_ = true;
+}
+
+void SimulatorRuntime::reset_for_reuse() {
+    // Only meaningful when not currently running: a still-started runtime is
+    // left untouched so an in-flight session is never disturbed.
+    if (started_) return;
+    shut_down_ = false;
 }
 
 size_t SimulatorRuntime::consumer_count() const {

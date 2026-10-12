@@ -1003,3 +1003,43 @@ logging, reasons, bounded capacity, field clamping, the enforcement invariant
 including a negative case, clear, concurrency, the passive-observer guarantee,
 and two integration cases against `SimulatorRuntime` and
 `ConsentGatedAcquisition`).
+
+## Native demo transport: one C++ process, no Node (added 2026-10-13, v14)
+
+```
+ (legacy)  browser ─► node http server ─► spawn hg_alexa_bridge  (NDJSON) ⟶ 2+ procs
+ (v14)     browser ─► hg_alexa_bridge --http …  ─► Application / AlexaContract /
+                        │ (embedded dashboard)      PersistenceAudit / Pipeline   ⟶ 1 proc
+                        └─ NativeHttp.h (loopback-only, GET-only subset)
+```
+
+`NativeHttp.h` is a small, bounded, loopback-only HTTP/1.1 subset (no external
+dependency). `hg_alexa_bridge --http <config> <creds> [--port N] [--token T]`
+serves:
+
+- `/` and `/index.html` — the dashboard, **embedded** at build time from
+  `src/web/index.html` via CMake `configure_file` → `generated/hg_web_assets.h`
+  (no runtime web file, no request-time filesystem path);
+- `/api/health` — static `{ok,up,simulated}`;
+- `/api/status` — real `AlexaContract::handle(status|alert_summary)` over the
+  live `Application` + SQLite;
+- `/api/run-scenario?cycles=N` — the real `run_demo_scenario` (simulator →
+  pipeline → correlation → alert policy → persistence), bounded to N≤100.
+
+The NDJSON stdio mode is unchanged and still used by the Node/integration tests.
+The dashboard is vanilla HTML/CSS/JS (unchanged); the browser talks only to the
+loopback JSON API.
+
+**Per-run semantics.** A single long-lived process serves repeated runs, so
+`run_demo_scenario` resets per-run state at entry (`RuntimeStatus` counters,
+`AlertPolicy`, pipeline history, and `SimulatorRuntime::reset_for_reuse()`), and
+`grant_consent` is idempotent, so each run reproduces the legacy fresh-process
+behaviour. See `docs/DECISIONS.md` (D-native-http) and `docs/FRICTION_LOG.md`
+(v14) for the defects this surfaced.
+
+**Security boundary.** Loopback-only bind by construction; GET-only; `Host` must
+be a loopback authority (DNS-rebinding defence); non-loopback `Origin` rejected
+(cross-site defence); no bodies/framing headers; CSP + frame/referrer headers on
+HTML; bounded sizes (8192 B request, 128 B path) and 3 s client timeouts; one
+request at a time. Details and the simulator-vs-production distinction:
+`docs/SECURITY_READINESS_V8.md`.
