@@ -8,6 +8,7 @@
 // future real hardware boundary and does NOT prove real hardware enforcement.
 
 #include "ConsentGate.h"
+#include "PrivacyAuditLog.h"
 #include "SimulatedSensorSource.h"
 #include <string>
 #include <optional>
@@ -27,6 +28,12 @@ class ConsentGatedAcquisition {
 public:
     ConsentGatedAcquisition(ConsentGate& gate, SimulatedSensorSource& sensor);
 
+    // Optional privacy audit observer (roadmap H-03). When set, every
+    // acquisition attempt records a metadata-only decision entry (authorized or
+    // denied, with reason). The log is a passive observer: it never changes the
+    // gate decision and is safe to leave unset. Pass nullptr to detach.
+    void set_privacy_audit(PrivacyAuditLog* log) { privacy_audit_ = log; }
+
     // Attempt to acquire one synthetic observation for the given request. If the
     // gate denies, no event is produced and no payload is processed. If the gate
     // authorizes, the next synthetic reading (if any) is returned as an event.
@@ -35,6 +42,7 @@ public:
 private:
     ConsentGate& gate_;
     SimulatedSensorSource& sensor_;
+    PrivacyAuditLog* privacy_audit_ = nullptr;  // non-owning; may be null
 };
 
 } // namespace homeguardian

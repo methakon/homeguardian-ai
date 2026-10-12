@@ -60,7 +60,7 @@ The page has four areas:
 | Step | Action | Expected result |
 |---|---|---|
 | 1 | Open the URL | Status shows **Running**, capture **Enabled (synthetic)**, mode **Simulated**. A banner explains this is a simulation. |
-| 2 | Click **▶ Run synthetic scenario** | Status updates: **15 events processed** (10 simulator + 5 detection-stage observations), **14 alerts generated**, **1 delivered**, **13 suppressed** (dedup/cooldown). The chat also reports the synthetic detection stage (detector `activity-energy`, N detected / inconclusive, fusion verdict). The alert timeline shows one alert (`sim-alert-N`, rule `sim-presence`, severity `info`). |
+| 2 | Click **▶ Run synthetic scenario** | Status updates: **15 events processed** (10 simulator + 5 detection-stage observations), **14 alerts generated**, **1 delivered**, **13 suppressed** (dedup/cooldown). The chat also reports the synthetic detection stage (detector `activity-energy`, N detected / inconclusive, fusion verdict) and the **privacy audit** (`N` consent decisions logged, `enforcement_ok: true`). The alert timeline shows one alert (`sim-alert-N`, rule `sim-presence`, severity `info`). |
 | 3 | Ask **"Is everything okay?"** | "There is 1 alert on record, highest severity info." (Counts come from the real backend.) |
 | 4 | Ask **"Is capture enabled?"** | "Capture is enabled for the synthetic sensor, and consent is granted — but this is simulated, and no physical camera or microphone is active." |
 | 5 | Click **▶ Run synthetic scenario** again | A second alert is appended; the earlier alert is still listed (durable history). |

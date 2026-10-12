@@ -250,6 +250,10 @@ async function runScenario() {
           const d = s.detection;
           addMsg('bot', `Detection stage (synthetic, ${d.provenance}): ${d.observations} observations from ${d.detector_id} (${d.model_id}) — ${d.detected} detected, ${d.not_detected} not detected, ${d.inconclusive} inconclusive. Fusion: ${d.fusion_verdict} (confidence ${d.fusion_confidence.toFixed(2)}, ${d.fusion_contributing} contributing).`);
         }
+        if (s.privacy_audit) {
+          const p = s.privacy_audit;
+          addMsg('bot', `Privacy audit: ${p.entries} consent decision(s) logged — ${p.authorized} authorized, ${p.denied} denied, ${p.acquired} acquired. Consent enforcement ${p.enforcement_ok ? 'verified' : 'VIOLATED'} (no data accessed without consent).`);
+        }
       } else {
         addMsg('bot', 'Capture is disabled by configuration, so the consent gate blocked every observation. No events reached the pipeline — this is the fail-closed behaviour working as intended. Enable capture in the demo config to run the scenario.');
       }

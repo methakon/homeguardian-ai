@@ -224,3 +224,22 @@ A bare `<build>/homeguardian_tests` run from an out-of-source dir without
 `HG_SOURCE_DIR` fails one config-path test (see `docs/FRICTION_LOG.md`,
 2026-10-12). After any new source files are added, reconfigure every build dir
 you cite (`cmake . && make`) — incremental dirs do not auto-pick up new sources.
+
+## Privacy audit (added 2026-10-13, roadmap H-03)
+
+`src/core/PrivacyAuditLog.{h,cpp}` — a bounded, thread-safe, metadata-only log of
+consent-gated data-access decisions. Attach it as a passive observer:
+
+- `ConsentGatedAcquisition::set_privacy_audit(&log)`
+- `SimulatorRuntime::set_privacy_audit(&log)`
+
+Never attach it inside `ConsentGate` — the gate is a pure decision function. The
+log observes decisions; it must not create them.
+
+Tests: `tests/core/test_privacy_audit.cpp`. Run with:
+`HG_SOURCE_DIR=<repo> hg_build/homeguardian_tests "[privacy][audit]"` (or the
+`[audit]` tag, which also includes the PersistenceAudit cases).
+
+Sources are registered in all three CMake targets (`homeguardian`,
+`homeguardian_tests`, `hg_alexa_bridge`) — remember to add new core sources to the
+bridge target too (see `docs/FRICTION_LOG.md`, 2026-10-12).

@@ -159,6 +159,19 @@ int SimulatorRuntime::tick() {
         // consistent with the fan-out above.
         auto req = request_for(id);
         auto decision = gate_->check({"harness", req.purpose, req.data_category});
+        // Privacy audit (H-03): record this delivery decision (authorized or
+        // denied). Passive, metadata-only, best-effort — never changes delivery.
+        if (privacy_audit_) {
+            PrivacyAuditEntry pe;
+            pe.timestamp = std::chrono::system_clock::now();
+            pe.subject_scope = "harness";
+            pe.purpose = req.purpose;
+            pe.data_category = req.data_category;
+            pe.authorized = decision.authorized;
+            pe.decision_reason = ConsentGate::reason_to_string(decision.reason);
+            pe.acquired = decision.authorized;  // media delivered iff authorized
+            privacy_audit_->record(pe);
+        }
         if (decision.authorized) {
             delivered++;
             // Build the synthetic observation (a valid Event: non-empty id +

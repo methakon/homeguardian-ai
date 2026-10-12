@@ -943,3 +943,63 @@ valid input, malformed/oversized payloads, unavailable/inconclusive/conflicting
 inputs, stale windows, bounded keys/windows, no-raw-media-in-payload, and Event
 pipeline integration. Full suite: **275 cases / 2071 assertions**, CTest 100%,
 Node 76/76.
+
+## Privacy audit log (added 2026-10-13, roadmap H-03)
+
+The consent gate is a *pure* decision function (no side effects). The privacy
+audit is therefore a **separate passive observer**, so the gate stays pure and
+the audit can never alter a decision:
+
+```
+ data-access attempt (acquisition / per-consumer delivery)
+        |
+        v
+   ConsentGate::check()  ──►  GateDecision { authorized, reason }
+        |                              |
+        |                              v
+        |                    PrivacyAuditLog::record(entry)      (passive, best-effort)
+        |                              |
+        v                              v
+   payload produced?          bounded ring buffer (≤ capacity)
+   (only if authorized)       counters: total / authorized / denied / acquired
+                                       |
+                                       v
+                              verify_enforcement(): no entry may
+                              record an acquisition that was not
+                              authorized (H-03 invariant)
+```
+
+**PrivacyAuditLog** (`src/core/PrivacyAuditLog.{h,cpp}`): a bounded (`capacity`,
+default 256), thread-safe (`std::mutex`) log of consent-gated data-access
+decisions. Each `PrivacyAuditEntry` carries only descriptive metadata —
+timestamp, subject scope, purpose, data category, the gate decision, the deny
+reason, and whether a payload was acquired. String fields are clamped to
+`kMaxFieldChars` (128) so a malformed caller cannot bloat an entry. `record()`
+is best-effort and never throws, so a logging failure can never widen access or
+crash the runtime.
+
+**Integration** (non-owning, optional pointers; null = no-op):
+- `ConsentGatedAcquisition::set_privacy_audit(log)` — records every `acquire()`
+  outcome (denied, authorized-but-empty, acquired).
+- `SimulatorRuntime::set_privacy_audit(log)` — records every per-consumer
+  delivery decision in `tick()`.
+
+**Consent enforcement verified:** `verify_enforcement()` returns false if any
+retained entry records an acquisition without an authorizing decision — the
+operational form of "consent enforcement verified". A test injects a bogus
+entry to prove the check is real, not a tautology.
+
+**Demo surface:** `run_demo_scenario` reports a `privacy_audit` block
+(`entries / authorized / denied / acquired / enforcement_ok / capacity`); the web
+UI renders it. Capture-off reports a zeroed, enforcement-OK trail (no data
+access was attempted — fail-closed).
+
+**Not persisted to disk by this component:** the audit log is in-memory and
+bounded; the structured logger still emits a durable record. Durable DB
+persistence of audit entries is a deliberate follow-up.
+
+**Tests:** `tests/core/test_privacy_audit.cpp` — 11 cases (authorized/denied
+logging, reasons, bounded capacity, field clamping, the enforcement invariant
+including a negative case, clear, concurrency, the passive-observer guarantee,
+and two integration cases against `SimulatorRuntime` and
+`ConsentGatedAcquisition`).

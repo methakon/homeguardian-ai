@@ -33,6 +33,7 @@
 #include "core/Observation.h"
 #include "core/SyntheticActivityDetector.h"
 #include "core/FusionEngine.h"
+#include "core/PrivacyAuditLog.h"
 
 #include <chrono>
 #include <atomic>
@@ -221,6 +222,7 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
     // is itself the correct, demonstrable fail-closed behaviour.
     bool capture_on = st.capture_enabled.load();
     json detection_summary = nlohmann::json();  // populated by the detection stage
+    PrivacyAuditLog privacy_audit;              // H-03: consent-decision audit
 
     if (capture_on) {
         // Enable capture on the simulator's OWN gate (Application constructs it
@@ -240,6 +242,9 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
         sim.set_event_sink([&app, audit](const Event& ev) {
             app.process_event(ev);
         });
+        // H-03 privacy audit: record every per-consumer delivery decision made
+        // during the scenario (metadata only; never changes delivery).
+        sim.set_privacy_audit(&privacy_audit);
         sim.start();
         for (int i = 0; i < cycles; ++i) {
             int delivered = sim.tick();
@@ -331,6 +336,20 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
     // i.e. capture was on). Absent when capture is off (fail-closed).
     if (!detection_summary.is_null()) {
         j["detection"] = detection_summary;
+    }
+    // Privacy audit (H-03): the consent-decision trail for this scenario run.
+    // Metadata only; reports how many data-access decisions were authorized,
+    // denied, and how many acquisitions occurred, plus the enforcement invariant.
+    {
+        const auto c = privacy_audit.counts();
+        json pa;
+        pa["entries"] = c.total;
+        pa["authorized"] = c.authorized;
+        pa["denied"] = c.denied;
+        pa["acquired"] = c.acquired;
+        pa["enforcement_ok"] = privacy_audit.verify_enforcement();
+        pa["capacity"] = privacy_audit.capacity();
+        j["privacy_audit"] = pa;
     }
     // If capture was off, say so explicitly (fail-closed demonstration).
     if (!capture_on) {

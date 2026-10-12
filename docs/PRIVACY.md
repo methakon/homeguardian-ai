@@ -719,3 +719,30 @@ derived statistics are retained, in bounded, size-capped structures (rolling
 windows and a capped key table). Nothing is persisted to the audit database
 beyond the resulting `Event`/`Alert` (which is alert *metadata* only). Nothing is
 uploaded or transmitted off-host.
+
+## Privacy audit log — privacy notes (added 2026-10-13, roadmap H-03)
+
+The `PrivacyAuditLog` implements H-03 ("all data access logged; consent
+enforcement verified") under strict privacy boundaries:
+
+- **Metadata only.** An audit entry contains a timestamp, subject scope, purpose,
+  data category, the gate decision, the deny reason, and an acquired flag. It has
+  **no** field for raw audio, video, frames, samples, transcripts, embeddings, or
+  biometrics, and none is derived from the payload. String fields are clamped to
+  128 chars.
+- **Passive observer.** The log never makes or changes a decision. Attaching,
+  detaching, or failing to write an entry cannot alter whether data is accessed.
+  A test asserts the decision is identical with and without the audit attached.
+- **Never throws.** `record()` is best-effort; a logging failure cannot widen
+  access or crash the runtime.
+- **Bounded.** The retained entries are capped (`capacity`, default 256, oldest
+  evicted); counters are cumulative. Memory cannot grow without limit.
+- **Enforcement invariant.** `verify_enforcement()` fails if any entry records an
+  acquisition that was not authorized — the auditable form of "no data accessed
+  without consent". The demo surfaces this as `enforcement_ok`.
+- **Fail-closed visibility.** With capture disabled, no data access is attempted,
+  so the audit trail is empty and reports `enforcement_ok: true` — the gate
+  blocked everything.
+- **No new data access.** The audit observes existing decisions at the consent
+  boundary; it introduces no new sensing, no new persistence of personal data,
+  and no covert identification or tracking.

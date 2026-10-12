@@ -193,7 +193,7 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 |----|------|-------------|---------------------|--------|
 | H-01 | Fall detection pipeline | E-02, E-03 | Pose-based fall detection with configurable sensitivity | TODO |
 | H-02 | Emergency workflow | G-02 | Configurable escalation: notify → call → emergency services | TODO |
-| H-03 | Privacy audit | D-01 | All data access logged; consent enforcement verified | TODO |
+| H-03 | Privacy audit | D-01 | All data access logged; consent enforcement verified | DONE |
 | H-04 | Security review | All | Input validation, injection prevention, access control | TODO |
 
 ## Phase L — Observation and inference framework (added 2026-10-12)
@@ -225,3 +225,21 @@ tracking, behavioural profiling, or learning new authorization rules.
 |----|------|-------------|---------------------|--------|
 | L-09 | Wire detection/fusion into the demo journey | L-01..L-05 | run_demo_scenario runs SyntheticActivityDetector + FusionEngine, feeds inference events through the existing pipeline, and surfaces a synthetic detection block in the scenario JSON + web UI; fail-closed capture-off path unchanged | DONE |
 | L-10 | Keep detection behind the consent gate | L-09 | capture-off => detection stage does not run, events_processed=0, no detection block | DONE (verified) |
+
+### Phase H — privacy audit implementation (added 2026-10-13, v13)
+
+H-03 is now implemented as a bounded, thread-safe, metadata-only audit log of
+consent-gated data-access decisions.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| H-03a | PrivacyAuditLog component | ConsentGate | Bounded ring buffer + counters; string fields clamped; never throws; thread-safe; entries carry scope/purpose/category/decision/reason/acquired only (no raw media) | DONE |
+| H-03b | Consent enforcement invariant | H-03a | `verify_enforcement()` returns false if any entry records an acquisition that was not authorized; unit-tested with a deliberately bogus entry | DONE |
+| H-03c | Wire into the data-access path | H-03a | `ConsentGatedAcquisition` and `SimulatorRuntime` accept an optional audit observer (non-owning, passive — never changes a decision); every delivery/acquisition decision is recorded | DONE |
+| H-03d | Surface in the demo | H-03c | `run_demo_scenario` reports an `privacy_audit` block (entries/authorized/denied/acquired/enforcement_ok); the web UI displays it; capture-off shows a zeroed, enforcement-OK trail | DONE |
+| H-03e | Tests | H-03a..H-03d | 11 new cases (unit + integration): authorized/denied logging, reasons, bounded capacity, field clamping, enforcement invariant (incl. negative), clear, concurrency, passive-observer; full suite 286 cases / 2120 assertions | DONE |
+
+**Scope note:** the audit log is in-memory + bounded and is surfaced through the
+demo/API. Durable database persistence of audit entries (via the existing SQLite
+layer) is a deliberate follow-up and is not required by the H-03 acceptance
+criteria; the structured logger already emits a durable record.

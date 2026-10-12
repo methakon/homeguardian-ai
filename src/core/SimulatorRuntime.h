@@ -25,6 +25,7 @@
 #include "core/ConsentGate.h"
 #include "core/ConsentRecord.h"
 #include "core/Event.h"
+#include "core/PrivacyAuditLog.h"
 #include "persistence/IConsentRepository.h"
 
 #include <atomic>
@@ -107,6 +108,12 @@ public:
     // logical device). Pass nullptr to clear.
     void set_event_sink(std::function<void(const Event&)> sink);
 
+    // Optional privacy audit observer (roadmap H-03). When set, every per-consumer
+    // delivery decision in tick() (authorized or denied) records a metadata-only
+    // entry. Passive observer only: it never changes any decision. Non-owning;
+    // may be null. Pass nullptr to detach.
+    void set_privacy_audit(PrivacyAuditLog* log) { privacy_audit_ = log; }
+
     // Start the single shared capture session (idempotent-guarded).
     void start();
 
@@ -153,6 +160,7 @@ private:
     bool shut_down_ = false;
     uint64_t seq_ = 0;
     std::function<void(const Event&)> event_sink_;
+    PrivacyAuditLog* privacy_audit_ = nullptr;  // non-owning; may be null
 };
 
 } // namespace homeguardian

@@ -93,6 +93,7 @@ microphone capture remains BLOCKED pending explicit operator approval.
 | Stabilization pass (v9) | Verified 275/2071, ctest 100%, Node 76/76, fresh out-of-source build green, ASan reconfirmed on current source (275/2071, zero sanitizer errors), demo loopback+scenario OK, persistence-after-restart OK | 2026-10-12 |
 | Demo completion (v10) | Wired v8 detection/fusion framework into the demo scenario: SyntheticActivityDetector + FusionEngine now run in run_demo_scenario, feed inference events through the EXISTING pipeline, and surface a synthetic detection block in the scenario JSON + web UI. Fail-closed capture-off path unchanged (detection absent, events=0). Added detection sources to hg_alexa_bridge target. Suite 275/2071; Node 76/76; ctest 100% | 2026-10-12 |
 | Judge-ready validation (v11) | Re-ran full end-to-end demo + failure-path matrix (capture-off fail-closed, inconclusive/conflicting fusion, dedup, restart persistence, malformed requests, loopback) — all PASS; C++ 275/2074, ctest 100%, Node 76/76, ASan 275/2074 zero errors, fresh out-of-source build green; no P0/P1 defects; recording recovery steps added to submission package | 2026-10-12 |
+| Privacy audit (v13) | Roadmap H-03: PrivacyAuditLog + verify_enforcement(); wired into ConsentGatedAcquisition + SimulatorRuntime (passive observer); demo `privacy_audit` block. 11 new tests; suite 286/2120; Node 76/76; ctest 100% | 2026-10-13 |
 
 ## Test Results
 
