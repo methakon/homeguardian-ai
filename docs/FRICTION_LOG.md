@@ -1922,3 +1922,65 @@ table in the audit is left as a historical record with an explicit "superseded"
 addendum, and dated FRICTION_LOG/STATUS rows are preserved unchanged. The README
 also no longer implies fall detection is implemented (H-01/H-02 are listed as
 planned).
+
+## L-12: statistical anomaly detection integrated into the pipeline (2026-10-13)
+
+**What was integrated.** `AnomalyDetector` (previously a library exercised only by
+unit tests) now has a pipeline role: the new core `AnomalyMonitor` is fed the
+bounded numeric feature (the synthetic activity energy) of each **authorized**
+acquisition, and every result becomes a detection Observation
+(`detector_id = "activity-anomaly"`) that flows through the SAME event pipeline —
+validation, bounded history, detection rule, alert policy. One stage per
+authorized acquisition; no second pipeline and no synthetic alert.
+
+**Design decision: anomaly evidence is ADVISORY by default.** DetectionFusionRule
+gained an explicit evidence allowlist (`evidence_detector_ids`, default
+`{"activity-energy"}`). Observations from a detector that is not on the list still
+flow through the pipeline (validated, counted, kept in history) but are not votes.
+So the statistical deviation is reported, audited and persisted, yet does not by
+itself change whether an alert is raised. Rationale, established by measurement
+rather than assumption:
+
+- The framework's `DetectorStatus` votes are about *presence*. An anomaly detector
+  emits `detected`/`not_detected` for *deviation from a learned baseline*, which is
+  a different target. Fusing them wholesale conflates "activity present" with
+  "statistically unusual".
+- Worse, the detector's own within-baseline samples vote `not_detected`, so on a
+  realistic run the negative votes outnumber the flagged ones and fusion returns
+  `inconclusive` — a vote-shaped fusion of an anomaly detector systematically
+  under-reports. This was observed while writing the causal test (a test that
+  initially failed for exactly this reason; see `test_anomaly_monitor.cpp`).
+- Therefore the influence of anomaly evidence is a deliberate, explicit
+  configuration: adding `"activity-anomaly"` to the allowlist makes the SAME
+  evidence raise a detection-driven alert. Both directions are unit-tested, which
+  is what "explicit, causal and tested" means here.
+
+The dashboard states the relationship from the live configuration
+(`fused_into_alert` / `relationship`), never a hardcoded string.
+
+**Baseline/reset semantics (deliberate).** The monitor is constructed per scenario
+run and reset at the start of every run, so each run establishes its own baseline
+deterministically; repeats produce identical results (tested). No cross-run drift.
+
+**New catalogue scenarios (measured, bridge, capture on).**
+
+| Scenario | media | events | alerts delivered | anomaly result |
+|---|---|---|---|---|
+| `anomaly-warmup` | 6 | 12 | 1 | baseline not ready (2/4 samples); no anomaly; reason "warming up (2/4 samples); not evaluated" |
+| `anomaly-normal` | 12 | 24 | 1 | baseline ready (mean 0.710, sd 0.00894); status `normal`; 0 anomalies |
+| `anomaly-deviation` | 16 | 32 | 1 | baseline ready; status `high`; **2 anomalies**; last z = 2.442 (threshold 2.0) with the detector's own reason |
+| `anomaly-missing` | 6 | 13 | 1 | deliberate gap probe: `missing` — "no observation for 4s (max_gap 3s)" |
+
+Consequence to state plainly: a deviation is a **statistical** finding. Nothing
+here claims a fall, an emergency, a medical event or danger, and a deviation alone
+does not raise an alert under the default configuration.
+
+**L-11 results preserved exactly.** `unusual` 10 generated / 1 delivered / 9
+suppressed; `default` 10 / 2 / 8; the anomaly block is absent for scenarios that do
+not run the stage. The activity detection evidence and the alert explanations are
+unchanged.
+
+**Stale-binary safeguard applied.** Every shipped target (`homeguardian`,
+`homeguardian_tests`, `hg_alexa_bridge`) is rebuilt before any runtime result is
+recorded, per the L-11 follow-up lesson. Standalone app and bridge agree:
+`alerts_gen=10 alerts_deliv=2 alerts_supp=8` (the `default` scenario).

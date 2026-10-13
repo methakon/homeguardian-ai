@@ -47,6 +47,11 @@ processing.
 - **Event pipeline** with a **detection/fusion-driven alert rule** — an alert is
   raised only when the fused detector evidence qualifies (raw observations alone
   never alert; they are the detector input).
+- **Statistical anomaly detection** — a bounded numeric feature per authorized
+  observation is compared with a learned rolling baseline (mean/stddev, warm-up,
+  high/low/missing). A deviation is reported and persisted as a *statistical*
+  finding; it is **advisory by default** and is not a fall, emergency or danger
+  claim (an explicit, tested evidence allowlist controls whether it may vote).
 - **Alert deduplication / cooldown policy** with re-arm on condition clear.
 - **SQLite persistence** with schema migration, transactional writes,
   age-based retention, and recovery.

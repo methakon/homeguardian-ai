@@ -28,7 +28,8 @@ Application::Application() {
     // INPUT. The previous independent, hardcoded "sim-presence" presence alert
     // has been removed.
     std::vector<std::shared_ptr<ICorrelationRule>> default_rules;
-    default_rules.push_back(std::make_shared<DetectionFusionRule>("detection-fusion"));
+    detection_rule_ = std::make_shared<DetectionFusionRule>("detection-fusion");
+    default_rules.push_back(detection_rule_);
     pipeline_ = std::make_unique<Pipeline>(default_rules);
 
     // Simulator runtime, built with capture DISABLED by default (config's
@@ -313,6 +314,15 @@ RuntimeStatus& Application::get_status() {
 
 void Application::set_alert_sink(std::function<void(const Alert&)> sink) {
     alert_sink_ = std::move(sink);
+}
+
+std::vector<std::string> Application::evidence_detector_ids() const {
+    return detection_rule_ ? detection_rule_->evidence_detector_ids()
+                           : std::vector<std::string>{};
+}
+
+void Application::set_evidence_detectors(std::vector<std::string> ids) {
+    if (detection_rule_) detection_rule_->set_evidence_detector_ids(std::move(ids));
 }
 
 AppState Application::state() const {

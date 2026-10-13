@@ -361,3 +361,23 @@ because the alert path logs.
 - Energies: detector threshold 0.5, min_quality 0.3 (quality = min(1,|e-0.5|/0.3)).
   `e >= 0.59` -> detected, `e <= 0.41` -> not_detected, `|e-0.5| < 0.09` ->
   inconclusive.
+
+## L-12 — Anomaly stage: how to change and verify it (2026-10-13)
+
+- `src/core/AnomalyMonitor.{h,cpp}` wraps `AnomalyDetector` and gives it a
+  pipeline role. Tune it via `AnomalyMonitor::Config`
+  (`zscore_threshold` default 2.0, `min_samples` default 4, `max_window` 32,
+  `max_gap` 3s, `detector_id` "activity-anomaly").
+- The feature fed to it is the scenario's per-tick synthetic activity energy —
+  the same input the activity detector sees, but judged against a LEARNED
+  baseline instead of a fixed threshold (relative vs absolute).
+- Evidence policy lives in `DetectionFusionRule::Config::evidence_detector_ids`
+  (default `{"activity-energy"}`; empty list = accept all). Add
+  `"activity-anomaly"` to make anomaly evidence vote; both directions are covered
+  by `tests/core/test_anomaly_monitor.cpp` (`[l12][causal]`).
+- Run it: `HG_SOURCE_DIR=<repo> ./homeguardian_tests "[l12]"`, or the demo
+  scenarios `anomaly-warmup`, `anomaly-normal`, `anomaly-deviation`,
+  `anomaly-missing`.
+- Recall: energy >= 0.59 with quality >= 0.3 is `detected` for the activity
+  detector; the anomaly detector instead compares each sample with the rolling
+  mean/stddev of the same key and flags |z| > threshold.

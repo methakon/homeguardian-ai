@@ -125,6 +125,7 @@ add_executable(homeguardian
     src/core/Observation.cpp
     src/core/PrivacyAuditLog.cpp
     src/core/AnomalyDetector.cpp
+    src/core/AnomalyMonitor.cpp
     src/core/DemoScenarios.cpp
     src/core/DemoScenarioRunner.cpp
     src/core/FusionEngine.cpp
@@ -169,6 +170,7 @@ add_executable(hg_alexa_bridge
     src/core/Observation.cpp
     src/core/PrivacyAuditLog.cpp
     src/core/AnomalyDetector.cpp
+    src/core/AnomalyMonitor.cpp
     src/core/DemoScenarios.cpp
     src/core/DemoScenarioRunner.cpp
     src/core/FusionEngine.cpp
@@ -239,6 +241,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_demo_scenarios.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection_alert.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_anomaly_monitor.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -264,6 +267,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/Observation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/PrivacyAuditLog.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AnomalyDetector.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnomalyMonitor.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DemoScenarios.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DemoScenarioRunner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/FusionEngine.cpp

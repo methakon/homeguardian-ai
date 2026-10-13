@@ -1134,3 +1134,42 @@ Key properties:
 - Everything the API/dashboard shows (verdict, confidence, contributing count,
   provenance, reason) comes from the alert's own `details`, i.e. the real
   evidence.
+
+## L-12 — Statistical anomaly stage (2026-10-13)
+
+    authorized synthetic observation (one per tick that delivered media)
+        |
+        +--> SyntheticActivityDetector  -> Observation (activity-energy)      [detection]
+        |
+        +--> AnomalyMonitor             -> Observation (activity-anomaly)     [L-12]
+                |
+                |  key: "activity-energy"; rolling mean/stddev (bounded window)
+                |  warm-up (< min_samples) -> inconclusive   (never a vote)
+                |  within baseline          -> not_detected
+                |  high / low deviation     -> detected      (the detector's
+                |                              target IS "an anomaly")
+                |  deliberate gap probe     -> inconclusive + status "missing"
+                v
+        Application::process_event -> Pipeline (validation + bounded history)
+                |
+                v
+        DetectionFusionRule.evaluate(window)
+                |
+                |  EVIDENCE ALLOWLIST (L-12): only detector ids on
+                |  cfg.evidence_detector_ids are reconstructed as evidence.
+                |  Default = {"activity-energy"} -> "activity-anomaly" is
+                |  ADVISORY: reported, audited, persisted, but never a vote.
+                |  Adding "activity-anomaly" makes its influence explicit and
+                |  causal (unit-tested in both directions).
+                v
+        AlertPolicy -> alert sink -> SQLite -> /api/alerts + dashboard
+
+Properties:
+- One detection step and one anomaly step per AUTHORIZED acquisition. No
+  acquisition (capture off / consent withdrawn / no authorized consumer) => no
+  observation, no anomaly sample, no alert.
+- The baseline is reset per scenario run, so repeats are deterministic.
+- Anomaly results are bounded and non-sensitive: feature value, mean, stddev,
+  z-score, counts and a short reason. No media, identities or profiles.
+- A statistical deviation is NOT a fall, emergency, medical or danger claim; the
+  alert message and rule are unchanged (L-11 semantics preserved).

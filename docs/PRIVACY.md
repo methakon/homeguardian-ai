@@ -789,3 +789,28 @@ contract remains AGGREGATE-ONLY.
 Consent semantics are unchanged and now also gate detection: detection runs only
 after an authorized acquisition, so a denied or withdrawn consumer can never
 cause a detection observation or a detection-driven alert.
+
+## L-12 — anomaly results: what is stored and exposed (2026-10-13)
+
+The anomaly stage adds only bounded numeric metadata to the scenario response and
+the local dashboard:
+
+| Field | Meaning | Sensitive? |
+|---|---|---|
+| baseline_ready / phase / samples / min_samples | is the learned baseline usable | no |
+| baseline_mean / baseline_stddev | rolling statistics of the bounded feature | no |
+| last_value / last_zscore | the evaluated sample and its z-score | no |
+| status (warm-up/normal/high/low/missing) / deviation / anomalies | the detector's verdict and count | no |
+| reason / missing_reason | the detector's own short explanation | no |
+| fused_into_alert / relationship | whether the result may influence the alert | no |
+
+- No raw audio, video, biometrics, identities or behavioural profiles are stored:
+  the detector's state is a bounded deque of numbers per key plus a running mean
+  and stddev (`max_window` 32, `max_keys` 256 in the library).
+- Anomaly Observations carry only bounded features + a note; they are treated
+  exactly like other detection Observations (validated, bounded history).
+- **Persisted alerts are unchanged**: anomaly internals are NOT written to SQLite;
+  only the delivered detection-driven alert metadata is, as before. The
+  `details` JSON never contains media keys.
+- The anomaly stage runs only for scenarios that enable it and only after an
+  AUTHORIZED acquisition, so consent/capture gating is preserved.

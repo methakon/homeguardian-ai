@@ -413,6 +413,43 @@ json scenario_result_json(Application& app, PersistenceAudit* audit,
         j["detection"] = d;
     }
 
+    // L-12 statistical anomaly stage: the detector's OWN result and its bounded
+    // explanation. Advisory by default — the relationship to the fusion/alert
+    // outcome is stated explicitly from the rule's evidence allowlist.
+    if (r.anomaly.ran) {
+        json a;
+        a["baseline_ready"] = r.anomaly.baseline_ready;
+        a["phase"] = r.anomaly.phase;
+        a["status"] = r.anomaly.status;          // warm-up|normal|high|low|missing
+        a["deviation"] = r.anomaly.deviation;
+        a["samples"] = r.anomaly.sample_count;
+        a["min_samples"] = r.anomaly.min_samples;
+        a["baseline_mean"] = r.anomaly.baseline_mean;
+        a["baseline_stddev"] = r.anomaly.baseline_stddev;
+        a["last_value"] = r.anomaly.last_value;
+        a["last_zscore"] = r.anomaly.last_zscore;
+        a["anomalies"] = r.anomaly.anomalies;
+        a["reason"] = r.anomaly.reason;
+        a["missing_checked"] = r.anomaly.missing_checked;
+        a["missing"] = r.anomaly.missing;
+        a["missing_reason"] = r.anomaly.missing_reason;
+        a["detector_id"] = "activity-anomaly";
+        a["provenance"] = "synthetic";
+        // Relationship: is anomaly evidence allowed to vote on the alert?
+        bool fused = false;
+        for (const auto& id : r.evidence_detectors) {
+            if (id == "activity-anomaly") { fused = true; break; }
+        }
+        a["fused_into_alert"] = fused;
+        a["relationship"] = fused
+            ? "anomaly evidence is counted as detection/fusion evidence for this "
+              "run (explicit allowlist)"
+            : "advisory: the anomaly result is reported and audited but is NOT "
+              "counted as alert evidence (the detection rule's evidence "
+              "allowlist excludes it)";
+        j["anomaly"] = a;
+    }
+
     // Privacy audit (H-03): consent-decision trail for this run (metadata only).
     {
         json pa;

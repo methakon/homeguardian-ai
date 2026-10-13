@@ -266,3 +266,27 @@ detail — rejected: it would weaken that boundary's documented aggregate-only
 guarantee. (b) Keeping the hardcoded alert — rejected: unverifiable and
 misleading. (c) A separate scenario engine — rejected: the mission forbids a
 second event engine.
+
+## D-anomaly-advisory: statistical anomaly evidence is advisory by default (2026-10-13, L-12)
+
+**Decision.** `AnomalyMonitor` feeds its results through the existing pipeline,
+but `DetectionFusionRule` accepts only allowlisted detector ids as fusion
+evidence; the default allowlist is the activity detector (`activity-energy`), so
+statistical anomaly evidence (`activity-anomaly`) is reported, audited and
+persisted **without** voting on an alert. Adding `activity-anomaly` to the
+allowlist is the explicit, tested way to let it influence alerts.
+
+**Why.** (a) The framework's votes are about *presence*; an anomaly detector's
+verdict is about *deviation from a learned baseline* — different targets, so
+wholesale fusion conflates them. (b) Measured while writing the causal test: the
+detector's own within-baseline samples emit `not_detected`, which outnumber the
+flagged samples on a realistic run, so fusing all of them returns `inconclusive`
+and a vote-shaped fusion of an anomaly detector systematically under-reports.
+Making the influence an explicit configuration keeps the L-11 alert semantics and
+measured results exactly intact while still providing a real, tested path for
+anomaly-driven alerts.
+
+**Consequences.** The dashboard shows the actual relationship
+(`fused_into_alert` / `relationship`) rather than implying the anomaly caused the
+alert. A deviation never becomes a fall/emergency/danger claim, and it never
+raises an alert under the default configuration.

@@ -96,6 +96,83 @@ std::vector<DemoScenario> build_catalogue() {
         v.push_back(std::move(s));
     }
 
+    // 6) L-12 anomaly scenarios — the statistical AnomalyMonitor.
+    {
+        DemoScenario s;
+        s.id = "anomaly-warmup";
+        s.title = "Anomaly: baseline warm-up";
+        s.description =
+            "Too few observations to trust a statistical baseline: the anomaly "
+            "detector warms up and flags nothing.";
+        s.cycles = 3;
+        s.grant_enabled = true;
+        s.grant_assistant = true;
+        s.run_detection = true;
+        s.run_anomaly = true;
+        s.detection_energies = {0.70, 0.72, 0.71};
+        s.expectation =
+            "no anomaly: the baseline is not ready, so nothing is evaluated. "
+            "Warm-up never produces a false anomaly.";
+        v.push_back(std::move(s));
+    }
+    {
+        DemoScenario s;
+        s.id = "anomaly-normal";
+        s.title = "Anomaly: normal activity";
+        s.description =
+            "Enough observations to establish a baseline, all within it: the "
+            "anomaly detector reports normal.";
+        s.cycles = 6;
+        s.grant_enabled = true;
+        s.grant_assistant = true;
+        s.run_detection = true;
+        s.run_anomaly = true;
+        s.detection_energies = {0.70, 0.72, 0.71, 0.70, 0.72, 0.71};
+        s.expectation =
+            "no anomaly: the baseline is ready and every evaluated sample is "
+            "within it (status normal).";
+        v.push_back(std::move(s));
+    }
+    {
+        DemoScenario s;
+        s.id = "anomaly-deviation";
+        s.title = "Anomaly: deviation from baseline";
+        s.description =
+            "After a stable baseline, sustained unusually high activity is "
+            "flagged as a statistical deviation with its z-score.";
+        s.cycles = 8;
+        s.grant_enabled = true;
+        s.grant_assistant = true;
+        s.run_detection = true;
+        s.run_anomaly = true;
+        s.detection_energies = {0.70, 0.72, 0.71, 0.70, 0.72, 0.71, 0.99, 0.99};
+        s.expectation =
+            "the last samples deviate above the learned baseline and are flagged "
+            "(status high) with the detector's own reason. Advisory: anomaly "
+            "evidence is not alert evidence unless explicitly allowed.";
+        v.push_back(std::move(s));
+    }
+    {
+        DemoScenario s;
+        s.id = "anomaly-missing";
+        s.title = "Anomaly: missing observation";
+        s.description =
+            "A deliberate gap past the expected observation interval: the "
+            "detector surfaces the silence instead of silently ignoring it.";
+        s.cycles = 3;
+        s.grant_enabled = true;
+        s.grant_assistant = true;
+        s.run_detection = true;
+        s.run_anomaly = true;
+        s.anomaly_missing_probe = true;
+        s.detection_energies = {0.70, 0.72, 0.71};
+        s.expectation =
+            "the baseline is too short to judge values, but the deliberate gap "
+            "is reported as a 'missing' anomaly (a sensor going quiet is "
+            "surfaced, not ignored).";
+        v.push_back(std::move(s));
+    }
+
     // 5) Scenario D — consent denied (fail-closed acquisition).
     {
         DemoScenario s;

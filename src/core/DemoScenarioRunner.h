@@ -24,6 +24,7 @@
 // SIMULATOR-ONLY. Deterministic given the same spec.
 
 #include "core/Alert.h"
+#include "core/AnomalyMonitor.h"
 #include "core/DemoScenarios.h"
 
 #include <cstddef>
@@ -81,6 +82,8 @@ struct ScenarioRunResult {
     std::vector<Alert> delivered_alerts;
 
     ScenarioDetectionResult detection;
+    AnomalyStatus anomaly;                      // L-12 statistical anomaly stage
+    std::vector<std::string> evidence_detectors; // detector ids that may vote
     ScenarioPrivacyResult privacy;
 
     std::string error;              // non-empty if the simulator could not run

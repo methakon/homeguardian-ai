@@ -36,6 +36,17 @@ public:
         double min_confidence = 0.5;    // minimum fused confidence to alert
         double warning_confidence = 0.8; // >= this -> Severity::warning
         size_t max_contributing = 10;   // bound on reported contributing ids
+        // Which detectors count as fusion evidence. An EMPTY list means "accept
+        // every detector" (backwards compatible). A non-empty list is a strict
+        // allowlist: observations from any other detector still flow through the
+        // pipeline (validated, counted, auditable) but are NOT votes.
+        //
+        // L-12: the default is the activity detector only. The statistical
+        // anomaly detector (detector id "activity-anomaly") is therefore
+        // ADVISORY by default: its result is reported and audited but does not
+        // influence the alert. Adding it here makes that influence explicit and
+        // is covered by tests.
+        std::vector<std::string> evidence_detector_ids = {"activity-energy"};
         Config() = default;             // explicit: usable in a default argument
     };
 
@@ -45,7 +56,25 @@ public:
     static Config defaults() { return Config{}; }
 
     explicit DetectionFusionRule(std::string name, Config cfg = defaults())
-        : name_(std::move(name)), cfg_(cfg), fusion_() {}
+        : name_(std::move(name)), cfg_(std::move(cfg)), fusion_() {}
+
+    // Replace the evidence allowlist at runtime (demo/test configuration). An
+    // empty vector means "accept all detectors". Single-threaded use only (the
+    // demo bridge and the tests call this between runs).
+    void set_evidence_detector_ids(std::vector<std::string> ids) {
+        cfg_.evidence_detector_ids = std::move(ids);
+    }
+    const std::vector<std::string>& evidence_detector_ids() const {
+        return cfg_.evidence_detector_ids;
+    }
+    // True when `detector_id` may contribute evidence (empty list = all).
+    bool accepts_detector(const std::string& detector_id) const {
+        if (cfg_.evidence_detector_ids.empty()) return true;
+        for (const auto& id : cfg_.evidence_detector_ids) {
+            if (id == detector_id) return true;
+        }
+        return false;
+    }
 
     std::optional<Alert> evaluate(const std::vector<Event>& window) override;
 

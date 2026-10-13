@@ -1,5 +1,6 @@
 #include "core/DemoScenarioRunner.h"
 
+#include "core/AnomalyMonitor.h"
 #include "core/Application.h"
 #include "core/FusionEngine.h"
 #include "core/Observation.h"
@@ -95,26 +96,61 @@ ScenarioRunResult run_demo_scenario(Application& app, const DemoScenario& spec) 
     // withdrawn, or with no authorized consumer, no media is delivered, so no
     // detection step runs and no detection-driven alert can exist.
     SyntheticActivityDetector detector;
-    std::vector<Observation> observations;   // the evidence the rule also sees
+    AnomalyMonitor anomaly;                  // L-12 statistical anomaly stage
+    std::vector<Observation> observations;   // all detection evidence this run
+    // Anomaly sample times are synthetic and deliberately in the PAST, so the
+    // events built from them are never rejected as "timestamp in the future".
+    const auto anomaly_base =
+        std::chrono::system_clock::now() -
+        std::chrono::seconds(static_cast<int>(spec.cycles < 0 ? 0 : spec.cycles) + 2);
+    int anomaly_observations = 0;
     if (started) {
         const int cycles = spec.cycles < 0 ? 0 : spec.cycles;
         for (int i = 0; i < cycles; ++i) {
             const int delivered = sim.tick();
             st.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
             if (delivered <= 0) continue;            // no acquisition -> no detection
-            if (!spec.run_detection) continue;
             if (spec.detection_energies.empty()) continue;
             const double energy = spec.detection_energies[
                 static_cast<size_t>(i) % spec.detection_energies.size()];
-            Observation o = detector.detect("det-obs-" + std::to_string(i), energy);
-            o.validate();
-            observations.push_back(o);
-            switch (o.status) {
-                case DetectorStatus::detected: ++r.detection.detected; break;
-                case DetectorStatus::not_detected: ++r.detection.not_detected; break;
-                default: ++r.detection.inconclusive; break;  // inconclusive/unavailable
+            if (spec.run_detection) {
+                Observation o = detector.detect("det-obs-" + std::to_string(i), energy);
+                o.validate();
+                observations.push_back(o);
+                switch (o.status) {
+                    case DetectorStatus::detected: ++r.detection.detected; break;
+                    case DetectorStatus::not_detected: ++r.detection.not_detected; break;
+                    default: ++r.detection.inconclusive; break;  // inconclusive/unavailable
+                }
+                app.process_event(o.to_event());
             }
-            app.process_event(o.to_event());
+            if (spec.run_anomaly) {
+                // The SAME bounded numeric feature the activity detector sees, but
+                // judged against a LEARNED baseline instead of a fixed threshold.
+                const auto sample_time =
+                    anomaly_base + std::chrono::seconds(i);
+                const AnomalyResult ar = anomaly.observe(energy, sample_time);
+                Observation ao = anomaly.to_observation(
+                    ar, "anom-obs-" + std::to_string(i),
+                    std::chrono::system_clock::now(), anomaly.config().min_samples);
+                observations.push_back(ao);
+                ++anomaly_observations;
+                app.process_event(ao.to_event());
+            }
+        }
+        if (spec.run_anomaly && spec.anomaly_missing_probe) {
+            // Deliberate gap: advance the synthetic clock past max_gap and ask
+            // the detector whether the feature has gone quiet.
+            const auto gap_time = anomaly_base +
+                std::chrono::seconds(static_cast<int>(spec.cycles < 0 ? 0 : spec.cycles) - 1) +
+                anomaly.config().max_gap + std::chrono::seconds(1);
+            const AnomalyResult mr = anomaly.check_missing(gap_time);
+            Observation mo = anomaly.to_observation(
+                mr, "anom-missing-probe", std::chrono::system_clock::now(),
+                anomaly.config().min_samples);
+            observations.push_back(mo);
+            ++anomaly_observations;
+            app.process_event(mo.to_event());
         }
     }
     sim.shutdown();
@@ -132,18 +168,34 @@ ScenarioRunResult run_demo_scenario(Application& app, const DemoScenario& spec) 
     // detection/fusion rule evaluated (all within the pipeline window), so the
     // outcome shown to the user is the one that caused (or did not cause) the
     // alert.
-    if (!observations.empty()) {
+    r.evidence_detectors = app.evidence_detector_ids();
+    // Only the detectors the rule accepts are evidence; the displayed fusion
+    // therefore uses the same allowlist, so what the user sees is what the rule
+    // evaluated.
+    std::vector<Observation> evidence;
+    for (const auto& o : observations) {
+        if (r.evidence_detectors.empty()) { evidence.push_back(o); continue; }
+        for (const auto& id : r.evidence_detectors) {
+            if (id == o.detector_id) { evidence.push_back(o); break; }
+        }
+    }
+    if (!evidence.empty()) {
         FusionEngine fusion;
-        const FusionResult fr = fusion.fuse(observations);
+        const FusionResult fr = fusion.fuse(evidence);
         r.detection.ran = true;
         r.detection.detector_id = detector.config().detector_id;
         r.detection.model_id = detector.config().model_id;
         r.detection.provenance = provenance_to_string(Provenance::synthetic);
-        r.detection.observations = observations.size();
+        r.detection.observations = evidence.size();
         r.detection.fusion_verdict = fusion_verdict_to_string(fr.verdict);
         r.detection.fusion_confidence = fr.confidence;
         r.detection.fusion_contributing = fr.contributing;
         r.detection.fusion_reason = fr.reason;
+    }
+
+    if (spec.run_anomaly) {
+        r.anomaly = anomaly.snapshot();
+        r.anomaly.ran = true;
     }
 
     // --- Counters + privacy audit ---

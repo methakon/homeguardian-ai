@@ -326,3 +326,14 @@ the v15 performance root cause and the durability decision is now resolved with
 | R-04 | Detection gated by authorized acquisition | R-01 | No acquisition (capture off / consent withdrawn / no authorized consumer) => no detection step => no detection-driven alert | DONE |
 | R-05 | Alert metadata surfaced (API + dashboard) | R-03 | Per-alert reason/severity/provenance from backend state; safe DOM only | DONE |
 | R-06 | Uncertainty + regression tests | R-01..R-05 | 9 `[l11]` cases prove the causal path and the negative cases; scenario suite updated to measured results | DONE |
+
+## Phase S — L-12 statistical anomaly detection in the live pipeline (2026-10-13)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| S-01 | AnomalyMonitor core component | AnomalyDetector | Feeds the bounded numeric feature of each AUTHORIZED acquisition; maps results to detection Observations; bounded, non-sensitive status | DONE |
+| S-02 | Detection Observations through the SAME pipeline | S-01, L-11 | Validation -> history -> detection rule -> alert policy; no second pipeline, no synthetic alert | DONE |
+| S-03 | Explicit evidence allowlist | L-11 | DetectionFusionRule accepts only allowlisted detector ids as votes; anomaly evidence advisory by default; influence explicit + causal + tested | DONE |
+| S-04 | Scenario catalogue: warm-up / normal / deviation / missing | S-01 | Deterministic baseline before deviations; deliberate gap probe; documented per-run baseline reset | DONE |
+| S-05 | API + dashboard exposure | S-01 | baseline ready, phase, status (warm-up/normal/high/low/missing), deviation, mean/sd, z-score, reason, gap reason, relationship to the alert | DONE |
+| S-06 | Tests + regression + stale-binary safeguard | S-01..S-05 | 17 `[l12]` cases incl. warm-up, normal, deviation, missing, uncertainty, consent/capture gating, repetition, L-11 preservation, persistence/privacy; every shipped target rebuilt before recording results | DONE |

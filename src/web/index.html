@@ -160,6 +160,10 @@
         verdicts on the synthetic evidence — an inconclusive result is never reported as a detection.</p>
         <p><b style="color:var(--text)">Fusion</b> combines detector outputs; when evidence is ambiguous or
         insufficient it reports <i>inconclusive</i> or <i>unavailable</i> rather than inventing confidence.</p>
+        <p><b style="color:var(--text)">Statistical anomaly.</b> A second stage learns the household's
+        recent activity baseline and flags deviations (high/low/missing). A deviation is a
+        <i>statistical</i> finding, not a fall, emergency or danger claim; by default it is
+        advisory and does not vote on the alert.</p>
         <p><b style="color:var(--text)">Alerts are detection-driven.</b> An alert is raised only
         when the fused detector evidence actually qualifies (the detection rule agrees, above a
         confidence floor). Raw observations on their own never raise an alert — they are the
@@ -310,6 +314,27 @@ function renderResult(s) {
       d.detected + ' / ' + d.not_detected + ' / ' + d.inconclusive));
     el.appendChild(kv('Fusion', d.fusion_verdict +
       ' (conf ' + Number(d.fusion_confidence).toFixed(2) + ', ' + d.fusion_contributing + ' contributing)'));
+  }
+  if (s.anomaly) {
+    const a = s.anomaly;
+    // Real backend anomaly result (L-12). No hardcoded values.
+    el.appendChild(kv('Statistical baseline',
+      (a.baseline_ready ? 'ready' : 'warming up') + ' · ' + a.samples + '/' + a.min_samples + ' samples'));
+    el.appendChild(kv('Anomaly status',
+      a.status + (a.deviation ? ' — deviation flagged' : '')));
+    el.appendChild(kv('Baseline mean / sd',
+      Number(a.baseline_mean).toFixed(3) + ' / ' + Number(a.baseline_stddev).toFixed(4)));
+    el.appendChild(kv('Last value / z-score',
+      Number(a.last_value).toFixed(2) + ' / ' + Number(a.last_zscore).toFixed(2)));
+    if (a.missing_checked) {
+      el.appendChild(kv('Missing-observation check', a.missing ? 'missing' : 'present'));
+    }
+    el.appendChild(kv('Anomaly vs alert', a.relationship || ''));
+    const ar = document.createElement('div');
+    ar.style.cssText = 'margin-top:6px;font-size:12px;color:var(--muted);';
+    ar.textContent = 'Anomaly detector: ' + (a.reason || '') +
+                     (a.missing_reason ? ' | gap: ' + a.missing_reason : '');
+    el.appendChild(ar);
   }
   if (s.privacy_audit) {
     const p = s.privacy_audit;
@@ -464,7 +489,11 @@ async function ask(question) {
   } else if (q.includes('why') && s && s.ok) {
     answer = (s.title || s.scenario_id) + ': ' + (s.outcome || 'no outcome recorded.') +
       (s.detection ? ' Detection: ' + s.detection.detected + ' detected, ' +
-        s.detection.inconclusive + ' inconclusive; fusion ' + s.detection.fusion_verdict + '.' : '');
+        s.detection.inconclusive + ' inconclusive; fusion ' + s.detection.fusion_verdict + '.' : '') +
+      (s.anomaly ? ' Statistical anomaly: ' + s.anomaly.status +
+        (s.anomaly.deviation ? ' (deviation)' : '') +
+        (s.anomaly.baseline_ready ? '' : ', baseline warming up') +
+        ' — ' + (s.anomaly.fused_into_alert ? 'counted as alert evidence.' : 'advisory, not alert evidence.') : '');
   } else if (q.includes('capture') || q.includes('consent') || q.includes('sensor')) {
     answer = status.capture_enabled
       ? 'Capture is enabled for the synthetic sensor, and consent is granted — but this is simulated, and no physical camera or microphone is active.'

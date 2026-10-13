@@ -193,3 +193,26 @@ Every alert shown carries rule `detection-fusion`, a severity derived from the
 fused confidence, and an explanation built from the alert's own evidence
 (contributing detector observations, fusion verdict, confidence). The timeline
 also shows the fusion verdict and `synthetic` provenance per alert.
+
+## L-12 — Statistical anomaly scenarios (2026-10-13)
+
+Four catalogue entries exercise the statistical anomaly stage. All figures below
+were measured from the freshly built bridge (capture on).
+
+| Scenario | Intent | Measured result |
+|---|---|---|
+| `anomaly-warmup` | too few observations to trust a baseline | baseline **not ready** (2/4 samples), status `warm-up`, **0 anomalies** — warm-up never produces a false anomaly |
+| `anomaly-normal` | routine activity at a stable level | baseline ready (mean 0.710, sd 0.00894), status `normal`, **0 anomalies** |
+| `anomaly-deviation` | sustained unusually high activity | baseline ready, status `high`, **2 anomalies**, last z = 2.442 (threshold 2.0), with the detector's own reason ("value 0.99 is 2.44 sigma above baseline mean 0.75 …") |
+| `anomaly-missing` | a deliberate gap past the expected interval | gap probe reports **`missing`** — "no observation for 4s (max_gap 3s)" |
+
+The **Scenario result** card shows, for these scenarios: whether the baseline is
+ready, the phase (warm-up/ready), the anomaly status (warm-up/normal/high/low/
+missing), baseline mean and standard deviation, the last value and z-score, the
+missing-observation check, and the detector's own explanation — plus an explicit
+**"Anomaly vs alert"** row stating whether anomaly evidence is counted as alert
+evidence for that run. Under the default configuration it is **advisory**.
+
+Plainly: a statistical deviation is not a fall, an emergency or a danger claim.
+Under the default configuration it does not raise an alert; the alert in these
+scenarios comes from the activity detection path, and the relationship row says so.

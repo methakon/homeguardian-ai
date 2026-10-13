@@ -21,6 +21,11 @@ std::optional<Alert> DetectionFusionRule::evaluate(const std::vector<Event>& win
     for (const auto& ev : window) {
         const auto o = Observation::from_event(ev);
         if (!o) continue;
+        // Evidence allowlist (L-12): observations from detectors that are not
+        // accepted are NOT votes and do not even count as unusable — they are
+        // simply not evidence for this rule. They still flowed through the
+        // pipeline and remain in history/audit.
+        if (!accepts_detector(o->detector_id)) continue;
         if (o->status == DetectorStatus::inconclusive ||
             o->status == DetectorStatus::unavailable) {
             ++inconclusive;
