@@ -487,3 +487,24 @@ If you add a new fixture that opens a database, suffix its path with
 `std::to_string(::getpid())` (or use
 `std::filesystem::temp_directory_path()` plus a stamp) — do not reuse a fixed
 filename in the working directory.
+
+
+## v21 — editing the dashboard (2026-10-13): no cmake re-run needed
+
+`src/web/index.html` is embedded into the bridge at **build** time by
+`cmake/generate_web_assets.cmake`, driven by an `add_custom_command` that depends
+on the HTML, the `cmake/hg_web_assets.h.in` template and the generator script.
+A plain `make -j4 hg_alexa_bridge` after editing the dashboard prints
+`Embedding the dashboard (src/web/index.html)` and relinks; the header is only
+rewritten when its content changes.
+
+Check it without a browser:
+
+```bash
+grep -c 'sevbadge\|impactbox' <build>/generated/hg_web_assets.h   # expect 9
+curl -s http://127.0.0.1:<port>/ | grep -c 'sevbadge\|impactbox'  # expect 9
+```
+
+Both zero would mean a stale embed (the failure mode fixed in v21: the header was
+generated at configure time with no dependency on the HTML, so `demo.sh` could
+serve the previous dashboard after a dashboard-only edit).

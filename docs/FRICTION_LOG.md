@@ -2117,3 +2117,29 @@ the database file before you look at the disk. And when a suite run goes red, it
 reason must be established before a later green run is accepted as evidence: a
 green run over an unexplained red one proves only that the red one was not
 reproduced.
+
+
+**Finding 5 (build wiring) — a built demo could serve a stale dashboard.**
+Starting `demo.sh` after a dashboard-only edit showed the PREVIOUS UI: the alert
+timeline rendered, but the severity badges and the SIMULATED impact panel were
+missing, and the served HTML contained none of the new classes. Root cause: the
+dashboard is embedded into the binary through
+`file(READ src/web/index.html)` + `configure_file`, i.e. at **configure** time.
+The generated `generated/hg_web_assets.h` had no build-system dependency on
+`index.html`, so `make` (and therefore `demo.sh`, which only builds the bridge
+when it is missing) happily relinked nothing and kept serving the old page. The
+header was timestamped 19:48 while the HTML was edited at 21:34.
+
+*Fix:* generation moved to a build-time `add_custom_command` (driven by
+`cmake/generate_web_assets.cmake`) that lists `src/web/index.html` and the
+template as `DEPENDS`, with the generated header added to the bridge target's
+sources so ordering and the rebuild trigger are real. The script rewrites the
+header only when its content changes, so no-op builds stay no-op.
+
+*Verified:* reconfigure + `make` regenerates and relinks; **touching
+`src/web/index.html` and running `make` alone** (no cmake re-run) prints
+"Embedding the dashboard" and refreshes the header; a completely fresh configure
++ build produces the same header; and a freshly built bridge serves a page
+containing the current markers (9/9). Lesson: an embedded asset generated at
+configure time is invisible to the build graph — give it a real `DEPENDS` or the
+next person to edit it will silently demo the old bytes.

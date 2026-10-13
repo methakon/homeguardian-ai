@@ -13,10 +13,23 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
 
 # Embed the dashboard HTML (single source of truth: src/web/index.html) so the
 # native demo binary is self-contained (no Node.js, no web-server file at
-# runtime). @ONLY leaves the CSS at-rules (@media/@keyframes) untouched.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html" HG_DASHBOARD_HTML)
-configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/hg_web_assets.h.in"
-               "${CMAKE_CURRENT_BINARY_DIR}/generated/hg_web_assets.h" @ONLY)
+# runtime). Generated at BUILD time, with the HTML as a real dependency: an
+# incremental `make` after editing the dashboard regenerates the header and
+# relinks the bridge. (Configure-time generation left a stale dashboard embedded
+# in an already-built binary, which is exactly what the demo would then serve.)
+set(HG_WEB_ASSETS "${CMAKE_CURRENT_BINARY_DIR}/generated/hg_web_assets.h")
+add_custom_command(
+    OUTPUT "${HG_WEB_ASSETS}"
+    COMMAND ${CMAKE_COMMAND}
+            -DHG_HTML=${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html
+            -DHG_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/hg_web_assets.h.in
+            -DHG_OUT=${HG_WEB_ASSETS}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_web_assets.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/web/index.html"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/hg_web_assets.h.in"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_web_assets.cmake"
+    COMMENT "Embedding the dashboard (src/web/index.html)"
+    VERBATIM)
 
 include(FetchContent)
 
@@ -159,6 +172,7 @@ install(TARGETS homeguardian DESTINATION bin)
 # JavaScript adapter. No network listener; stdin/stdout only. Used by the
 # local end-to-end integration tests and demo (F22-30).
 add_executable(hg_alexa_bridge
+    ${HG_WEB_ASSETS}          # generated: dependency ordering + rebuild trigger
     src/bridge/hg_alexa_bridge.cpp
     src/core/AlexaContract.cpp
     src/core/AlexaCredentialStore.cpp
