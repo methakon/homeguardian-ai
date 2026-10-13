@@ -173,6 +173,32 @@ std::vector<DemoScenario> build_catalogue() {
         v.push_back(std::move(s));
     }
 
+    // 7) H-01s — SIMULATED critical impact scenario (severity prioritisation).
+    {
+        DemoScenario s;
+        s.id = "synthetic-critical-impact";
+        s.title = "SIMULATED critical impact pattern";
+        s.description =
+            "A synthetic impact-like signature (a high-intensity transient "
+            "followed by stillness) plus normal activity before it. The impact "
+            "classifier must CONFIRM the two-phase pattern before a critical "
+            "alert is raised. Simulation only: this is not fall detection.";
+        s.cycles = 6;
+        s.grant_enabled = true;
+        s.grant_assistant = true;
+        s.run_detection = true;   // activity detector (pre-impact activity + drop)
+        s.run_anomaly = true;     // statistical layer stays advisory (L-12)
+        s.run_impact = true;      // synthetic impact classifier (H-01s)
+        s.detection_energies = {0.70, 0.72, 0.71, 0.70, 0.20, 0.18};
+        s.impact_intensities = {0.10, 0.12, 0.11, 0.95, 0.10, 0.08};
+        s.expectation =
+            "the transient at sample 4 is NOT confirmed on its own; stillness at "
+            "sample 5 completes the pattern and ONE critical alert is raised "
+            "(Severity::critical), independent of the info activity alert. A "
+            "statistical LOW deviation is also reported but stays advisory.";
+        v.push_back(std::move(s));
+    }
+
     // 5) Scenario D — consent denied (fail-closed acquisition).
     {
         DemoScenario s;

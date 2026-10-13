@@ -814,3 +814,28 @@ the local dashboard:
   `details` JSON never contains media keys.
 - The anomaly stage runs only for scenarios that enable it and only after an
   AUTHORIZED acquisition, so consent/capture gating is preserved.
+
+
+## H-01s — what the synthetic impact stage stores and exposes (2026-10-13)
+
+The impact stage adds no new data class. It processes one bounded numeric
+synthetic feature (impact intensity in [0,1]) per AUTHORIZED acquisition and
+emits `Observation`s with `provenance = synthetic`, `source = sim_sensor` and
+bounded features (phase, value, transient/stillness values, sample distance,
+thresholds).
+
+- **No camera, microphone, pose, biometric or personal data.** A "confirmed
+  impact pattern" is a statement about synthetic numbers, never about a person.
+- The alert's `details` are non-sensitive metadata: pattern name, two bounded
+  intensities, a sample count, a supporting count, `provenance`, `simulated` and
+  `emergency_services_contacted: false`. No media, transcripts, credentials or
+  person identifiers.
+- Persisted alerts are unchanged in shape; the same non-sensitive `details` are
+  written to SQLite and no impact internals beyond them.
+- The stage runs only for a scenario that enables it and only after an AUTHORIZED
+  acquisition. Capture off, missing/withdrawn/expired/ambiguous consent => no
+  observation => no classifier result => no critical alert.
+- The privacy audit trail is unchanged and `enforcement_ok` stays true for every
+  scenario, including the critical one.
+- Every user-visible string about this feature says it is simulated and that no
+  emergency services are contacted.

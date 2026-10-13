@@ -2,6 +2,7 @@
 
 #include "core/AnomalyMonitor.h"
 #include "core/Application.h"
+#include "core/ImpactClassifier.h"
 #include "core/FusionEngine.h"
 #include "core/Observation.h"
 #include "core/PrivacyAuditLog.h"
@@ -97,6 +98,7 @@ ScenarioRunResult run_demo_scenario(Application& app, const DemoScenario& spec) 
     // detection step runs and no detection-driven alert can exist.
     SyntheticActivityDetector detector;
     AnomalyMonitor anomaly;                  // L-12 statistical anomaly stage
+    SyntheticImpactClassifier impact;        // H-01s synthetic impact classifier
     std::vector<Observation> observations;   // all detection evidence this run
     // Anomaly sample times are synthetic and deliberately in the PAST, so the
     // events built from them are never rejected as "timestamp in the future".
@@ -123,6 +125,35 @@ ScenarioRunResult run_demo_scenario(Application& app, const DemoScenario& spec) 
                     default: ++r.detection.inconclusive; break;  // inconclusive/unavailable
                 }
                 app.process_event(o.to_event());
+            }
+            if (spec.run_impact && !spec.impact_intensities.empty()) {
+                // H-01s: a bounded synthetic impact-intensity sample per AUTHORIZED
+                // acquisition. The classifier must CONFIRM a transient-then-
+                // stillness pattern; a lone sample is reported as inconclusive.
+                const double intensity = spec.impact_intensities[
+                    static_cast<size_t>(i) % spec.impact_intensities.size()];
+                const ImpactResult ir = impact.classify(intensity);
+                if (ir.phase == "transient") ++r.impact.transients;
+                if (ir.status == DetectorStatus::detected) {
+                    ++r.impact.confirmations;
+                    // Remember the pattern that was actually confirmed: the
+                    // classifier clears its transient state on confirmation, so
+                    // the last-sample fields would read 0.
+                    r.impact.confirmed_transient_value = ir.transient_value;
+                    r.impact.confirmed_stillness_value = ir.stillness_value;
+                    r.impact.confirmed_samples_since_transient = ir.samples_since_transient;
+                }
+                Observation io = impact.to_observation(
+                    ir, "impact-obs-" + std::to_string(i),
+                    std::chrono::system_clock::now());
+                observations.push_back(io);
+                app.process_event(io.to_event());
+                r.impact.last_phase = ir.phase;
+                r.impact.last_reason = ir.reason;
+                r.impact.last_value = ir.value;
+                r.impact.transient_value = ir.transient_value;
+                r.impact.stillness_value = ir.stillness_value;
+                r.impact.samples_since_transient = ir.samples_since_transient;
             }
             if (spec.run_anomaly) {
                 // The SAME bounded numeric feature the activity detector sees, but
@@ -196,6 +227,13 @@ ScenarioRunResult run_demo_scenario(Application& app, const DemoScenario& spec) 
     if (spec.run_anomaly) {
         r.anomaly = anomaly.snapshot();
         r.anomaly.ran = true;
+    }
+    if (spec.run_impact) {
+        r.impact.ran = true;
+        r.impact.samples = impact.samples();
+        for (const auto& a : r.delivered_alerts) {
+            if (a.severity == Severity::critical) ++r.impact.critical_alerts;
+        }
     }
 
     // --- Counters + privacy audit ---

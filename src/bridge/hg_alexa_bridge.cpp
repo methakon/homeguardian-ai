@@ -246,10 +246,31 @@ json alert_to_json(const Alert& a) {
         if (a.details.contains("fusion_confidence")) x["fusion_confidence"] = a.details["fusion_confidence"];
         if (a.details.contains("contributing")) x["detectors_contributing"] = a.details["contributing"];
         if (a.details.contains("reason")) x["evidence"] = a.details["reason"];
+        // H-01s synthetic impact evidence (non-sensitive; no media, no person).
+        if (a.details.contains("impact_pattern")) {
+            x["impact_pattern"] = a.details["impact_pattern"];
+            x["transient_intensity"] = a.details["transient_intensity"];
+            x["stillness_intensity"] = a.details["stillness_intensity"];
+            x["samples_since_transient"] = a.details["samples_since_transient"];
+            x["supporting_observations"] = a.details["supporting_observations"];
+            x["simulated"] = a.details.value("simulated", true);
+            x["emergency_services_contacted"] = false;
+        }
     }
 
     // WHY did this alert fire? Built only from the alert's own evidence.
     std::ostringstream os;
+    if (has_details && a.details.contains("impact_pattern")) {
+        os << "rule '" << a.rule_name
+           << "' fired on a CONFIRMED simulated impact pattern (transient "
+           << a.details["transient_intensity"].get<double>() << " -> stillness "
+           << a.details["stillness_intensity"].get<double>() << " within "
+           << a.details["samples_since_transient"].get<size_t>()
+           << " sample(s)); demonstration only — this does not confirm a real "
+              "fall and no emergency services are contacted";
+        x["explanation"] = os.str();
+        return x;
+    }
     os << "rule '" << a.rule_name << "' fired from the detection/fusion evidence";
     if (has_details && a.details.contains("contributing") &&
         a.details["contributing"].is_number()) {
@@ -448,6 +469,34 @@ json scenario_result_json(Application& app, PersistenceAudit* audit,
               "counted as alert evidence (the detection rule's evidence "
               "allowlist excludes it)";
         j["anomaly"] = a;
+    }
+
+    // H-01s synthetic impact stage: the classifier's own result. Synthetic
+    // demonstration only — this is NOT fall detection.
+    if (r.impact.ran) {
+        json im;
+        im["samples"] = r.impact.samples;
+        im["transients"] = r.impact.transients;
+        im["confirmations"] = r.impact.confirmations;
+        im["last_phase"] = r.impact.last_phase;
+        im["last_value"] = r.impact.last_value;
+        im["transient_value"] = r.impact.transient_value;
+        im["stillness_value"] = r.impact.stillness_value;
+        im["samples_since_transient"] = r.impact.samples_since_transient;
+        im["confirmed_transient_value"] = r.impact.confirmed_transient_value;
+        im["confirmed_stillness_value"] = r.impact.confirmed_stillness_value;
+        im["confirmed_samples_since_transient"] =
+            r.impact.confirmed_samples_since_transient;
+        im["last_reason"] = r.impact.last_reason;
+        im["detector_id"] = "impact-signal";
+        im["provenance"] = "synthetic";
+        im["simulated"] = true;
+        im["critical_alerts_delivered"] = r.impact.critical_alerts;
+        im["emergency_services_contacted"] = false;
+        im["disclaimer"] =
+            "Simulated critical impact pattern. This demonstration does not "
+            "confirm a real fall or contact emergency services.";
+        j["impact"] = im;
     }
 
     // Privacy audit (H-03): consent-decision trail for this run (metadata only).

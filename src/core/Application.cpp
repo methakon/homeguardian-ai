@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "DetectionFusionRule.h"
+#include "SyntheticImpactRule.h"
 #include "Logger.h"
 #include "Observation.h"
 #include "SyntheticActivityDetector.h"
@@ -27,9 +28,15 @@ Application::Application() {
     // Raw observations alone never raise an alert — they are the detector's
     // INPUT. The previous independent, hardcoded "sim-presence" presence alert
     // has been removed.
+    // H-01s adds a second rule. The pipeline evaluates every rule and returns the
+    // highest-severity alert, so a confirmed synthetic impact (critical) is never
+    // lost behind an unrelated info/warning activity alert. The impact rule reads
+    // only the impact classifier's observations and stays silent otherwise, so
+    // scenarios without impact evidence are unaffected.
     std::vector<std::shared_ptr<ICorrelationRule>> default_rules;
     detection_rule_ = std::make_shared<DetectionFusionRule>("detection-fusion");
     default_rules.push_back(detection_rule_);
+    default_rules.push_back(std::make_shared<SyntheticImpactRule>("synthetic-impact"));
     pipeline_ = std::make_unique<Pipeline>(default_rules);
 
     // Simulator runtime, built with capture DISABLED by default (config's

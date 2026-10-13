@@ -102,10 +102,14 @@ bash demo.sh
 ```
 
 This builds the C++ bridge if needed, starts a loopback-only web server, and
-prints a `http://127.0.0.1:<port>` URL. Open it, click **Run synthetic
-scenario**, and ask questions like *"Is everything okay?"*. See
-[docs/DEMO_WEB.md](docs/DEMO_WEB.md) for the full walkthrough, expected output,
-and troubleshooting.
+prints a `http://127.0.0.1:<port>` URL. Open it, pick a scenario (**Run synthetic
+scenario**) and ask questions like *"Is everything okay?"*. Ten scenarios are
+shipped, including `synthetic-critical-impact`: a simulated impact-like signature
+(a high-intensity transient followed by a completing stillness sample) that raises
+one **critical** alert with its own evidence. It is a **simulation demonstration
+of severity prioritisation, not fall detection** — the dashboard says so and no
+emergency service is involved. See [docs/DEMO_WEB.md](docs/DEMO_WEB.md) for the
+full walkthrough, expected output, and troubleshooting.
 
 > Prerequisites: a C++20 compiler, CMake ≥ 3.20, and `make`. **Node.js is NOT
 > required** for the demo — the native C++ server serves the dashboard and API in

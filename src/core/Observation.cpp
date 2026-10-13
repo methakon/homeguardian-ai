@@ -103,12 +103,20 @@ std::optional<Observation> Observation::from_event(const Event& event) {
     if (p.contains("note") && p["note"].is_string())
         o.note = p["note"].get<std::string>();
 
-    // Carry only the bounded, known non-sensitive features.
+    // Carry the bounded, non-sensitive feature payload. The keys that map onto
+    // dedicated Observation fields are excluded; everything else is preserved so
+    // a detector-specific feature (e.g. the impact classifier's "phase") survives
+    // the round trip. The payload is already bounded by validate().
     nlohmann::json features = nlohmann::json::object();
-    if (p.contains("energy") && p["energy"].is_number())
-        features["energy"] = p["energy"];
-    if (p.contains("detect_threshold") && p["detect_threshold"].is_number())
-        features["detect_threshold"] = p["detect_threshold"];
+    static const char* kMetaKeys[] = {"provenance", "detector_id", "model_id",
+                                      "status", "quality", "note"};
+    for (auto it = p.begin(); it != p.end(); ++it) {
+        bool is_meta = false;
+        for (const char* k : kMetaKeys) {
+            if (it.key() == k) { is_meta = true; break; }
+        }
+        if (!is_meta) features[it.key()] = it.value();
+    }
     o.features = std::move(features);
 
     return o;

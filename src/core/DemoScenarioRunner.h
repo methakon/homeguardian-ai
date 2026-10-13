@@ -25,6 +25,7 @@
 
 #include "core/Alert.h"
 #include "core/AnomalyMonitor.h"
+#include "core/ImpactClassifier.h"
 #include "core/DemoScenarios.h"
 
 #include <cstddef>
@@ -51,6 +52,25 @@ struct ScenarioDetectionResult {
     double fusion_confidence = 0.0;
     size_t fusion_contributing = 0;
     std::string fusion_reason;
+};
+
+// Synthetic impact-classifier summary (H-01s). Synthetic demonstration only:
+// NOT fall detection.
+struct ScenarioImpactResult {
+    bool ran = false;
+    size_t samples = 0;
+    size_t transients = 0;        // isolated high-intensity samples seen
+    size_t confirmations = 0;     // completed transient-then-stillness patterns
+    std::string last_phase;       // idle | transient | confirmed | expired
+    std::string last_reason;      // bounded explanation from the classifier
+    double last_value = 0.0;
+    double transient_value = 0.0;          // last sample's pending transient (0 if none)
+    double stillness_value = 0.0;          // last sample's stillness (0 if none)
+    size_t samples_since_transient = 0;    // last sample's wait
+    double confirmed_transient_value = 0.0;  // the pattern that was confirmed
+    double confirmed_stillness_value = 0.0;
+    size_t confirmed_samples_since_transient = 0;
+    size_t critical_alerts = 0;   // critical alerts DELIVERED this run
 };
 
 // Privacy-audit summary for the run (metadata only; never media).
@@ -83,6 +103,7 @@ struct ScenarioRunResult {
 
     ScenarioDetectionResult detection;
     AnomalyStatus anomaly;                      // L-12 statistical anomaly stage
+    ScenarioImpactResult impact;                // H-01s synthetic impact stage
     std::vector<std::string> evidence_detectors; // detector ids that may vote
     ScenarioPrivacyResult privacy;
 

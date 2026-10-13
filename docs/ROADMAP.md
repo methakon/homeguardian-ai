@@ -337,3 +337,25 @@ the v15 performance root cause and the durability decision is now resolved with
 | S-04 | Scenario catalogue: warm-up / normal / deviation / missing | S-01 | Deterministic baseline before deviations; deliberate gap probe; documented per-run baseline reset | DONE |
 | S-05 | API + dashboard exposure | S-01 | baseline ready, phase, status (warm-up/normal/high/low/missing), deviation, mean/sd, z-score, reason, gap reason, relationship to the alert | DONE |
 | S-06 | Tests + regression + stale-binary safeguard | S-01..S-05 | 17 `[l12]` cases incl. warm-up, normal, deviation, missing, uncertainty, consent/capture gating, repetition, L-11 preservation, persistence/privacy; every shipped target rebuilt before recording results | DONE |
+
+
+## Phase T — H-01s synthetic critical impact + severity prioritisation (added 2026-10-13)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| H-01s | SIMULATED critical impact scenario | S-01..S-06 | `synthetic-critical-impact`: normal activity, then a high-intensity transient, then a completing stillness sample. The critical alert exists only because the evidence qualified | DONE |
+| T-01 | `SyntheticImpactClassifier` (core) | Observation | Deterministic transient-then-stillness pattern with documented, tested thresholds (transient >= 0.80, stillness <= 0.25, window 4 samples). A lone transient is `inconclusive` — never a confirmation | DONE |
+| T-02 | `SyntheticImpactRule` (correlation) | T-01, AlertPolicy | Fires ONLY on a confirmed pattern with >= 2 supporting impact observations; maps a confirmed pattern to `Severity::critical`; message + `details` state that this is not fall detection and no emergency service is contacted | DONE |
+| T-03 | Severity prioritisation in `Pipeline` | T-02 | Every registered rule is evaluated and the HIGHEST severity is returned (info < warning < critical), so a critical impact alert is never lost behind an unrelated info/warning alert; single-rule behaviour is unchanged | DONE |
+| T-04 | Lossy round-trip fix (`Observation::from_event`) | R-02 | The reconstructed Observation carries the bounded feature payload. Previously only activity `energy`/`detect_threshold` survived, so a detector-specific feature (the impact `phase`) was invisible to every rule | DONE |
+| T-05 | Scenario + API + dashboard | T-01..T-04 | Id in the strict allowlist and the selector; the API returns the classifier's real result plus the alert's non-sensitive evidence; the dashboard labels it SIMULATED and never claims a real fall or an emergency response | DONE |
+| T-06 | Tests + regression + stale-binary safeguard | T-01..T-05 | 18 `[h01s]` cases: normal, lone signal, confirmed pattern, evidence derivation, prioritisation, duplicate suppression, rule independence, re-arm, capture-off, denied/expired/ambiguous consent, inconclusive, repetition, persistence + restart, allowlist, L-11/L-12 preservation, no sensing/emergency contact | DONE |
+
+### Boundary — kept explicit and unchanged
+
+| Item | Status |
+|------|--------|
+| **H-01s** synthetic impact-prioritisation demonstration | **IMPLEMENTED (simulation only)** |
+| **H-01** real pose-based fall detection | **NOT implemented** |
+| **H-02** emergency workflow / escalation | **NOT implemented** |
+| **G-02** external notifications | **NOT implemented** |

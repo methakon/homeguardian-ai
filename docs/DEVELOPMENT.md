@@ -381,3 +381,45 @@ because the alert path logs.
 - Recall: energy >= 0.59 with quality >= 0.3 is `detected` for the activity
   detector; the anomaly detector instead compares each sample with the rolling
   mean/stddev of the same key and flags |z| > threshold.
+
+
+## H-01s — Synthetic impact stage: how to change and verify it (2026-10-13)
+
+- `src/core/ImpactClassifier.{h,cpp}` — the deterministic classifier. Tune it via
+  `SyntheticImpactClassifier::Config` (`transient_threshold` 0.80,
+  `stillness_threshold` 0.25, `max_window` 4, `detector_id` "impact-signal").
+  `Config::defaults()` exists because a nested `Config` cannot be used as a
+  default argument in an aggregate initialiser (same pitfall as v8).
+- `src/core/SyntheticImpactRule.{h,cpp}` — the critical-severity mapping
+  (`min_supporting` 2 by default). It reads only `impact-signal` observations.
+- `src/core/Pipeline.cpp` — `severity_rank()` (critical 2, warning 1, info 0) and
+  the evaluate-all-rules loop. If you add a rule, it participates in
+  prioritisation automatically; a rule that returns `nullopt` never affects it.
+- Scenario definition: `src/core/DemoScenarios.cpp` → `synthetic-critical-impact`
+  (`impact_intensities`, `run_impact`). The runner feeds one bounded sample per
+  AUTHORIZED acquisition (`src/core/DemoScenarioRunner.cpp`).
+- Tests: `tests/core/test_synthetic_impact.cpp` (`[impact][h01s]`, 18 cases)
+  covers each acceptance criterion; `[h01s]` runs in ~0.2 s.
+
+Verify:
+
+```bash
+cd hg_build && cmake . && make -j4 homeguardian hg_alexa_bridge homeguardian_tests
+HG_SOURCE_DIR=$PWD/.. ./homeguardian_tests "[h01s]"      # focused
+HG_SOURCE_DIR=$PWD/.. ./homeguardian_tests               # full: 364 cases / 2811 assertions
+ctest --test-dir .                                       # 100%
+```
+
+Two pitfalls specific to this feature:
+
+1. **The pipeline window is time-based.** `Pipeline::get_recent_events()` drops
+   events older than `correlation_window_ms` (5 s). A test (or a producer) that
+   timestamps observations with a fixed past instant will silently see an empty
+   window and no rules will fire. Use `std::chrono::system_clock::now()`.
+2. **Round-trip features.** `Observation::from_event` must carry the bounded
+   feature payload, not just the activity keys; the impact rule matches on the
+   `phase` feature. `[h01s]` fails loudly if that regresses.
+
+Expected numbers for the scenario (deterministic): media 12, events 30,
+generated 23, delivered 2 (1 CRITICAL + 1 INFO), suppressed 21, persisted 2,
+impact 6 samples / 1 transient / 1 confirmation.

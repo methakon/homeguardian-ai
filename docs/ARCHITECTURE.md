@@ -1173,3 +1173,50 @@ Properties:
   z-score, counts and a short reason. No media, identities or profiles.
 - A statistical deviation is NOT a fall, emergency, medical or danger claim; the
   alert message and rule are unchanged (L-11 semantics preserved).
+
+
+## H-01s — Synthetic impact prioritisation (2026-10-13)
+
+H-01s adds one bounded stage and one prioritisation change. It is a SIMULATION
+demonstration of severity prioritisation; it is **not** fall detection.
+
+```
+ authorized acquisition (SimulatorRuntime)
+   +--> SyntheticActivityDetector -> Observation (activity-energy)      [L-01]
+   +--> AnomalyMonitor            -> Observation (activity-anomaly)     [L-12]
+   +--> SyntheticImpactClassifier -> Observation (impact-signal)        [H-01s]
+              |
+              v
+        Pipeline (history -> time-window correlation)
+              |  DetectionFusionRule    (activity evidence -> info/warning)
+              |  SyntheticImpactRule    (confirmed impact -> CRITICAL)
+              v  highest severity wins (info < warning < critical)       [H-01s]
+        AlertPolicy (dedup + cooldown, keyed rule+severity)
+              v
+        SQLite -> Native HTTP API -> dashboard
+```
+
+**`SyntheticImpactClassifier`** (`src/core/ImpactClassifier.{h,cpp}`): deterministic
+two-phase pattern over a bounded feature in [0,1].
+
+| Sample | Condition | Result |
+|--------|-----------|--------|
+| transient | intensity >= 0.80 | `inconclusive`, phase `transient` — NOT a confirmation |
+| stillness | <= 0.25 within 4 samples of a transient | `detected`, phase `confirmed` — the pattern that H-01s acts on |
+| expired | transient with no stillness inside the window | `not_detected`, phase `expired`, with the reason |
+| otherwise | — | `not_detected` |
+
+**`SyntheticImpactRule`** (`src/core/SyntheticImpactRule.{h,cpp}`): reads only
+`impact-signal` observations reconstructed from the window; requires a confirmed
+observation AND >= 2 supporting impact observations; maps a confirmed pattern to
+`Severity::critical` and puts the bounded evidence in `details`
+(`impact_pattern`, `transient_intensity`, `stillness_intensity`,
+`samples_since_transient`, `supporting_observations`, `provenance`, `simulated`,
+`emergency_services_contacted: false`). It is the only source of critical alerts
+in the build.
+
+**Severity prioritisation.** `Pipeline::process` evaluates every registered rule
+and returns the highest severity, so a critical impact alert is never lost behind
+an activity alert. Activity evidence and impact evidence therefore both appear in
+the critical scenario (1 CRITICAL `synthetic-impact` + 1 INFO `detection-fusion`),
+and neither suppresses the other.

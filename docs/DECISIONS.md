@@ -290,3 +290,77 @@ anomaly-driven alerts.
 (`fused_into_alert` / `relationship`) rather than implying the anomaly caused the
 alert. A deviation never becomes a fall/emergency/danger claim, and it never
 raises an alert under the default configuration.
+
+
+## D-impact-pattern: a deterministic synthetic impact classifier, not fall detection (2026-10-13, H-01s)
+
+### Context
+
+H-01s must demonstrate severity prioritisation with a plausible high-priority
+household event. Nothing in the build can honestly classify an impact: there is
+no camera, no pose estimation, no model and no biometric data, and H-01 (real
+pose-based fall detection) is explicitly out of scope. Roadmap guidance for this
+milestone forbids presenting an ordinary activity-energy reading as "proof of an
+impact" without a meaningful mapping.
+
+### Decision
+
+Introduce `SyntheticImpactClassifier` (`src/core/ImpactClassifier.{h,cpp}`), a
+small deterministic classifier over a bounded synthetic impact-intensity feature
+in [0,1], with documented two-phase semantics: a transient (>= 0.80) is NOT a
+confirmation on its own (`inconclusive`, "awaiting supporting stillness"); the
+pattern is confirmed only when a following sample <= 0.25 arrives within 4
+samples. Anything else is `not_detected`; an expired transient reports why.
+
+`SyntheticImpactRule` reads only those observations and fires a critical alert
+only for a confirmed pattern with >= 2 supporting observations.
+
+### Rationale
+
+- The mapping from feature to classification is explicit, deterministic and
+  testable (both thresholds and the window are asserted), so no ordinary activity
+  reading is mislabelled as an impact.
+- Ordering is honest evidence: a single ambiguous signal cannot become a
+  definitive critical classification.
+- It reuses the established `Observation`/`Event`/rule/policy/persistence path.
+
+### Consequences
+
+- Every positive result carries its own evidence (transient value, stillness
+  value, sample distance, supporting count) and every note states plainly that
+  this is a synthetic demonstration, not fall detection, and that no emergency
+  service is contacted.
+- H-01 (real pose-based fall detection) remains NOT implemented; H-01s says so in
+  the alert message, the API payload and the dashboard.
+
+## D-severity-prioritisation: highest severity wins in the pipeline (2026-10-13, H-01s)
+
+### Context
+
+Before H-01s `Pipeline` returned the FIRST rule's alert and stopped. With more
+than one rule registered, a critical condition could be hidden behind an
+unrelated info/warning alert that happened to match first.
+
+### Decision
+
+`Pipeline` evaluates EVERY registered rule over the same window and returns the
+alert with the highest severity (`info < warning < critical`); ties keep the
+earliest rule. `Application` registers `DetectionFusionRule` (activity) and
+`SyntheticImpactRule` (impact); the impact rule stays silent unless impact
+evidence exists, so other scenarios are unaffected.
+
+### Rationale
+
+- Severity prioritisation must be genuine: the critical classification comes from
+  the backend rules and their evidence, not from presentation.
+- Independent rules must not suppress each other; they keep their own policy keys
+  (rule + severity), so a critical alert and an unrelated info alert are both
+  delivered.
+
+### Consequences
+
+- Single-rule behaviour is bit-identical to the previous implementation.
+- Duplicate suppression, cooldown and re-arm semantics are unchanged (they are
+  keyed on rule + severity and remain per process).
+- Covered by `[h01s]` tests: prioritisation, duplicate suppression, rule
+  independence and re-arm.

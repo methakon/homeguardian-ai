@@ -33,6 +33,8 @@ struct DemoScenario {
     bool run_detection = true;          // run the activity detection stage
     bool run_anomaly = false;           // run the statistical anomaly stage (L-12)
     bool anomaly_missing_probe = false; // also exercise the missing-observation path
+    bool run_impact = false;            // run the synthetic impact classifier (H-01s)
+    std::vector<double> impact_intensities;  // bounded synthetic impact feature [0,1]
     std::vector<double> detection_energies;  // synthetic energies in [0,1]
     std::string expectation;            // what the demo expects (documentation)
 };

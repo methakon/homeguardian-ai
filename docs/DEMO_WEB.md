@@ -216,3 +216,40 @@ evidence for that run. Under the default configuration it is **advisory**.
 Plainly: a statistical deviation is not a fall, an emergency or a danger claim.
 Under the default configuration it does not raise an alert; the alert in these
 scenarios comes from the activity detection path, and the relationship row says so.
+
+
+## H-01s — Simulated critical impact scenario (2026-10-13)
+
+`synthetic-critical-impact` is the tenth catalogue entry and the only one that
+can produce a **critical** alert. Figures below are measured from the rebuilt
+`hg_alexa_bridge` (Release), run 3× with identical results.
+
+| Field | Measured value |
+|-------|----------------|
+| Synthetic media authorized | 12 |
+| Events processed | 30 |
+| Alerts generated | 23 |
+| Alerts delivered | **2** (1 CRITICAL `synthetic-impact` + 1 INFO `detection-fusion`) |
+| Duplicates suppressed | 21 |
+| Alerts persisted (this run / total) | 2 / 2 |
+| Impact classifier | 6 samples, **1 transient**, **1 confirmation** |
+| Confirmed pattern | transient **0.95** → stillness **0.10** within **1 sample** |
+| Anomaly layer | status `low`, 2 anomalies, `fused_into_alert` **false** (advisory) |
+| Consent enforcement | `enforcement_ok` true |
+| Scenario latency | ~0.15 s per run |
+
+The classifier sees `0.10, 0.12, 0.11, 0.95, 0.10, 0.08`: sample 4 is a lone
+transient (**inconclusive**, no alert), sample 5 supplies the stillness that
+confirms the pattern, and sample 6 is inert. That is why the alert is delivered
+once and then suppressed as a duplicate.
+
+The dashboard shows the scenario result plus a red **SIMULATED critical impact**
+panel containing the classifier, sample/transient/confirmation counts, the
+confirmed pattern, the delivered-critical count, the classifier's own reason and
+the backend disclaimer. Critical alerts render with a red severity badge; the
+severity is also spelled out as text so colour is never the only signal. The
+wording is fixed to "Simulated critical impact pattern. This demonstration does
+not confirm a real fall or contact emergency services."
+
+**Never** shown: a claim that a real person fell, that an ambulance was
+contacted, or that emergency services were notified.

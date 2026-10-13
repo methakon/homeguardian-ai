@@ -1984,3 +1984,52 @@ unchanged.
 `homeguardian_tests`, `hg_alexa_bridge`) is rebuilt before any runtime result is
 recorded, per the L-11 follow-up lesson. Standalone app and bridge agree:
 `alerts_gen=10 alerts_deliv=2 alerts_supp=8` (the `default` scenario).
+
+
+## H-01s: synthetic impact / severity prioritisation (2026-10-13)
+
+**Defect found: `Observation::from_event` silently dropped every non-activity
+feature.** The impact rule decides from a detector-specific feature (`phase`:
+transient/confirmed), and the rule never fired — the scenario produced only the
+activity INFO alert even though the classifier had confirmed the pattern
+(`confirmations: 1`). Root cause: `from_event` rebuilt `features` from only the
+two activity keys it knew (`energy`, `detect_threshold`), so a conforming
+detector's own features vanished on the round trip through the pipeline. This was
+latent since L-11 (nothing depended on it until now). Fix: carry the whole bounded
+feature payload, excluding only the keys that map to dedicated Observation fields
+(`provenance`, `detector_id`, `model_id`, `status`, `quality`, `note`). Regression
+coverage: the `[h01s]` evidence tests assert the confirmed-pattern fields, so a
+future lossy round trip fails loudly. Lesson: when a rule consumes a detector's
+feature, prove the feature survives `to_event()` → `from_event()` in a test.
+
+**Test-only gotcha: the pipeline window is time-based.** A first version of the
+prioritisation test timestamped its impact events with a fixed past instant; the
+events fell outside `correlation_window_ms` (5 s), the pipeline saw an empty
+window and no rule fired. Producers and tests must use `now()`. Recorded in
+DEVELOPMENT.md with the feature notes.
+
+**Measurement trap: `hg_build` is a Debug build.** Reporting the bridge binary
+from `hg_build` gives ~28.8 MB (debug info); the L-12 baseline (3,259,960 B) is a
+**Release** figure. Footprint must always be taken from a Release build
+(`/tmp/hg_h01srel` here): 3,320,856 B, +1.87% vs L-12. Take RSS from the Release
+process as well (idle 6,432 kB, 1 process / 1 thread).
+
+**Security expectations must match the documented contract.** The native HTTP
+interface is **loopback-only and unauthenticated by design**: it rejects any
+`Authorization` header with 400, exact-matches paths (so `/api/status?token=x` is
+404, not 401), and answers an unknown scenario with HTTP 200 +
+`{"ok":false,"error":"unknown_scenario"}` rather than an error status. Adversarial
+checks: bad Host 403, bad Origin 403, POST 405, Authorization header 400,
+malformed/duplicated scenario 400, traversal 404, body-on-GET 400.
+
+**Restart semantics worth stating.** Alert dedup/cooldown state is per process,
+while alert history is durable. After a bridge restart the same critical alert is
+delivered again (cooldown state is fresh) and appended to history (2 → 4
+persisted). That is the existing `AlertPolicy` contract, not a regression.
+
+**Stale-binary safeguard (reconfirmed, per the L-11 lesson).** Every shipped
+target was rebuilt before results were recorded: the standalone `homeguardian`
+binary with capture on still reports `alerts_gen=10 alerts_deliv=2
+alerts_supp=8` (identical to L-11) because no impact observations exist in that
+flow — the new rule is registered and silent, which is exactly the expected
+difference from the scenario-driven bridge (23/2/21 with 1 CRITICAL).

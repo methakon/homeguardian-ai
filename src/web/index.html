@@ -58,7 +58,21 @@
   .alert .why { color: var(--muted); font-size: 12px; margin-top: 3px; }
   .alert.info { border-left-color: var(--accent); }
   .alert.warning { border-left-color: var(--warn); }
-  .alert.critical { border-left-color: var(--danger); }
+  .alert.critical { border-left-color: var(--danger); background: rgba(220,60,60,.10); }
+  .alert.critical .msg { color: var(--danger); font-weight: 600; }
+  /* Severity is always spelled out as text as well as colour (not colour-only). */
+  .sevbadge { display: inline-block; font-size: 10px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px;
+    border-radius: 999px; margin-right: 7px; vertical-align: middle;
+    border: 1px solid transparent; }
+  .sevbadge.critical { background: var(--danger); color: #fff; }
+  .sevbadge.warning { background: var(--warn); color: #16181d; }
+  .sevbadge.info { background: var(--accent); color: #16181d; }
+  .impactbox { border: 1px solid var(--danger); border-left-width: 4px;
+    border-radius: 9px; padding: 10px 12px; margin-top: 10px;
+    background: rgba(220,60,60,.08); }
+  .impactbox .sim { color: var(--danger); font-weight: 700; font-size: 13px; }
+  .impactbox .disc { color: var(--muted); font-size: 12px; margin-top: 6px; }
   .empty { color: var(--muted); font-size: 13px; font-style: italic; padding: 8px 0; }
   .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 4px; }
   .metric { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; text-align: center; }
@@ -336,6 +350,36 @@ function renderResult(s) {
                      (a.missing_reason ? ' | gap: ' + a.missing_reason : '');
     el.appendChild(ar);
   }
+  if (s.impact) {
+    // H-01s synthetic impact stage. Everything here comes from the backend;
+    // nothing is hardcoded. SIMULATED is stated explicitly.
+    const im = s.impact;
+    const box = document.createElement('div'); box.className = 'impactbox';
+    const h = document.createElement('div'); h.className = 'sim';
+    h.appendChild(document.createTextNode(
+      '⚠ SIMULATED critical impact pattern — synthetic demonstration, not fall detection'));
+    box.appendChild(h);
+    box.appendChild(kv('Impact classifier',
+      im.detector_id + ' · ' + (im.provenance || 'synthetic')));
+    box.appendChild(kv('Samples / transients / confirmations',
+      im.samples + ' / ' + im.transients + ' / ' + im.confirmations));
+    if (im.confirmations > 0) {
+      box.appendChild(kv('Confirmed pattern',
+        'transient ' + Number(im.confirmed_transient_value).toFixed(2) +
+        ' → stillness ' + Number(im.confirmed_stillness_value).toFixed(2) +
+        ' within ' + im.confirmed_samples_since_transient + ' sample(s)'));
+    }
+    box.appendChild(kv('Critical alerts delivered', im.critical_alerts_delivered));
+    box.appendChild(kv('Emergency services contacted',
+      im.emergency_services_contacted ? 'yes' : 'no'));
+    const rsn = document.createElement('div'); rsn.className = 'disc';
+    rsn.textContent = 'Classifier: ' + (im.last_reason || '');
+    box.appendChild(rsn);
+    const disc = document.createElement('div'); disc.className = 'disc';
+    disc.textContent = im.disclaimer || '';
+    box.appendChild(disc);
+    el.appendChild(box);
+  }
   if (s.privacy_audit) {
     const p = s.privacy_audit;
     el.appendChild(kv('Consent decisions',
@@ -373,7 +417,12 @@ async function refreshAlerts() {
   for (const a of list) {
     const d = document.createElement('div');
     d.className = 'alert ' + sevClass(a.severity);
-    const msg = document.createElement('div'); msg.textContent = a.message || '(alert)';
+    const msg = document.createElement('div'); msg.className = 'msg';
+    const badge = document.createElement('span');
+    badge.className = 'sevbadge ' + sevClass(a.severity);
+    badge.textContent = a.severity;              // text, not colour alone
+    msg.appendChild(badge);
+    msg.appendChild(document.createTextNode(a.message || '(alert)'));
     const id = document.createElement('div'); id.className = 'id';
     id.textContent = a.alert_id + ' · rule ' + a.rule + ' · severity ' + a.severity +
                      ' · conf ' + Number(a.confidence).toFixed(2) +
@@ -383,6 +432,17 @@ async function refreshAlerts() {
     const why = document.createElement('div'); why.className = 'why';
     why.textContent = a.explanation || '';
     d.appendChild(msg); d.appendChild(id); d.appendChild(why);
+    // H-01s: show the synthetic impact evidence the BACKEND produced, if any.
+    if (a.impact_pattern) {
+      const ie = document.createElement('div'); ie.className = 'why';
+      ie.textContent = 'Simulated impact evidence: pattern ' + a.impact_pattern +
+        ' · transient ' + Number(a.transient_intensity).toFixed(2) +
+        ' → stillness ' + Number(a.stillness_intensity).toFixed(2) +
+        ' within ' + a.samples_since_transient + ' sample(s) · ' +
+        a.supporting_observations + ' supporting observation(s) · emergency ' +
+        'services contacted: ' + (a.emergency_services_contacted ? 'yes' : 'no');
+      d.appendChild(ie);
+    }
     el.appendChild(d);
   }
 }
