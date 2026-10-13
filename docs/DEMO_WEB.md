@@ -135,3 +135,38 @@ A tight script that fits the time limit and shows the product working:
 **Recording tips:** 1080p, show the terminal command and the browser side by
 side or in sequence, keep the cursor visible, and end on the test suite running
 so judges see the engineering depth.
+
+## v17 — Scenario catalogue and explainable alerts (2026-10-13)
+
+The dashboard now includes a **scenario selector** and a **Scenario result**
+card. For each run the page shows, from backend data only:
+
+1. **What happened** — the selected scenario and its description.
+2. **What was detected** — detector counts (`detected` / `not detected` /
+   `inconclusive`) for the synthetic evidence.
+3. **Fusion** — verdict, confidence and contributing inputs. An ambiguous or
+   insufficient result is reported as `inconclusive`/`unavailable`, never as a
+   detection.
+4. **Why an alert was, or was not, generated** — the correlation rule outcome and
+   the number of duplicate alerts suppressed by the dedup/cooldown policy.
+5. **What was persisted** — the count written this run and the durable total.
+6. **Consent** — authorized vs denied acquisitions and whether enforcement held.
+
+The **Alert timeline** is rendered from `GET /api/alerts` (real rows from the
+local SQLite audit store) using `textContent` — the previous hardcoded
+"synthetic simulator presence notice" string is gone.
+
+| Scenario | Intent | Observed result (capture on) |
+|---|---|---|
+| `default` | backwards-compatible original | 10 observations, 1 alert delivered, 13 suppressed, 1 persisted |
+| `normal` | routine activity, no qualifying concern | 1 observation, **no alert**; activity detected (2/2) |
+| `unusual` | repeated activity triggers the rule | 10 observations, 1 alert delivered, 13 suppressed, 1 persisted |
+| `inconclusive` | ambiguous evidence | 1 observation, **no alert**; detector 3 inconclusive, fusion `unavailable` |
+| `consent-denied` | denied acquisition | 1 authorized + 1 denied, **no alert**, `enforcement_ok` true |
+
+Endpoints: `GET /api/scenarios`, `GET /api/alerts`,
+`GET /api/run-scenario[?scenario=<id>][&cycles=N]`. All loopback-only.
+
+The assistant is a **fixed keyword matcher** grounded in the real status and the
+last scenario result. It is not a language model and is not real Alexa+
+intelligence.

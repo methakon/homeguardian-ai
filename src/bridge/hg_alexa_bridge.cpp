@@ -34,6 +34,8 @@
 #include "core/SyntheticActivityDetector.h"
 #include "core/FusionEngine.h"
 #include "core/PrivacyAuditLog.h"
+#include "core/DemoScenarios.h"
+#include "core/DemoScenarioRunner.h"
 #include "bridge/NativeHttp.h"
 #include "hg_web_assets.h"
 
@@ -207,22 +209,111 @@ json response_to_json(const AlexaResponse& r) {
     return j;
 }
 
-// Run the REAL synthetic household scenario through the REAL Application
-// pipeline and persist the resulting alerts. This reuses the exact components
-// Application::run() uses (SimulatorRuntime -> event sink -> Pipeline ->
-// correlation -> AlertPolicy -> PersistenceAudit). It does NOT build a second
-// event-processing engine and does NOT activate any physical sensor: the
-// simulator only ever produces synthetic, in-process observations.
-//
-// Returns a JSON summary of what the scenario actually did (delivered media,
-// events processed, alerts generated/delivered/suppressed, persistence writes)
-// so the web UI displays real results rather than fabricated values.
-json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
-    SimulatorRuntime& sim = app.get_simulator_runtime();
-    RuntimeStatus& st = app.get_status();
+// --- Scenario/demo JSON adapters ---------------------------------------------
+// The scenario EXECUTION lives in core (DemoScenarioRunner), which drives the
+// REAL Application pipeline (SimulatorRuntime -> event sink -> Pipeline ->
+// correlation -> AlertPolicy). This file only adapts the run result to JSON and
+// persists exactly the alerts the pipeline delivered. No alert is fabricated.
 
-    // Bounded, optional phase profiling (HG_PROFILE=1). OFF by default; adds
-    // only numeric timings (no credentials, paths, or media) to the response.
+const char* severity_to_string(Severity s) {
+    switch (s) {
+        case Severity::critical: return "critical";
+        case Severity::warning: return "warning";
+        default: return "info";
+    }
+}
+
+// Non-sensitive projection of one alert (metadata only; never media).
+json alert_to_json(const Alert& a) {
+    json x;
+    x["alert_id"] = a.alert_id;
+    x["severity"] = severity_to_string(a.severity);
+    x["rule"] = a.rule_name;
+    x["message"] = a.message;
+    x["confidence"] = a.confidence;
+    x["detected_at_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+        a.detected_at.time_since_epoch()).count();
+    x["contributing_events"] = a.contributing_event_ids.size();
+    // Explain WHY this alert fired, derived from the alert's own rule/evidence.
+    std::ostringstream os;
+    os << "rule '" << a.rule_name << "' fired on "
+       << a.contributing_event_ids.size()
+       << " authorized synthetic observation(s) within the correlation window";
+    x["explanation"] = os.str();
+    return x;
+}
+
+// Read-only recent alert detail from the REAL durable audit store. Used by the
+// dashboard timeline so it shows backend data instead of hardcoded text.
+json alerts_payload(PersistenceAudit* audit) {
+    json out;
+    out["ok"] = true;
+    out["alerts"] = json::array();
+    out["total"] = 0;
+    if (audit) {
+        for (const auto& a : audit->alerts().find_recent(ALEXA_MAX_ALERTS_RETURNED)) {
+            out["alerts"].push_back(alert_to_json(a));
+        }
+        out["total"] = audit->total_alert_count();
+    }
+    return out;
+}
+
+// The scenario catalogue (ids + human text). No outcomes are pre-baked.
+json scenarios_payload() {
+    json out;
+    out["ok"] = true;
+    out["default"] = default_demo_scenario_id();
+    out["scenarios"] = json::array();
+    for (const auto& s : demo_scenarios()) {
+        json x;
+        x["id"] = s.id;
+        x["title"] = s.title;
+        x["description"] = s.description;
+        x["expectation"] = s.expectation;
+        x["cycles"] = s.cycles;
+        out["scenarios"].push_back(x);
+    }
+    return out;
+}
+
+// Human-readable outcome: why an alert was, or was not, generated.
+std::string outcome_text(const ScenarioRunResult& r) {
+    std::ostringstream os;
+    if (!r.capture_enabled) {
+        return "capture disabled by configuration: nothing was delivered, so no "
+               "observation was processed and no alert could be generated "
+               "(fail-closed).";
+    }
+    if (r.alerts_delivered > 0) {
+        os << "alert delivered by the real correlation/alert policy ("
+           << r.alerts_delivered << " delivered, " << r.alerts_suppressed
+           << " duplicate(s) suppressed).";
+        return os.str();
+    }
+    if (r.detection.ran &&
+        (r.detection.fusion_verdict == "inconclusive" ||
+         r.detection.fusion_verdict == "unavailable")) {
+        os << "no alert: the detection/fusion stage reported '"
+           << r.detection.fusion_verdict
+           << "' (ambiguous or insufficient evidence is never promoted to a "
+              "confirmed alert).";
+        return os.str();
+    }
+    if (r.media_authorized < 2) {
+        os << "no alert: only " << r.media_authorized
+           << " authorized synthetic observation(s) reached the pipeline, below "
+              "the >=2 within-60s correlation threshold.";
+        return os.str();
+    }
+    return "no alert: the correlation condition was not met this run.";
+}
+
+// Run `spec` (optionally with a caller-supplied cycle override) and return the
+// JSON result. Persists exactly the delivered alerts.
+json scenario_result_json(Application& app, PersistenceAudit* audit,
+                          const DemoScenario& base_spec, bool cycles_set,
+                          unsigned cycles_override) {
     const bool prof = [] {
         const char* p = std::getenv("HG_PROFILE");
         return p != nullptr && *p != '\0' && *p != '0';
@@ -236,181 +327,82 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
         pt = now;
     };
 
-    // Capture must be enabled in the loaded config for the scenario to deliver
-    // anything. If the kill switch is off, the gate blocks all delivery — which
-    // is itself the correct, demonstrable fail-closed behaviour.
-    bool capture_on = st.capture_enabled.load();
-    json detection_summary = nlohmann::json();  // populated by the detection stage
-    PrivacyAuditLog privacy_audit;              // H-03: consent-decision audit
-    std::string scenario_error;                 // non-empty if the sim could not run
+    DemoScenario spec = base_spec;
+    if (cycles_set) spec.cycles = static_cast<int>(cycles_override);
 
-    // Fresh-run semantics. The legacy demo spawned a NEW bridge process per
-    // scenario run, so each run reported its own counters and delivered its own
-    // alert. A single long-lived native process must preserve that user-visible
-    // behavior, so reset the per-run state here (simulator-only; never touches
-    // the config kill-switch, consent grants, or the durable audit DB).
-    st.reset_counters();
-    app.get_alert_policy().reset();
-    app.get_pipeline().clear_history();
-    sim.reset_for_reuse();
-    lap("reset");
+    ScenarioRunResult r = run_demo_scenario(app, spec);
+    lap("run");
 
-    if (capture_on) {
-        // Enable capture on the simulator's OWN gate (Application constructs it
-        // disabled by default) and reflect it in RuntimeStatus. This mirrors
-        // exactly what Application::run() does when the config enables capture.
-        sim.set_media_capture_enabled(true);
-        st.capture_enabled.store(true);
-        lap("capture_enable");
-        // Synthetic grants for the simulator's consumers (test consent only).
-        sim.grant_consent(SimulatorRuntime::enabled_device_id(), "sim_alexa_enabled");
-        sim.grant_consent(SimulatorRuntime::assistant_device_id(), "sim_alexa_assistant");
-        lap("consent");
-        // Route every AUTHORIZED synthetic observation through the real
-        // application event path (process_event -> Pipeline -> correlation ->
-        // AlertPolicy). Delivered alerts are then persisted to the SAME audit
-        // DB the status provider reads, so alert history is real and durable.
-        // (The bridge does not call Application::run(), so process_event does
-        // not auto-persist; the scenario persists delivered alerts explicitly.)
-        sim.set_event_sink([&app, audit](const Event& ev) {
-            app.process_event(ev);
-        });
-        // H-03 privacy audit: record every per-consumer delivery decision made
-        // during the scenario (metadata only; never changes delivery).
-        sim.set_privacy_audit(&privacy_audit);
-        // A scenario must never take down the server: a failed start/tick is
-        // reported, not thrown. (The runtime re-arms on the next run.)
-        bool sim_started = true;
-        std::string sim_error;
-        try {
-            sim.start();
-        } catch (const std::exception& e) {
-            sim_started = false;
-            sim_error = e.what();
-        }
-        if (sim_started) {
-            for (int i = 0; i < cycles; ++i) {
-                int delivered = sim.tick();
-                st.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
-            }
-        }
-        sim.shutdown();
-        lap("sim_ticks");
-        if (!sim_started && !sim_error.empty()) {
-            scenario_error = sim_error;  // surfaced in the summary; generic text
-        }
-
-        // Persist a durable alert record for the delivered synthetic condition
-        // so alert history is real and survives restart. This is metadata only
-        // (no raw media). The alert id is unique per scenario run.
-        if (audit && st.alerts_delivered.load() > 0) {
-            static std::atomic<uint64_t> scenario_seq{0};
-            Alert a = Alert::create(
-                "sim-alert-" + std::to_string(scenario_seq.fetch_add(1)),
-                Severity::info, "synthetic simulator presence notice",
-                {}, 0.9, "sim-presence", nlohmann::json::object());
-            audit->record_alert(a);  // best-effort; failure degrades, never throws
-        }
-        lap("persist");
-
-        // --- Detection / fusion stage (Runtime Readiness v8 framework) ---
-        // Exercise the REAL detection path that the demo otherwise bypassed:
-        // SyntheticActivityDetector produces Observations (provenance=synthetic,
-        // explicit detected/not_detected/inconclusive status), FusionEngine
-        // combines them with confidence propagation + conflict handling, and
-        // each Observation flows through the EXISTING event pipeline via
-        // to_event() -> process_event(). No second event engine, no physical
-        // sensor, no raw media. This closes the Observation -> Detection/Fusion
-        // -> Event pipeline link in the demo journey.
-        //
-        // The energy sequence is deterministic so the demo and tests are stable.
-        // It deliberately includes an inconclusive value (near threshold) and
-        // exercises fusion conflict handling so unavailable/inconclusive inputs
-        // are never asserted as detections.
-        SyntheticActivityDetector detector;
-        FusionEngine fusion;
-        std::vector<Observation> observations;
-        std::vector<double> energies = {0.8, 0.75, 0.52, 0.82, 0.78};
-        int det_detected = 0, det_not = 0, det_inconclusive = 0;
-        for (size_t i = 0; i < energies.size(); ++i) {
-            Observation o = detector.detect(
-                "det-obs-" + std::to_string(i), energies[i]);
-            o.validate();
-            observations.push_back(o);
-            switch (o.status) {
-                case DetectorStatus::detected: ++det_detected; break;
-                case DetectorStatus::not_detected: ++det_not; break;
-                default: ++det_inconclusive; break;  // inconclusive / unavailable
-            }
-            // Feed each observation through the REAL pipeline (same path the
-            // simulator events take). Inference events are counted and
-            // correlated by the existing rules; they never fabricate a
-            // detection — the detector's own status governs that.
-            app.process_event(o.to_event());
-        }
-        FusionResult fr = fusion.fuse(observations);
-
-        json det;
-        det["detector_id"] = detector.config().detector_id;
-        det["model_id"] = detector.config().model_id;
-        det["provenance"] = provenance_to_string(Provenance::synthetic);
-        det["observations"] = observations.size();
-        det["detected"] = det_detected;
-        det["not_detected"] = det_not;
-        det["inconclusive"] = det_inconclusive;
-        det["fusion_verdict"] = fusion_verdict_to_string(fr.verdict);
-        det["fusion_confidence"] = fr.confidence;
-        det["fusion_contributing"] = fr.contributing;
-        det["fusion_reason"] = fr.reason;
-        detection_summary = det;  // attached to the summary JSON below
-        lap("detection");
-    }
+    // Persist EXACTLY the alerts the pipeline delivered (metadata only). This
+    // replaces the previous hardcoded placeholder alert.
+    size_t persisted_now = 0;
+    if (audit) persisted_now = persist_run_alerts(*audit, r);
+    lap("persist");
 
     json j;
     j["ok"] = true;
-    j["scenario"] = "synthetic-household-observation";
-    j["synthetic"] = true;          // always synthetic; no physical sensor
-    j["capture_enabled"] = capture_on;
-    j["cycles"] = capture_on ? cycles : 0;
-    j["media_authorized"] = st.media_authorized.load();
-    j["media_denied"] = st.media_denied.load();
-    j["events_processed"] = st.events_processed.load();
-    j["alerts_generated"] = st.alerts_generated.load();
-    j["alerts_delivered"] = st.alerts_delivered.load();
-    j["alerts_suppressed"] = st.alerts_suppressed.load();
-    // Durable alert history from the real audit store.
-    if (audit) {
-        j["persisted_alert_count"] = audit->total_alert_count();
+    j["synthetic"] = true;                 // always synthetic; no physical sensor
+    j["scenario_id"] = r.scenario_id;
+    j["title"] = r.title;
+    j["description"] = r.description;
+    j["expectation"] = r.expectation;
+    j["capture_enabled"] = r.capture_enabled;
+    j["cycles"] = r.capture_enabled ? r.cycles : 0;
+    j["media_authorized"] = r.media_authorized;
+    j["denied_acquisitions"] = r.denied_acquisitions;
+    j["events_processed"] = r.events_processed;
+    j["alerts_generated"] = r.alerts_generated;
+    j["alerts_delivered"] = r.alerts_delivered;
+    j["alerts_suppressed"] = r.alerts_suppressed;
+    j["alerts_persisted_this_run"] = persisted_now;
+    if (audit) j["persisted_alert_count"] = audit->total_alert_count();
+
+    // REAL delivered alerts (rule/policy output), non-sensitive.
+    j["alerts"] = json::array();
+    for (const auto& a : r.delivered_alerts) {
+        j["alerts"].push_back(alert_to_json(a));
     }
-    // Detection / fusion summary (only present when the detection stage ran,
-    // i.e. capture was on). Absent when capture is off (fail-closed).
-    if (!detection_summary.is_null()) {
-        j["detection"] = detection_summary;
+
+    // Detection / fusion summary (only when the stage ran).
+    if (r.detection.ran) {
+        json d;
+        d["detector_id"] = r.detection.detector_id;
+        d["model_id"] = r.detection.model_id;
+        d["provenance"] = r.detection.provenance;
+        d["observations"] = r.detection.observations;
+        d["detected"] = r.detection.detected;
+        d["not_detected"] = r.detection.not_detected;
+        d["inconclusive"] = r.detection.inconclusive;
+        d["fusion_verdict"] = r.detection.fusion_verdict;
+        d["fusion_confidence"] = r.detection.fusion_confidence;
+        d["fusion_contributing"] = r.detection.fusion_contributing;
+        d["fusion_reason"] = r.detection.fusion_reason;
+        j["detection"] = d;
     }
-    // Privacy audit (H-03): the consent-decision trail for this scenario run.
-    // Metadata only; reports how many data-access decisions were authorized,
-    // denied, and how many acquisitions occurred, plus the enforcement invariant.
+
+    // Privacy audit (H-03): consent-decision trail for this run (metadata only).
     {
-        const auto c = privacy_audit.counts();
         json pa;
-        pa["entries"] = c.total;
-        pa["authorized"] = c.authorized;
-        pa["denied"] = c.denied;
-        pa["acquired"] = c.acquired;
-        pa["enforcement_ok"] = privacy_audit.verify_enforcement();
-        pa["capacity"] = privacy_audit.capacity();
+        pa["entries"] = r.privacy.entries;
+        pa["authorized"] = r.privacy.authorized;
+        pa["denied"] = r.privacy.denied;
+        pa["acquired"] = r.privacy.acquired;
+        pa["enforcement_ok"] = r.privacy.enforcement_ok;
+        pa["capacity"] = r.privacy.capacity;
         j["privacy_audit"] = pa;
     }
-    // If capture was off, say so explicitly (fail-closed demonstration).
-    if (!capture_on) {
+
+    j["outcome"] = outcome_text(r);
+
+    if (!r.error.empty()) {
+        j["error"] = "simulator_unavailable";
+        j["detail"] = r.error;             // generic; no paths/tokens/PII
+    }
+    if (!r.capture_enabled) {
         j["note"] = "capture disabled by configuration; no observations were "
                     "delivered (consent/capture gate blocked them)";
     }
-    if (!scenario_error.empty()) {
-        j["error"] = "simulator_unavailable";
-        j["detail"] = scenario_error;  // generic; no paths/tokens/PII
-    }
-    if (prof) j["timing_ms"] = timing;  // phase breakdown; off by default
+    if (prof) j["timing_ms"] = timing;
     return j;
 }
 
@@ -441,7 +433,7 @@ json contract_call(const std::string& token, const char* op,
 int run_http_mode(Application& app, PersistenceAudit* audit,
                   IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider,
                   const std::string& token, uint16_t port) {
-    auto handler = [&](std::string_view op, unsigned cycles) -> std::string {
+    auto handler = [&](const hg_native_http::HandlerRequest& req) -> std::string {
         const bool prof = [] {
             const char* p = std::getenv("HG_PROFILE");
             return p != nullptr && *p != '\0' && *p != '0';
@@ -455,18 +447,35 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
             ht[n] = std::chrono::duration<double, std::milli>(now - pt).count();
             pt = now;
         };
-        if (op == "status") {
+        if (req.op == "status") {
             out["status"] = contract_call(token, "status", verifier, provider);
             lap("status_call");
             out["summary"] = contract_call(token, "alert_summary", verifier, provider);
             lap("summary_call");
-        } else if (op == "scenario") {
-            out["scenario"] = run_demo_scenario(app, audit, static_cast<int>(cycles));
-            lap("scenario_total");
-            out["status"] = contract_call(token, "status", verifier, provider);
-            lap("status_call");
-            out["summary"] = contract_call(token, "alert_summary", verifier, provider);
-            lap("summary_call");
+        } else if (req.op == "scenario") {
+            const DemoScenario* spec = req.scenario.empty()
+                ? find_demo_scenario(default_demo_scenario_id())
+                : find_demo_scenario(req.scenario);
+            if (spec == nullptr) {
+                // Unknown (but syntactically valid) scenario id: rejected.
+                out["ok"] = false;
+                out["error"] = "unknown_scenario";
+                out["scenario_id"] = std::string(req.scenario);
+            } else {
+                out["scenario"] = scenario_result_json(
+                    app, audit, *spec, req.cycles_set, req.cycles);
+                lap("scenario_total");
+                out["status"] = contract_call(token, "status", verifier, provider);
+                lap("status_call");
+                out["summary"] = contract_call(token, "alert_summary", verifier, provider);
+                lap("summary_call");
+            }
+        } else if (req.op == "alerts") {
+            out = alerts_payload(audit);
+            lap("alerts");
+        } else if (req.op == "scenarios") {
+            out = scenarios_payload();
+            lap("scenarios");
         } else {
             out["ok"] = false;
             out["error"] = "unknown_operation";
@@ -607,16 +616,34 @@ int main(int argc, char* argv[]) {
         //   run_scenario [cycles]
         // Reuses the real Application pipeline; persists alerts; returns a
         // real summary. Never activates a physical sensor.
+        // Control line: run a real synthetic scenario.
+        // Format: run_scenario [cycles] [scenario_id]
+        // Reuses the real Application pipeline; persists the REAL delivered
+        // alerts; returns a real summary. Never activates a physical sensor.
         if (line.rfind("run_scenario", 0) == 0) {
             int cycles = 5;
+            bool cycles_set = false;
+            std::string sid;
             std::istringstream iss(line);
             std::string cmd;
             iss >> cmd;
-            if (iss >> cycles) { /* parsed */ }
+            if (iss >> cycles) cycles_set = true;
+            if (iss >> sid) { /* optional scenario id */ }
             if (cycles < 0) cycles = 0;
             if (cycles > 100) cycles = 100;  // bound
-            json out = run_demo_scenario(app, audit, cycles);
-            std::cout << out.dump() << "\n";
+            const DemoScenario* spec = sid.empty()
+                ? find_demo_scenario(default_demo_scenario_id())
+                : find_demo_scenario(sid);
+            json sout;
+            if (spec == nullptr) {
+                sout["ok"] = false;
+                sout["error"] = "unknown_scenario";
+                sout["scenario_id"] = sid;
+            } else {
+                sout = scenario_result_json(app, audit, *spec, cycles_set,
+                                            static_cast<unsigned>(cycles));
+            }
+            std::cout << sout.dump() << "\n";
             std::cout.flush();
             continue;
         }

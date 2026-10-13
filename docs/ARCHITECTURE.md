@@ -1043,3 +1043,36 @@ be a loopback authority (DNS-rebinding defence); non-loopback `Origin` rejected
 HTML; bounded sizes (8192 B request, 128 B path) and 3 s client timeouts; one
 request at a time. Details and the simulator-vs-production distinction:
 `docs/SECURITY_READINESS_V8.md`.
+
+## v17 — Scenario catalogue, runner and explainable alerts (2026-10-13)
+
+    DemoScenario (core/DemoScenarios)            data only: cycles, consent, energies
+            |
+            v
+    run_demo_scenario(Application&, spec)        core/DemoScenarioRunner
+            |
+            +--> SimulatorRuntime: reset counters + CONSENT STATE, grant/withdraw,
+            |       start, N x tick()  -- each AUTHORIZED observation -> event sink
+            |
+            +--> Application::process_event()    (the EXISTING path)
+            |       -> Pipeline (validation + correlation)
+            |       -> AlertPolicy (dedup/cooldown)
+            |       -> delivered alert -> Application alert sink (passive observer)
+            |
+            +--> SyntheticActivityDetector + FusionEngine (detection stage)
+            |       observations -> to_event() -> same pipeline (inference events)
+            |
+            v
+    ScenarioRunResult  ->  persist_run_alerts(PersistenceAudit&, result)
+                                writes EXACTLY the delivered alerts (real output)
+
+- `Application::set_alert_sink()` is a passive observer invoked only for
+  DELIVERED alerts. It cannot change delivery, ordering, or persistence.
+- `SimulatorRuntime::reset_consent_state()` clears only the synthetic in-memory
+  consent repo; it never touches durable state.
+- HTTP: `GET /api/run-scenario[?scenario=<id>][&cycles=N]`, `GET /api/alerts`,
+  `GET /api/scenarios`, plus the existing `/`, `/index.html`, `/api/health`,
+  `/api/status`. All loopback-only, GET-only, with the H-04 protections.
+- The dashboard is vanilla HTML/CSS/JS, embedded in the binary; it renders
+  backend-derived values using `textContent` / `createElement` (never `innerHTML`
+  with backend strings).

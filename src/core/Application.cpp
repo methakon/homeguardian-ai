@@ -247,6 +247,10 @@ void Application::process_event(const Event& event) {
                     status_.persistence_healthy.store(false);
                 }
             }
+            // Optional passive observer: hand the DELIVERED alert to the sink
+            // (e.g. the demo scenario runner captures the real alert so it — and
+            // only it — is persisted/shown). Never changes delivery.
+            if (alert_sink_) alert_sink_(*alert);
         } else if (suppressed) {
             status_.alerts_suppressed.fetch_add(1);
             Logger::get()->info("Alert suppressed (dedup/cooldown): {}", alert->message);
@@ -284,6 +288,10 @@ PersistenceAudit* Application::get_persistence() {
 
 RuntimeStatus& Application::get_status() {
     return status_;
+}
+
+void Application::set_alert_sink(std::function<void(const Alert&)> sink) {
+    alert_sink_ = std::move(sink);
 }
 
 AppState Application::state() const {

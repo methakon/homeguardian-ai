@@ -1764,3 +1764,70 @@ databases, logs, or binaries tracked.
 
 **No P0 blockers remain.** Remaining items are user-only (record/upload the video,
 capture screenshots, complete and verify the Devpost submission).
+
+## v17: multi-scenario household-safety demonstration with explainable alerts (2026-10-13)
+
+**Milestone.** Implement a small, deterministic SCENARIO CATALOGUE (A normal, B
+unusual, C inconclusive, D consent-denied, plus the backwards-compatible
+default), run every scenario through the REAL pipeline, and make the dashboard
+show backend-derived alert detail instead of hardcoded text.
+
+**What was wrong before (verified defects found this milestone):**
+
+1. **The persisted alert was a hardcoded placeholder.** `hg_alexa_bridge.cpp`
+   constructed `Alert::create("sim-alert-N", Severity::info, "synthetic
+   simulator presence notice", {}, 0.9, "sim-presence", {})` and wrote THAT to
+   SQLite whenever `alerts_delivered > 0` — it was not the alert the pipeline
+   produced. The dashboard then ALSO hardcoded the same string
+   (`src/web/index.html`), so the "why" shown to a user was a literal in two
+   places and was never derived from backend state.
+   *Fix:* `Application` gained a passive `set_alert_sink()` observer invoked only
+   for DELIVERED alerts; the scenario runner captures those real alerts and
+   `persist_run_alerts()` writes exactly them. The dashboard now renders
+   `/api/alerts` (real durable rows). No fabricated alert is inserted anywhere.
+
+2. **Consent state leaked between scenario runs in one process.** Consent
+   grants/withdrawals live in the simulator's in-memory repo and survived
+   `reset_for_reuse()`. In the long-lived demo process, running `unusual` (both
+   consumers granted) and then `inconclusive` (one consumer) produced TWO
+   observations and an alert — the `inconclusive` scenario silently stopped being
+   inconclusive. Order of execution changed results.
+   *Fix:* added `SimulatorRuntime::reset_consent_state()` (clears the synthetic
+   repo only) and the runner calls it at the start of every scenario, so each
+   scenario is deterministic and isolated. Regression test:
+   "scenarios are isolated within one long-lived process".
+
+**Behaviour noted (not a defect).** The correlation rule is re-evaluated against
+the recent-event window on EVERY processed event. After the 10 authorized
+observations of a 5-cycle scenario the window still holds >=2, so the 5
+detection-stage inference events also re-fire the rule: 15 events -> 14 rule
+firings. The alert policy delivers exactly ONE and deduplicates the other 13, so
+the user-visible behaviour is correct; only the `alerts_generated` counter is
+inflated. Documented and asserted as measured behaviour rather than "fixed", to
+avoid changing established semantics late in the schedule.
+
+**Detection-stage energies.** Threshold 0.5, min_quality 0.3
+(quality = min(1, |e-0.5|/0.3)). Energies within 0.09 of 0.5 are inconclusive.
+Scenario C uses {0.52, 0.49, 0.51} -> 3 inconclusive observations and fusion
+`unavailable` ("only 0 usable input(s)"), i.e. the system refuses to invent a
+verdict. Scenario B uses {0.95, 0.90, 0.88, 0.92, 0.85} -> 5 detected, fusion
+`detected` (confidence 1.0).
+
+**Security/behaviour changes.** `/api/run-scenario` now accepts a strictly
+allowlisted `scenario=` token in addition to `cycles=`; unknown/malformed tokens
+are rejected (400 for malformed syntax, `{"ok":false,"error":"unknown_scenario"}`
+for a well-formed but unknown id, consistent with the existing API-error
+convention). New read-only routes `/api/alerts` and `/api/scenarios`. The Alexa
+contract was deliberately left AGGREGATE-ONLY (it never returns alert detail):
+the demo dashboard reads its own loopback `/api/alerts` from the durable store, so
+the contract's documented privacy property is unchanged.
+
+**Measured footprint (like-for-like Release builds).** Bridge binary 3,185,400 B
+vs 3,128,392 B (v16) = **+57 KB / +1.8 %**. Idle RSS 6,864 kB; after a scenario
+7,408 kB; peak 7,408 kB; 1 thread; 1 process. Scenario latency ~67-83 ms
+(dominated by the retained SQLite `synchronous=FULL` fsync). `synchronous=FULL`
+unchanged.
+
+**Verification.** 320 C++ test cases / 2,409 assertions pass; ASan/UBSan clean;
+node-free native demo; loopback-only; unknown/malformed scenario rejected;
+duplicate suppression; persistence + restart; capture-off fail-closed.

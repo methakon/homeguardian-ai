@@ -134,6 +134,13 @@ public:
     // fresh process per run, so this preserves that user-visible behavior).
     void reset_for_reuse();
 
+    // Clear ALL synthetic consent records (grants and withdrawals) so a new
+    // scenario starts from a clean consent state instead of inheriting a
+    // previous run's grants/withdrawals. Simulator-only: it touches only the
+    // in-memory synthetic repo. Used by the demo scenario runner so each
+    // scenario in a long-lived process is deterministic and isolated.
+    void reset_consent_state();
+
     // --- Introspection (for status reporting + tests) ---
     size_t consumer_count() const;
     size_t delivered_count(const std::string& consumer_id) const;

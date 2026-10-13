@@ -248,6 +248,12 @@ void SimulatorRuntime::reset_for_reuse() {
     shut_down_ = false;
 }
 
+void SimulatorRuntime::reset_consent_state() {
+    // Clear synthetic consent records only (grants + withdrawals). The repo is
+    // in-memory and simulator-only; no durable consent is affected.
+    repo_.delete_all();
+}
+
 size_t SimulatorRuntime::consumer_count() const {
     return broker_ ? broker_->consumer_count() : 0;
 }

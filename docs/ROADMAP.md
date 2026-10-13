@@ -297,3 +297,20 @@ criteria; the structured logger already emits a durable record.
 local transport scope) is DONE; Phase N N-01..N-07 are DONE; Phase O established
 the v15 performance root cause and the durability decision is now resolved with
 **no code-level durability change**.
+
+## Phase Q — Multi-scenario demo with explainable alerts (added 2026-10-13, v17)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| Q-01 | Deterministic scenario catalogue (core) | L-09 | Data-only fixtures (no pre-baked outcomes); ids form an allowlist; default entry preserved | DONE |
+| Q-02 | Scenario runner through the REAL pipeline | Q-01 | Runs SimulatorRuntime -> event sink -> Pipeline -> correlation -> AlertPolicy; no second engine | DONE |
+| Q-03 | Scenario A normal | Q-02 | Activity detected, but no alert (below the >=2 correlation threshold) | DONE |
+| Q-04 | Scenario B unusual | Q-02 | Alert traceable to the rule/evidence; duplicates suppressed | DONE |
+| Q-05 | Scenario C inconclusive | Q-02 | Detector + fusion preserve inconclusive/unavailable; no alert, no fabricated confidence | DONE |
+| Q-06 | Scenario D consent denied | Q-02 | Denied acquisition blocked; no event from the denied consumer; enforcement_ok true | DONE |
+| Q-07 | Real alerts captured + persisted | Q-02 | The alert persisted is the pipeline output (the old hardcoded placeholder is removed) | DONE |
+| Q-08 | Scenario isolation in one process | Q-02 | Consent state reset per run; results independent of execution order | DONE |
+| Q-09 | Allowlisted scenario selection over HTTP | Q-02 | scenario= strictly validated; unknown rejected; Host/Origin/loopback preserved | DONE |
+| Q-10 | Dashboard: selector + backend-derived detail + safe DOM | Q-07 | Real alert severity/rule/message/explanation; textContent only; explains what/why/persisted/consent | DONE |
+| Q-11 | Honest simulated assistant | Q-10 | Answers grounded in real status + last scenario; explicitly not a language model | DONE |
+| Q-12 | Tests + docs + footprint | Q-03..Q-11 | Per-scenario tests, isolation, persistence, malformed ids, injection-safety; footprint documented | DONE |

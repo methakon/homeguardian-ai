@@ -30,10 +30,22 @@ inline constexpr size_t kMaxHeaderBytes = 8192;
 inline constexpr size_t kMaxPathBytes = 128;
 inline constexpr size_t kRecvChunk = 2048;
 
-using Handler = std::function<std::string(std::string_view, unsigned)>;
-// Handler receives "status" or "scenario" and MUST return JSON. The native
-// integration calls the existing C++ backend (Application/SimulatorRuntime/
-// SQLite); it must never synthesize data.
+// A parsed, validated routing result handed to the handler.
+struct HandlerRequest {
+    std::string_view op;        // "status" | "scenario" | "alerts" | "scenarios"
+    std::string_view scenario;  // scenario token; "" => caller's default
+    unsigned cycles = 5;        // simulator ticks (valid only when cycles_set)
+    bool cycles_set = false;    // true when the caller explicitly set cycles
+};
+
+using Handler = std::function<std::string(const HandlerRequest&)>;
+// Handler receives a validated request and MUST return JSON. Operations:
+//   "status"    -- read-only status/summary
+//   "scenario"  -- run the selected synthetic scenario (uses `scenario`/`cycles`)
+//   "alerts"    -- read-only recent alert detail
+//   "scenarios" -- read-only scenario catalogue
+// The native integration calls the existing C++ backend (Application/
+// SimulatorRuntime/SQLite); it must never synthesize data.
 
 // Stop flag for clean shutdown. A signal handler sets this (async-signal-safe);
 // the accept loop notices it within one listener-timeout tick.
@@ -158,23 +170,64 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         return response(200, "application/json",
                         R"({"ok":true,"status":"up","simulated":true})");
     if (path == "/api/status")
-        return response(200, "application/json", handler("status", 0));
+        return response(200, "application/json", handler({"status", "", 5, false}));
+    if (path == "/api/alerts")
+        return response(200, "application/json", handler({"alerts", "", 5, false}));
+    if (path == "/api/scenarios")
+        return response(200, "application/json", handler({"scenarios", "", 5, false}));
     if (path == "/api/run-scenario" ||
-        path.substr(0, 25) == "/api/run-scenario?cycles=") {
-        unsigned cycles = 5;
-        if (path != "/api/run-scenario") {
-            const auto value = path.substr(25);
-            if (value.empty() || value.size() > 3)
-                return json_error(400, "invalid_cycles");
-            cycles = 0;
-            for (char ch : value) {
-                if (ch < '0' || ch > '9')
-                    return json_error(400, "invalid_cycles");
-                cycles = cycles * 10 + static_cast<unsigned>(ch - '0');
+        path.substr(0, 18) == "/api/run-scenario?") {
+        // State-advancing route: bounded, allowlisted query only. Accepts at
+        // most one `cycles=<digits>` and one `scenario=<token>`; any other key,
+        // duplicate, empty value, or malformed token is rejected 400.
+        HandlerRequest req;
+        req.op = "scenario";
+        const auto qmark = path.find('?');
+        if (qmark != std::string_view::npos) {
+            std::string_view q = path.substr(qmark + 1);
+            if (q.empty()) return json_error(400, "invalid_query");
+            bool scenario_seen = false;
+            while (!q.empty()) {
+                const auto amp = q.find('&');
+                const std::string_view pair =
+                    amp == std::string_view::npos ? q : q.substr(0, amp);
+                q = amp == std::string_view::npos ? std::string_view{}
+                                                  : q.substr(amp + 1);
+                if (pair.empty()) return json_error(400, "invalid_query");
+                const auto eq = pair.find('=');
+                if (eq == std::string_view::npos)
+                    return json_error(400, "invalid_query");
+                const std::string_view key = pair.substr(0, eq);
+                const std::string_view val = pair.substr(eq + 1);
+                if (key == "cycles") {
+                    if (req.cycles_set || val.empty() || val.size() > 3)
+                        return json_error(400, "invalid_cycles");
+                    req.cycles_set = true;
+                    req.cycles = 0;
+                    for (char ch : val) {
+                        if (ch < '0' || ch > '9')
+                            return json_error(400, "invalid_cycles");
+                        req.cycles = req.cycles * 10 +
+                                     static_cast<unsigned>(ch - '0');
+                    }
+                    if (req.cycles > 100)
+                        return json_error(400, "invalid_cycles");
+                } else if (key == "scenario") {
+                    if (scenario_seen || val.empty() || val.size() > 32)
+                        return json_error(400, "invalid_scenario");
+                    scenario_seen = true;
+                    for (char ch : val) {
+                        const bool ok = (ch >= 'a' && ch <= 'z') ||
+                                        (ch >= '0' && ch <= '9') || ch == '-';
+                        if (!ok) return json_error(400, "invalid_scenario");
+                    }
+                    req.scenario = val;
+                } else {
+                    return json_error(400, "invalid_query");
+                }
             }
-            if (cycles > 100) return json_error(400, "invalid_cycles");
         }
-        return response(200, "application/json", handler("scenario", cycles));
+        return response(200, "application/json", handler(req));
     }
     return json_error(404, "not_found");
 }

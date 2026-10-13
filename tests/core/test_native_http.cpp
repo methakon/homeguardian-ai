@@ -20,13 +20,17 @@ namespace {
 struct Rec {
     int calls = 0;
     std::string last_op;
+    std::string last_scenario;
     unsigned last_cycles = 0;
+    bool last_cycles_set = false;
 };
 Handler recording_handler(Rec& r) {
-    return [&r](std::string_view op, unsigned cycles) {
+    return [&r](const HandlerRequest& req) {
         ++r.calls;
-        r.last_op = std::string(op);
-        r.last_cycles = cycles;
+        r.last_op = std::string(req.op);
+        r.last_scenario = std::string(req.scenario);
+        r.last_cycles = req.cycles;
+        r.last_cycles_set = req.cycles_set;
         return std::string("{\"ok\":true}");
     };
 }
@@ -221,4 +225,70 @@ TEST_CASE("NativeHttp: loopback authority helper is strict", "[nativehttp][h04]"
     REQUIRE_FALSE(is_loopback_authority("example.com"));
     REQUIRE_FALSE(is_loopback_authority("127.0.0.1.evil"));
     REQUIRE_FALSE(is_loopback_authority("localhost.evil"));
+}
+
+// ---------------------------------------------------------------------------
+// v17: scenario selection (allowlisted query), read-only demo routes.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("NativeHttp: scenario selection is parsed and passed to the handler",
+          "[nativehttp][h04][scenario]") {
+    Rec h; auto handler = recording_handler(h);
+
+    auto d = dispatch(req("GET /api/run-scenario?scenario=unusual HTTP/1.1"), "<html>", handler);
+    REQUIRE(starts_with(d, "HTTP/1.1 200 OK"));
+    REQUIRE(h.calls == 1);
+    REQUIRE(h.last_op == "scenario");
+    REQUIRE(h.last_scenario == "unusual");
+    REQUIRE_FALSE(h.last_cycles_set);   // cycles not given -> spec default applies
+
+    auto b = dispatch(req("GET /api/run-scenario?scenario=normal&cycles=3 HTTP/1.1"), "<html>", handler);
+    REQUIRE(starts_with(b, "HTTP/1.1 200 OK"));
+    REQUIRE(h.last_scenario == "normal");
+    REQUIRE(h.last_cycles == 3);
+    REQUIRE(h.last_cycles_set);
+
+    auto c = dispatch(req("GET /api/run-scenario?cycles=7&scenario=consent-denied HTTP/1.1"), "<html>", handler);
+    REQUIRE(starts_with(c, "HTTP/1.1 200 OK"));
+    REQUIRE(h.last_scenario == "consent-denied");
+    REQUIRE(h.last_cycles == 7);
+}
+
+TEST_CASE("NativeHttp: malformed scenario identifiers are rejected 400",
+          "[nativehttp][h04][scenario]") {
+    Rec h; auto handler = recording_handler(h);
+    for (const char* p : {
+             "/api/run-scenario?scenario=",
+             "/api/run-scenario?scenario=NORMAL",
+             "/api/run-scenario?scenario=ab!",
+             "/api/run-scenario?scenario=a.b",
+             "/api/run-scenario?scenario=a/b",
+             "/api/run-scenario?scenario=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}) {
+        auto out = dispatch(req(std::string("GET ") + p + " HTTP/1.1"), "<html>", handler);
+        REQUIRE(starts_with(out, "HTTP/1.1 400"));
+    }
+    REQUIRE(h.calls == 0);  // never reached the handler
+}
+
+TEST_CASE("NativeHttp: duplicate and unknown query keys are rejected 400",
+          "[nativehttp][h04][scenario]") {
+    Rec h; auto handler = recording_handler(h);
+    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?scenario=a&scenario=b HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=1&cycles=2 HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?foo=1 HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?scenario HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario? HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(h.calls == 0);
+}
+
+TEST_CASE("NativeHttp: read-only demo routes reach the handler",
+          "[nativehttp][h04][scenario]") {
+    Rec h; auto handler = recording_handler(h);
+    auto a = dispatch(req("GET /api/alerts HTTP/1.1"), "<html>", handler);
+    REQUIRE(starts_with(a, "HTTP/1.1 200 OK"));
+    REQUIRE(h.last_op == "alerts");
+    auto c = dispatch(req("GET /api/scenarios HTTP/1.1"), "<html>", handler);
+    REQUIRE(starts_with(c, "HTTP/1.1 200 OK"));
+    REQUIRE(h.last_op == "scenarios");
+    REQUIRE(h.calls == 2);
 }

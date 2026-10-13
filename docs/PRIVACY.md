@@ -746,3 +746,29 @@ enforcement verified") under strict privacy boundaries:
 - **No new data access.** The audit observes existing decisions at the consent
   boundary; it introduces no new sensing, no new persistence of personal data,
   and no covert identification or tracking.
+
+## v17 — scenario demo exposure and consent isolation (2026-10-13)
+
+**What the demo now exposes (loopback only).**
+- `/api/alerts` returns the most recent alert METADATA from the local audit
+  store: `alert_id`, `severity`, `rule`, `message`, `confidence`, `detected_at`,
+  `contributing_events`, and a derived explanation string. No media, no
+  transcripts, no embeddings, no personal identifiers. Alert messages in this
+  build are synthetic simulator strings.
+- `/api/scenarios` returns the scenario catalogue (static text).
+- `/api/run-scenario?scenario=<id>` accepts only tokens from a fixed allowlist;
+  it is loopback-bound and subject to the existing Host/Origin checks.
+
+**The Alexa-facing contract is unchanged and remains AGGREGATE-ONLY** (`state`,
+`capture_enabled`, `alert_count`, `highest_severity`, capped `alert_ids`). Per-alert
+detail is available only on the local demo surface, never through the contract.
+
+**Consent.** Each scenario run clears the synthetic in-memory consent repo first
+(`reset_consent_state()`), so a previous run's grants or withdrawals cannot
+influence a later run. The fail-closed gate behaviour is unchanged, and the
+privacy audit (`enforcement_ok`) is evaluated per run: in every scenario,
+acquisitions equal authorizations (no acquisition without consent). Denied
+acquisitions are counted and surfaced.
+
+**No change** to: `synchronous=FULL`, WAL, the bounded (256) audit ring, token
+access control, loopback binding, or the consent decision path.

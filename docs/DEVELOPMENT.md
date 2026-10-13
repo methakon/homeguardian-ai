@@ -315,3 +315,30 @@ curl -s 'http://127.0.0.1:<port>/api/run-scenario?cycles=5' | python3 -m json.to
 ```
 
 Findings and the reproduction methodology: `docs/PERF_SCENARIO_LATENCY_V15.md`.
+
+## v17 — Running the scenarios (2026-10-13)
+
+Scenarios are executed by `src/core/DemoScenarioRunner.cpp` and can be driven
+three ways:
+
+1. **Web demo (default):** `bash demo.sh`, then pick a scenario in the dashboard
+   selector and click "Run scenario". The page calls
+   `/api/run-scenario?scenario=<id>`.
+2. **HTTP directly:**
+   `curl "http://127.0.0.1:<port>/api/run-scenario?scenario=unusual"`.
+   `cycles=N` may be added to override the scenario's own cycle count.
+3. **NDJSON bridge (tests):** `run_scenario [cycles] [scenario_id]` on stdin.
+
+Catalogue: `default` (backwards-compatible), `normal`, `unusual`,
+`inconclusive`, `consent-denied` (see `docs/DEMO_WEB.md`). Unknown ids are
+rejected.
+
+Tests: the scenario suite is `tests/core/test_demo_scenarios.cpp` and the
+allowlist/route tests are in `tests/core/test_native_http.cpp`.
+
+    cd hg_build && cmake . && make -j4 homeguardian_tests
+    HG_SOURCE_DIR=<repo> ./homeguardian_tests "[scenario]"
+
+Note: scenario tests construct `Application`, which is a process-wide singleton;
+each test scopes its own instance. `Logger::initialize("error")` is required
+because the alert path logs.

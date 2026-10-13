@@ -233,3 +233,36 @@ scope. Correctness and durability take priority over demo latency.
 ~50–180 ms (dominated by one durable commit). No code change; the v15
 investigation and the default-off `HG_PROFILE` instrumentation remain as
 documentation/tooling.
+
+## D-demo-scenarios: deterministic scenario catalogue + real-alert persistence (2026-10-13, v17)
+
+**Decision.** The demo is a small, deterministic SCENARIO CATALOGUE
+(`src/core/DemoScenarios.{h,cpp}`) executed by a core runner
+(`src/core/DemoScenarioRunner.{h,cpp}`) that drives the REAL Application
+pipeline. Scenario definitions are data (cycles, synthetic consent, detection
+energies); they contain NO pre-baked alert outcomes.
+
+**Why.** The previous demo produced one hardcoded alert
+(`"synthetic simulator presence notice"` written directly to SQLite whenever an
+alert had been delivered) and the dashboard hardcoded the same text. That
+undermined the project's central claim (detection -> alert -> explanation) and
+made the "why" unverifiable.
+
+**Consequences.**
+- `Application` exposes a passive `set_alert_sink()` observer; the runner captures
+  the alerts the pipeline actually DELIVERED and `persist_run_alerts()` writes
+  exactly those. No fabricated alert is ever inserted.
+- `SimulatorRuntime::reset_consent_state()` clears the synthetic consent repo at
+  the start of each scenario, so scenarios are deterministic and independent of
+  execution order in the long-lived demo process.
+- The Alexa contract stays AGGREGATE-ONLY (its documented privacy property). The
+  dashboard gets per-alert detail from a new loopback-only `/api/alerts` served
+  from the durable store, not from the contract.
+- `/api/run-scenario` gained a strictly allowlisted `scenario=` token; `/api/scenarios`
+  lists the catalogue. Unknown scenario ids are rejected.
+
+**Alternatives rejected.** (a) Extending the Alexa contract to return per-alert
+detail — rejected: it would weaken that boundary's documented aggregate-only
+guarantee. (b) Keeping the hardcoded alert — rejected: unverifiable and
+misleading. (c) A separate scenario engine — rejected: the mission forbids a
+second event engine.

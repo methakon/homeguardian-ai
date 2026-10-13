@@ -124,6 +124,8 @@ add_executable(homeguardian
     src/core/Observation.cpp
     src/core/PrivacyAuditLog.cpp
     src/core/AnomalyDetector.cpp
+    src/core/DemoScenarios.cpp
+    src/core/DemoScenarioRunner.cpp
     src/core/FusionEngine.cpp
     src/core/SyntheticActivityDetector.cpp
     src/core/AlexaCredentialStore.cpp
@@ -165,6 +167,8 @@ add_executable(hg_alexa_bridge
     src/core/Observation.cpp
     src/core/PrivacyAuditLog.cpp
     src/core/AnomalyDetector.cpp
+    src/core/DemoScenarios.cpp
+    src/core/DemoScenarioRunner.cpp
     src/core/FusionEngine.cpp
     src/core/SyntheticActivityDetector.cpp
     src/core/EventValidator.cpp
@@ -231,10 +235,12 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_native_http.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_demo_scenarios.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Config.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Application.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Logger.cpp
         ${CMAKE_SOURCE_DIR}/src/core/EventValidator.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SimulatedEventSource.cpp
@@ -254,6 +260,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/Observation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/PrivacyAuditLog.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AnomalyDetector.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/DemoScenarios.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/DemoScenarioRunner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/FusionEngine.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SyntheticActivityDetector.cpp
         ${CMAKE_SOURCE_DIR}/src/persistence/SQLiteDatabase.cpp
