@@ -1253,3 +1253,51 @@ directory, corrupt file), the bridge keeps serving: `/api/status` answers
 `{"error":"unavailable","ok":false}`, read routes fail closed, a scenario still
 produces real detection evidence but claims **no** persistence. Nothing is
 fabricated to mask the degraded state.
+
+
+## Distributed target architecture (owner-directed, 2026-10-13)
+
+The simulator-first product (v21) remains intact and is the hackathon fallback.
+The target product adds a distributed topology around the SAME core:
+
+```
+  Android node(s)                        Docker host
+  ┌──────────────────────┐               ┌───────────────────────────────────┐
+  │ Camera1/Camera2       │   D-03        │ hub container (non-root, caps off)│
+  │ AAudio microphone     │  authenticated│  ┌─────────────────────────────┐  │
+  │ ConsentGuardedDevice  │◄──encrypted──►│  │ hg_alexa_bridge (C++20)     │  │
+  │ IMediaDevice adapters │   LAN only    │  │  consent gate + audit       │  │
+  │ explicit start/stop   │               │  │  observation → detection     │  │
+  │ permission lifecycle  │               │  │  → fusion → AlertPolicy      │  │
+  └──────────────────────┘               │  │  → SQLite (WAL, FULL)        │  │
+                                          │  └─────────────────────────────┘  │
+                                          │   /data volume (durable)          │
+                                          │   127.0.0.1 only, NOT published    │
+                                          └───────────────────────────────────┘
+```
+
+Design rules that hold across the D-series:
+
+- **One event engine.** Nodes produce observations; the hub's existing pipeline
+  processes them. No node runs detection/fusion/alerting.
+- **Consent first.** A physically connected phone is not permission to record:
+  acquisition needs an explicit user action + OS permission + a consent record,
+  and every path fails closed.
+- **Loopback by default.** The hub's all-in-one HTTP server stays
+  `127.0.0.1`-only. A network-facing boundary is D-03 (authenticated, encrypted,
+  separately reviewed) — never a listener-address change.
+- **Derived observations by default.** Compact features (motion energy, audio
+  RMS, availability) are the default payload; raw media only when specifically
+  authorised.
+
+### D-01 container shape
+
+Multi-stage: a builder that compiles the hub, a `test` stage that runs the
+existing suite with the container toolchain, and a minimal runtime image running
+as uid 10001 with all capabilities dropped. `/data` is the only writable path and
+is a named volume, so container replacement preserves alert history. The
+entrypoint `exec`s the hub, making it PID 1 for clean SIGTERM.
+
+Builder and runtime use the **same** Debian release (trixie-slim): the project
+requires CMake >= 3.28.3 (bookworm ships 3.25.1 and cannot configure), and a
+binary built against a newer glibc than the runtime provides would not start.

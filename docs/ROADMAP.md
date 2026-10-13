@@ -376,3 +376,31 @@ verified defects only. No new features, no architectural change, no merge.
 | U-06 | End-to-end, privacy, persistence, lifecycle and stress verification | U-01..U-05 | Browser smoke test, adversarial matrix, alternating/repeated runs, corrupted-DB and read-only-dir handling, restart recovery, graceful SIGTERM, resource stability | DONE |
 | U-08 | Test fixtures safe under concurrent runs | U-01 | Eleven fixtures no longer use fixed CWD-relative database names; two suite instances in one working directory both pass with zero `disk I/O error` occurrences (`scripts/verify_suite_concurrency.sh`) | DONE |
 | U-07 | Release-candidate report | U-01..U-06 | `docs/RELEASE_CANDIDATE_V21.md` with tested functionality, limitations, reproduction commands and a GO/CONDITIONAL GO/NO-GO decision | DONE |
+
+
+## Phase D — Distributed architecture (owner-directed, added 2026-10-13)
+
+The project owner changed the target architecture: the simulator-only web demo is
+no longer the intended final product. The target is a central C++20 hub in Docker
+plus real old-Android-phone acquisition nodes, with genuine Alexa integration only
+if an officially supported runtime exists.
+
+**v21 remains the tested fallback for the hackathon.** These phases are additive:
+they reuse the consent gate, observation/event model, detection + fusion, alert
+policy, SQLite persistence and dashboard, and introduce **no second event engine**.
+Work happens on the dedicated branch `feature/distributed-homeguardian`.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| D-01 | Dockerize the existing C++ hub | v21 | Multi-stage build; no Node/Python in the image; non-root; no privileged container; no device passthrough; no published port (loopback-only server); health check; persistent SQLite volume; explicit config/secret mounts; clean SIGTERM; resource limits; documented restart behaviour; one container starts the real core, keeps state across container replacement, and passes the existing suite inside the container toolchain | DONE |
+| D-02 | Android acquisition node | D-01 | On a test phone: authorized real frames + PCM samples, correctly timestamped, bounded, accounted for; permission denial/withdrawal stops delivery; else BLOCKED and reported as such | TODO |
+| D-03 | Secure device transport | D-02 | Registration/pairing, per-device identity + auth, encrypted LAN transport, per-device consent, versioning, sequence numbers/timestamps, heartbeat, bounded queues, backpressure/drop, replay + malformed protection, reconnect policy, no unauthorized forwarding | TODO |
+| D-04 | Multiple nodes | D-03 | Device registry, per-device media/consent, independent streams, device-scoped source ids, clock-skew handling, bounded buffering, reconnect isolation, revocation, multi-source correlation; losing one device does not affect another | TODO |
+| D-05 | Real media-derived observations | D-02, D-04 | Modest explainable features (frame-change/motion energy, audio RMS, availability, connect/disconnect, bounded sensors) computed from actually acquired data, flowing through the existing pipeline; capture-off/permission/consent/disconnect all fail closed | TODO |
+| D-06 | Genuine Alexa integration | D-01 (external gate) | Official runtime or official skill route, verified against primary Amazon sources. **Official Docker runtime: BLOCKED** (no official Alexa/Alexa+ container image; AVS tools withdrawn; AVS Device SDK archived 2024-01-16; Alexa+ partner-gated). Skill route requires owner approval | BLOCKED (external) |
+
+## Phase V — D-01 container verification tooling (2026-10-13)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| V-01 | `scripts/verify_docker_hub.sh` | D-01 | Starts the real container and asserts health, real-core responses, persisted alerts, survival across container replacement, clean SIGTERM exit, no published ports / non-root / caps dropped / no docker.sock / loopback-only listener, WAL header in the volume, and reports image size + RSS + CPU + threads | DONE |

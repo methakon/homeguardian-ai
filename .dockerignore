@@ -1,0 +1,43 @@
+# Build context exclusions for the hub image (deploy/docker/Dockerfile).
+# Keep this list tight: the image must build from a clean clone.
+
+# --- build trees (large, host-specific, contain downloaded deps) ---
+hg_build/
+hg_asan/
+hg_asan_e/
+hg_asan_f1/
+hg_asan_f21/
+hg_verify/
+hg_f1_verify/
+hg_f21_verify/
+hg_android/
+hg_android27/
+hg_apk_build/
+hg_asan_f22/
+build/
+build_final/
+apk/
+cmake-build-*/
+
+# --- VCS + editors ---
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# --- untracked local material that must never enter an image ---
+example/
+node_modules/
+
+# --- runtime artefacts: databases, WAL/SHM sidecars, logs, credentials ---
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.log
+homeguardian.log
+deploy/docker/secrets/creds.json
+
+# --- misc ---
+*.swp
+.DS_Store

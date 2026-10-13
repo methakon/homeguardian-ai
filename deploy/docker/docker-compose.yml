@@ -1,0 +1,87 @@
+# HomeGuardian AI hub — Docker Compose deployment (milestone D-01).
+#
+#   cd deploy/docker
+#   cp secrets/creds.json.example secrets/creds.json     # synthetic demo token
+#   docker compose build
+#   docker compose up -d
+#   docker compose ps          # health should be "healthy"
+#   docker compose logs -f
+#   docker compose down        # state stays in the named volume
+#
+# The hub's HTTP listener is LOOPBACK ONLY inside the container and is NOT
+# published here on purpose: it was designed and security-reviewed for loopback,
+# so exposing it on a LAN would be a downgrade. To view the dashboard from this
+# host, use the opt-in override that binds the host side to 127.0.0.1:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.loopback.yml up -d
+#
+# (127.0.0.1 on the host is still not LAN exposure; a genuinely network-facing
+# boundary is milestone D-03's authenticated, encrypted transport.)
+
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: runtime
+      args:
+        HG_NPROC: "4"
+    image: homeguardian-hub:${HG_TAG:-local}
+
+    # `init: true` runs a tiny PID-1 init: it forwards SIGTERM and reaps children,
+    # which is what makes `docker compose stop` a clean shutdown for the hub.
+    init: true
+
+    # On failure or host reboot, come back up; a deliberate `docker compose stop`
+    # is respected (`unless-stopped`).
+    restart: unless-stopped
+
+    # Least privilege: no new privileges, drop every Linux capability. The hub
+    # needs none of them (no raw sockets, no device access, no setuid).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # Resource ceilings (Compose v2 honours these for local runs).
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1.0
+    pids_limit: 128
+
+    # No `ports:` on purpose (see the header). No device passthrough, no
+    # privileged mode, no docker.sock mount.
+    volumes:
+      - hg_data:/data
+
+    # Configuration and credentials are mounted read-only. Nothing sensitive is
+    # baked into an image layer. Credentials come from the `hg_creds` secret.
+    secrets:
+      - hg_creds
+
+    environment:
+      HG_PORT: "8080"
+      HG_TOKEN: "demo-token"          # synthetic demo token (contract calls only)
+      HG_DATA_DIR: "/data"
+      HG_CONFIG: "/etc/homeguardian/hub.json"
+      HG_CREDS: "/run/secrets/hg_creds"
+
+    # Give the hub time to close SQLite cleanly on stop.
+    stop_grace_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  hg_data:
+    driver: local
+
+secrets:
+  # A local file-backed secret: mounted read-only at /run/secrets/hg_creds.
+  # Replace with an external secret store for anything beyond the synthetic demo
+  # credential (see docs/DISTRIBUTED_DEPLOYMENT.md).
+  hg_creds:
+    file: ./secrets/creds.json

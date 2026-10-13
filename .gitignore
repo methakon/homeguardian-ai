@@ -93,3 +93,4 @@ config/*.local.json
 # OS files
 .DS_Store
 Thumbs.db
+deploy/docker/secrets/creds.json

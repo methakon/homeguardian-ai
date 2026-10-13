@@ -426,3 +426,129 @@ must be applied where the data is written.
 
 - New `[logger]` regression plus `scripts/verify_retention.sh`.
 - Durability (WAL + `synchronous=FULL`) and the alert record shape are unchanged.
+
+
+## D-distributed-target: hub in Docker + Android nodes, v21 preserved (2026-10-13, D-01)
+
+### Context
+
+The project owner changed the target architecture: the simulator-only web demo is
+no longer the intended final product. The target is a central C++20 hub in Docker
+plus real Android phones as camera/microphone/speaker/sensor nodes, with genuine
+Alexa integration if an officially supported runtime exists. The hackathon
+deadline (feature freeze 19 Oct 2026) does not fit the whole distributed
+architecture.
+
+### Decision
+
+Work proceeds on a dedicated branch, `feature/distributed-homeguardian`, created
+from the verified v21 commit. The v21 simulator product stays untouched and
+remains the tested submission fallback (it is *not* deleted or destabilised).
+The D-series reuses the existing consent gate, observation/event model,
+detection + fusion, alert policy, SQLite persistence and dashboard; **no second
+event engine** is introduced and no node performs detection or alerting.
+
+### Rationale
+
+- The owner's architecture decision is explicit, so it is implemented — but the
+  deadline makes a verified fallback essential.
+- Reusing the pipeline keeps one set of consent/privacy/durability guarantees to
+  audit rather than two.
+
+### Consequences
+
+- Documentation states an honest operating mode per deployment
+  (`SIMULATION MODE`, `REAL LOCAL CAPTURE ACTIVE`, `AMAZON ALEXA — Not Connected`)
+  and never claims real capture or an Alexa connection that is not verified.
+- Final submission media stays pending until the owner picks which verified
+  implementation to submit.
+
+## D-hub-container-base: debian:trixie-slim in both stages (2026-10-13, D-01)
+
+### Context
+
+The first container build failed at configure:
+`CMake 3.28.3 or higher is required. You are running version 3.25.1` — Debian
+bookworm ships CMake 3.25.1, while the project's `CMakeLists.txt` requires
+3.28.3 (the host has 3.28.3, which is why local builds work).
+
+### Decision
+
+Use `debian:trixie-slim` (CMake 3.31.6, g++ 14, glibc 2.41) for **both** the
+builder and the runtime stage. Do not relax the project's CMake requirement, and
+do not build on a newer glibc than the runtime provides.
+
+### Rationale
+
+- Relaxing `cmake_minimum_required` would change a working project contract to
+  suit the container, which the mission forbids.
+- A binary linked against a newer glibc than the runtime image has cannot start
+  (`GLIBC_2.3x not found`), so builder and runtime must be the same release.
+
+### Consequences
+
+- The image base is documented in the Dockerfile with the reason, so a future
+  change of base is a conscious decision rather than a silent regression.
+- The `test` stage proves the suite passes with the container toolchain.
+
+## D-hub-no-published-ports: the loopback-only server is not exposed (2026-10-13, D-01)
+
+### Context
+
+The hub's handwritten HTTP server was designed and security-reviewed for
+loopback use: it is unauthenticated by design, relies on `Host`/`Origin`
+validation, and has no TLS. The container could publish a port in one line.
+
+### Decision
+
+The hub container publishes **no** ports. Its listener stays `127.0.0.1` inside
+the container. An opt-in override
+(`docker-compose.loopback.yml`) may bind the **host** side to `127.0.0.1` for
+local viewing only. A genuinely network-facing boundary is milestone D-03's
+authenticated, encrypted transport with pairing and revocation, reviewed on its
+own.
+
+### Rationale
+
+Changing `127.0.0.1` to `0.0.0.0` (or publishing the port) would expose an
+unauthenticated, unencrypted surface to the LAN — a security downgrade, not a
+deployment step.
+
+### Consequences
+
+- `scripts/verify_docker_hub.sh` asserts no published ports and that the
+  listening socket is `0100007F:1F90` (127.0.0.1) and never `00000000`.
+- Anyone needing LAN access must wait for D-03.
+
+## D-alexa-official-runtime-blocked: no genuine Alexa/Alexa+ Docker runtime (2026-10-13, D-06)
+
+### Context
+
+The mission asks for genuine Alexa/Alexa+ running inside Docker, but explicitly
+makes official support a feasibility gate rather than permission to substitute a
+simulator or an unofficial image.
+
+### Decision
+
+Report `OFFICIAL ALEXA DOCKER RUNTIME: BLOCKED`, with primary-source evidence, and
+implement nothing Alexa-branded in the meantime. Evaluate the official skill
+route as an alternative **for owner approval** without silently switching the
+requested architecture.
+
+### Rationale
+
+Evidence (all from Amazon's own pages; see `docs/DISTRIBUTED_DEPLOYMENT.md` §6):
+AVS developer tools are "no longer generally available for Alexa Built-in"; the
+AVS Device SDK repository was archived 2024-01-16; the AVS documentation set and
+console no longer resolve; Alexa+ Category SDK / MCP Toolkit are "available to
+select partners only"; there is no official Amazon Alexa image on Docker Hub.
+Building an imitation and calling it genuine would be a false claim.
+
+### Consequences
+
+- The dashboard must show `AMAZON ALEXA — Not Connected` unless a verified
+  authenticated integration exists.
+- Unblocking requires Amazon partner access (Alexa+ for Builders, Category SDK /
+  MCP Toolkit, a supported marketplace, AWS hosting) — an owner-level action.
+- The existing `AlexaContract` + skill-handler prototypes are the reuse target if
+  the owner approves the official skill route.

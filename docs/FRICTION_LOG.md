@@ -2143,3 +2143,32 @@ header only when its content changes, so no-op builds stay no-op.
 containing the current markers (9/9). Lesson: an embedded asset generated at
 configure time is invisible to the build graph — give it a real `DEPENDS` or the
 next person to edit it will silently demo the old bytes.
+
+
+## D-01: containerising the hub (2026-10-13)
+
+**CMake version vs base image.** The first `docker build` failed at configure:
+`CMake Error at CMakeLists.txt:1 (cmake_minimum_required): CMake 3.28.3 or higher
+is required. You are running version 3.25.1`. The project pins
+`cmake_minimum_required(VERSION 3.28.3)` and the host has exactly 3.28.3, so
+nothing local ever hinted at it; Debian bookworm ships 3.25.1. Fix: build and run
+on `debian:trixie-slim` (CMake 3.31.6). Do NOT lower the project's requirement to
+fit an older base.
+
+**Builder and runtime must share a libc.** Choosing a newer base for the builder
+only would produce a binary that cannot start on an older runtime
+(`GLIBC_2.3x not found`). Both stages therefore use the same release; the
+Dockerfile says so, because the failure mode is a runtime crash, not a build
+error.
+
+**A 404 is data.** The Alexa feasibility check had to verify claims against
+Amazon's own pages, and several are simply gone: the AVS
+`deprecated-features.html` page (both en-US and en-GB) now returns **404**, the
+`/docs/alexa/alexa-voice-service/` directory 404s, and the AVS console serves a
+storefront interstitial. Record the HTTP status alongside the quote: a snippet
+from a search index can outlive the page it came from, and "the documentation
+disappeared" is itself the strongest available evidence that the route is closed.
+
+**Verify a base image's toolchain before a long build.** Checking
+`cmake --version` inside `debian:trixie-slim` took ~30 s and would have saved a
+9-minute failed build. Probe the toolchain version you depend on first.
