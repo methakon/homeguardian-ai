@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <unistd.h>   // getpid (unique temp config path)
 
 using namespace homeguardian;
 using json = nlohmann::json;
@@ -101,4 +102,33 @@ TEST_CASE("Shipped default config has media capture and cloud disabled", "[confi
     REQUIRE(j["media_capture_enabled"].get<bool>() == false);
     REQUIRE(j.contains("cloud_processing_enabled"));
     REQUIRE(j["cloud_processing_enabled"].get<bool>() == false);
+}
+
+TEST_CASE("Config: the alert retention window is a bounded, configurable policy",
+          "[config][v21]") {
+    // Both the application and the native bridge honour this value for their
+    // durable alert stores. A default of 0 (keep forever) would let the demo
+    // store grow without bound, so the default and the override path are pinned.
+    REQUIRE(Config{}.alert_retention_days == 30);
+
+    const std::string path = "/tmp/hg_v21_cfg_retention_" +
+                             std::to_string(::getpid()) + ".json";
+
+    {   // an explicit window round-trips
+        Config c; c.alert_retention_days = 7; c.save(path);
+        Config l; l.load(path);
+        REQUIRE(l.alert_retention_days == 7);
+    }
+    {   // 0 is an explicit, valid choice: retention disabled (keep forever)
+        Config c; c.alert_retention_days = 0; c.save(path);
+        Config l; l.load(path);
+        REQUIRE(l.alert_retention_days == 0);
+    }
+    {   // out-of-range values are rejected by validation, never silently kept
+        Config c; c.alert_retention_days = -1;
+        REQUIRE_THROWS_AS(c.save(path), std::invalid_argument);
+        Config c2; c2.alert_retention_days = 36501;
+        REQUIRE_THROWS_AS(c2.save(path), std::invalid_argument);
+    }
+    std::remove(path.c_str());
 }

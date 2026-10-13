@@ -839,3 +839,24 @@ thresholds).
   scenario, including the critical one.
 - Every user-visible string about this feature says it is simulated and that no
   emergency services are contacted.
+
+
+## v21 — no new data class; degraded state is reported honestly (2026-10-13)
+
+v21 added no data class, no sensor and no retention of new information. The three
+fixes are behavioural:
+
+- The HTTP status for an unsupported scenario id changed to `400`; the response
+  body still carries only the generic error and the echoed identifier — never a
+  path, token or internal detail.
+- Logging failure is no longer fatal; the logger falls back to console output and
+  never writes secrets (it never did).
+- The bridge's durable alert store honours `alert_retention_days`, so old alert
+  metadata is deleted on schedule instead of accumulating. Deleting audit records
+  is a privacy-positive change and matches the documented retention policy.
+
+When persistence is unavailable the deployment reports itself as degraded
+(`/api/status` -> `{"error":"unavailable","ok":false}`) and the scenario result
+omits persisted-alert counts rather than reporting fabricated ones. The privacy
+audit trail continues to run in every mode and `enforcement_ok` stayed true for
+all ten verified scenarios, in capture-on and capture-off configurations.

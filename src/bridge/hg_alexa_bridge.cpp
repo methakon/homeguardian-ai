@@ -488,6 +488,7 @@ json scenario_result_json(Application& app, PersistenceAudit* audit,
         im["confirmed_samples_since_transient"] =
             r.impact.confirmed_samples_since_transient;
         im["last_reason"] = r.impact.last_reason;
+        im["confirmed_reason"] = r.impact.confirmed_reason;
         im["detector_id"] = "impact-signal";
         im["provenance"] = "synthetic";
         im["simulated"] = true;
@@ -551,8 +552,25 @@ json contract_call(const std::string& token, const char* op,
 // real backend + SQLite state. Simulator-only. Returns a process exit code.
 int run_http_mode(Application& app, PersistenceAudit* audit,
                   IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider,
-                  const std::string& token, uint16_t port) {
-    auto handler = [&](const hg_native_http::HandlerRequest& req) -> std::string {
+                  const std::string& token, uint16_t port, int retention_days) {
+    // Bounded retention for the BRIDGE's own durable alert store. The config the
+    // bridge is handed declares alert_retention_days (30 by default) and the
+    // demo server writes to its own audit DB, so honour the retention window
+    // here too: prune once at startup and, at most once per interval, after a
+    // scenario has just written alerts. Without this the durable demo store grew
+    // without bound across runs and restarts. alert_retention_days == 0 keeps
+    // records forever (unchanged). Durability (WAL + synchronous=FULL) and the
+    // audit record shape are untouched.
+    const auto retention_window = std::chrono::hours(24) * retention_days;
+    if (audit != nullptr && retention_days > 0) {
+        const size_t pruned = audit->prune_older_than_age(retention_window);
+        if (pruned > 0) {
+            std::cerr << "retention: pruned " << pruned << " alert(s) older than "
+                      << retention_days << " day(s)\n";
+        }
+    }
+    auto handler = [&](const hg_native_http::HandlerRequest& req,
+                       int& status_out) -> std::string {
         const bool prof = [] {
             const char* p = std::getenv("HG_PROFILE");
             return p != nullptr && *p != '\0' && *p != '0';
@@ -576,7 +594,12 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                 ? find_demo_scenario(default_demo_scenario_id())
                 : find_demo_scenario(req.scenario);
             if (spec == nullptr) {
-                // Unknown (but syntactically valid) scenario id: rejected.
+                // Unknown (but syntactically valid) scenario id: rejected with a
+                // 400 and a generic JSON error body. The id is echoed back so a
+                // client can report which value was unsupported, and the body
+                // shape is unchanged from the earlier 200-with-ok:false form so
+                // existing clients (the dashboard checks scenario.ok) keep working.
+                status_out = 400;
                 out["ok"] = false;
                 out["error"] = "unknown_scenario";
                 out["scenario_id"] = std::string(req.scenario);
@@ -584,6 +607,10 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                 out["scenario"] = scenario_result_json(
                     app, audit, *spec, req.cycles_set, req.cycles);
                 lap("scenario_total");
+                if (audit != nullptr && retention_days > 0) {
+                    (void)audit->maybe_prune_retention(retention_window,
+                                                       std::chrono::minutes(10));
+                }
                 out["status"] = contract_call(token, "status", verifier, provider);
                 lap("status_call");
                 out["summary"] = contract_call(token, "alert_summary", verifier, provider);
@@ -596,6 +623,9 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
             out = scenarios_payload();
             lap("scenarios");
         } else {
+            // Unreachable through the HTTP router (op is transport-assigned);
+            // kept as a fail-closed guard for direct handler use.
+            status_out = 400;
             out["ok"] = false;
             out["error"] = "unknown_operation";
         }
@@ -657,10 +687,12 @@ int main(int argc, char* argv[]) {
     // load failure is non-fatal for a read-only bridge: capture stays reported
     // as disabled (fail-safe) and the bridge keeps serving.
     bool capture_enabled = false;
+    int alert_retention_days = Config{}.alert_retention_days;  // safe default (30)
     try {
         Config cfg;
         cfg.load(config_path);
         capture_enabled = cfg.media_capture_enabled;
+        alert_retention_days = cfg.alert_retention_days;
     } catch (const std::exception&) {
         capture_enabled = false;  // fail-safe: never imply capture is on
     }
@@ -716,7 +748,8 @@ int main(int argc, char* argv[]) {
     // Native HTTP demo mode: serve the loopback dashboard + JSON API and return
     // when shutdown is requested. Otherwise fall through to the NDJSON loop.
     if (http_mode) {
-        return run_http_mode(app, audit, *verifier, provider, http_token, http_port);
+        return run_http_mode(app, audit, *verifier, provider, http_token, http_port,
+                             alert_retention_days);
     }
 
     std::ios::sync_with_stdio(false);

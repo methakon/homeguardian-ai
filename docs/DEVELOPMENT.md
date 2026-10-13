@@ -423,3 +423,46 @@ Two pitfalls specific to this feature:
 Expected numbers for the scenario (deterministic): media 12, events 30,
 generated 23, delivered 2 (1 CRITICAL + 1 INFO), suppressed 21, persisted 2,
 impact 6 samples / 1 transient / 1 confirmation.
+
+
+## v21 — release-candidate verification: how to run it (2026-10-13)
+
+Three defects were fixed in v21. Re-verify with the matrix below; every figure in
+`docs/RELEASE_CANDIDATE_V21.md` came from a fresh out-of-source Release build.
+
+```bash
+# 1. fresh Release build (never measure from hg_build -- it is a Debug build)
+cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release \
+  -DFETCHCONTENT_SOURCE_DIR_SPDLOG=$PWD/hg_build/_deps/spdlog-src \
+  -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=$PWD/hg_build/_deps/nlohmann_json-src /tmp/hg_rc
+cd /tmp/hg_rc && make -j4 homeguardian homeguardian_tests hg_alexa_bridge
+ctest --test-dir .          # 100%
+
+# 2. retention regression (defect 3)
+HG_BRIDGE_PATH=/tmp/hg_rc/hg_alexa_bridge bash scripts/verify_retention.sh
+
+# 3. live matrices (start the bridge first, in a writable scratch dir)
+/tmp/hg_rc/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 8497 --token demo-token
+```
+
+Pitfalls confirmed in v21:
+
+1. **An unwritable CWD used to abort the process.** The logger's file sink threw
+   out of `main()`. It is now best-effort; the `[logger]` test pins it (it places a
+   *directory* named `homeguardian.log` in a scratch dir, which fails
+   deterministically even for root).
+2. **A read-only or corrupt audit DB is a supported state**, not a crash: the
+   status route reports `unavailable` and no persistence is claimed. Test it by
+   running the bridge from a `chmod 500` directory or with a garbage
+   `homeguardian_bridge_audit.db`.
+3. **The bridge's alert store is bounded by `alert_retention_days`.** When
+   checking retention, remember there are two databases: the application's
+   `homeguardian_audit.db` and the bridge's `homeguardian_bridge_audit.db`
+   (relative to the bridge's CWD). Seed rows in the one the route actually serves.
+4. **`pgrep -f hg_alexa_bridge` matches your own shell command.** Enumerate with
+   `pgrep -ax hg_alexa_bridge` and read `/proc/<pid>` by exact PID.
+5. **The unknown-scenario contract changed to 400** (see
+   `docs/ARCHITECTURE.md`). Update any client or test that assumed `200` plus
+   `{"ok":false}`.
+6. `scripts/verify_retention.sh` needs `sqlite3`; if it is not on `PATH`, set
+   `HG_SQLITE3=/path/to/sqlite3`.

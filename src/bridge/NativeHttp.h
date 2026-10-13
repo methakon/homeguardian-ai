@@ -38,14 +38,18 @@ struct HandlerRequest {
     bool cycles_set = false;    // true when the caller explicitly set cycles
 };
 
-using Handler = std::function<std::string(const HandlerRequest&)>;
-// Handler receives a validated request and MUST return JSON. Operations:
+// A handler receives a validated request and MUST return a JSON body. It also
+// reports the HTTP status for the outcome it decided (200 for success; 400 for a
+// well-formed request naming an unsupported value such as an unknown scenario).
+// The transport never invents a business status and the handler never parses
+// HTTP. Operations:
 //   "status"    -- read-only status/summary
 //   "scenario"  -- run the selected synthetic scenario (uses `scenario`/`cycles`)
 //   "alerts"    -- read-only recent alert detail
 //   "scenarios" -- read-only scenario catalogue
 // The native integration calls the existing C++ backend (Application/
 // SimulatorRuntime/SQLite); it must never synthesize data.
+using Handler = std::function<std::string(const HandlerRequest&, int& status_out)>;
 
 // Stop flag for clean shutdown. A signal handler sets this (async-signal-safe);
 // the accept loop notices it within one listener-timeout tick.
@@ -169,12 +173,20 @@ inline std::string dispatch(std::string_view request, std::string_view html,
     if (path == "/api/health")
         return response(200, "application/json",
                         R"({"ok":true,"status":"up","simulated":true})");
+    // The handler decides the business outcome, including a non-200 status when
+    // it rejects a well-formed request (e.g. an unknown scenario id). The
+    // transport owns framing, header and query validation only.
+    auto invoke = [&handler](const HandlerRequest& r) {
+        int status = 200;
+        std::string body = handler(r, status);
+        return response(static_cast<unsigned>(status), "application/json", body);
+    };
     if (path == "/api/status")
-        return response(200, "application/json", handler({"status", "", 5, false}));
+        return invoke({"status", "", 5, false});
     if (path == "/api/alerts")
-        return response(200, "application/json", handler({"alerts", "", 5, false}));
+        return invoke({"alerts", "", 5, false});
     if (path == "/api/scenarios")
-        return response(200, "application/json", handler({"scenarios", "", 5, false}));
+        return invoke({"scenarios", "", 5, false});
     if (path == "/api/run-scenario" ||
         path.substr(0, 18) == "/api/run-scenario?") {
         // State-advancing route: bounded, allowlisted query only. Accepts at
@@ -227,7 +239,7 @@ inline std::string dispatch(std::string_view request, std::string_view html,
                 }
             }
         }
-        return response(200, "application/json", handler(req));
+        return invoke(req);
     }
     return json_error(404, "not_found");
 }

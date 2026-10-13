@@ -364,3 +364,65 @@ evidence exists, so other scenarios are unaffected.
   keyed on rule + severity and remain per process).
 - Covered by `[h01s]` tests: prioritisation, duplicate suppression, rule
   independence and re-arm.
+
+
+## D-handler-owned-status: the handler reports the HTTP status (2026-10-13, v21)
+
+### Context
+
+The native HTTP transport hard-coded `response(200, ...)` around every handler
+result, so a well-formed request naming an unsupported value (an unknown scenario
+id) answered `200 OK` with `{"ok":false,...}`. That misleads any client that reads
+the status code rather than the body, and it contradicts the transport's own
+strict validation (which answers 400/403/404/405/413 correctly).
+
+### Decision
+
+`Handler` is `std::function<std::string(const HandlerRequest&, int& status_out)>`.
+The handler returns the JSON body and reports the status for the outcome it
+decided; the transport continues to own framing, header and query validation. An
+unknown scenario answers `400 Bad Request` with the unchanged JSON error body. A
+handler cannot override a transport-level rejection (the handler never runs).
+
+### Rationale
+
+- The layer that knows the business outcome should own the status; a hard-coded
+  200 makes every failure look like success.
+- The body shape is unchanged, so the dashboard (which keys on `scenario.ok`) and
+  any existing client keep working — no unnecessary breakage.
+
+### Consequences
+
+- New `[v21]` tests assert the status line, the JSON body, and the
+  non-override property.
+- Documented behaviour change for direct API users; recorded in DEMO_WEB,
+  ARCHITECTURE and SECURITY_READINESS_V8.
+
+## D-degraded-startup: diagnostics never abort, persistence degrades (2026-10-13, v21)
+
+### Context
+
+With an unwritable working directory the shipped binaries died with SIGABRT
+(exit 134) because the logger's file sink threw out of `main()`. Separately, the
+bridge's own durable alert store never applied the configured retention window.
+
+### Decision
+
+- Logging is best-effort: if the log file cannot be created, log to the console
+  only, report the reason once, and continue. Registration failures are ignored.
+- The bridge applies `alert_retention_days` to its own audit DB (startup plus a
+  bounded periodic prune, only after a scenario write); `0` keeps records forever.
+- An unusable audit database keeps the process serving and reports
+  `{"error":"unavailable","ok":false}`; no persistence is claimed.
+
+### Rationale
+
+Consent enforcement, capture gating and the privacy audit must keep running even
+on a read-only or full filesystem; a diagnostic facility must never be able to
+take down the safety path. Retention is already a configured, tested policy — it
+must be applied where the data is written.
+
+### Consequences
+
+- New `[logger]` regression plus `scripts/verify_retention.sh`.
+- Durability (WAL + `synchronous=FULL`) and the alert record shape are unchanged.

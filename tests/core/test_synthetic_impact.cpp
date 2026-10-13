@@ -471,6 +471,11 @@ TEST_CASE("H-01s: the scenario result exposes the backend critical evidence",
     REQUIRE(r.impact.transients == 1);
     REQUIRE(r.impact.confirmations == 1);
     REQUIRE(r.impact.critical_alerts == 1);
+    // The dashboard panel must be able to say WHY the pattern was confirmed:
+    // the snapshot's last-sample reason describes only the final sample.
+    REQUIRE_FALSE(r.impact.confirmed_reason.empty());
+    REQUIRE(r.impact.confirmed_reason.find("transient 0.95") != std::string::npos);
+    REQUIRE(r.impact.confirmed_reason.find("stillness 0.1") != std::string::npos);
 
     // The evidence the dashboard/API serialise.
     bool found = false;

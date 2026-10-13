@@ -372,8 +372,17 @@ function renderResult(s) {
     box.appendChild(kv('Critical alerts delivered', im.critical_alerts_delivered));
     box.appendChild(kv('Emergency services contacted',
       im.emergency_services_contacted ? 'yes' : 'no'));
+    // When a pattern was confirmed, show WHY that sample confirmed it; the
+    // snapshot's last-sample reason ("no impact transient") describes the final
+    // sample only and would read as if nothing was confirmed.
+    if (im.confirmations > 0 && im.confirmed_reason) {
+      const con = document.createElement('div'); con.className = 'disc';
+      con.textContent = 'Confirmed because: ' + im.confirmed_reason;
+      box.appendChild(con);
+    }
     const rsn = document.createElement('div'); rsn.className = 'disc';
-    rsn.textContent = 'Classifier: ' + (im.last_reason || '');
+    rsn.textContent = (im.confirmations > 0 ? 'Last sample: ' : 'Classifier: ') +
+                      (im.last_reason || '');
     box.appendChild(rsn);
     const disc = document.createElement('div'); disc.className = 'disc';
     disc.textContent = im.disclaimer || '';

@@ -1220,3 +1220,36 @@ and returns the highest severity, so a critical impact alert is never lost behin
 an activity alert. Activity evidence and impact evidence therefore both appear in
 the critical scenario (1 CRITICAL `synthetic-impact` + 1 INFO `detection-fusion`),
 and neither suppresses the other.
+
+
+## v21 — HTTP status contract, retention and failure handling (2026-10-13)
+
+**The handler owns the business status.** `hg_native_http::Handler` is
+`std::function<std::string(const HandlerRequest&, int& status_out)>`: the handler
+returns a JSON body and reports the HTTP status for the outcome it decided, while
+the transport keeps owning framing, header and query validation. An unsupported
+but well-formed value (an unknown scenario id) is therefore `400 Bad Request` with
+`{"ok":false,"error":"unknown_scenario","scenario_id":"…"}` instead of a
+`200`-with-`ok:false`. Transport rejections (413 oversized, 403 Host/Origin, 405
+method, 404 path, 400 malformed/query) never reach the handler and cannot be
+overridden by it. The dashboard reads `scenario.ok`, so the change is
+client-compatible.
+
+**The bridge's durable alert store is bounded.** `hg_alexa_bridge` writes alerts to
+its own audit DB (`homeguardian_bridge_audit.db`) and now applies the config's
+`alert_retention_days` to it: once at startup and, at most once per interval,
+after a scenario write (`PersistenceAudit::maybe_prune_retention`).
+`alert_retention_days = 0` keeps records forever. Durability (WAL +
+`synchronous=FULL`) and the alert record shape are unchanged.
+
+**Logging is diagnostic, never fatal.** `Logger::initialize` creates the
+`homeguardian.log` file sink on a best-effort basis: if the working directory is
+not writable it logs to the console only and reports the reason. It previously
+threw `spdlog::spdlog_ex` out of `main()`, so the shipped binaries died with
+SIGABRT instead of starting degraded.
+
+**Degraded mode is explicit.** If the audit database cannot be opened (unwritable
+directory, corrupt file), the bridge keeps serving: `/api/status` answers
+`{"error":"unavailable","ok":false}`, read routes fail closed, a scenario still
+produces real detection evidence but claims **no** persistence. Nothing is
+fabricated to mask the degraded state.

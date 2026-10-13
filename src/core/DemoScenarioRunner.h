@@ -70,6 +70,7 @@ struct ScenarioImpactResult {
     double confirmed_transient_value = 0.0;  // the pattern that was confirmed
     double confirmed_stillness_value = 0.0;
     size_t confirmed_samples_since_transient = 0;
+    std::string confirmed_reason;            // why THAT sample confirmed the pattern
     size_t critical_alerts = 0;   // critical alerts DELIVERED this run
 };
 

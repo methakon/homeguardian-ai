@@ -359,3 +359,19 @@ the v15 performance root cause and the durability decision is now resolved with
 | **H-01** real pose-based fall detection | **NOT implemented** |
 | **H-02** emergency workflow / escalation | **NOT implemented** |
 | **G-02** external notifications | **NOT implemented** |
+
+
+## Phase U — v21 final integration and stability verification (added 2026-10-13)
+
+Release-candidate pass: verify the existing product end to end and correct
+verified defects only. No new features, no architectural change, no merge.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| U-01 | Fresh out-of-source Release build of every shipped target | — | `homeguardian`, `homeguardian_tests`, `hg_alexa_bridge` build clean (0 errors) from scratch, outside the source tree; every runtime figure taken from those binaries | DONE |
+| U-02 | Full scenario-catalogue verification | U-01 | All 10 registered scenarios exercised with asserted expectations (consent, capture, observations, events, detection, anomaly, fusion, alerts gen/delivered/suppressed, severity, persistence, audit) | DONE |
+| U-03 | HTTP contract: unsupported scenario is 400 | U-01 | Handler owns the business status; unknown scenario answers 400 with the existing generic JSON error body; transport validation unchanged; regression asserts status **and** body | DONE |
+| U-04 | Logger must never abort the process | U-01 | An unwritable working directory degrades to console-only logging instead of SIGABRT; regression test | DONE |
+| U-05 | Bounded retention for the bridge's alert store | U-01 | The configured `alert_retention_days` is applied to the bridge's own durable store (startup + bounded periodic, only on write); `scripts/verify_retention.sh` regression | DONE |
+| U-06 | End-to-end, privacy, persistence, lifecycle and stress verification | U-01..U-05 | Browser smoke test, adversarial matrix, alternating/repeated runs, corrupted-DB and read-only-dir handling, restart recovery, graceful SIGTERM, resource stability | DONE |
+| U-07 | Release-candidate report | U-01..U-06 | `docs/RELEASE_CANDIDATE_V21.md` with tested functionality, limitations, reproduction commands and a GO/CONDITIONAL GO/NO-GO decision | DONE |

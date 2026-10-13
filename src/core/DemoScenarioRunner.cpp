@@ -142,6 +142,7 @@ ScenarioRunResult run_demo_scenario(Application& app, const DemoScenario& spec) 
                     r.impact.confirmed_transient_value = ir.transient_value;
                     r.impact.confirmed_stillness_value = ir.stillness_value;
                     r.impact.confirmed_samples_since_transient = ir.samples_since_transient;
+                    r.impact.confirmed_reason = ir.reason;
                 }
                 Observation io = impact.to_observation(
                     ir, "impact-obs-" + std::to_string(i),

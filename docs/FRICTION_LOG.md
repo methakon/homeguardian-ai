@@ -2033,3 +2033,50 @@ binary with capture on still reports `alerts_gen=10 alerts_deliv=2
 alerts_supp=8` (identical to L-11) because no impact observations exist in that
 flow — the new rule is registered and silent, which is exactly the expected
 difference from the scenario-driven bridge (23/2/21 with 1 CRITICAL).
+
+
+## v21: release-candidate verification — three verified defects (2026-10-13)
+
+**Defect 1 — an unsupported scenario answered 200.** `GET
+/api/run-scenario?scenario=nope` returned `200 OK` with
+`{"ok":false,"error":"unknown_scenario"}`. Root cause: the transport hard-coded
+`response(200, ...)` around the handler result, so the handler had no channel for a
+business status. Fix: `Handler` is now
+`std::function<std::string(const HandlerRequest&, int& status)>`; the transport
+still owns framing/header/query validation, and its own rejections cannot be
+overridden. Body shape unchanged so the dashboard (which keys on `scenario.ok`)
+needs no edit. Regression: `[v21]` asserts the status line, the JSON body, and
+that a handler status never overrides transport validation. Lesson: if a layer
+owns the outcome, it must own the status — a hard-coded `200` makes every failure
+look like success to anything that reads the status.
+
+**Defect 2 — a read-only working directory aborted the shipped binaries.**
+`terminate called after throwing an instance of 'spdlog::spdlog_ex': Failed
+opening file homeguardian.log for writing: Permission denied`, exit 134 (SIGABRT).
+Root cause: `Logger::initialize` created the file sink unguarded and the exception
+escaped `main()`. Everything else in the app is carefully fail-closed (persistence
+degrades, capture fails safe), so a diagnostic log file killing the process was
+inconsistent. Fix: best-effort sink + console fallback + guarded registration.
+Regression: `[logger]` — placing a *directory* named `homeguardian.log` in a
+scratch dir fails deterministically on any account, including root. Lesson: a
+diagnostic facility must never be able to take down the safety path.
+
+**Defect 3 — the bridge never applied retention to its own alert store.** An alert
+seeded 40 days old survived a restart, so the durable demo store could grow without
+bound. Root cause: retention was only wired into the application's own
+`homeguardian_audit.db`; the bridge writes `homeguardian_bridge_audit.db` and never
+called the (already tested) retention helpers with the config it was handed. Fix:
+startup prune plus a bounded periodic prune (at most once per interval, only after
+a scenario write), honouring `alert_retention_days` (0 = keep forever). Regression:
+`scripts/verify_retention.sh` (seed out-of-window + in-window rows, restart, assert
+only the out-of-window row is gone, the API total follows, scenarios still run).
+Lesson: two databases in one process means two retention lifecycles — wire the
+policy where the data is actually written.
+
+**Measurement notes.** `hg_build` is a Debug build (~26 MB binaries); all
+footprint and latency figures in `docs/RELEASE_CANDIDATE_V21.md` come from a fresh
+out-of-source Release build. Take RSS from `/proc/<exact pid>` (`pgrep -ax`), not
+`pgrep -f`, which also matches the agent's own shell. A scenario run on a fresh,
+small database is faster (72–111 ms here) than on one carrying a large WAL
+(147–169 ms measured in H-01s) — the accepted `synchronous=FULL` fsync dominates
+either way, and the range must be reported as a range.

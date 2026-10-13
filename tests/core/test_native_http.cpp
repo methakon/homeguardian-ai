@@ -25,12 +25,29 @@ struct Rec {
     bool last_cycles_set = false;
 };
 Handler recording_handler(Rec& r) {
-    return [&r](const HandlerRequest& req) {
+    return [&r](const HandlerRequest& req, int& status_out) {
         ++r.calls;
         r.last_op = std::string(req.op);
         r.last_scenario = std::string(req.scenario);
         r.last_cycles = req.cycles;
         r.last_cycles_set = req.cycles_set;
+        (void)status_out;   // recording handler always succeeds
+        return std::string("{\"ok\":true}");
+    };
+}
+
+// A handler that mirrors the bridge's scenario contract: a well-formed but
+// unsupported scenario id is rejected with 400 + a generic JSON error body.
+Handler rejecting_handler(Rec& r) {
+    return [&r](const HandlerRequest& req, int& status_out) {
+        ++r.calls;
+        r.last_op = std::string(req.op);
+        r.last_scenario = std::string(req.scenario);
+        if (req.op == "scenario" && req.scenario != "default") {
+            status_out = 400;
+            return std::string("{\"ok\":false,\"error\":\"unknown_scenario\",\"scenario_id\":\"") +
+                   std::string(req.scenario) + "\"}";
+        }
         return std::string("{\"ok\":true}");
     };
 }
@@ -291,4 +308,54 @@ TEST_CASE("NativeHttp: read-only demo routes reach the handler",
     REQUIRE(starts_with(c, "HTTP/1.1 200 OK"));
     REQUIRE(h.last_op == "scenarios");
     REQUIRE(h.calls == 2);
+}
+
+// ---------------------------------------------------------------------------
+// v21: the handler owns the business status. A well-formed request naming an
+// unsupported value (e.g. an unknown scenario id) must answer 400 Bad Request
+// with a generic JSON error body, not 200-with-ok:false.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("NativeHttp: a handler-decided 400 is returned as 400 Bad Request",
+          "[nativehttp][h04][v21]") {
+    Rec h; auto handler = rejecting_handler(h);
+    auto out = dispatch(req("GET /api/run-scenario?scenario=nope HTTP/1.1"), "<html>", handler);
+    REQUIRE(starts_with(out, "HTTP/1.1 400 Bad Request"));
+    REQUIRE(out.find("\"ok\":false") != std::string::npos);
+    REQUIRE(out.find("\"error\":\"unknown_scenario\"") != std::string::npos);
+    REQUIRE(out.find("\"scenario_id\":\"nope\"") != std::string::npos);
+    REQUIRE(out.find("Content-Type: application/json") != std::string::npos);
+    REQUIRE(h.calls == 1);
+    REQUIRE(h.last_scenario == "nope");
+}
+
+TEST_CASE("NativeHttp: a supported scenario keeps the 200 status",
+          "[nativehttp][h04][v21]") {
+    Rec h; auto handler = rejecting_handler(h);
+    auto out = dispatch(req("GET /api/run-scenario?scenario=default HTTP/1.1"), "<html>", handler);
+    REQUIRE(starts_with(out, "HTTP/1.1 200 OK"));
+    REQUIRE(h.calls == 1);
+}
+
+TEST_CASE("NativeHttp: a handler status never overrides transport validation",
+          "[nativehttp][h04][v21]") {
+    // Malformed query / bad Host are rejected by the transport BEFORE the
+    // handler runs, so a handler cannot be used to bypass input validation.
+    Rec h; auto handler = rejecting_handler(h);
+    auto bad_query = dispatch(req("GET /api/run-scenario?bogus=1 HTTP/1.1"), "<html>", handler);
+    REQUIRE(starts_with(bad_query, "HTTP/1.1 400 Bad Request"));
+    REQUIRE(bad_query.find("invalid_query") != std::string::npos);
+    REQUIRE(h.calls == 0);
+
+    auto bad_host = dispatch(req("GET /api/run-scenario?scenario=nope HTTP/1.1",
+                                 "Host: evil.example\r\n"), "<html>", handler);
+    REQUIRE(starts_with(bad_host, "HTTP/1.1 403 Forbidden"));
+    REQUIRE(h.calls == 0);
+
+    // A status the handler sets on a read-only route is still its own: the
+    // route is not special-cased.
+    Rec h2; auto handler2 = rejecting_handler(h2);
+    auto alerts = dispatch(req("GET /api/alerts HTTP/1.1"), "<html>", handler2);
+    REQUIRE(starts_with(alerts, "HTTP/1.1 200 OK"));
+    REQUIRE(h2.last_op == "alerts");
 }

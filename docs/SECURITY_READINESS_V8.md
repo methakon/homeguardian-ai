@@ -140,3 +140,44 @@ no timing fields and behaviour is unchanged (verified). It exposes **no**
 credentials, tokens, filesystem paths, personal data, or media — only numeric
 millisecond durations and the existing route/op names already in the contract.
 Not a change to any access-control or validation behaviour.
+
+
+## v21 addendum — native HTTP contract and fail-closed hardening (2026-10-13)
+
+Re-verified against the v21 release candidate (fresh out-of-source Release build).
+
+**Contract change (client-visible, intentional).** An unsupported but well-formed
+`scenario` value now answers **`400 Bad Request`** with the unchanged generic JSON
+body (`{"ok":false,"error":"unknown_scenario","scenario_id":"…"}`). The handler
+reports the business status; the transport still rejects framing, header, method,
+path and query problems itself (413/403/405/404/400) and a handler status can
+never override one of those.
+
+**Adversarial matrix — 51/51 pass.** Missing / duplicate / non-loopback `Host`
+(400/403), cross-site `Origin` (403), non-GET methods including lowercase `get`
+(405), `Authorization` / `Content-Length` / `Transfer-Encoding` / `Expect` /
+obs-fold / body-on-GET (400), unknown or duplicated query keys, empty, malformed,
+over-length or out-of-range `cycles`, malformed `scenario` charset (400), traversal
+and unknown paths (404), oversized header block (413), truncated and partial
+requests (no response, no crash), a 20× malformed flood followed by a valid
+request (200). The listener binds IPv4 loopback only and the interface is
+unauthenticated **by design** (this hand-written demo server is not claimed to be
+production-ready).
+
+**Two fail-closed defects were found and fixed here.**
+
+1. *Abort on an unwritable working directory.* `Logger::initialize` threw
+   `spdlog::spdlog_ex` when it could not create `homeguardian.log`; the exception
+   escaped `main()` and the process died with SIGABRT (exit 134) — a
+   denial-of-service on a read-only or full filesystem. The file sink is now
+   best-effort (console-only fallback, reason reported) and registration is
+   guarded; `[logger]` covers it.
+2. *The bridge's alert store ignored `alert_retention_days`*, so durable audit
+   metadata accumulated without bound. The bridge now prunes its own store at
+   startup and, at most once per interval, after a scenario write;
+   `scripts/verify_retention.sh` covers the seed -> restart -> pruned path.
+
+**Degraded mode stays fail-closed.** With a corrupt or unwritable audit database
+the bridge keeps serving but reports `{"error":"unavailable","ok":false}` on the
+status route, read routes fail closed, and a scenario claims no persisted alerts.
+No authentication or consent path was relaxed in v21.

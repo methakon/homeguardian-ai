@@ -253,3 +253,27 @@ not confirm a real fall or contact emergency services."
 
 **Never** shown: a claim that a real person fell, that an ambulance was
 contacted, or that emergency services were notified.
+
+
+## v21 — API contract note and impact-panel wording (2026-10-13)
+
+**Unknown scenario ids now answer `400 Bad Request`.** Selecting or requesting a
+scenario that is not in the catalogue returns the same generic JSON error body as
+before (`{"ok":false,"error":"unknown_scenario","scenario_id":"…"}`), but with a
+`400` status instead of `200`. The dashboard already keys on `scenario.ok`, so it
+behaves exactly as before and shows "The backend rejected the scenario: …".
+Malformed ids are still rejected by the transport with `400` before the handler
+runs. Existing scenario identifiers and every successful response are unchanged.
+
+**Impact panel wording.** When the synthetic impact pattern is confirmed the
+"SIMULATED critical impact pattern" panel now reads "Confirmed because: …" using
+the reason from the sample that completed the pattern (for example
+`simulated impact signature: transient 0.95 followed by stillness 0.1 within 1
+sample(s)`), and the classifier's final-sample reason is labelled "Last sample:".
+Previously the last-sample reason appeared directly under "Confirmed pattern",
+which could read as if nothing had been confirmed.
+
+**Degraded mode is honest.** If the bridge cannot open its audit database (for
+example an unwritable directory) the dashboard's status card shows the backend as
+unavailable; a scenario still runs and its detection/impact evidence is real, but
+the page shows no persisted-alert counts rather than inventing them.
