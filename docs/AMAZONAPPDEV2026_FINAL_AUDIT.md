@@ -157,8 +157,8 @@ creative, well-understood use of the ecosystem.
 1. Start the simulated Alexa+ web experience (one command).
 2. Grant consent for the simulated living-room sensor (show the consent gate).
 3. Speak/type "Is everything okay at home?" → the experience invokes the real backend.
-4. Two synthetic observations arrive → the correlation rule fires → an alert appears with its
-   evidence (contributing event IDs, rule, timestamp).
+4. Detection observations arrive → the detection/fusion rule qualifies → a detection-driven
+   alert appears with its evidence (fusion verdict, fused confidence, rule, timestamp).
 5. Show the dedup/cooldown behaviour on a repeat query.
 6. Withdraw consent → show subsequent observations are blocked (fail-closed).
 7. Show the persisted alert summary survives a restart (`historical_alerts`).
@@ -292,3 +292,20 @@ license". That was inaccurate — the repo carried an **MIT** `LICENSE` (added i
 now resolved as Apache-2.0 by explicit approval.
 
 **P0-2 status: DONE.**
+
+## Superseded rows in the claims audit above (2026-10-13, after L-11)
+
+The claims table at the top of this document was authored at an earlier
+milestone. The following rows are now out of date; the findings themselves are
+left intact as a historical record:
+
+| Original row | Current state |
+|---|---|
+| "C++ core … 255 cases / 2004 assertions" | Suite is now **329 cases / 2453 assertions** (assertions verified in this milestone's run). |
+| "End-to-end household workflow … `Alert generated: synthetic simulator presence notice` → dedup (1 delivered / 8 suppressed)" | The alert is now **detection-driven** (L-11): rule `detection-fusion`, message names the fused evidence, severity derived from the fused confidence. The demo run now reports e.g. 10 generated / 1 delivered / 9 suppressed (Unusual activity) or 10 / 2 / 8 (Default, two severities). The old presence notice no longer exists anywhere in `src/`. |
+| "README: Alexa+ … with MCP integration" | Corrected: the README no longer claims MCP. |
+| "License to be selected / no LICENSE file" | Resolved in v16: Apache-2.0 `LICENSE` + `NOTICE`. |
+| Boost.Beast/Drogon HTTP surface | Superseded: the demo HTTP surface is the native C++ transport (`hg_alexa_bridge --http`), with the Node adapter retained only as an optional legacy reference. |
+
+No new claim is made here; every figure above was produced by this milestone's
+test run or live demo.

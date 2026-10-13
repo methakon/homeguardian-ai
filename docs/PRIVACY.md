@@ -479,9 +479,9 @@ surface; they operate on synthetic alerts and simulator state only:
 - Configuration remains fail-closed: capture disabled by default; invalid or
   contradictory config is rejected before components start and cannot enable
   capture or bypass consent.
-- The alert is a **synthetic presence notice**, never a real-world danger
-  detection. No raw audio/video/biometric data is persisted. No physical sensor
-  was activated.
+- The alert is a **synthetic, detection-driven activity notice** (raised only when
+  the fused detector evidence qualifies), never a real-world danger detection. No
+  raw audio/video/biometric data is persisted. No physical sensor was activated.
 
 ## Durable audit + observability — privacy notes (added 2026-10-11)
 
@@ -515,8 +515,8 @@ observability without any new capture or retention surface:
   and cannot grant consent or enable capture. Counters reset per process and are
   never mistaken for durable audit history.
 - **Logs/records cannot be mistaken for physical sensor activation:** all media
-  is synthetic; the alert is a synthetic presence notice, not a danger
-  detection. No physical sensor was activated.
+  is synthetic; the alert is a synthetic, detection-driven activity notice, not a
+  danger detection. No physical sensor was activated.
 
 ## Integration contract + consent verification (added 2026-10-11)
 

@@ -60,8 +60,8 @@ The page has four areas:
 | Step | Action | Expected result |
 |---|---|---|
 | 1 | Open the URL | Status shows **Running**, capture **Enabled (synthetic)**, mode **Simulated**. A banner explains this is a simulation. |
-| 2 | Click **▶ Run synthetic scenario** | Status updates: **15 events processed** (10 simulator + 5 detection-stage observations), **14 alerts generated**, **1 delivered**, **13 suppressed** (dedup/cooldown). The chat also reports the synthetic detection stage (detector `activity-energy`, N detected / inconclusive, fusion verdict) and the **privacy audit** (`N` consent decisions logged, `enforcement_ok: true`). The alert timeline shows one alert (`sim-alert-N`, rule `sim-presence`, severity `info`). |
-| 3 | Ask **"Is everything okay?"** | "There is 1 alert on record, highest severity info." (Counts come from the real backend.) |
+| 2 | Pick a scenario (e.g. **Unusual activity**) and click **▶ Run scenario** | Status updates: **15 events processed** (10 authorized synthetic observations + 5 detection observations), **10 alerts generated**, **1 delivered**, **9 suppressed** (dedup/cooldown). The **Scenario result** card shows the detector counts (5 detected), the fusion verdict (`detected`, confidence 1.00), the consent audit (`enforcement_ok: true`) and *why* the alert fired. The alert timeline shows the alert with rule `detection-fusion`, severity `warning`, its `synthetic` provenance and an explanation built from its evidence. |
+| 3 | Ask **"Is everything okay?"** | "There is 1 alert on record, highest severity warning." (Counts come from the real backend.) |
 | 4 | Ask **"Is capture enabled?"** | "Capture is enabled for the synthetic sensor, and consent is granted — but this is simulated, and no physical camera or microphone is active." |
 | 5 | Click **▶ Run synthetic scenario** again | A second alert is appended; the earlier alert is still listed (durable history). |
 | 6 | Click **↻ Refresh status** | Counters and timeline reflect the current backend state. |
@@ -125,11 +125,11 @@ A tight script that fits the time limit and shows the product working:
 |---|---|---|
 | 0:00–0:15 | Terminal: `bash demo.sh`, browser opens | "HomeGuardian AI — a privacy-first home safety system. This is a simulated Alexa+ experience running entirely locally." |
 | 0:15–0:35 | The UI: banner, status card | "Status is Running, capture is enabled for a synthetic sensor. No physical camera or microphone is ever activated." |
-| 0:35–1:00 | Click **Run synthetic scenario** | "Two synthetic observations arrive and a detection stage classifies them — some detected, one near the threshold reported as inconclusive. The correlation rule fires and an alert is generated. Note 14 generated, 1 delivered, 13 suppressed by the cooldown policy." |
+| 0:35–1:00 | Pick **Unusual activity** and click **▶ Run scenario** | "Synthetic observations are acquired under consent and a detector classifies them. The fusion result agrees, so the detection rule raises an alert — the alert exists because the evidence qualified, not because a counter ticked. Ten firings, but the cooldown policy delivers one and suppresses nine." |
 | 1:00–1:20 | Alert timeline + ask "Is everything okay?" | "The alert is persisted with its id, rule, and severity. The answer comes from the real backend, not from the page." |
 | 1:20–1:45 | Ask "Is capture enabled?"; run scenario again | "Consent-first: if capture or consent is withdrawn, the gate blocks everything and nothing reaches the pipeline." |
 | 1:45–2:10 | Privacy card | "Local-first, no cloud, no raw media — only alert metadata is stored." |
-| 2:10–2:40 | Terminal: `npm test` / test counts scrolling | "275 C++ test cases, 76 Node tests, ASan/UBSan clean, fresh-build reproducible." |
+| 2:10–2:40 | Terminal: `npm test` / test counts scrolling | "329 C++ test cases, 76 Node tests, ASan/UBSan clean, fresh-build reproducible." |
 | 2:40–3:00 | Close | "This is a simulated Alexa+ experience built on a real, tested backend. Thank you." |
 
 **Recording tips:** 1080p, show the terminal command and the browser side by
@@ -147,14 +147,19 @@ card. For each run the page shows, from backend data only:
 3. **Fusion** — verdict, confidence and contributing inputs. An ambiguous or
    insufficient result is reported as `inconclusive`/`unavailable`, never as a
    detection.
-4. **Why an alert was, or was not, generated** — the correlation rule outcome and
-   the number of duplicate alerts suppressed by the dedup/cooldown policy.
+4. **Why an alert was, or was not, generated** — the detection/fusion rule outcome
+   and the number of duplicate alerts suppressed by the dedup/cooldown policy.
 5. **What was persisted** — the count written this run and the durable total.
 6. **Consent** — authorized vs denied acquisitions and whether enforcement held.
 
 The **Alert timeline** is rendered from `GET /api/alerts` (real rows from the
 local SQLite audit store) using `textContent` — the previous hardcoded
 "synthetic simulator presence notice" string is gone.
+
+> **Superseded by L-11.** The table below records the v17 (pre-L-11) behaviour,
+> when the alert came from a raw-observation correlation rule and the detection
+> stage did not influence it. See the "L-11 — Alerts are now detection-driven"
+> section at the end of this file for the current, re-measured results.
 
 | Scenario | Intent | Observed result (capture on) |
 |---|---|---|

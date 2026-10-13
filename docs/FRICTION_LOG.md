@@ -1893,3 +1893,32 @@ conditions. That is the intended prioritisation behaviour, now driven by evidenc
 **Footprint.** See the milestone report; the detection rule adds one small
 translation unit and no runtime dependency, no extra process and no thread.
 `synchronous=FULL` and WAL are unchanged.
+
+## L-11 follow-up: a stale binary nearly produced a false verification (2026-10-13)
+
+**What happened.** After changing `Application` (default rule set + detection
+step), only `hg_alexa_bridge` and `homeguardian_tests` were rebuilt. The
+standalone app binary `hg_build/homeguardian` was NOT, so when it was run to
+capture the real log output for `docs/DEMO_SIMULATOR.md` it still printed the
+OLD message (`Alert generated: synthetic simulator presence notice`) and the old
+counts — i.e. the app appeared not to have been changed at all.
+
+**Why it mattered.** The intended documentation edit was to quote the app's real
+new output. Quoting the stale binary's output (or worse, "predicting" the new
+output) would have written a false verification into a judge-facing document.
+
+**Fix / rule.** Rebuild EVERY shipped target (`homeguardian`,
+`homeguardian_tests`, `hg_alexa_bridge`) before verifying or documenting runtime
+behaviour, and quote only output observed from a binary built after the change.
+Re-measured after rebuilding: `alerts_gen=10 alerts_deliv=2 alerts_supp=8`, with
+the message `Alert generated: synthetic activity detected: fusion confidence
+0.92 from 2 contributing detector observation(s)`.
+
+**Documentation sweep.** Living docs that still described the pre-L-11 behaviour
+were corrected (README vision/current-status, ARCHITECTURE, PRIVACY,
+DEMO_SIMULATOR, DEMO_WEB walkthrough + video script, SUBMISSION_PACKAGE video
+script + test counts, AMAZONAPPDEV2026_FINAL_AUDIT scenario step). The claims
+table in the audit is left as a historical record with an explicit "superseded"
+addendum, and dated FRICTION_LOG/STATUS rows are preserved unchanged. The README
+also no longer implies fall detection is implemented (H-01/H-02 are listed as
+planned).

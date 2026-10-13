@@ -695,8 +695,9 @@ alerts — correct rule behavior, but noisy. `AlertPolicy` collapses that to one
 notification per active condition with a re-notification interval, without hiding
 the first occurrence or any materially new (different-key) alert. It is a
 notification policy, **not** a safety detector; a suppressed duplicate is still
-an active condition. The alert is a synthetic presence notice, never a real-world
-danger detection.
+an active condition. The alert is a synthetic, **detection-driven** activity
+notice (L-11: it is raised only when the fused detector evidence qualifies),
+never a real-world danger detection.
 
 **Application lifecycle** (`AppState`): `Constructed → Starting → Running →
 Stopping → Stopped`, with `Failed` for config/startup errors. `run()` applies the
@@ -941,8 +942,9 @@ budget with no model download.
 **Tests:** `tests/core/test_detection.cpp` — 20 cases / 67 assertions covering
 valid input, malformed/oversized payloads, unavailable/inconclusive/conflicting
 inputs, stale windows, bounded keys/windows, no-raw-media-in-payload, and Event
-pipeline integration. Full suite: **275 cases / 2071 assertions**, CTest 100%,
-Node 76/76.
+pipeline integration. Full suite at that milestone: **275 cases / 2071
+assertions**, CTest 100%, Node 76/76 (current totals are recorded in the later
+sections of this document and in `docs/STATUS.md`).
 
 ## Privacy audit log (added 2026-10-13, roadmap H-03)
 

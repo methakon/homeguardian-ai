@@ -64,9 +64,9 @@ see the consent gate refuse to deliver anything once capture is turned off.
 
 | Implemented and tested | Simulated (this demo) | Planned (not built) |
 |---|---|---|
-| Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter, synthetic detection + fusion stage (activity-energy detector, explainable anomaly detection, confidence-aware fusion — all synthetic, now exercised in the demo scenario) | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference (face/pose/lip/voice), a real Alexa+ MCP server, Amazon Login with Amazon account linking, Ring integration |
+| Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter, synthetic detection + fusion stage (activity-energy detector, explainable anomaly detection, confidence-aware fusion — all synthetic), and a **detection-driven alert rule** (an alert is raised only when the fused detector evidence qualifies; raw observations never alert) | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference (face/pose/lip/voice), a real Alexa+ MCP server, Amazon Login with Amazon account linking, Ring integration |
 
-**Testing.** 275 C++ test cases (2,074 assertions), 76 Node tests, ASan/UBSan
+**Testing.** 329 C++ test cases (2,453 assertions), 76 Node tests, ASan/UBSan
 clean, and a reproducible out-of-source build — all green at submission.
 
 ---
@@ -81,11 +81,11 @@ expected outputs.
 |---|---|---|
 | **0:00–0:15** | Terminal: `bash demo.sh`; browser opens to the URL | "HomeGuardian AI is a privacy-first home safety system. This is a simulated Alexa+ experience that runs entirely on my machine." |
 | **0:15–0:35** | The web UI: the yellow banner, then the status card | "Note the banner — this is a simulation. No physical camera or microphone is ever activated. Status is Running, capture is enabled for a synthetic sensor." |
-| **0:35–1:00** | Click **▶ Run synthetic scenario** | "Two synthetic observations arrive, and a detection stage classifies them — some detected, one near the threshold reported as inconclusive rather than fabricated. The correlation rule fires and an alert is generated. Look at the counters: fifteen events processed, fourteen alerts generated — but only one delivered, thirteen suppressed by the cooldown policy." |
+| **0:35–1:00** | Pick **Unusual activity** in the scenario selector, click **▶ Run scenario** | "Synthetic observations are acquired under consent and a detector classifies them — all detected here. The fusion result agrees with confidence 1.0, and the detection rule raises the alert: the alert exists because the evidence qualified, not because a counter ticked. Ten firings, but the cooldown policy delivers one and suppresses nine duplicates." |
 | **1:00–1:20** | Alert timeline, then ask **"Is everything okay?"** | "The alert is persisted with its id, rule, and severity. And the answer comes from the real backend, not from the web page." |
 | **1:20–1:45** | Ask **"Is capture enabled?"**; click **Run synthetic scenario** again | "Consent-first. If capture or consent is withdrawn, the gate blocks everything and nothing reaches the pipeline — I can demonstrate that with the capture-off config." |
 | **1:45–2:05** | Run the scenario against `config/homeguardian.json` (capture off) — show `events_processed: 0` | "Zero events. The consent gate refused every observation. That fail-closed behaviour is the core privacy guarantee." |
-| **2:05–2:25** | The privacy card; then the terminal running `npm test` / the C++ suite | "Local-first, no cloud, no raw media — only alert metadata is stored. And it is tested: 275 C++ cases, 76 Node tests, sanitizers clean, reproducible build." |
+| **2:05–2:25** | The privacy card; then the terminal running `npm test` / the C++ suite | "Local-first, no cloud, no raw media — only alert metadata is stored. And it is tested: 329 C++ cases, 76 Node tests, sanitizers clean, reproducible build." |
 | **2:25–2:50** | Back to the UI, ask **"What can you do?"** | "It reports home status, alerts, and consent state, and runs synthetic scenarios — read-only, so it can never enable a sensor or change configuration." |
 | **2:50–3:00** | Close on the repo README | "A simulated Alexa+ experience built on a real, tested, privacy-first backend. Thank you." |
 
@@ -171,7 +171,7 @@ desired; the substance reflects real experience.
 - *Would use again:* yes.
 
 **Catch2**
-- *Purpose:* the C++ unit/integration suite (275 cases).
+- *Purpose:* the C++ unit/integration suite (329 cases).
 - *What worked:* tag filters made focused runs easy; SECTIONs kept fixtures
   readable.
 - *What needs improvement:* nothing specific.

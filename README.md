@@ -18,7 +18,8 @@ provides:
 
 - **Consent-based wellbeing observations** — opt-in monitoring of activity
   patterns, with explicit user control.
-- **Fall and safety-event detection** — alerts for potential falls or unusual
+- **Fall and safety-event detection** *(planned — see the implemented/planned
+  breakdown below; not implemented)* — alerts for potential falls or unusual
   inactivity, with configurable emergency workflows.
 - **Contextual event correlation** — connecting events across time for
   meaningful insights.
@@ -43,7 +44,9 @@ processing.
 - **Consent-guarded delivery boundary** — media is delivered only while capture
   is enabled *and* consent is granted; withdrawal or capture-off blocks all
   delivery.
-- **Event pipeline** with time-window **correlation rules**.
+- **Event pipeline** with a **detection/fusion-driven alert rule** — an alert is
+  raised only when the fused detector evidence qualifies (raw observations alone
+  never alert; they are the detector input).
 - **Alert deduplication / cooldown policy** with re-arm on condition clear.
 - **SQLite persistence** with schema migration, transactional writes,
   age-based retention, and recovery.
@@ -66,6 +69,8 @@ processing.
   pending explicit approval**.
 - A real Alexa+ **MCP server** (spec 2025-11-25+, Streamable HTTP) — not built.
 - Amazon **Login with Amazon** account linking — not built.
+- Fall detection (H-01) and the emergency/escalation workflow (H-02) —
+  **not implemented** (no pose inference, no emergency calling).
 - Ring integration — **not implemented**.
 
 ## Technology Stack
@@ -171,12 +176,12 @@ homeguardian-ai/
 
 **Simulator-first development with consent-gated acquisition.** The C++ core
 (event model, consent gate, consent-guarded device delivery boundary, event
-pipeline + time-window correlation rules, alert dedup policy, and SQLite
+pipeline + a detection/fusion-driven alert rule, alert dedup policy, and SQLite
 persistence) is implemented and covered by the host test suite. A deterministic
 in-process sensor simulator exercises the full consent/lifecycle/delivery/
 bounded-buffer machinery on the shared code paths, and an end-to-end simulator
 workflow is tested. The simulated Alexa+ web experience drives that same
-backend, so the demo shows real event processing, correlation, alerts, and
+backend, so the demo shows real event processing, detection, alerts, and
 durable persistence.
 
 **No real camera or microphone capture is implemented or authorized.** Capture
