@@ -237,3 +237,22 @@ honest description.
 **Next action (immediately after this report):** implement **P0-1 (README honesty fix) and P0-2
 (LICENSE, pending user approval of MIT)** as one small commit, then proceed to **P0-3 (the simulated
 Alexa+ web experience)** — the single highest-value task for both eligibility and judging score.
+
+## License options (v15, 2026-10-13) — DECISION REQUIRED, nothing committed
+
+P0-2 (no LICENSE on the public repo) is still open. **No license has been added
+or selected.** Options for the user to choose:
+
+1. **MIT** — permissive, shortest, most common for hackathon/demo code; allows
+   reuse and modification with attribution; no patent grant.
+2. **Apache-2.0** — permissive like MIT **plus an express patent grant** and a
+   NOTICE/trademark clause; better for anything that might see corporate use.
+3. **BSD-3-Clause** — permissive, no patent grant, adds a no-endorsement clause.
+4. **No license (all rights reserved)** — default copyright; code is *not*
+   open-source and others cannot legally reuse it. Acceptable if the repo is to
+   stay private later; public repo + no license usually means no reuse rights.
+
+**Note:** the repository is currently **public** with **no license**, which is
+the least helpful state for judges and reusers. A LICENSE is a one-line decision
+but a legal one, so it is left to the user. If MIT/Apache/BSD is chosen, also
+update `README.md`'s license section and, for Apache-2.0, add a `NOTICE` file.

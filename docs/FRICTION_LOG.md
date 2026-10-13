@@ -1668,3 +1668,55 @@ compare like-for-like with a Release build (`scripts/bench_demo.sh`).
 Host/Origin, method, traversal, cycles bounds, smuggling headers, security
 headers, handler-not-reached on rejection), plus the existing H-03/privacy and
 detection suites. Full suite 304 cases / 2217 assertions; ASan/UBSan clean.
+
+## Native scenario latency — root-caused to SQLite fsync, not the native design (2026-10-13, v15)
+
+**Symptom (carried from v14):** the native `/api/run-scenario` measured slower
+(≈50–180 ms) than the legacy Node→C++ path (≈7–16 ms) even though the native
+server is far lighter in memory/CPU/processes.
+
+**Reproduced (Release, 40 trials):** native scenario median 46.5 ms / p95 437 ms
+/ max 602 ms (sd 120 ms) — high variability; native `/api/status` 0.61 ms,
+`/api/health` 0.25 ms (so HTTP parsing/dispatch is fine); legacy scenario
+6.1 ms.
+
+**Investigated, not guessed.** Bounded `HG_PROFILE=1` phase timing put **99 % of
+the latency in the `persist` phase (the single SQLite alert commit)**: median
+91.8 ms / p95 520 ms; every other phase (reset, `set_media_capture_enabled`,
+consent grants, simulator start+5 ticks+shutdown, detection+fusion, contract
+calls) was **< 1 ms**.
+
+**Decisive control:** same DB file, same window, identical code — only
+connection lifetime differed. Fresh connection (legacy child model) persist
+0.11 ms; long-lived connection (native) 30.6 ms. `strace -T -e fsync,fdatasync`
+showed **both** paths fsync heavily (11 fsyncs each, **28–410 ms per fsync**);
+the difference is *where* the sync lands, not whether it happens. A plain
+`sqlite3` test with no HomeGuardian code settled it:
+
+```
+PRAGMA synchronous=FULL  (SQLite default): median 92.7 ms/commit
+PRAGMA synchronous=NORMAL (WAL)          : median  0.03 ms/commit
+```
+
+**Root cause:** `journal_mode=WAL` with the SQLite default `synchronous=FULL`
+does one `fsync` per commit; this host's ext4 volume (/dev/sdc3) charges
+**~50–410 ms per fsync**. The scenario performs exactly one durable commit (the
+alert), hence ~93 ms median with a heavy tail. It is a **storage + durability-
+setting** property, **not** a defect of the native single-process architecture —
+v14's "native is slower" conclusion is therefore corrected.
+
+**Resolution / outcome:** **no safe code optimization removes the cost.**
+Eliminating the fsync means weakening durability (`synchronous=NORMAL` or async
+batching), which the mission explicitly forbids without approval; and every other
+phase is already sub-millisecond. The durable commit is left intact. The single
+lever (`synchronous=NORMAL`, scenario → ~1–2 ms) is documented and **left for
+explicit user approval** (`docs/PERF_SCENARIO_LATENCY_V15.md` §5). Do not bypass
+SQLite or drop the write.
+
+**Regression protection:** the profiling instrumentation is **default-off**
+(`HG_PROFILE=1` only) and adds only numeric fields when enabled — verified inert
+when unset (default response has no `timing_ms` and counts are unchanged). No
+correctness, security, durability, or footprint change was made.
+
+**Remaining limitation:** absolute numbers are host-specific; the phase
+attribution and the FULL-vs-NORMAL ratio are the portable findings.

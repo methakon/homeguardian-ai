@@ -299,3 +299,19 @@ environment. The cause was not isolated in this pass and is a documented
 follow-up. Native wins decisively on memory, CPU, process count, dependency
 surface, and self-containment; latency for the read routes (`/health`,
 `/status`) is equal or better.
+
+## Profiling the scenario path (added 2026-10-13, v15)
+
+Set `HG_PROFILE=1` to add steady-clock phase timings to the scenario response
+(`timing_ms` inside `scenario`, and `handler_timing_ms` at the top level). It is
+**off by default and inert when unset** (verified: the default response contains
+no timing fields and all counts are unchanged). It records only numeric
+durations — no credentials, paths, or media.
+
+```
+HG_PROFILE=1 hg_build/hg_alexa_bridge --http config/homeguardian.demo.json <creds> \
+  --port 0 --token demo-token
+curl -s 'http://127.0.0.1:<port>/api/run-scenario?cycles=5' | python3 -m json.tool
+```
+
+Findings and the reproduction methodology: `docs/PERF_SCENARIO_LATENCY_V15.md`.

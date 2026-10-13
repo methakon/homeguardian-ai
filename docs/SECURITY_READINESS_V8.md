@@ -131,3 +131,12 @@ shutdown, read-only contract.
 
 **Do not claim public-network readiness.** The adapter is for controlled local
 development demonstration only.
+
+## Addendum (v15): profiling instrumentation
+
+`HG_PROFILE=1` adds bounded phase timings (steady-clock, numeric only) to the
+scenario/response JSON. It is **off by default**; when unset the response carries
+no timing fields and behaviour is unchanged (verified). It exposes **no**
+credentials, tokens, filesystem paths, personal data, or media — only numeric
+millisecond durations and the existing route/op names already in the contract.
+Not a change to any access-control or validation behaviour.

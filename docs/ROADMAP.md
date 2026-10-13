@@ -255,3 +255,30 @@ criteria; the structured logger already emits a durable record.
 | N-05 | H-04 security review + adversarial tests | N-02 | Input validation, Host/Origin enforcement, CSP, resource limits; 18 `[nativehttp]` cases incl. handler-not-reached-on-rejection | DONE |
 | N-06 | Footprint benchmark (native vs legacy Node) | N-03 | Measured RSS/CPU/startup/latency/process count/deps via `scripts/bench_demo.sh`; recorded (incl. the unflattering run-scenario latency) | DONE |
 | N-07 | Legacy Node adapter retained as reference | N-03 | `src/bridge/hg_demo_server.js` kept; `HG_DEMO_LEGACY_NODE=1` path; not required by default | DONE |
+
+## Phase O — Scenario latency investigation (added 2026-10-13, v15)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| O-01 | Reproduce the v14 scenario-latency gap | N-03 | 40-trial Release measurement with median/p95/variability | DONE (native 46.5 ms median / 437 ms p95) |
+| O-02 | Phase-profile the scenario path | O-01 | Steady-clock phases via default-off `HG_PROFILE=1`; no sensitive data | DONE (99 % in `persist`) |
+| O-03 | Isolate the cause | O-02 | Control + `strace` + isolated `sqlite3` measurement | DONE (SQLite `synchronous=FULL` fsync ≈ 93 ms/commit) |
+| O-04 | Safe optimization | O-03 | Improve latency **without** durability/security/footprint regressions | **NOT ACHIEVED** — no safe lever; only `synchronous=NORMAL` (durability trade-off) would help → documented, awaiting approval (`docs/PERF_SCENARIO_LATENCY_V15.md`) |
+| O-05 | Keep instrumentation, default-off, reported | O-02 | `HG_PROFILE=1` inert when unset; no credential/media leakage | DONE |
+
+**Phase F / G review vs the implemented native transport** (requested):
+
+- **F-01 "HTTP server (Boost.Beast) — REST API for dashboard and alerts":**
+  **superseded / satisfied in scope.** A loopback REST-ish API for the dashboard
+  and alerts now exists as the **native `hg_alexa_bridge --http`** transport
+  (GET-only subset, no external dependency), rather than Boost.Beast. The
+  original dependency choice is deliberately NOT adopted (dependency-avoidance
+  goal). Not a production HTTP server: no TLS, no real auth, handwritten subset.
+- **G-01 "Web dashboard (HTML/CSS/JS) — shows events and status":**
+  **implemented**, but built on the native transport (F-01 above) rather than the
+  never-built Boost.Beast F-01. The dashboard is vanilla HTML/CSS/JS
+  (`src/web/index.html`), embedded into the binary, showing status, alerts, the
+  detection stage, and the privacy audit; it drives the real backend.
+- **F-02 (MCP), F-03 (Alexa+ integration), G-02 (notifications), G-03 (Ring
+  simulator), H-01 (fall detection):** **NOT implemented / deferred** — unchanged.
+  No MCP, live Alexa, physical sensing, or production HTTP deployment is claimed.

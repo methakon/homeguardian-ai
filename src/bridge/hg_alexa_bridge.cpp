@@ -221,6 +221,21 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
     SimulatorRuntime& sim = app.get_simulator_runtime();
     RuntimeStatus& st = app.get_status();
 
+    // Bounded, optional phase profiling (HG_PROFILE=1). OFF by default; adds
+    // only numeric timings (no credentials, paths, or media) to the response.
+    const bool prof = [] {
+        const char* p = std::getenv("HG_PROFILE");
+        return p != nullptr && *p != '\0' && *p != '0';
+    }();
+    json timing = json::object();
+    auto pt = std::chrono::steady_clock::now();
+    auto lap = [&](const char* name) {
+        if (!prof) return;
+        const auto now = std::chrono::steady_clock::now();
+        timing[name] = std::chrono::duration<double, std::milli>(now - pt).count();
+        pt = now;
+    };
+
     // Capture must be enabled in the loaded config for the scenario to deliver
     // anything. If the kill switch is off, the gate blocks all delivery — which
     // is itself the correct, demonstrable fail-closed behaviour.
@@ -238,6 +253,7 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
     app.get_alert_policy().reset();
     app.get_pipeline().clear_history();
     sim.reset_for_reuse();
+    lap("reset");
 
     if (capture_on) {
         // Enable capture on the simulator's OWN gate (Application constructs it
@@ -245,9 +261,11 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
         // exactly what Application::run() does when the config enables capture.
         sim.set_media_capture_enabled(true);
         st.capture_enabled.store(true);
+        lap("capture_enable");
         // Synthetic grants for the simulator's consumers (test consent only).
         sim.grant_consent(SimulatorRuntime::enabled_device_id(), "sim_alexa_enabled");
         sim.grant_consent(SimulatorRuntime::assistant_device_id(), "sim_alexa_assistant");
+        lap("consent");
         // Route every AUTHORIZED synthetic observation through the real
         // application event path (process_event -> Pipeline -> correlation ->
         // AlertPolicy). Delivered alerts are then persisted to the SAME audit
@@ -277,6 +295,7 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
             }
         }
         sim.shutdown();
+        lap("sim_ticks");
         if (!sim_started && !sim_error.empty()) {
             scenario_error = sim_error;  // surfaced in the summary; generic text
         }
@@ -292,6 +311,7 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
                 {}, 0.9, "sim-presence", nlohmann::json::object());
             audit->record_alert(a);  // best-effort; failure degrades, never throws
         }
+        lap("persist");
 
         // --- Detection / fusion stage (Runtime Readiness v8 framework) ---
         // Exercise the REAL detection path that the demo otherwise bypassed:
@@ -343,6 +363,7 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
         det["fusion_contributing"] = fr.contributing;
         det["fusion_reason"] = fr.reason;
         detection_summary = det;  // attached to the summary JSON below
+        lap("detection");
     }
 
     json j;
@@ -389,6 +410,7 @@ json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
         j["error"] = "simulator_unavailable";
         j["detail"] = scenario_error;  // generic; no paths/tokens/PII
     }
+    if (prof) j["timing_ms"] = timing;  // phase breakdown; off by default
     return j;
 }
 
@@ -420,18 +442,36 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                   IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider,
                   const std::string& token, uint16_t port) {
     auto handler = [&](std::string_view op, unsigned cycles) -> std::string {
+        const bool prof = [] {
+            const char* p = std::getenv("HG_PROFILE");
+            return p != nullptr && *p != '\0' && *p != '0';
+        }();
         json out;
+        json ht = json::object();
+        auto pt = std::chrono::steady_clock::now();
+        auto lap = [&](const char* n) {
+            if (!prof) return;
+            const auto now = std::chrono::steady_clock::now();
+            ht[n] = std::chrono::duration<double, std::milli>(now - pt).count();
+            pt = now;
+        };
         if (op == "status") {
             out["status"] = contract_call(token, "status", verifier, provider);
+            lap("status_call");
             out["summary"] = contract_call(token, "alert_summary", verifier, provider);
+            lap("summary_call");
         } else if (op == "scenario") {
             out["scenario"] = run_demo_scenario(app, audit, static_cast<int>(cycles));
+            lap("scenario_total");
             out["status"] = contract_call(token, "status", verifier, provider);
+            lap("status_call");
             out["summary"] = contract_call(token, "alert_summary", verifier, provider);
+            lap("summary_call");
         } else {
             out["ok"] = false;
             out["error"] = "unknown_operation";
         }
+        if (prof) out["handler_timing_ms"] = ht;
         return out.dump();
     };
     // Clean shutdown: the handler sets a stop flag; accept() poll-wakes on its
