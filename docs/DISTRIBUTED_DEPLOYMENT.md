@@ -262,10 +262,24 @@ attached-device count.
 | Bundled `libc++_shared.so` | 1,331,388 B |
 | Host suite after D-02 | 387 cases / 3,053 assertions (+18 / +212 vs v21) |
 | `[d02]` contracts | 18 cases / 212 assertions |
+| Fresh out-of-source Release build | all 3 host targets, 0 compile errors: `homeguardian` 3,210,648 B, `hg_alexa_bridge` 3,342,280 B, `homeguardian_tests` 6,782,120 B |
+| Release host suite | 387 cases / 3,053 assertions, all pass |
+| ASan + UBSan host suite | 387 cases / 3,053 assertions, all pass, **0 sanitizer reports** |
 
 Device-side figures (RAM, CPU, camera FPS, audio latency, battery, thermal) are
 **NOT measured**: no phone is attached. They are not estimated here because an
 estimate is not evidence.
+
+Two honest notes on the numbers above:
+
+- `hg_alexa_bridge` grew 3,320,856 -> 3,342,280 B (+0.65%) because the two new core
+  translation units belong to the shared core library every target links. That code
+  is what D-03 needs on the hub side, so the cost buys the transport milestone its
+  identity and accounting rather than duplicating them per target.
+- The ASan suite covers `CaptureAccounting` and the consent/guard contracts, which
+  are ordinary host code. The AAudio backend cannot run on the host at all (it is
+  compiled only under `HOMEGUARDIAN_ANDROID`), so for D-02 it is
+  **compile-verified for armeabi-v7a, not runtime-verified**.
 
 ### 2.5 Physical acceptance — BLOCKED
 
