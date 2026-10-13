@@ -76,10 +76,12 @@ processing.
 - nlohmann/json v3.11.3 (JSON) — via CMake FetchContent
 - SQLite amalgamation (persistence) — vendored in `third_party/sqlite`
 - Catch2 v2.13.10 (testing) — vendored in `third_party/catch2`
-- Node.js (standard library only) for the web demo and the Alexa skill prototype
+- Node.js (standard library only) — **optional**, for the legacy demo server and
+  the Alexa skill prototype tests only; not required by the default demo
 
-No unreviewed third-party dependency is used by the web demo or bridge; they
-use only the C++ standard library and the Node.js standard library.
+No unreviewed third-party dependency is used by the demo or bridge; the native
+demo and bridge use only the C++ standard library. The optional legacy demo
+server and the Alexa skill prototype use only the Node.js standard library.
 
 ## Quick start — run the demo
 
@@ -95,7 +97,10 @@ scenario**, and ask questions like *"Is everything okay?"*. See
 [docs/DEMO_WEB.md](docs/DEMO_WEB.md) for the full walkthrough, expected output,
 and troubleshooting.
 
-> Prerequisites: a C++20 compiler, CMake ≥ 3.20, `make`, and Node.js ≥ 18.
+> Prerequisites: a C++20 compiler, CMake ≥ 3.20, and `make`. **Node.js is NOT
+> required** for the demo — the native C++ server serves the dashboard and API in
+> one process. (Node.js ≥ 18 is needed only for the optional legacy demo server
+> and the Alexa-skill prototype tests.)
 > The first configure fetches spdlog and nlohmann/json (network needed once).
 
 ## Building the C++ core
@@ -195,13 +200,14 @@ HomeGuardian AI is designed with privacy as a core principle:
 
 ## License
 
-HomeGuardian AI's original source code is released under the **MIT License**.
-See [LICENSE](LICENSE) for the full text.
+HomeGuardian AI's original source code is released under the **Apache License,
+Version 2.0**. See [LICENSE](LICENSE) for the full text and
+[NOTICE](NOTICE) for copyright and third-party attribution.
 
 Bundled and fetched third-party components retain their own licenses and are
-not relicensed under MIT (SQLite — public domain; Catch2 — Boost Software
-License 1.0; spdlog and nlohmann/json — MIT; ask-sdk-core and ask-sdk-model —
-Apache License 2.0). See the notice at the end of [LICENSE](LICENSE).
+**not** relicensed under Apache-2.0 (SQLite — public domain; Catch2 — Boost
+Software License 1.0; spdlog and nlohmann/json — MIT; ask-sdk-core and
+ask-sdk-model — Apache License 2.0). See [NOTICE](NOTICE).
 
 ## Contributing
 

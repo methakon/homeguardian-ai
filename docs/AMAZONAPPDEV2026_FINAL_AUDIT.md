@@ -256,3 +256,39 @@ or selected.** Options for the user to choose:
 the least helpful state for judges and reusers. A LICENSE is a one-line decision
 but a legal one, so it is left to the user. If MIT/Apache/BSD is chosen, also
 update `README.md`'s license section and, for Apache-2.0, add a `NOTICE` file.
+
+## P0-2 RESOLVED (v16, 2026-10-13) — Apache License 2.0
+
+**Decision:** the project owner explicitly approved **Apache License, Version
+2.0**. (Recorded here so the earlier "options" list above is read as history, not
+as an open question.)
+
+**Implemented:**
+- Root `LICENSE` = the complete, unmodified Apache License 2.0 text. Verified
+  byte-for-byte against the official text (`https://www.apache.org/licenses/LICENSE-2.0.txt`):
+  sha256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` for
+  both the fetched official copy and the committed file.
+- Root `NOTICE` added: copyright notice + third-party attribution.
+- `README.md` license section updated from MIT to Apache-2.0 with a NOTICE link.
+
+**Attribution review (no relicensing of third-party code):**
+| Component | Location | License | Action |
+|---|---|---|---|
+| SQLite | `third_party/sqlite` (bundled) | Public domain | preserved (own notice in source) |
+| Catch2 | `third_party/catch2` (bundled) | Boost Software License 1.0 | preserved (own notice in headers) |
+| spdlog | CMake FetchContent (not vendored) | MIT | attributed in NOTICE |
+| nlohmann/json | CMake FetchContent (not vendored) | MIT | attributed in NOTICE |
+| ask-sdk-core/model | `alexa_skill` (npm, optional) | Apache-2.0 | attributed in NOTICE |
+
+**Copyright holder:** `Copyright 2026 Swarna Sekhar Dhar` — evidenced by the
+repository owner, 45 of 46 commits, and the prior MIT copyright line. One commit
+(the `NativeHttp.h` foundation, `6a996daf`) is authored by a different name; the
+owner should confirm whether a second copyright line is desired. No ownership was
+invented.
+
+**Note (correction):** an earlier v15 statement said the public repo had "no
+license". That was inaccurate — the repo carried an **MIT** `LICENSE` (added in
+`f1a923b`). P0-2 was therefore not "missing license" but "license choice"; it is
+now resolved as Apache-2.0 by explicit approval.
+
+**P0-2 status: DONE.**

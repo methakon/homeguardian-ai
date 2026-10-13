@@ -5,7 +5,7 @@
 alternative; no MCP server is required for this route)
 **Deadline:** October 23, 2026, 12:00 PM PDT = **October 24, 2026, 12:30 AM IST**
 **Repository:** https://github.com/methakon/homeguardian-ai (public)
-**License:** MIT (see [LICENSE](../LICENSE))
+**License:** Apache License 2.0 (see [LICENSE](../LICENSE) and [NOTICE](../NOTICE))
 
 > **Honesty statement for judges.** This is a *project-built simulation* of an
 > Alexa+ conversational experience. It is **not** a real Alexa+ device
@@ -206,20 +206,27 @@ Builder and Open Source mini-challenges are therefore **not claimed**.
 
 ## 5. Submission checklist
 
+**Deadline:** October 23, 2026, 12:00 PM PDT = **October 24, 2026, 00:30 IST**.
+
 | Item | Status | Owner |
 |---|---|---|
 | Repository public and accessible | ✅ DONE — https://github.com/methakon/homeguardian-ai | — |
-| LICENSE file (MIT) | ✅ DONE — [LICENSE](../LICENSE) | — |
-| README accurate (no MCP/Ring/sensor overclaims) | ✅ DONE | — |
-| Runnable demo from a clean clone (`bash demo.sh`) | ✅ DONE + verified | — |
+| **License: Apache-2.0** `LICENSE` (sha256-verified vs apache.org) + `NOTICE` | ✅ DONE | — |
+| README accurate (no MCP/Ring/sensor overclaims; Native, no Node) | ✅ DONE | — |
+| Runnable demo from a clean clone (`bash demo.sh`, Node-free) | ✅ DONE + verified | — |
 | Demo guide (`docs/DEMO_WEB.md`) | ✅ DONE | — |
-| Primary track: **Alexa+** | ⬜ **USER** — select on Devpost | user |
+| Native low-footprint C++ implementation (1 process; ~6.4 MB idle RSS) | ✅ DONE | — |
+| Consent-first privacy architecture + privacy audit (`enforcement_ok`) | ✅ DONE | — |
+| Release-readiness verified: Release build, C++ suite, CTest, ASan/UBSan, `[nativehttp]` adversarial, loopback-only, persistence/restart, capture-off fail-closed, graceful shutdown | ✅ DONE (evidence in this repo's docs) | — |
+| Primary track: **Alexa+ (Route B — simulated web experience)** | ⬜ **USER** — select on Devpost | user |
 | Project description (use §1 above) | ⬜ **USER** — paste into Devpost | user |
+| Screenshots | ⬜ **USER** — capture the running dashboard | user |
 | Demo video <3 min, public on YouTube/Vimeo | ⬜ **USER** — record with §2, check with §3 | user |
 | Product feedback (use §4 above) | ⬜ **USER** — paste into Devpost | user |
-| Explain prior work / hackathon-window updates | ⬜ **USER** — 35 commits Oct 9–12 2026, all in-window | user |
-| Final Devpost submission | ⬜ **USER** — submit and confirm it renders | user |
+| Explain prior work / hackathon-window updates | ⬜ **USER** — 46 commits Oct 9–13 2026, all in-window | user |
+| Final Devpost submission + verify the rendered page | ⬜ **USER** — submit and confirm it renders | user |
 
 **Not claimed:** AWS Builder mini-challenge, Open Source mini-challenge, live
 Alexa+ integration, MCP server, Ring integration, physical sensor capture, and
-real-world detection accuracy.
+real-world detection accuracy. The simulated Alexa+ experience is **not**
+equivalent to production Alexa+ integration.

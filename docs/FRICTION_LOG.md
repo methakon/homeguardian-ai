@@ -1720,3 +1720,47 @@ correctness, security, durability, or footprint change was made.
 
 **Remaining limitation:** absolute numbers are host-specific; the phase
 attribution and the FULL-vs-NORMAL ratio are the portable findings.
+
+## v16: Apache-2.0 licensing, durability decision closed, release readiness (2026-10-13)
+
+**Licensing (hackathon P0-2).** The owner approved **Apache License 2.0**. The
+repo previously carried an **MIT** `LICENSE` (added in `f1a923b`), so P0-2 was
+"license choice", not "missing license" — a v15 statement that the public repo
+had "no license" was **inaccurate** and is corrected here.
+
+Actions: replaced root `LICENSE` with the complete, **unmodified** Apache-2.0
+text (verified: sha256 `cfc7749b…` matches both the committed file and the
+official text fetched from `apache.org/licenses/LICENSE-2.0.txt`); added root
+`NOTICE` (copyright + third-party attribution); updated `README.md`.
+
+Attribution review (no relicensing of third-party code): SQLite (public domain,
+bundled), Catch2 (BSL-1.0, bundled), spdlog + nlohmann/json (MIT, fetched at
+build time), ask-sdk-core/model (Apache-2.0, optional npm). Their own notices are
+preserved; `NOTICE` summarizes them.
+
+**Ownership:** `Copyright 2026 Swarna Sekhar Dhar` — evidenced by the repository
+owner, 45 of 46 commits, and the prior MIT copyright line. **One commit is
+authored by a different name** (`6a996daf`, the `NativeHttp.h` foundation by
+"MAMATA RAJBANSHI DHAR"); the owner should confirm whether a second copyright
+line is wanted. No ownership was invented.
+
+**SQLite durability decision closed.** Owner confirmed **KEEP
+`synchronous=FULL`**. Verified: `SQLiteDatabase` sets `PRAGMA journal_mode=WAL`
+and no explicit `synchronous`, so SQLite's default **FULL (2)** applies; a live
+run's audit DB reported `journal_mode=wal`, `synchronous=2`. No durability or
+transaction change was made; the v15 performance investigation stays documented
+in `docs/PERF_SCENARIO_LATENCY_V15.md`, and the default-off `HG_PROFILE`
+instrumentation remains off unless requested.
+
+**Release readiness re-verified** (all executed this milestone): fresh
+out-of-source **Release** build (GEN 0, all targets) + ctest 100 %; full C++ suite
+**304 cases / 2214 assertions**; `[nativehttp]` adversarial **18 / 97**; ASan/UBSan
+**304 / 2214, zero errors**; **Node legacy 76/76**; `demo.sh` with **Node removed
+from PATH** starts a single native process (Node never invoked); loopback-only
+bind; health/status/scenario + embedded dashboard OK; repeated scenario grows
+durable history (1→2); capture-off fail-closed (events 0, detection absent);
+privacy `enforcement_ok` true; graceful SIGINT/SIGTERM shutdown; no secrets,
+databases, logs, or binaries tracked.
+
+**No P0 blockers remain.** Remaining items are user-only (record/upload the video,
+capture screenshots, complete and verify the Devpost submission).

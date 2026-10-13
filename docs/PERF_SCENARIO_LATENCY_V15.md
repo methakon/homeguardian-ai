@@ -108,7 +108,10 @@ sub-millisecond; the single durable commit is the whole latency.
 3. Do **not** remove the alert persistence or bypass SQLite (explicitly out of
    scope).
 
-**Decision required from the user:** (a) keep `synchronous=FULL` (durable,
+**DECISION RESOLVED (v16, 2026-10-13): `synchronous=FULL` RETAINED — the
+storage-related latency is accepted.** The owner chose durability over
+scenario latency; no code change was made. (Original request for decision,
+retained as history:) **Decision required from the user:** (a) keep `synchronous=FULL` (durable,
 ~93 ms/run on this host), or (b) approve `synchronous=NORMAL` for the demo audit
 connection (~1–2 ms/run, crash-safe but may lose the most recent commits on power
 loss). No license/code change is made for this without approval.

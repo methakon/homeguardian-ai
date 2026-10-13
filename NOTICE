@@ -1,0 +1,36 @@
+HomeGuardian AI
+Copyright 2026 Swarna Sekhar Dhar
+
+This product is licensed under the Apache License, Version 2.0 (see the LICENSE
+file in this repository).
+
+This product includes software developed by third parties. The components below
+are distributed under their own licenses and are NOT relicensed under the
+Apache License 2.0. Their upstream copyright and license notices are preserved
+in the component sources; this file summarizes them for attribution.
+
+Bundled in this repository (under third_party/):
+
+  - SQLite (third_party/sqlite)
+    Public domain. https://sqlite.org/copyright.html
+    The SQLite source in this repository carries its own public-domain notice;
+    it is not relicensed here.
+
+  - Catch2 (third_party/catch2)
+    Boost Software License 1.0.
+    The Catch2 headers carry their own BSL-1.0 notice (see
+    third_party/catch2/single_include/catch2/catch.hpp).
+
+Fetched at build time (CMake FetchContent; not vendored in this repository):
+
+  - spdlog — MIT License. https://github.com/gabime/spdlog
+  - nlohmann/json — MIT License. https://github.com/nlohmann/json
+
+Optional, installed separately via npm for the Alexa skill prototype
+(alexa_skill/; not part of the native demo or the default build):
+
+  - ask-sdk-core, ask-sdk-model — Apache License 2.0.
+
+Original HomeGuardian AI source code (everything not under third_party/ and not
+fetched/installed as noted above) is Copyright 2026 Swarna Sekhar Dhar and is
+licensed under the Apache License, Version 2.0.

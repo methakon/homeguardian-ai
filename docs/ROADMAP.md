@@ -175,17 +175,17 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| F-01 | HTTP server (Boost.Beast) | C-03 | REST API for dashboard and alerts | TODO |
-| F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | TODO |
-| F-03 | Alexa+ integration | F-02 | Alexa+ can invoke HomeGuardian tools | TODO |
+| F-01 | HTTP server | C-03 | REST API for dashboard and alerts | DONE (in scope) — implemented as the native C++ loopback transport `hg_alexa_bridge --http` (GET-only subset, no external dependency). Boost.Beast deliberately NOT adopted (dependency-avoidance). Broader/production REST (auth, TLS, full HTTP) remains absent. |
+| F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | DEFERRED / SUPERSEDED — Route B selected (simulated Alexa+ experience); no MCP server is implemented or claimed. |
+| F-03 | Alexa+ integration | F-02 | Alexa+ can invoke HomeGuardian tools | DEFERRED — no live Alexa+ identity/device integration. The in-repo simulated Alexa+ web experience is NOT equivalent to production Alexa+ integration. |
 
 ## Phase G — Dashboard and Notifications
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| G-01 | Web dashboard | F-01 | HTML/CSS/JS dashboard shows events and status | TODO |
-| G-02 | Notification service | C-03 | Email/push/webhook alerts | TODO |
-| G-03 | Ring simulator | C-03 | Simulated Ring events for development | TODO |
+| G-01 | Web dashboard | F-01 | HTML/CSS/JS dashboard shows events and status | DONE — vanilla HTML/CSS/JS dashboard (`src/web/index.html`), embedded in the native binary, shows status/alerts/detection/privacy-audit and drives the real backend. Built on the native transport (F-01), not Boost.Beast. |
+| G-02 | Notification service | C-03 | Email/push/webhook alerts | DEFERRED — not implemented (out of v16 scope). |
+| G-03 | Ring simulator | C-03 | Simulated Ring events for development | DEFERRED — not implemented; no Ring integration is claimed. |
 
 ## Phase H — Safety and Hardening
 
@@ -263,7 +263,7 @@ criteria; the structured logger already emits a durable record.
 | O-01 | Reproduce the v14 scenario-latency gap | N-03 | 40-trial Release measurement with median/p95/variability | DONE (native 46.5 ms median / 437 ms p95) |
 | O-02 | Phase-profile the scenario path | O-01 | Steady-clock phases via default-off `HG_PROFILE=1`; no sensitive data | DONE (99 % in `persist`) |
 | O-03 | Isolate the cause | O-02 | Control + `strace` + isolated `sqlite3` measurement | DONE (SQLite `synchronous=FULL` fsync ≈ 93 ms/commit) |
-| O-04 | Safe optimization | O-03 | Improve latency **without** durability/security/footprint regressions | **NOT ACHIEVED** — no safe lever; only `synchronous=NORMAL` (durability trade-off) would help → documented, awaiting approval (`docs/PERF_SCENARIO_LATENCY_V15.md`) |
+| O-04 | Safe optimization | O-03 | Improve latency **without** durability/security/footprint regressions | **CLOSED (v16)** — decision: KEEP `synchronous=FULL`; storage-related latency accepted. No safe lever exists; durability retained. See `docs/DECISIONS.md` (D-sqlite-synchronous-full-retained). |
 | O-05 | Keep instrumentation, default-off, reported | O-02 | `HG_PROFILE=1` inert when unset; no credential/media leakage | DONE |
 
 **Phase F / G review vs the implemented native transport** (requested):
@@ -282,3 +282,18 @@ criteria; the structured logger already emits a durable record.
 - **F-02 (MCP), F-03 (Alexa+ integration), G-02 (notifications), G-03 (Ring
   simulator), H-01 (fall detection):** **NOT implemented / deferred** — unchanged.
   No MCP, live Alexa, physical sensing, or production HTTP deployment is claimed.
+
+## Phase P — Licensing and release readiness (added 2026-10-13, v16)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| P-01 | Close the SQLite durability decision | O-03/O-04 | `synchronous=FULL` retained; verified in code (WAL) and at runtime (`synchronous=2`); no durability change | DONE |
+| P-02 | Apache-2.0 license (hackathon P0-2) | user approval | Root `LICENSE` = unmodified Apache-2.0 (sha256-verified vs apache.org); `NOTICE` with attribution; README updated | DONE |
+| P-03 | Third-party attribution review | P-02 | SQLite/Catch2/spdlog/nlohmann-json (and optional ask-sdk) licenses identified and preserved; no relicensing | DONE |
+| P-04 | Roadmap reconciliation (F-01/G-01/F-02/F-03) | — | Accurate status: local demo HTTP + dashboard DONE in scope; MCP/Alexa+/notifications/Ring DEFERRED; Boost.Beast not adopted | DONE |
+| P-05 | Release-readiness verification | — | Clean-clone Release build, C++/CTest/ASan, native adversarial suite, Node-free demo, loopback, persistence, capture-off, privacy, graceful shutdown, no artifacts committed | DONE |
+
+**Completed records preserved:** H-04 (security hardening for the documented
+local transport scope) is DONE; Phase N N-01..N-07 are DONE; Phase O established
+the v15 performance root cause and the durability decision is now resolved with
+**no code-level durability change**.

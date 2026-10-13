@@ -200,3 +200,36 @@ build time (CMake `configure_file`) so the binary is self-contained.
 **Not adopted:** an external HTTP framework/library. The surface is a bounded
 loopback demo subset; a reviewed server stack + TLS is required only for
 non-local/production use (see `docs/SECURITY_READINESS_V8.md`).
+
+## D-license-apache: Apache License 2.0 (2026-10-13, v16)
+
+**Decision.** License HomeGuardian AI's original source under the **Apache
+License 2.0** (owner-approved), replacing the previous MIT `LICENSE`.
+
+**Rationale.** Apache-2.0 is permissive like MIT but adds an express patent grant
+and a NOTICE/attribution convention — preferable for a public hackathon project
+that may see reuse or corporate evaluation.
+
+**Implementation.** Root `LICENSE` = the unmodified official Apache-2.0 text
+(sha256 verified against apache.org). Root `NOTICE` = copyright + third-party
+attribution. README updated. Bundled/fetched third-party components (SQLite —
+public domain; Catch2 — BSL-1.0; spdlog, nlohmann/json — MIT; ask-sdk — Apache
+2.0) are **not** relicensed and keep their own notices.
+
+**Ownership.** `Copyright 2026 Swarna Sekhar Dhar` (repo owner; 45/46 commits;
+prior MIT line). One externally-authored commit is flagged for owner confirmation.
+
+## D-sqlite-synchronous-full-retained: durability over latency (2026-10-13, v16)
+
+**Decision.** KEEP `PRAGMA synchronous=FULL` on the audit SQLite connection. The
+~93 ms/commit fsync cost measured in v15 (`docs/PERF_SCENARIO_LATENCY_V15.md`) is
+accepted as the price of durable alert persistence on this host.
+
+**Rationale.** Weakening synchronization (`NORMAL`) or batching away required
+audit commits would trade durability for benchmark numbers — explicitly out of
+scope. Correctness and durability take priority over demo latency.
+
+**Consequence.** The native `/api/run-scenario` latency on this host remains
+~50–180 ms (dominated by one durable commit). No code change; the v15
+investigation and the default-off `HG_PROFILE` instrumentation remain as
+documentation/tooling.
