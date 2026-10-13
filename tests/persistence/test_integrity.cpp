@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include <unistd.h>   // getpid: process-unique fixture paths
 #include "persistence/SQLiteDatabase.h"
 #include "persistence/EventRepository.h"
 #include "persistence/AlertRepository.h"
@@ -21,7 +22,11 @@ using json = nlohmann::json;
 // write failure (documented, distinct from real disk-full).
 // ---------------------------------------------------------------------------
 
-static const std::string I_TEST_DB = "test_integrity.db";
+// Unique per process: two suite instances running in the same working
+// directory must not delete each other's database (SQLite reports the
+// collision as a confusing 'disk I/O error' on the next WAL/DDL call).
+static const std::string I_TEST_DB =
+    std::string("test_integrity.db.") + std::to_string(::getpid());
 
 struct IntegrityFixture {
     IntegrityFixture() {

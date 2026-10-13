@@ -466,3 +466,24 @@ Pitfalls confirmed in v21:
    `{"ok":false}`.
 6. `scripts/verify_retention.sh` needs `sqlite3`; if it is not on `PATH`, set
    `HG_SQLITE3=/path/to/sqlite3`.
+
+
+## v21 — the test suite is safe to run twice in one working directory (2026-10-13)
+
+Fixture databases are now **unique per process** (`<name>.db.<pid>`). Eleven
+fixtures across ten test files previously used fixed CWD-relative names and
+unlinked them on construction, so a second `homeguardian_tests` instance in the
+same directory deleted the first one's open database; SQLite reported that as
+`SQL error: disk I/O error` on `PRAGMA journal_mode = WAL` (31 and 27 phantom
+failures in a direct two-instance reproduction). Verify with:
+
+```bash
+HG_TESTS_PATH=$PWD/hg_build/homeguardian_tests bash scripts/verify_suite_concurrency.sh
+# both instances: "All tests passed (2841 assertions in 369 test cases)"
+# 0 "disk I/O error" occurrences; no leftover *.db in the working directory
+```
+
+If you add a new fixture that opens a database, suffix its path with
+`std::to_string(::getpid())` (or use
+`std::filesystem::temp_directory_path()` plus a stamp) — do not reuse a fixed
+filename in the working directory.

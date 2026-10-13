@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include <unistd.h>   // getpid: process-unique fixture paths
 #include "persistence/SQLiteDatabase.h"
 #include "persistence/ProfileRepository.h"
 #include "persistence/ConsentRepository.h"
@@ -17,7 +18,11 @@
 using namespace homeguardian;
 using json = nlohmann::json;
 
-static const std::string E_TEST_DB = "test_phase_e.db";
+// Unique per process: two suite instances running in the same working
+// directory must not delete each other's database (SQLite reports the
+// collision as a confusing 'disk I/O error' on the next WAL/DDL call).
+static const std::string E_TEST_DB =
+    std::string("test_phase_e.db.") + std::to_string(::getpid());
 
 struct PhaseEFixture {
     PhaseEFixture() {

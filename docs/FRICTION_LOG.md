@@ -2080,3 +2080,40 @@ out-of-source Release build. Take RSS from `/proc/<exact pid>` (`pgrep -ax`), no
 small database is faster (72–111 ms here) than on one carrying a large WAL
 (147–169 ms measured in H-01s) — the accepted `synchronous=FULL` fsync dominates
 either way, and the range must be reported as a range.
+
+
+**Finding 4 (verification defect) — two suite instances in one working directory
+produced phantom "disk I/O error" failures.** A large Release/ASan build plus a
+repeated-run loop overlapped in this session, so two `homeguardian_tests`
+processes executed concurrently in the same working directory. One instance
+reported 9 failures (`test_consent_gate`, `test_consent_guarded_device`,
+`test_fake_device_delivery`, `test_persistence`), every one of them:
+`unexpected exception ... SQL execute failed: disk I/O error | SQL: PRAGMA
+journal_mode = WAL;`. A direct reproduction with two instances side by side gave
+31 and 27 failures with 49 occurrences of the same message.
+
+*Root cause:* eleven fixtures across ten test files used **fixed, CWD-relative
+database filenames** (`test_persistence.db`, `test_consent_gate.db`,
+`test_privacy_<tag>.db`, `test_audit_<tag>.db`, …) and unlinked them in their
+constructors. A second instance running in the same directory deleted the first
+instance's open database (and its `-wal`/`-shm`), and SQLite surfaces a
+replaced-or-removed database file in WAL mode as `SQLITE_IOERR` — a message that
+says nothing about the actual cause. It is a test-fixture defect, not a product
+defect: every instance passes when run alone, and the product only ever opens one
+database per process.
+
+*Fix:* every fixture path is now unique per process
+(`<name>.db.<pid>`), so concurrent instances cannot collide.
+
+*Regression:* `scripts/verify_suite_concurrency.sh` starts two instances in one
+working directory, requires both to pass, and requires zero `disk I/O error`
+occurrences plus no leftover fixture databases. Before the fix: FAIL (31/27 failed
+cases, 49 disk-I/O errors). After: both instances pass (369 cases / 2841
+assertions each).
+
+*Lesson:* a "disk I/O error" from SQLite in a test run is usually **file
+interference**, not hardware — look for another process that removed or replaced
+the database file before you look at the disk. And when a suite run goes red, its
+reason must be established before a later green run is accepted as evidence: a
+green run over an unexplained red one proves only that the red one was not
+reproduced.

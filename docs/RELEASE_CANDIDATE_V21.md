@@ -220,6 +220,36 @@ evidence but **no** durable persistence is claimed.
 A corrupted audit DB is likewise handled: the bridge keeps serving, the read and
 scenario routes fail closed, and the process stays alive.
 
+### Defect fixed — test fixtures were not safe under concurrent runs
+
+*Expected:* the verification suite can be run twice in one working directory
+(which happens whenever a build, a repeated-run loop and a sanitizer suite
+overlap).
+*Observed:* two instances running together failed with
+`unexpected exception ... SQL execute failed: disk I/O error | SQL: PRAGMA
+journal_mode = WAL;`. A direct two-instance reproduction gave **31 and 27 failed
+cases with 49 occurrences** of that message.
+*Root cause:* eleven fixtures across ten test files used **fixed, CWD-relative
+database filenames** (`test_persistence.db`, `test_consent_gate.db`,
+`test_privacy_<tag>.db`, `test_audit_<tag>.db`, …) and unlinked them in their
+constructors. The second instance deleted the first instance's open database and
+its `-wal`/`-shm` files; SQLite reports a removed/replaced database file in WAL
+mode as a `disk I/O error`, which names neither the cause nor the culprit. It is a
+test-fixture defect, not a product defect: a single instance always passes, and
+the product opens one database per process.
+*Fix:* every fixture path is unique per process (`<name>.db.<pid>`).
+*Regression:* `scripts/verify_suite_concurrency.sh` — two instances in one
+working directory must both pass, with zero `disk I/O error` occurrences and no
+leftover fixture databases. Before: FAIL (31/27 failed). After: both instances
+pass (369 cases / 2841 assertions each), for the Release and the ASan binaries.
+
+**This explains every red run observed during v21.** The first ASan suite
+(9 failures) and one direct Release run (1 failure) were executed while another
+suite instance was running in the same working directory, so all of them are the
+same fixture collision. Every one of those runs passes when re-executed alone,
+and the fix removes the class of failure rather than the instances. A green run
+over an unexplained red one is not evidence — hence this section.
+
 ## 9. Test results (actual, executed)
 
 | Suite | Result | Baseline |
@@ -237,6 +267,7 @@ scenario routes fail closed, and the process stays alive.
 | E2E + stability | PASS | — |
 | Retention regression | 8/8 | — |
 | Fail-closed (capture off / corrupted DB / read-only dir) | 7/7 | — |
+| Suite concurrency (two instances, one CWD) | both pass, 0 `disk I/O error` | 31/27 failed before the fixture fix |
 
 Nothing in the matrix was skipped.
 
@@ -272,6 +303,9 @@ weakened to improve any number.
 - Alert dedup/cooldown state resets when the process restarts (history does not).
 - In degraded mode (unusable audit DB) alerts are decided in memory but not
   persisted; the status endpoint reports `unavailable`.
+- The suite is now concurrency-safe within one working directory, but two
+  instances still share `homeguardian.log` (the logger's own file, append-only);
+  that is expected and harmless, and fixture databases no longer collide.
 
 ## 12. Reproduction
 
@@ -284,8 +318,9 @@ make -j4 homeguardian homeguardian_tests hg_alexa_bridge
 ctest --test-dir .            # 100%
 ./homeguardian_tests "[v21]"  # 5 cases / 27 assertions
 
-# retention regression (needs a built bridge)
+# regression scripts (need the built binaries)
 HG_BRIDGE_PATH=<build>/hg_alexa_bridge bash scripts/verify_retention.sh
+HG_TESTS_PATH=<build>/homeguardian_tests bash scripts/verify_suite_concurrency.sh
 
 # live demo + matrices
 <build>/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 8497 --token demo-token
