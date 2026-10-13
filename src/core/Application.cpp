@@ -1,6 +1,8 @@
 #include "Application.h"
+#include "DetectionFusionRule.h"
 #include "Logger.h"
-#include "TimeWindowCorrelation.h"
+#include "Observation.h"
+#include "SyntheticActivityDetector.h"
 #include <thread>
 #include <chrono>
 #include <memory>
@@ -18,16 +20,15 @@ Application::Application() {
     instance_ = this;
     app_state_ = AppState::Constructed;
 
-    // Existing time-window correlation rule: fires a synthetic info alert once
-    // >=2 observations arrive within the window. This is the app's existing
-    // alert engine — reused unchanged; the simulator feeds it authorized
-    // observations only. It is a SYNTHETIC test alert, never a real-world
-    // danger claim.
+    // L-11: alerts are DETECTION-DRIVEN. The default rule set contains only the
+    // detection/fusion rule: it reconstructs the detector evidence from the
+    // inference events carried by the pipeline, fuses it, and raises an alert
+    // only when the fused verdict is `detected` with sufficient confidence.
+    // Raw observations alone never raise an alert — they are the detector's
+    // INPUT. The previous independent, hardcoded "sim-presence" presence alert
+    // has been removed.
     std::vector<std::shared_ptr<ICorrelationRule>> default_rules;
-    default_rules.push_back(std::make_shared<TimeWindowCorrelation>(
-        "sim-presence", std::vector<EventType>{EventType::observation},
-        /*min_count=*/2, std::chrono::milliseconds(60000),
-        Severity::info, "synthetic simulator presence notice"));
+    default_rules.push_back(std::make_shared<DetectionFusionRule>("detection-fusion"));
     pipeline_ = std::make_unique<Pipeline>(default_rules);
 
     // Simulator runtime, built with capture DISABLED by default (config's
@@ -150,6 +151,11 @@ int Application::run(const std::string& config_path) {
             status_.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
             status_.speaker_queue_depth.store(simulator_->speaker_queue_size());
             status_.speaker_played.store(simulator_->speaker_played_count());
+            // L-11: detection runs because an AUTHORIZED acquisition occurred.
+            // The resulting inference event flows through the SAME pipeline,
+            // where the detection/fusion rule decides whether to alert. No
+            // acquisition => no detection => no detection-driven alert.
+            if (delivered > 0) run_detection_step(i);
             Logger::get()->info("Simulator cycle {}: delivered={} blocked={} "
                                 "speaker_played={} pipeline_history={} "
                                 "alerts_delivered={} alerts_suppressed={}",
@@ -204,6 +210,21 @@ int Application::run(const std::string& config_path) {
                         app_state_to_string(app_state_.load()), status_.summary());
     Logger::get()->flush();
     return 0;
+}
+
+void Application::run_detection_step(int index) {
+    // Detection is driven by an AUTHORIZED acquisition: this is only called when
+    // a simulator tick actually delivered media. The synthetic detector INPUT is
+    // deterministic so the standalone demo is reproducible; the detector, the
+    // fusion engine and the rule are the real implementations.
+    static const double kEnergies[] = {0.8, 0.75, 0.52, 0.82, 0.78};
+    constexpr size_t kN = sizeof(kEnergies) / sizeof(kEnergies[0]);
+    const size_t idx = static_cast<size_t>(index) % kN;
+    SyntheticActivityDetector detector;
+    Observation o = detector.detect("app-det-obs-" + std::to_string(index),
+                                    kEnergies[idx]);
+    o.validate();
+    process_event(o.to_event());
 }
 
 void Application::request_shutdown() {

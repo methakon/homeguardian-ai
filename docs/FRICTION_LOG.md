@@ -1831,3 +1831,65 @@ unchanged.
 **Verification.** 320 C++ test cases / 2,409 assertions pass; ASan/UBSan clean;
 node-free native demo; loopback-only; unknown/malformed scenario rejected;
 duplicate suppression; persistence + restart; capture-off fail-closed.
+
+## L-11: detection-driven, explainable alerts (2026-10-13, v18)
+
+**Correction to the v17 entry.** v17 correctly removed the *hardcoded* alert and
+made the persisted alert the pipeline's own output — but the alert was still
+raised by `TimeWindowCorrelation("sim-presence")`, which counts RAW
+`EventType::observation` events. The detection/fusion stage ran alongside and had
+NO influence on whether an alert existed. So the alert could fire with the
+detector reporting `not_detected`/`unavailable`, and a run whose fusion said
+`available`/`inconclusive` still produced a "presence" alert. The v17 claim that
+alerts were "pipeline-derived" was true; the claim implied by the docs that
+detection *caused* them was not. That is what L-11 fixes.
+
+**What changed.**
+1. New `DetectionFusionRule` (core) replaces `sim-presence` as the pipeline's
+   default rule. It reconstructs `Observation`s from the inference events in the
+   pipeline window (`Observation::from_event`, a new round-trip with
+   `to_event()`), fuses them with the existing `FusionEngine`, and returns an
+   alert ONLY when the fused verdict is `detected` with confidence >= 0.5 and at
+   least 2 usable votes. `inconclusive` / `unavailable` / `not_detected` /
+   conflicting evidence never produce an alert.
+2. Alert severity is derived from the fused confidence: >= 0.8 -> `warning`,
+   otherwise `info` (never `critical`; no emergency claim is made). The alert's
+   `details` carry `fusion_verdict`, `fusion_confidence`, `contributing`,
+   `inconclusive`, `provenance` and the fusion `reason` — all non-sensitive.
+3. Detection now runs ONLY when an AUTHORIZED acquisition occurred: the scenario
+   runner (and `Application::run()`) take one detection step per tick that
+   actually delivered media. No acquisition (capture off, consent withdrawn, no
+   authorized consumer) => no detection => no detection-driven alert.
+4. Raw observations no longer raise alerts — they are the detector's input.
+
+**Defect found and fixed.** The recurring nested-`Config` default-argument error
+(`default member initializer ... required before the end of its enclosing class`)
+struck again on `DetectionFusionRule`: fixed with the `static Config defaults()`
+pattern already documented for `AnomalyDetector`.
+
+**Behaviour noted (measured, not "fixed").** Because the pipeline re-evaluates
+every rule against the recent-event window on EVERY processed event, once >= 2
+agreeing detector observations are in the window each subsequent processed event
+re-fires the detection rule (raw observation events included). The alert policy
+delivers the qualifying alerts and deduplicates the repeats, so the user-visible
+result is correct; only `alerts_generated` is inflated. Carried over from the
+v17 note.
+
+**Measured scenario behaviour (capture on, live demo).**
+
+| Scenario | media | events | generated | delivered | suppressed | persisted | detection | fusion |
+|---|---|---|---|---|---|---|---|---|
+| normal | 4 | 6 | 0 | 0 | 0 | 0 | 2 not_detected | not_detected (0.80) |
+| unusual | 10 | 15 | 10 | 1 | 9 | 1 | 5 detected | detected (1.00) -> warning |
+| inconclusive | 3 | 6 | 0 | 0 | 0 | 0 | 3 inconclusive | unavailable |
+| consent-denied | 1 | 1 | 0 | 0 | 0 | 0 | not run | - |
+| default | 10 | 15 | 10 | 2 | 8 | 2 | 4 detected + 1 inconclusive | detected (0.75) -> warning + info |
+
+`default` delivers TWO alerts because the evidence produces two different
+severities (a `warning` at confidence 0.92 and an `info` at 0.61), and the alert
+policy keys deduplication on rule+severity — different severities are independent
+conditions. That is the intended prioritisation behaviour, now driven by evidence.
+
+**Footprint.** See the milestone report; the detection rule adds one small
+translation unit and no runtime dependency, no extra process and no thread.
+`synchronous=FULL` and WAL are unchanged.

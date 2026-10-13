@@ -46,6 +46,11 @@ public:
 
     static void signal_handler(int signal);
 
+    // L-11: run one detection step because an AUTHORIZED acquisition occurred.
+    // Feeds the detector's Observation through process_event() so the
+    // detection/fusion rule can decide whether to alert. Simulator-only.
+    void run_detection_step(int index);
+
 private:
     Config config_;
     std::atomic<bool> shutdown_flag_{false};

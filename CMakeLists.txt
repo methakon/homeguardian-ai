@@ -110,6 +110,7 @@ add_executable(homeguardian
     src/core/EventValidator.cpp
     src/core/SimulatedEventSource.cpp
     src/core/TimeWindowCorrelation.cpp
+    src/core/DetectionFusionRule.cpp
     src/core/Pipeline.cpp
     src/core/UUID.cpp
     src/core/ConsentGate.cpp
@@ -164,6 +165,7 @@ add_executable(hg_alexa_bridge
     src/core/RuntimeStatus.cpp
     src/core/Pipeline.cpp
     src/core/TimeWindowCorrelation.cpp
+    src/core/DetectionFusionRule.cpp
     src/core/Observation.cpp
     src/core/PrivacyAuditLog.cpp
     src/core/AnomalyDetector.cpp
@@ -236,6 +238,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_native_http.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_demo_scenarios.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_detection_alert.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -245,6 +248,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/EventValidator.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SimulatedEventSource.cpp
         ${CMAKE_SOURCE_DIR}/src/core/TimeWindowCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
         ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ConsentGate.cpp

@@ -103,21 +103,20 @@ TEST_CASE("Scenario normal: routine activity produces no alert",
     const ScenarioRunResult r = run_by_id("normal");
 
     REQUIRE(r.capture_enabled);
-    REQUIRE(r.media_authorized == 1);          // exactly one observation
-    REQUIRE(r.events_processed >= 1);
-    REQUIRE(r.alerts_generated == 0);          // below the >=2 threshold
+    REQUIRE(r.media_authorized == 4);          // 2 ticks x 2 consumers
+    REQUIRE(r.alerts_generated == 0);
     REQUIRE(r.alerts_delivered == 0);
     REQUIRE(r.delivered_alerts.empty());
 
-    // Activity WAS detected (so "no alert" is a threshold decision, not a miss).
+    // The detector RAN and the fused verdict was not_detected: the alert is
+    // withheld because no detection qualified, not because the rule was absent.
     REQUIRE(r.detection.ran);
-    REQUIRE(r.detection.detected == 2);
-    REQUIRE(r.detection.inconclusive == 0);
+    REQUIRE(r.detection.detected == 0);
+    REQUIRE(r.detection.not_detected == 2);
+    REQUIRE(r.detection.fusion_verdict == "not_detected");
+    REQUIRE(r.detection.fusion_contributing == 2);
     REQUIRE(r.detection.provenance == "synthetic");
-
-    // One consumer was never granted consent -> its acquisition is denied.
-    REQUIRE(r.privacy.authorized == 1);
-    REQUIRE(r.privacy.denied == 1);
+    REQUIRE(r.privacy.denied == 0);
     REQUIRE(r.privacy.enforcement_ok);
 }
 
@@ -132,23 +131,27 @@ TEST_CASE("Scenario unusual: alert is traceable and duplicates are suppressed",
 
     REQUIRE(r.capture_enabled);
     REQUIRE(r.media_authorized == 10);         // 5 cycles x 2 consumers
-    // NOTE (measured, not asserted from docs): the correlation rule is
-    // re-evaluated against the recent-event window on EVERY processed event.
-    // After the 10 authorized observations the window still holds >=2, so the
-    // 5 detection-stage inference events also re-fire it: 15 events -> 14 rule
-    // firings. The alert policy delivers exactly one and deduplicates the rest,
-    // so the user-visible behaviour (one alert) is correct.
-    REQUIRE(r.alerts_generated == 14);
-    REQUIRE(r.alerts_delivered == 1);          // first delivery
-    REQUIRE(r.alerts_suppressed == 13);        // the rest are deduplicated
+    // The rule is re-evaluated against the recent-event window on EVERY
+    // processed event, so once >=2 agreeing detector observations are in the
+    // window every processed event re-fires it (10 firings for 15 events). The
+    // alert policy delivers one and deduplicates the rest, so the user-visible
+    // behaviour (exactly one alert) is correct.
+    REQUIRE(r.alerts_generated == 10);
+    REQUIRE(r.alerts_delivered == 1);
+    REQUIRE(r.alerts_suppressed == 9);
     REQUIRE(r.alerts_suppressed == r.alerts_generated - 1);
 
     // The delivered alert is REAL pipeline output, traceable to the rule.
     REQUIRE(r.delivered_alerts.size() == 1);
     const Alert& a = r.delivered_alerts.front();
-    REQUIRE(a.rule_name == "sim-presence");
-    REQUIRE(a.severity == Severity::info);
+    // The alert comes from the DETECTION rule, and its severity is derived from
+    // the fused evidence (confidence 1.00 -> warning).
+    REQUIRE(a.rule_name == "detection-fusion");
+    REQUIRE(a.severity == Severity::warning);
     REQUIRE_FALSE(a.message.empty());
+    REQUIRE(a.details.contains("fusion_verdict"));
+    REQUIRE(a.details["fusion_verdict"] == "detected");
+    REQUIRE(a.details.contains("fusion_confidence"));
     REQUIRE(a.contributing_event_ids.size() >= 2);   // real evidence
     REQUIRE(a.confidence >= 0.0);
     REQUIRE(a.confidence <= 1.0);
@@ -174,6 +177,7 @@ TEST_CASE("Scenario inconclusive: ambiguous evidence yields no alert and no "
     REQUIRE(r.alerts_delivered == 0);
     REQUIRE(r.delivered_alerts.empty());
 
+    REQUIRE(r.media_authorized == 3);          // 3 ticks x 1 consumer
     // The detector reported inconclusive (never "detected") for every input...
     REQUIRE(r.detection.ran);
     REQUIRE(r.detection.detected == 0);
@@ -271,7 +275,7 @@ TEST_CASE("Scenario: delivered alerts persist durably and survive restart",
         // The persisted alert is the real rule output.
         auto recent = audit.alerts().find_recent(5);
         REQUIRE(recent.size() == 1);
-        REQUIRE(recent.front().rule_name == "sim-presence");
+        REQUIRE(recent.front().rule_name == "detection-fusion");
     }
     {
         // Reopen: the alert survived the restart and is counted as historical.
@@ -324,7 +328,7 @@ TEST_CASE("Scenario: scenarios are isolated within one long-lived process",
     app.get_status().capture_enabled.store(true);
 
     const ScenarioRunResult normal1 = run_demo_scenario(app, *find_demo_scenario("normal"));
-    REQUIRE(normal1.media_authorized == 1);            // one consumer granted
+    REQUIRE(normal1.media_authorized == 4);            // 2 ticks x 2 consumers
     REQUIRE(normal1.alerts_delivered == 0);
 
     const ScenarioRunResult unusual = run_demo_scenario(app, *find_demo_scenario("unusual"));
@@ -338,7 +342,7 @@ TEST_CASE("Scenario: scenarios are isolated within one long-lived process",
 
     // After a run that WITHDREW consent, a later scenario must not inherit it.
     const ScenarioRunResult inconcl = run_demo_scenario(app, *find_demo_scenario("inconclusive"));
-    REQUIRE(inconcl.media_authorized == 1);            // would be 2 if leaked
+    REQUIRE(inconcl.media_authorized == 3);            // would exceed 3 if leaked
     REQUIRE(inconcl.alerts_delivered == 0);
     REQUIRE(inconcl.detection.fusion_verdict == "unavailable");
 

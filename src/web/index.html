@@ -160,8 +160,11 @@
         verdicts on the synthetic evidence — an inconclusive result is never reported as a detection.</p>
         <p><b style="color:var(--text)">Fusion</b> combines detector outputs; when evidence is ambiguous or
         insufficient it reports <i>inconclusive</i> or <i>unavailable</i> rather than inventing confidence.</p>
-        <p><b style="color:var(--text)">Alerts</b> are raised only by the existing correlation rule and
-        alert policy. This demo does not claim fall detection, medical emergencies, or real recognition.</p>
+        <p><b style="color:var(--text)">Alerts are detection-driven.</b> An alert is raised only
+        when the fused detector evidence actually qualifies (the detection rule agrees, above a
+        confidence floor). Raw observations on their own never raise an alert — they are the
+        detector's input. This demo does not claim fall detection, medical emergencies, or real
+        recognition.</p>
       </div>
     </div>
   </div>
@@ -349,6 +352,8 @@ async function refreshAlerts() {
     const id = document.createElement('div'); id.className = 'id';
     id.textContent = a.alert_id + ' · rule ' + a.rule + ' · severity ' + a.severity +
                      ' · conf ' + Number(a.confidence).toFixed(2) +
+                     (a.fusion_verdict ? ' · fusion ' + a.fusion_verdict : '') +
+                     (a.provenance ? ' · ' + a.provenance : '') +
                      (a.detected_at_ms ? ' · ' + new Date(a.detected_at_ms).toLocaleTimeString() : '');
     const why = document.createElement('div'); why.className = 'why';
     why.textContent = a.explanation || '';

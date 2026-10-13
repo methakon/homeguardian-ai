@@ -34,41 +34,45 @@ std::vector<DemoScenario> build_catalogue() {
         v.push_back(std::move(s));
     }
 
-    // 2) Scenario A — normal household activity (no qualifying concern).
+    // 2) Scenario A — normal household activity (no qualifying detection).
     {
         DemoScenario s;
         s.id = "normal";
         s.title = "Normal household activity";
         s.description =
-            "A single authorized synthetic observation: routine activity that "
-            "does not meet the alert rule.";
-        s.cycles = 1;
+            "Routine synthetic activity BELOW the detection baseline: the "
+            "detector runs and the fused verdict is not_detected.";
+        s.cycles = 2;
         s.grant_enabled = true;
-        s.grant_assistant = false;   // one device active
+        s.grant_assistant = true;
         s.run_detection = true;
-        s.detection_energies = {0.72, 0.68};
+        // Both energies are below the 0.5 threshold (and clear of the
+        // inconclusive band), so both detector observations are not_detected.
+        s.detection_energies = {0.24, 0.28};
         s.expectation =
-            "no alert: one observation is below the >=2-in-60s correlation "
-            "threshold, even though activity was detected.";
+            "no alert: the fused detection verdict is not_detected. Activity was "
+            "observed and evaluated, but nothing qualified as a detection.";
         v.push_back(std::move(s));
     }
 
-    // 3) Scenario B — unusual activity (traceable alert).
+    // 3) Scenario B — unusual activity (traceable detection-driven alert).
     {
         DemoScenario s;
         s.id = "unusual";
         s.title = "Unusual activity";
         s.description =
-            "Repeated authorized synthetic observations within the window "
-            "trigger the correlation rule and produce an alert.";
+            "Sustained synthetic activity above the detection baseline: the "
+            "detector and fusion agree, and the alert is raised from that "
+            "evidence.";
         s.cycles = 5;
         s.grant_enabled = true;
         s.grant_assistant = true;
         s.run_detection = true;
         s.detection_energies = {0.95, 0.90, 0.88, 0.92, 0.85};
         s.expectation =
-            "one alert delivered and persisted; repeated duplicates suppressed; "
-            "the alert references the observed synthetic pattern.";
+            "detection-driven alert: every detector observation is detected, "
+            "fusion confidence is 1.00, and the alert severity follows that "
+            "confidence; repeats are suppressed by the alert policy.";
         v.push_back(std::move(s));
     }
 
@@ -78,16 +82,17 @@ std::vector<DemoScenario> build_catalogue() {
         s.id = "inconclusive";
         s.title = "Inconclusive detection";
         s.description =
-            "Ambiguous synthetic evidence near the detector threshold: the "
-            "detector and fusion stages report inconclusive.";
-        s.cycles = 1;
+            "Ambiguous synthetic evidence near the detector threshold: every "
+            "detector observation is inconclusive and fusion refuses a verdict.";
+        s.cycles = 3;
         s.grant_enabled = true;
         s.grant_assistant = false;
         s.run_detection = true;
         s.detection_energies = {0.52, 0.49, 0.51};
         s.expectation =
-            "no definitive classification and no alert: an uncertain result is "
-            "never promoted to a confirmed alert.";
+            "no alert: the detector reported inconclusive for every input and "
+            "fusion returned unavailable. An uncertain result is never promoted "
+            "to a confirmed alert.";
         v.push_back(std::move(s));
     }
 

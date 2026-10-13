@@ -314,3 +314,15 @@ the v15 performance root cause and the durability decision is now resolved with
 | Q-10 | Dashboard: selector + backend-derived detail + safe DOM | Q-07 | Real alert severity/rule/message/explanation; textContent only; explains what/why/persisted/consent | DONE |
 | Q-11 | Honest simulated assistant | Q-10 | Answers grounded in real status + last scenario; explicitly not a language model | DONE |
 | Q-12 | Tests + docs + footprint | Q-03..Q-11 | Per-scenario tests, isolation, persistence, malformed ids, injection-safety; footprint documented | DONE |
+
+## Phase R — L-11 detection-driven, explainable alerts (added 2026-10-13, v18)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| L-11 | Detection-driven alert generation | L-01..L-05, L-09 | The alert exists only because the detection/fusion evidence qualified; the previous independent raw-observation rule is removed | DONE |
+| R-01 | DetectionFusionRule (core) | FusionEngine | Fuses reconstructed detection observations; alerts only on `detected` >= confidence floor with >= 2 usable votes; never on inconclusive/unavailable/not_detected/conflict | DONE |
+| R-02 | Observation::from_event round-trip | Observation | Rebuilds an Observation from the inference event carried by the pipeline; rejects non-inference/unknown-status events | DONE |
+| R-03 | Evidence-derived severity + metadata | R-01 | severity from fused confidence; `details` carry fusion_verdict/confidence/contributing/inconclusive/provenance/reason | DONE |
+| R-04 | Detection gated by authorized acquisition | R-01 | No acquisition (capture off / consent withdrawn / no authorized consumer) => no detection step => no detection-driven alert | DONE |
+| R-05 | Alert metadata surfaced (API + dashboard) | R-03 | Per-alert reason/severity/provenance from backend state; safe DOM only | DONE |
+| R-06 | Uncertainty + regression tests | R-01..R-05 | 9 `[l11]` cases prove the causal path and the negative cases; scenario suite updated to measured results | DONE |

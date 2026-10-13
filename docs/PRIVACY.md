@@ -772,3 +772,20 @@ acquisitions are counted and surfaced.
 
 **No change** to: `synchronous=FULL`, WAL, the bounded (256) audit ring, token
 access control, loopback binding, or the consent decision path.
+
+## L-11 — detection-driven alerts: what the alert metadata now carries (2026-10-13)
+
+The alert `details` JSON (and therefore the `/api/alerts` projection) now carries
+the evidence that caused the alert: `fusion_verdict`, `fusion_confidence`,
+`contributing` (count), `inconclusive` (count), `detector_ids` (bounded to 10),
+`provenance` ("synthetic") and the fusion `reason` string (a bounded, numeric
+explanation such as "detected by 5 input(s), agreement 1, confidence 1").
+
+None of this is derived from media: these are aggregate detector verdicts and
+counts. The bounded contributing-event id list is capped at 10. No raw audio,
+video, biometrics, transcripts or credentials are added, and the Alexa-facing
+contract remains AGGREGATE-ONLY.
+
+Consent semantics are unchanged and now also gate detection: detection runs only
+after an authorized acquisition, so a denied or withdrawn consumer can never
+cause a detection observation or a detection-driven alert.

@@ -84,11 +84,37 @@ ScenarioRunResult run_demo_scenario(Application& app, const DemoScenario& spec) 
         started = false;
         err = e.what();
     }
+
+    // --- Detection is DRIVEN BY AUTHORIZED ACQUISITIONS (L-11) ---
+    // Each tick that actually delivered media (i.e. at least one consumer was
+    // authorized) runs ONE detection step on the shared synthetic payload the
+    // consumers received. The resulting inference Observation flows through the
+    // SAME pipeline, where the detection/fusion rule decides whether to alert.
+    //
+    // Consequences that the tests assert: with capture off, with consent
+    // withdrawn, or with no authorized consumer, no media is delivered, so no
+    // detection step runs and no detection-driven alert can exist.
+    SyntheticActivityDetector detector;
+    std::vector<Observation> observations;   // the evidence the rule also sees
     if (started) {
         const int cycles = spec.cycles < 0 ? 0 : spec.cycles;
         for (int i = 0; i < cycles; ++i) {
             const int delivered = sim.tick();
             st.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
+            if (delivered <= 0) continue;            // no acquisition -> no detection
+            if (!spec.run_detection) continue;
+            if (spec.detection_energies.empty()) continue;
+            const double energy = spec.detection_energies[
+                static_cast<size_t>(i) % spec.detection_energies.size()];
+            Observation o = detector.detect("det-obs-" + std::to_string(i), energy);
+            o.validate();
+            observations.push_back(o);
+            switch (o.status) {
+                case DetectorStatus::detected: ++r.detection.detected; break;
+                case DetectorStatus::not_detected: ++r.detection.not_detected; break;
+                default: ++r.detection.inconclusive; break;  // inconclusive/unavailable
+            }
+            app.process_event(o.to_event());
         }
     }
     sim.shutdown();
@@ -102,25 +128,12 @@ ScenarioRunResult run_demo_scenario(Application& app, const DemoScenario& spec) 
         r.error = err;
     }
 
-    // --- Detection / fusion stage (real detector + fusion components) ---
-    if (spec.run_detection && !spec.detection_energies.empty()) {
-        SyntheticActivityDetector detector;
+    // Detection/fusion summary for display. These are the SAME observations the
+    // detection/fusion rule evaluated (all within the pipeline window), so the
+    // outcome shown to the user is the one that caused (or did not cause) the
+    // alert.
+    if (!observations.empty()) {
         FusionEngine fusion;
-        std::vector<Observation> observations;
-        for (size_t i = 0; i < spec.detection_energies.size(); ++i) {
-            Observation o = detector.detect("det-obs-" + std::to_string(i),
-                                            spec.detection_energies[i]);
-            o.validate();
-            observations.push_back(o);
-            switch (o.status) {
-                case DetectorStatus::detected: ++r.detection.detected; break;
-                case DetectorStatus::not_detected: ++r.detection.not_detected; break;
-                default: ++r.detection.inconclusive; break;  // inconclusive/unavailable
-            }
-            // Feed each observation through the REAL pipeline (inference events;
-            // they never fabricate a detection).
-            app.process_event(o.to_event());
-        }
         const FusionResult fr = fusion.fuse(observations);
         r.detection.ran = true;
         r.detection.detector_id = detector.config().detector_id;

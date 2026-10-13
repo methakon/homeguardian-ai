@@ -1076,3 +1076,59 @@ request at a time. Details and the simulator-vs-production distinction:
 - The dashboard is vanilla HTML/CSS/JS, embedded in the binary; it renders
   backend-derived values using `textContent` / `createElement` (never `innerHTML`
   with backend strings).
+
+## L-11 — Detection-driven alert path (2026-10-13)
+
+The alert is now CAUSED by the detection/fusion evidence. The raw-observation
+`sim-presence` rule is gone.
+
+    SimulatorRuntime::tick()  (one shared synthetic payload)
+        |
+        |  per consumer: ConsentGate decision  (authorized -> delivered)
+        v
+    authorized synthetic Observation event  --->  Application::process_event()
+        |                                                 |
+        | (the tick delivered media)                      v
+        v                                          Pipeline (validation +
+    SyntheticActivityDetector                       recent-event window)
+        |                                                 |
+        v                                                 v
+    Observation (inference event)  ----------->  DetectionFusionRule.evaluate(window)
+                                                          |
+                                        Observation::from_event() rebuilds the
+                                        detection evidence from the window
+                                                          |
+                                                          v
+                                                    FusionEngine.fuse()
+                                                          |
+                        not_detected / inconclusive / unavailable / conflict
+                                                          |
+                                                  (no alert returned)
+                                        detected AND confidence >= floor AND
+                                        >= 2 usable votes
+                                                          |
+                                                          v
+                                   Alert {severity from confidence, rule
+                                   "detection-fusion", reason/evidence in details}
+                                                          |
+                                                          v
+                                     AlertPolicy (dedup/cooldown by rule+severity)
+                                                          |
+                                                          v
+                                     Application alert sink -> PersistenceAudit
+                                                          |
+                                                          v
+                                     /api/alerts  +  embedded dashboard
+
+Key properties:
+- Detection runs ONLY after an authorized acquisition. Capture off, consent
+  withdrawn, or no authorized consumer => `tick()` delivers nothing => no
+  detection step => no detection-driven alert.
+- Raw observations never raise alerts; they are the detector's input.
+- Alert severity is derived from the fused confidence (>= 0.8 -> warning, else
+  info). The system never emits `critical`, and makes no fall/medical claim.
+- `Observation::from_event()` is the round-trip that lets the rule reuse the SAME
+  evidence the pipeline carried — no parallel detection state.
+- Everything the API/dashboard shows (verdict, confidence, contributing count,
+  provenance, reason) comes from the alert's own `details`, i.e. the real
+  evidence.

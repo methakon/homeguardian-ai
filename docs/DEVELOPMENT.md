@@ -342,3 +342,22 @@ allowlist/route tests are in `tests/core/test_native_http.cpp`.
 Note: scenario tests construct `Application`, which is a process-wide singleton;
 each test scopes its own instance. `Logger::initialize("error")` is required
 because the alert path logs.
+
+## L-11 — How the detection→alert path works (2026-10-13)
+
+- The default correlation rule is `DetectionFusionRule` (`src/core/DetectionFusionRule.{h,cpp}`).
+  It is the only alert source. To change what can alert, change its `Config`
+  (`min_usable`, `min_confidence`, `warning_confidence`, `max_contributing`) —
+  not a hardcoded string.
+- Detection inputs come from AUTHORIZED acquisitions: the scenario runner takes
+  one detection step per tick that delivered media, using the scenario's
+  `detection_energies` (indexed by tick). With no acquisition there is no
+  detection and therefore no detection-driven alert.
+- `Observation::from_event()` rebuilds an `Observation` from the inference event
+  in the pipeline window, so the rule fuses exactly the evidence that flowed
+  through the pipeline.
+- Focused tests: `HG_SOURCE_DIR=<repo> ./homeguardian_tests "[l11]"` (causal
+  path + negative cases) and `"[scenario]"` (end-to-end scenario results).
+- Energies: detector threshold 0.5, min_quality 0.3 (quality = min(1,|e-0.5|/0.3)).
+  `e >= 0.59` -> detected, `e <= 0.41` -> not_detected, `|e-0.5| < 0.09` ->
+  inconclusive.

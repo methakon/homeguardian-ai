@@ -44,6 +44,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -223,8 +224,11 @@ const char* severity_to_string(Severity s) {
     }
 }
 
-// Non-sensitive projection of one alert (metadata only; never media).
+// Non-sensitive projection of one alert (metadata only; never media). The
+// explanation is derived from the alert's OWN rule and evidence details
+// (populated by the detection/fusion rule) — never a hardcoded string.
 json alert_to_json(const Alert& a) {
+    const bool has_details = a.details.is_object();
     json x;
     x["alert_id"] = a.alert_id;
     x["severity"] = severity_to_string(a.severity);
@@ -234,11 +238,28 @@ json alert_to_json(const Alert& a) {
     x["detected_at_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
         a.detected_at.time_since_epoch()).count();
     x["contributing_events"] = a.contributing_event_ids.size();
-    // Explain WHY this alert fired, derived from the alert's own rule/evidence.
+    x["provenance"] = has_details
+        ? a.details.value("provenance", std::string("synthetic"))
+        : std::string("synthetic");
+    if (has_details) {
+        if (a.details.contains("fusion_verdict")) x["fusion_verdict"] = a.details["fusion_verdict"];
+        if (a.details.contains("fusion_confidence")) x["fusion_confidence"] = a.details["fusion_confidence"];
+        if (a.details.contains("contributing")) x["detectors_contributing"] = a.details["contributing"];
+        if (a.details.contains("reason")) x["evidence"] = a.details["reason"];
+    }
+
+    // WHY did this alert fire? Built only from the alert's own evidence.
     std::ostringstream os;
-    os << "rule '" << a.rule_name << "' fired on "
-       << a.contributing_event_ids.size()
-       << " authorized synthetic observation(s) within the correlation window";
+    os << "rule '" << a.rule_name << "' fired from the detection/fusion evidence";
+    if (has_details && a.details.contains("contributing") &&
+        a.details["contributing"].is_number()) {
+        os << " (" << a.details["contributing"].get<size_t>()
+           << " contributing detector observation(s)";
+        if (a.details.contains("fusion_verdict"))
+            os << ", fusion verdict '" << a.details["fusion_verdict"].get<std::string>() << "'";
+        os << ")";
+    }
+    os << std::fixed << std::setprecision(2) << " at confidence " << a.confidence;
     x["explanation"] = os.str();
     return x;
 }
@@ -277,36 +298,48 @@ json scenarios_payload() {
     return out;
 }
 
-// Human-readable outcome: why an alert was, or was not, generated.
+// Human-readable outcome: why an alert was, or was not, generated. Derived from
+// the run's real counters, the fused detection verdict and the consent audit.
 std::string outcome_text(const ScenarioRunResult& r) {
     std::ostringstream os;
     if (!r.capture_enabled) {
         return "capture disabled by configuration: nothing was delivered, so no "
-               "observation was processed and no alert could be generated "
-               "(fail-closed).";
+               "observation was acquired, no detection ran, and no alert could "
+               "be generated (fail-closed).";
     }
     if (r.alerts_delivered > 0) {
-        os << "alert delivered by the real correlation/alert policy ("
-           << r.alerts_delivered << " delivered, " << r.alerts_suppressed
-           << " duplicate(s) suppressed).";
+        os << "detection-driven alert delivered (" << r.alerts_delivered
+           << " delivered, " << r.alerts_suppressed
+           << " duplicate(s) suppressed by the dedup/cooldown policy).";
         return os.str();
     }
-    if (r.detection.ran &&
-        (r.detection.fusion_verdict == "inconclusive" ||
-         r.detection.fusion_verdict == "unavailable")) {
-        os << "no alert: the detection/fusion stage reported '"
-           << r.detection.fusion_verdict
-           << "' (ambiguous or insufficient evidence is never promoted to a "
-              "confirmed alert).";
+    // Prefer the detection explanation: it is the reason with the most
+    // explanatory power when detection evidence exists. (A separate consumer
+    // merely lacking consent is not the reason an alert was withheld.)
+    if (r.detection.ran) {
+        os << std::fixed << std::setprecision(2);
+        if (r.detection.fusion_verdict != "detected") {
+            os << "no alert: the fused detection verdict is '"
+               << r.detection.fusion_verdict << "' (confidence "
+               << r.detection.fusion_confidence << ", "
+               << r.detection.fusion_contributing
+               << " contributing input(s)). An uncertain, unavailable or "
+                  "not-detected result never raises an alert.";
+            return os.str();
+        }
+        os << "no alert: the fused verdict was 'detected' but confidence "
+           << r.detection.fusion_confidence
+           << " is below the alert threshold.";
         return os.str();
     }
-    if (r.media_authorized < 2) {
-        os << "no alert: only " << r.media_authorized
-           << " authorized synthetic observation(s) reached the pipeline, below "
-              "the >=2 within-60s correlation threshold.";
+    if (r.privacy.denied > 0) {
+        os << "no alert: " << r.privacy.denied
+           << " acquisition(s) were denied by the consent gate and produced no "
+              "observation; the remaining authorized evidence did not constitute "
+              "a qualifying detection.";
         return os.str();
     }
-    return "no alert: the correlation condition was not met this run.";
+    return "no alert: no detection evidence was produced for this scenario.";
 }
 
 // Run `spec` (optionally with a caller-supplied cycle override) and return the

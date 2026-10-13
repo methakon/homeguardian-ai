@@ -170,3 +170,21 @@ Endpoints: `GET /api/scenarios`, `GET /api/alerts`,
 The assistant is a **fixed keyword matcher** grounded in the real status and the
 last scenario result. It is not a language model and is not real Alexa+
 intelligence.
+
+## L-11 — Alerts are now detection-driven (2026-10-13)
+
+The scenario table below is RE-MEASURED after L-11; the previous table described
+the (now removed) raw-observation rule.
+
+| Scenario | Intent | Measured result (capture on) |
+|---|---|---|
+| `normal` | routine activity below the detection baseline | 4 deliveries, 0 alerts. Detector: 2 not_detected; fusion `not_detected` (0.80) |
+| `unusual` | sustained activity above the baseline | 10 deliveries, **1 alert** (`warning`), 9 suppressed. Detector: 5 detected; fusion `detected` (1.00) |
+| `inconclusive` | ambiguous evidence | 3 deliveries, 0 alerts. Detector: 3 inconclusive; fusion `unavailable` |
+| `consent-denied` | withdrawn consent | 1 authorized + 1 denied, 0 alerts; detection not run (denied path produced no observation) |
+| `default` | backwards-compatible original | 10 deliveries, **2 alerts** (`warning` 0.92 + `info` 0.61), 8 suppressed |
+
+Every alert shown carries rule `detection-fusion`, a severity derived from the
+fused confidence, and an explanation built from the alert's own evidence
+(contributing detector observations, fusion verdict, confidence). The timeline
+also shows the fusion verdict and `synthetic` provenance per alert.
