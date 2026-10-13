@@ -197,22 +197,111 @@ and is labelled `REAL LOCAL CAPTURE ACTIVE` only when real frames are flowing.
 
 ---
 
-## 2. D-02 — Android acquisition nodes (planned)
+## 2. D-02 — Android acquisition node (implemented; physical capture BLOCKED)
 
-Reuses the existing abstractions — `IMediaDevice`, `ConsentGuardedDevice`,
-Camera1/Camera2 adapters, the AAudio backend, the NDK build and the
-permission/lifecycle harness — so one application can target both the documented
-Android 8.1 / API 27 / armeabi-v7a device and newer phones (Camera1 where Camera2
-is inadequate).
+`apk/` is the node application. One APK targets both the documented older device
+(Android 8.1 / API 27 / armeabi-v7a, Camera1 path) and newer phones (Camera2 NDK
+path): the camera backend is an explicit, documented choice, never a silent
+fallback.
 
-Planned controls: camera selection (front/rear), microphone selection where
-supported, device identifier, configurable resolution/FPS, audio sample
-rate/channels, status, explicit start/stop, runtime permissions, a persistent
-recording indicator, battery/thermal reporting, safe reconnect, low-resource
-operation. Acquisition never starts because the app started — it requires an
-explicit user action plus granted permission.
+### 2.1 What was implemented
+
+| Piece | Detail |
+|-------|--------|
+| `apk/src/.../MainActivity.java` | Node UI: device identity + display name, consent grant / **withdraw**, camera facing (back/front), preview size (320x240 / 640x480 / 854x480) and FPS (5/10/15), microphone rate (8000/16000/44100) and channels (mono/stereo), Start/Stop for each device, a live **RECORDING** banner, live counters and the last refusal reason, runtime permission flows, and a non-capture self-test |
+| `apk/src/.../Camera1Bridge.java` | Camera1 acquisition: facing/size/FPS selection with the closest supported values, wall-clock timestamps per frame, a local frame count, per-frame delivery gate, deterministic release, safe to call from any thread |
+| `apk/src/.../DeviceIdentity.java` | Non-personal identity inputs: Android ID (hashed natively), display name, API level, primary ABI, model. No accounts, contacts, IMEI, location or media content |
+| `apk/jni/hg_harness_jni.cpp` | 12 JNI entry points, all exception-safe (a C++ exception must never cross the boundary): identity, permission mirror, consent grant/withdraw, camera start/stop, mic start/stop + stop-request poll, stats, stop-all, self-test. Owns one `CaptureAccountant` and one `ConsentGate` |
+| `src/core/CaptureAccounting.{h,cpp}` | The bounded/authorized payload contract both driver threads call: dimension/size/rate/channel/timestamp validation, saturating counters, drop reasons, thread-safe (`counters()` returns a copy) |
+| `src/core/NodeIdentity.{h,cpp}` | Opaque node id (FNV-1a over the device seed) + sanitised, bounded display labels; the D-03 registration identifier |
+| `src/backend/android/AAudioCaptureDevice.{h,cpp}` | **Completed**: the backend previously opened a stream but registered no data callback, so no PCM was ever read. It now sets an `AAUDIO_FORMAT_PCM_I16` stream with the configured rate/channels/frames-per-callback, registers the data + error callbacks, authorises **every** buffer through the consent gate, accounts it, tracks negotiated rate/channels, counts xruns, and raises a stop request on consent/permission refusal or a stream disconnect |
+
+### 2.2 Acquisition rules (unchanged philosophy, now on a real device)
+
+- Capture is **off by default**. Nothing opens on launch; the self-test performs
+  no capture.
+- Starting requires all three: an explicit operator tap, the Android runtime
+  permission granted through the normal flow (never `adb pm grant`), and a
+  HomeGuardian consent record. Any one missing = nothing captured; the native
+  gate refuses regardless of what the UI does.
+- **No background capture.** There is no foreground service and no
+  `FOREGROUND_SERVICE` permission: leaving the activity stops and releases every
+  device (`onPause`/`onDestroy`). Screen-off operation would require a foreground
+  service with a persistent notification and is deliberately left as a follow-up
+  (it cannot be verified without a device).
+- Every frame and every PCM buffer is re-checked against consent/permission/
+  capture state immediately before delivery and then validated and counted. A
+  refused payload is dropped, counted with a reason, and (for audio) raises a
+  stop request the control thread acts on.
+- Frames/samples live in memory for the duration of the callback only: no decode,
+  no feature, no file, no upload, no inference. The node does **not** recognise
+  faces, speech, falls or emergencies — that claim is not made anywhere.
+
+### 2.3 Build and verify (no device needed)
+
+```bash
+bash apk/build_apk.sh                      # native lib + dex + package + sign
+bash scripts/verify_android_node.sh        # 18 software checks + device report
+```
+
+`verify_android_node.sh` asserts: the native library builds for armeabi-v7a and
+exports every JNI entry point the app calls; the APK builds, aligns and
+signature-verifies; the manifest declares exactly CAMERA + RECORD_AUDIO with both
+hardware features optional and **no** FOREGROUND_SERVICE; the dex contains no
+`invoke-custom`/`invoke-polymorphic` (the API 27 verifier rejects invokedynamic —
+this is what forces the no-lambda Java style); the `[d02]` host contracts pass;
+the existing host suite still passes; and it reports APK/library sizes plus the
+attached-device count.
+
+### 2.4 Measured (host)
+
+| Metric | Value |
+|--------|-------|
+| APK | 794,159 B (0.76 MiB) |
+| Native library (armeabi-v7a) | 1,140,532 B (1.09 MiB) |
+| Bundled `libc++_shared.so` | 1,331,388 B |
+| Host suite after D-02 | 387 cases / 3,053 assertions (+18 / +212 vs v21) |
+| `[d02]` contracts | 18 cases / 212 assertions |
+
+Device-side figures (RAM, CPU, camera FPS, audio latency, battery, thermal) are
+**NOT measured**: no phone is attached. They are not estimated here because an
+estimate is not evidence.
+
+### 2.5 Physical acceptance — BLOCKED
+
+`D-02 PHYSICAL CAPTURE ACCEPTANCE: BLOCKED — NO DEVICE ATTACHED`. No frame count,
+sample count, battery reading or device log is reported, because none was
+observed. See §2.6 for exactly what is needed to unblock it.
+
+### 2.6 Requirements for physical acceptance
+
+To turn `BLOCKED` into verified, the operator needs to:
+
+1. Attach the documented device (Android 8.1 / API 27 / armeabi-v7a, ~1 GB RAM) or
+   any Android ≥ 8.1 phone, with USB debugging enabled and authorised.
+2. Install the built APK: `adb install -r hg_apk_build/homeguardian-harness.apk`.
+3. Launch **HomeGuardian Node**, press **Grant consent**, then **START camera
+   capture** and accept the CAMERA runtime prompt; repeat for the microphone with
+   **START microphone capture**.
+4. Confirm on screen: the RECORDING banner, a rising `frames=` count (and
+   `audio_buf=`/`samples=` for the mic), the negotiated preview size/FPS, and the
+   `audio=` state in the live counters.
+5. Exercise the failure paths: **WITHDRAW consent** while capturing (counters
+   must stop advancing and the devices must be released), deny a permission and
+   press Start (nothing may open), and background the app (capture must stop).
+6. Capture the supporting evidence: `adb logcat -s HGNode HGCam1 HGAudio` and
+   `adb shell dumpsys media.camera | head -40`, plus a screen recording of the
+   counters.
+
+Nothing in the app will start capture without step 3: the operator action is
+required by design, so physical acceptance cannot be automated from this host.
 
 ## 3. D-03 — Secure device transport (planned)
+
+Prerequisites from D-02 are in place: each node has a stable opaque `node_id`
+plus sanitised labels (`src/core/NodeIdentity.*`), and every payload already
+carries a validated timestamp. D-03 adds registration/pairing, per-device
+identity and authentication, and the encrypted LAN transport.
 
 Registration/pairing, per-device identity, mutual authentication, encrypted LAN
 transport (a reviewed library — **not** custom cryptography), per-device consent,

@@ -1,14 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.homeguardian.harness"
-    android:versionCode="1"
-    android:versionName="0.1.0">
+    android:versionCode="2"
+    android:versionName="0.2.0">
 
     <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="27" />
 
-    <!-- Camera and microphone permissions are requested at RUNTIME only, and
-         only when the operator explicitly triggers a capture test. The app
-         never starts capture on launch. -->
+    <!-- Camera and microphone permissions are requested at RUNTIME only, after
+         an explicit operator action (Grant consent + Start). The app never
+         starts capture on launch, and never captures in the background: leaving
+         the activity stops and releases every device. No foreground service is
+         declared because no background capture is implemented. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
@@ -16,12 +18,12 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
-        android:label="HomeGuardian Harness"
+        android:label="HomeGuardian Node"
         android:allowBackup="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="HomeGuardian Harness">
+            android:label="HomeGuardian Node">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

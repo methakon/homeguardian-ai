@@ -261,6 +261,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection_alert.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_anomaly_monitor.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_synthetic_impact.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_node_capture.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -273,6 +274,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ImpactClassifier.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SyntheticImpactRule.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/CaptureAccounting.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/NodeIdentity.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
         ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ConsentGate.cpp

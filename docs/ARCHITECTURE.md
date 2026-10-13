@@ -1301,3 +1301,41 @@ entrypoint `exec`s the hub, making it PID 1 for clean SIGTERM.
 Builder and runtime use the **same** Debian release (trixie-slim): the project
 requires CMake >= 3.28.3 (bookworm ships 3.25.1 and cannot configure), and a
 binary built against a newer glibc than the runtime provides would not start.
+
+
+## D-02 — Android acquisition node (2026-10-13)
+
+```
+  Android node (apk/)                                  native contracts (src/core/)
+  ┌──────────────────────────────────────────┐         ┌───────────────────────────┐
+  │ MainActivity  (identity, consent,        │         │ CaptureAccounting         │
+  │   facing/size/FPS, rate/channels, REC    │  JNI    │  bounded + authorized +    │
+  │   banner, live counters)                 │◄───────►│  timestamped payload       │
+  │ Camera1Bridge  (preview frames)          │  12     │  contract, saturating      │
+  │ AAudioCaptureDevice (PCM buffers)        │  entry  │  counters, drop reasons    │
+  │ DeviceIdentity (Android ID → opaque id)  │  points │ NodeIdentity (node_id)     │
+  └──────────────────────────────────────────┘         └───────────────────────────┘
+             │ per-frame / per-buffer                      │ every payload
+             ▼                                             ▼
+        ConsentGuardedDevice ── authorize_delivery() ── ConsentGate (granted/
+        (IMediaDevice lifecycle)                          withdrawn/expired,
+                                                          capture enabled)
+```
+
+Design rules this milestone adds:
+
+- **One accountant, two driver threads.** Camera1 frames (Java callback thread)
+  and AAudio PCM buffers (driver thread) both go through the same
+  `CaptureAccountant`, which validates dimensions/size/rate/channels/timestamps,
+  refuses unauthorized payloads with a counted reason, and returns a counter
+  *copy* to the UI so nothing observes half-updated state.
+- **Authorization is per payload, not per session.** The camera path calls the
+  full gate for every frame; the audio path calls the full gate from its data
+  callback for every buffer. A withdrawal or permission revocation therefore
+  stops delivery at the next payload, and the audio path additionally raises a
+  stop request that the control thread turns into a real stop+release.
+- **The client is never trusted to gate itself.** `CaptureAccounting` is a core,
+  host-tested component: the same code that enforces limits on the phone is the
+  code the host tests drive, so the contract is verified without hardware.
+- **No background capture exists** in this milestone: no foreground service, and
+  leaving the activity stops every device.

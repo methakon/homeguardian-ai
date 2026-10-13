@@ -17,6 +17,9 @@ BUILD_DIR="$ROOT/hg_apk_build"
 export JAVA_HOME="${JAVA_HOME:-$HOME/android-jdk}"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/android-ndk-r26d}"
+# dx/d8/apksigner are shell wrappers that invoke `java`, so the JDK's bin must be
+# on PATH as well as JAVA_HOME being set.
+export PATH="$JAVA_HOME/bin:$PATH"
 NDK="$ANDROID_NDK_HOME"
 SDK="$ANDROID_HOME"
 BT="$SDK/build-tools/27.0.0"
@@ -49,6 +52,8 @@ CORE_SRC=(
   "$ROOT/src/backend/android/AAudioCaptureDevice.cpp"
   "$ROOT/src/core/ConsentGate.cpp"
   "$ROOT/src/core/ConsentGuardedDevice.cpp"
+  "$ROOT/src/core/CaptureAccounting.cpp"
+  "$ROOT/src/core/NodeIdentity.cpp"
 )
 INC=( -I"$ROOT/src" -I"$ROOT/src/core" -I"$ROOT/src/backend/android"
       -I"$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" )

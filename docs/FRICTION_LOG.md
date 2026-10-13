@@ -2172,3 +2172,75 @@ disappeared" is itself the strongest available evidence that the route is closed
 **Verify a base image's toolchain before a long build.** Checking
 `cmake --version` inside `debian:trixie-slim` took ~30 s and would have saved a
 9-minute failed build. Probe the toolchain version you depend on first.
+
+## D-02: the AAudio backend opened a stream but never read PCM (2026-10-13)
+
+**Defect.** `AAudioCaptureDevice::start()` called `AAudioStreamBuilder_openStream()`
+and `AAudioStream_requestStart()` but never called
+`AAudioStreamBuilder_setDataCallback()`. The stream started, the device LED lit,
+the stream reported `AAUDIO_OK` — and not one PCM buffer was ever handed to the
+application. A node built on it would have captured silence and, worse, reported
+itself as capturing.
+
+**Why it survived.** The existing host tests exercised the *contract* (fail-closed
+initialize, consent per payload) and the simulator never used AAudio at all, so
+nothing asked the backend whether it actually produced data. "The stream opened"
+was silently treated as "the microphone works" — the same class of error as the
+stale `homeguardian` binary in L-11: a green signal that does not mean what it
+looks like it means.
+
+**Fix.** The backend now configures `AAUDIO_FORMAT_PCM_I16` with the requested
+rate/channels/frames-per-callback, registers both a data callback and an error
+callback, authorises **every** buffer through the consent gate immediately before
+delivery, accounts size/rate/channel/timestamp per buffer, tracks the negotiated
+rate/channels, counts xruns and stream disconnects, and raises a stop request
+when consent/permission refuse or the device disappears. Verification is host-side
+and therefore contract-level: the delivery boundary is the same host-tested
+`CaptureAccountant`, and the failure path is covered by tests that drive a
+refusing gate. **What remains unverified without a phone is exactly one thing: that
+real PCM arrives** — which is why D-02 reports physical acceptance as BLOCKED
+rather than claiming capture.
+
+**Rule.** A backend that reports success must be asked what it *produced*. Count
+the payloads, not the transitions: "opened" and "started" are transitions.
+
+## D-02: a hex escape ate a character and the test looked guilty (2026-10-13)
+
+`REQUIRE(sanitize_label("bad\nname\r\twith\x01ctl") == "badnamewithctl")` failed
+with `"badnamewithtl" == "badnamewithctl"` — one character short, as though the
+sanitiser had dropped a printable `c`. It had not: in C++ the hex escape is
+greedy, so `\x01ctl` is the single byte `0x1C` followed by `tl`. The input string
+was wrong, not the function.
+
+**Fix.** Append the control byte explicitly (`raw.push_back('\x01')`) whenever the
+next character is a hex digit. The comment in the test now says why, because the
+next reader will make the same inference from the same output.
+
+**Rule.** When a one-character difference appears at a boundary between an escape
+sequence and printable text, suspect the literal before the logic.
+
+## D-02: build_apk.sh set JAVA_HOME but not PATH (2026-10-13)
+
+The NDK and Java compilation both succeeded, then dexing failed with
+`dx: line 89: exec: java: not found`. `dx`, `apksigner` and `zipalign` are shell
+wrappers that invoke `java`, so exporting `JAVA_HOME` is not enough — the JDK's
+`bin` must be on `PATH`. Fixed in `build_apk.sh` with
+`export PATH="$JAVA_HOME/bin:$PATH"` next to the existing `JAVA_HOME` export.
+
+**Rule.** For a wrapper script that shells out to `java`, set both the variable and
+the PATH; the error appears three stages later than the cause.
+
+## D-02: two checkers were wrong before the product was (2026-10-13)
+
+Twice in this milestone a failure came from the *check*, not the artefact:
+
+1. A container-inspection script reported the mounted hub configuration as missing
+   because it looked in the wrong location inside the container.
+2. `verify_android_node.sh` reported "camera uses-feature missing" for a manifest
+   that declares it: `aapt dump badging` emits
+   `uses-feature-not-required: name='android.hardware.camera'` when the feature is
+   declared `required="false"`. The grep looked for `uses-feature:`.
+
+**Rule.** Before "fixing" a product to satisfy a check, confirm the check is
+asking the right question — and prefer a check that fails loudly on the *wrong
+key* (a required-vs-optional regex) over one that fails on absence.

@@ -508,3 +508,47 @@ curl -s http://127.0.0.1:<port>/ | grep -c 'sevbadge\|impactbox'  # expect 9
 Both zero would mean a stale embed (the failure mode fixed in v21: the header was
 generated at configure time with no dependency on the HTML, so `demo.sh` could
 serve the previous dashboard after a dashboard-only edit).
+
+
+## D-02 — building and testing the Android node (2026-10-13)
+
+```bash
+# native lib + dex + package + sign (no Gradle; JDK/SDK/NDK only)
+bash apk/build_apk.sh
+
+# host-side acceptance: 18 checks + device presence report
+bash scripts/verify_android_node.sh
+
+# the node contracts on their own
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[d02]"
+```
+
+Toolchain (all already on this host): JDK 17 at `$HOME/android-jdk`, SDK at
+`$HOME/Android/Sdk` (build-tools 27.0.3, platform android-27), NDK r26d. The
+script exports `JAVA_HOME` **and** puts `$JAVA_HOME/bin` on `PATH` — `dx`,
+`apksigner` and `zipalign` are shell wrappers that invoke `java`, so setting
+`JAVA_HOME` alone fails with `dx: line 89: exec: java: not found`.
+
+Java style constraint: no lambdas. The build dexes with `dx` and deliberately
+omits `--min-sdk-version`, because that enables invokedynamic desugaring which
+the API 27 dex verifier on the target device rejects. `verify_android_node.sh`
+checks the dex for `invoke-custom`/`invoke-polymorphic` so this cannot silently
+regress.
+
+Pitfalls hit while implementing D-02:
+
+1. **`` in a string literal is greedy.** `"with\x01ctl"` parses as the hex
+   escape `\x01c` followed by `tl`, so a sanitisation test asserted the wrong
+   expected value. Append the control byte explicitly (`raw.push_back('\x01')`)
+   when the next character is a hex digit.
+2. **Two clocks.** Java sends `System.currentTimeMillis()` as the frame
+   timestamp because the native accountant validates against
+   `system_clock`; `SystemClock.elapsedRealtime()` (boot-relative) would fail the
+   plausibility check as a then-future/zero timestamp. Audio uses the native
+   clock directly.
+3. **`clock_t` is a C type.** A `using clock_t = std::chrono::system_clock;`
+   alias in a test collides with the C `clock_t` from `<ctime>` and fails with
+   "template argument 1 is invalid". Use a distinct name (`Clock`).
+4. **aapt spells optional features differently.** A manifest feature declared
+   `required="false"` is reported as `uses-feature-not-required:` (not
+   `uses-feature:`), so a checker grepping the wrong key reports a false failure.

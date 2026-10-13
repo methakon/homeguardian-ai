@@ -1,43 +1,63 @@
-// JNI bridge for the HomeGuardian acceptance-test harness.
+// JNI bridge for the HomeGuardian Android acquisition node (milestone D-02).
 //
-// SAFETY CONTRACT (enforced here):
-//  - Capture is disabled by default. Neither sensor starts on library load or
-//    app launch.
-//  - nativeStartCamera()/nativeStartMic() activate capture ONLY when called
-//    explicitly by the operator (a button press), and ONLY after the OS has
-//    granted the corresponding runtime permission (checked by the Activity,
-//    and re-checked here defensively).
-//  - Every delivered frame/sample passes authorize_delivery() immediately
-//    before delivery; on denial the payload is dropped and capture is stopped.
-//  - No media is written to disk or uploaded. Delivered payloads are counted
-//    in memory only and never persisted.
+// SAFETY CONTRACT (enforced here, and re-enforced per payload by the accountant):
+//  - Capture is DISABLED by default. Nothing opens on library load or app launch.
+//  - nativeStartCamera()/nativeStartMic() activate capture ONLY when the operator
+//    explicitly pressed Start AND the Activity confirmed the OS permission was
+//    granted. The Android permission is modelled here as a flag the Activity
+//    sets, so a revocation (or a lifecycle stop) immediately fails delivery.
+//  - EVERY frame (Camera1 preview callback) and EVERY PCM buffer (AAudio data
+//    callback) is checked against the consent gate immediately before delivery
+//    and then accounted: bounded size/dimension/rate/timestamp validation plus
+//    saturating counters. A refused payload is dropped and never queued.
+//  - No media is written to disk, uploaded, decoded or interpreted. There is no
+//    face, speech, fall or emergency inference anywhere in this file.
 //
-// The capture wiring here is intentionally minimal: it opens the device,
-// confirms consent is granted, and counts delivered payloads through the
-// delivery gate. It does not decode frames, run inference, or store anything.
+// The JNI layer owns one CaptureAccountant shared by both capture paths, and one
+// ConsentGate fed by an in-memory consent repository (a node has no database).
+// A captured C++ exception never crosses the boundary: every entry point catches
+// and reports a clean, fail-closed result, because an escaping exception aborts
+// the process.
 
 #include <jni.h>
-#include <string>
-#include <memory>
-#include <atomic>
-#include <mutex>
+
 #include <android/log.h>
 
-#define HG_LOG_TAG "HGHarness"
-#define HG_LOGI(...) __android_log_print(ANDROID_LOG_INFO, HG_LOG_TAG, __VA_ARGS__)
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
 
-#include "backend/android/NdkCameraDevice.h"
 #include "backend/android/AAudioCaptureDevice.h"
+#include "backend/android/NdkCameraDevice.h"
+#include "core/CaptureAccounting.h"
 #include "core/ConsentGate.h"
 #include "core/ConsentGuardedDevice.h"
 #include "core/ConsentRecord.h"
-#include "core/FakeMediaDevice.h"
+#include "core/NodeIdentity.h"
+
+#define HG_LOG_TAG "HGNode"
+#define HG_LOGI(...) __android_log_print(ANDROID_LOG_INFO, HG_LOG_TAG, __VA_ARGS__)
+#define HG_LOGW(...) __android_log_print(ANDROID_LOG_WARN, HG_LOG_TAG, __VA_ARGS__)
 
 using namespace homeguardian;
 
 namespace {
 
-// A minimal in-memory consent repository (no database needed for the harness).
+inline int64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+// The consent gate works in time_points; the accountant works in epoch ms.
+inline std::chrono::system_clock::time_point tp_now() {
+    return std::chrono::system_clock::now();
+}
+
+// In-memory consent repository: a phone node keeps consent in RAM only.
 class MemoryConsentRepo : public IConsentRepository {
 public:
     void save(const ConsentRecord& r) override {
@@ -46,15 +66,33 @@ public:
     }
     std::optional<ConsentRecord> find_by_id(const std::string&) override { return std::nullopt; }
     std::vector<ConsentRecord> find_by_subject(const std::string& s) override { return filter(s, ""); }
-    std::vector<ConsentRecord> find_by_purpose(const std::string& s, const std::string& p) override { return filter(s, p); }
+    std::vector<ConsentRecord> find_by_purpose(const std::string& s, const std::string& p) override {
+        return filter(s, p);
+    }
     size_t count() override { std::lock_guard<std::mutex> lk(m_); return records_.size(); }
-    size_t delete_all() override { std::lock_guard<std::mutex> lk(m_); size_t n = records_.size(); records_.clear(); return n; }
-    void grant(const std::string& subject, const std::string& purpose, const std::vector<std::string>& cats) {
-        save(ConsentRecord::create_granted("harness-grant", subject, purpose, cats, "1.0.0", "operator"));
+    size_t delete_all() override {
+        std::lock_guard<std::mutex> lk(m_);
+        size_t n = records_.size();
+        records_.clear();
+        return n;
+    }
+    void grant(const std::string& subject, const std::string& purpose,
+               const std::vector<std::string>& cats) {
+        save(ConsentRecord::create_granted("node-grant", subject, purpose, cats, "1.0.0", "operator"));
     }
     void withdraw(const std::string& subject, const std::string& purpose) {
-        save(ConsentRecord::create_withdrawn("harness-withdraw", subject, purpose, "1.0.0", "operator"));
+        save(ConsentRecord::create_withdrawn("node-withdraw", subject, purpose, "1.0.0", "operator"));
     }
+    bool granted(const std::string& subject, const std::string& purpose) {
+        std::lock_guard<std::mutex> lk(m_);
+        for (auto it = records_.rbegin(); it != records_.rend(); ++it) {
+            if (it->get_subject_scope() == subject && it->get_purpose() == purpose) {
+                return it->get_decision() == ConsentDecision::granted;
+            }
+        }
+        return false;
+    }
+
 private:
     std::vector<ConsentRecord> filter(const std::string& s, const std::string& p) {
         std::lock_guard<std::mutex> lk(m_);
@@ -67,223 +105,352 @@ private:
     std::vector<ConsentRecord> records_;
 };
 
-// Harness singleton state. Capture objects are created only on explicit start.
-struct Harness {
+// Node singleton. Devices are created only on an explicit operator start.
+struct Node {
     MemoryConsentRepo repo;
     std::unique_ptr<ConsentGate> gate;
-    // Camera
-    std::unique_ptr<NdkCameraDeviceImpl> camera;
+    CaptureAccountant accountant;
+
+    NodeIdentity identity;
+
+    // OS permission model: the Activity sets these from the real grant state and
+    // clears them on revocation or when the app leaves the foreground.
+    std::atomic<bool> camera_permission{false};
+    std::atomic<bool> mic_permission{false};
+
+    // camera
+    int camera_id = 0;                 // 0 = back, 1 = front (Camera1 index)
+    std::unique_ptr<NdkCameraDeviceImpl> camera;        // camera2 path
     std::unique_ptr<ConsentGuardedDevice> guarded_camera;
-    // Mic
+    // mic (AAudio)
     std::unique_ptr<AAudioCaptureDeviceImpl> mic;
     std::unique_ptr<ConsentGuardedDevice> guarded_mic;
-    std::atomic<int> camera_delivered{0};
-    std::atomic<int> mic_delivered{0};
+
     std::mutex m;
 };
 
-Harness& harness() {
-    static Harness h;
+Node& node() {
+    static Node n;
     static std::once_flag once;
     std::call_once(once, [] {
-        // Grant consent up front for the two test purposes; capture is still
-        // gated by the delivery check and by explicit operator action.
-        h.repo.grant("harness", "camera_test", {"camera"});
-        h.repo.grant("harness", "mic_test", {"audio"});
-        h.gate = std::make_unique<ConsentGate>(h.repo, /*media_capture_enabled=*/true);
+        // Consent is granted for the two acquisition purposes ONLY by an explicit
+        // operator action in the UI; until then nothing is authorized.
+        n.gate = std::make_unique<ConsentGate>(n.repo, /*media_capture_enabled=*/true);
     });
-    return h;
+    return n;
 }
 
-} // namespace
+std::string jstr(JNIEnv* env, jstring s) {
+    if (s == nullptr) return std::string();
+    const char* c = env->GetStringUTFChars(s, nullptr);
+    std::string out = c ? c : "";
+    if (c) env->ReleaseStringUTFChars(s, c);
+    return out;
+}
+
+jstring to_jstring(JNIEnv* env, const std::string& s) {
+    return env->NewStringUTF(s.c_str());
+}
+
+// Compact one-line stats for the UI. Non-sensitive counters only.
+std::string stats_string(Node& n) {
+    const CaptureCounters c = n.accountant.counters();
+    std::string s;
+    s += "video=" + std::string(n.accountant.video_running() ? "on" : "off");
+    s += " audio=" + std::string(n.accountant.audio_running() ? "on" : "off");
+    s += " frames=" + std::to_string(c.frames_authorized) + "/" + std::to_string(c.frames_seen);
+    s += " dropped=" + std::to_string(c.frames_dropped);
+    s += " frame_bytes=" + std::to_string(c.frame_bytes);
+    s += " audio_buf=" + std::to_string(c.audio_buffers_authorized) + "/" +
+         std::to_string(c.audio_buffers_seen);
+    s += " audio_dropped=" + std::to_string(c.audio_buffers_dropped);
+    s += " samples=" + std::to_string(c.audio_frames);
+    s += " audio_bytes=" + std::to_string(c.audio_bytes);
+    s += " xruns=" + std::to_string(c.xruns);
+    s += " ts_regress=" + std::to_string(c.timestamp_regressions);
+    if (c.last_drop != DropReason::none) {
+        s += " last_drop=" + std::string(drop_reason_to_string(c.last_drop));
+        if (!c.last_drop_detail.empty()) s += " (" + c.last_drop_detail + ")";
+    }
+    return s;
+}
+
+}  // namespace
 
 extern "C" {
 
+// ---- identity --------------------------------------------------------------
+
 JNIEXPORT jstring JNICALL
-Java_org_homeguardian_harness_MainActivity_nativeSelfTest(JNIEnv* env, jobject /*thiz*/) {
-    // Reuse the on-device non-capture self-test logic inline (no capture here).
-    auto& h = harness();
-    auto now = std::chrono::system_clock::now();
-
-    std::string out = "self-test:\n";
-    auto d = h.gate->check({"harness", "camera_test", "camera"}, now);
-    out += d.authorized ? "gate: camera authorized\n" : "gate: camera DENIED\n";
-    auto w = h.gate->check({"harness", "nope", "camera"}, now);
-    out += (!w.authorized) ? "gate: unknown purpose denied\n" : "gate: UNEXPECTED allow\n";
-
-    // Fail-closed guards on the real backends (device not confirmed -> Error).
-    NdkCameraDeviceImpl cam;
-    bool camClosed = false;
-    try { cam.initialize(); } catch (const std::exception&) { camClosed = true; }
-    out += camClosed ? "camera backend: fail-closed OK\n" : "camera backend: UNEXPECTED open\n";
-
-    AAudioCaptureDeviceImpl mic;
-    bool micClosed = false;
-    try { mic.initialize(); } catch (const std::exception&) { micClosed = true; }
-    out += micClosed ? "audio backend: fail-closed OK\n" : "audio backend: UNEXPECTED open\n";
-
-    HG_LOGI("non-capture self-test: gate_cam=%d gate_unknown_denied=%d cam_closed=%d mic_closed=%d",
-            (int)d.authorized, (int)(!w.authorized), (int)camClosed, (int)micClosed);
-
-    return env->NewStringUTF(out.c_str());
+Java_org_homeguardian_harness_MainActivity_nativeSetIdentity(JNIEnv* env, jobject /*thiz*/,
+                                                             jstring seed, jstring display_name,
+                                                             jint api_level, jstring abi,
+                                                             jstring model) {
+    auto& n = node();
+    n.identity = make_node_identity(jstr(env, seed), jstr(env, display_name),
+                                    static_cast<int>(api_level), jstr(env, abi), jstr(env, model));
+    HG_LOGI("identity set: %s", node_identity_summary(n.identity).c_str());
+    return to_jstring(env, node_identity_summary(n.identity));
 }
 
 JNIEXPORT jstring JNICALL
-Java_org_homeguardian_harness_MainActivity_nativeStartCamera(JNIEnv* env, jobject /*thiz*/) {
-    auto& h = harness();
-    std::lock_guard<std::mutex> lk(h.m);
-    if (!h.camera) {
-        h.camera = std::make_unique<NdkCameraDeviceImpl>();
-        // Confirm the device ONLY now, because the operator explicitly started
-        // a capture test AND the OS permission was granted by the Activity.
-        h.camera->set_device_confirmed(true);
-        h.guarded_camera = std::make_unique<ConsentGuardedDevice>(
-            *h.camera, *h.gate, AcquisitionRequest{"harness", "camera_test", "camera"});
+Java_org_homeguardian_harness_MainActivity_nativeIdentity(JNIEnv* env, jobject /*thiz*/) {
+    return to_jstring(env, node_identity_summary(node().identity));
+}
+
+// ---- permission model (set by the Activity from the real OS grant state) ----
+
+JNIEXPORT void JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeSetPermissions(JNIEnv* /*env*/, jobject /*thiz*/,
+                                                                jboolean camera, jboolean mic) {
+    auto& n = node();
+    n.camera_permission.store(camera == JNI_TRUE);
+    n.mic_permission.store(mic == JNI_TRUE);
+}
+
+// ---- consent --------------------------------------------------------------
+
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeGrantConsent(JNIEnv* env, jobject /*thiz*/,
+                                                              jboolean camera, jboolean mic) {
+    auto& n = node();
+    if (camera == JNI_TRUE) n.repo.grant("node", "camera_acquire", {"camera"});
+    if (mic == JNI_TRUE) n.repo.grant("node", "mic_acquire", {"audio"});
+    return to_jstring(env, "consent recorded (camera=" + std::string(camera == JNI_TRUE ? "yes" : "no") +
+                               ", mic=" + std::string(mic == JNI_TRUE ? "yes" : "no") + ")");
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeWithdrawConsent(JNIEnv* env, jobject thiz) {
+    auto& n = node();
+    n.repo.withdraw("node", "camera_acquire");
+    n.repo.withdraw("node", "mic_acquire");
+    // Force any in-flight capture down immediately.
+    {
+        std::lock_guard<std::mutex> lk(n.m);
+        if (n.guarded_camera) n.guarded_camera->recheck_and_enforce();
+        if (n.guarded_mic) n.guarded_mic->recheck_and_enforce();
     }
-    // initialize() may throw (e.g. camera enumeration returns 0 devices). Never
-    // let a C++ exception escape the JNI boundary (it aborts the process);
-    // catch it and report a clean fail-closed result.
+    return to_jstring(env, "consent withdrawn: capture delivery blocked");
+}
+
+// ---- camera ---------------------------------------------------------------
+
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeStartCamera(JNIEnv* env, jobject /*thiz*/,
+                                                             jint camera_id) {
+    auto& n = node();
+    std::lock_guard<std::mutex> lk(n.m);
+    if (!n.camera_permission.load()) {
+        return to_jstring(env, "camera: OS permission not granted; capture not started");
+    }
+    if (!n.repo.granted("node", "camera_acquire")) {
+        return to_jstring(env, "camera: consent not granted; capture not started");
+    }
+    n.camera_id = static_cast<int>(camera_id);
+    if (!n.camera) {
+        n.camera = std::make_unique<NdkCameraDeviceImpl>();
+        n.camera->set_device_confirmed(true);
+        n.guarded_camera = std::make_unique<ConsentGuardedDevice>(
+            *n.camera, *n.gate, AcquisitionRequest{"node", "camera_acquire", "camera"},
+            [&n] { return n.camera_permission.load(); });
+    }
     GuardResult init;
     try {
-        init = h.guarded_camera->initialize();
+        init = n.guarded_camera->initialize();
     } catch (const std::exception& e) {
-        h.guarded_camera->close();
-        HG_LOGI("camera initialize threw (fail-closed): %s", e.what());
-        return env->NewStringUTF((std::string("camera: initialize failed, capture not started (") + e.what() + ")").c_str());
+        n.guarded_camera->close();
+        return to_jstring(env, std::string("camera: initialize failed (") + e.what() + ")");
     }
-    if (!init.allowed) {
-        return env->NewStringUTF("camera: initialize denied by gate");
-    }
-    // A C++ exception here (e.g. camera enumeration returns 0 devices, or the
-    // device errors) must NOT escape across the JNI boundary, which would abort
-    // the process. Catch it and report a clean, fail-closed denial instead.
+    if (!init.allowed) return to_jstring(env, "camera: initialize denied by gate");
     GuardResult r;
     try {
-        r = h.guarded_camera->start();
+        r = n.guarded_camera->start();
     } catch (const std::exception& e) {
-        h.guarded_camera->close();
-        HG_LOGI("camera start threw (fail-closed): %s", e.what());
-        return env->NewStringUTF((std::string("camera: start failed, capture not started (") + e.what() + ")").c_str());
+        n.guarded_camera->close();
+        return to_jstring(env, std::string("camera: start failed (") + e.what() + ")");
     }
-    if (!r.allowed) {
-        return env->NewStringUTF((std::string("camera: start denied (") + r.explanation + ")").c_str());
-    }
-    // The device is now capturing. Each real NDK frame callback must call
-    // authorize_delivery() before delivering; the harness counts authorized
-    // deliveries. No frame is decoded or stored.
-    return env->NewStringUTF("camera: capturing (delivery-gated)");
+    if (!r.allowed) return to_jstring(env, std::string("camera: start denied (") + r.explanation + ")");
+    n.accountant.note_capture_started(/*video=*/true, now_ms());
+    HG_LOGI("camera capture started (id=%d)", n.camera_id);
+    return to_jstring(env, "camera: capturing (delivery-gated)");
 }
 
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeStopCamera(JNIEnv* env, jobject /*thiz*/) {
-    auto& h = harness();
-    std::lock_guard<std::mutex> lk(h.m);
-    if (h.guarded_camera) { h.guarded_camera->stop(); h.guarded_camera->close(); }
-    std::string out = "camera: stopped; delivered=" + std::to_string(h.camera_delivered.load());
-    return env->NewStringUTF(out.c_str());
+    auto& n = node();
+    std::lock_guard<std::mutex> lk(n.m);
+    if (n.guarded_camera) {
+        n.guarded_camera->stop();
+        n.guarded_camera->close();
+    }
+    const CaptureCounters c = n.accountant.counters();
+    return to_jstring(env, "camera stopped: frames=" + std::to_string(c.frames_authorized) +
+                               " dropped=" + std::to_string(c.frames_dropped));
 }
 
+// The Camera1 preview callback: the real acquisition boundary for the legacy
+// camera path. Called on the camera's callback thread for EVERY frame.
+JNIEXPORT jboolean JNICALL
+Java_org_homeguardian_harness_Camera1Bridge_nativeOnPreviewFrame(JNIEnv* env, jobject /*thiz*/,
+                                                                 jbyteArray data, jint width,
+                                                                 jint height, jint /*format*/,
+                                                                 jlong timestamp_ms) {
+    auto& n = node();
+    const size_t bytes = data ? static_cast<size_t>(env->GetArrayLength(data)) : 0u;
+    bool authorized = false;
+    {
+        std::lock_guard<std::mutex> lk(n.m);
+        if (!n.guarded_camera) return JNI_FALSE;
+        try {
+            authorized = n.guarded_camera->authorize_delivery();
+        } catch (const std::exception& e) {
+            HG_LOGW("camera delivery gate threw (fail-closed): %s", e.what());
+            n.guarded_camera->close();
+            return JNI_FALSE;
+        }
+    }
+    CaptureAccountant::Decision d = n.accountant.account_frame(
+        static_cast<uint32_t>(width > 0 ? width : 0), static_cast<uint32_t>(height > 0 ? height : 0),
+        bytes, static_cast<int64_t>(timestamp_ms), authorized, now_ms());
+    return d.authorized ? JNI_TRUE : JNI_FALSE;
+}
+
+// ---- microphone (AAudio) --------------------------------------------------
+
 JNIEXPORT jstring JNICALL
-Java_org_homeguardian_harness_MainActivity_nativeStartMic(JNIEnv* env, jobject /*thiz*/) {
-    auto& h = harness();
-    std::lock_guard<std::mutex> lk(h.m);
-    if (!h.mic) {
-        h.mic = std::make_unique<AAudioCaptureDeviceImpl>();
-        h.mic->set_device_confirmed(true);
-        h.guarded_mic = std::make_unique<ConsentGuardedDevice>(
-            *h.mic, *h.gate, AcquisitionRequest{"harness", "mic_test", "audio"});
+Java_org_homeguardian_harness_MainActivity_nativeStartMic(JNIEnv* env, jobject /*thiz*/,
+                                                          jint sample_rate, jint channels) {
+    auto& n = node();
+    std::lock_guard<std::mutex> lk(n.m);
+    if (!n.mic_permission.load()) {
+        return to_jstring(env, "mic: OS permission not granted; capture not started");
+    }
+    if (!n.repo.granted("node", "mic_acquire")) {
+        return to_jstring(env, "mic: consent not granted; capture not started");
+    }
+    if (!n.mic) {
+        n.mic = std::make_unique<AAudioCaptureDeviceImpl>();
+        AAudioCaptureDeviceImpl::Config cfg;
+        cfg.sample_rate = static_cast<int32_t>(sample_rate);
+        cfg.channels = static_cast<int32_t>(channels);
+        n.mic->set_config(cfg);
+        n.mic->set_accountant(&n.accountant);
+        // Per-buffer authorization: re-evaluates the gate on the driver thread.
+        n.mic->set_authorize([&n] {
+            try {
+                return n.guarded_mic && n.guarded_mic->authorize_delivery();
+            } catch (...) {
+                return false;
+            }
+        });
+        n.guarded_mic = std::make_unique<ConsentGuardedDevice>(
+            *n.mic, *n.gate, AcquisitionRequest{"node", "mic_acquire", "audio"},
+            [&n] { return n.mic_permission.load(); });
+    } else {
+        AAudioCaptureDeviceImpl::Config cfg;
+        cfg.sample_rate = static_cast<int32_t>(sample_rate);
+        cfg.channels = static_cast<int32_t>(channels);
+        n.mic->set_config(cfg);
     }
     GuardResult init;
     try {
-        init = h.guarded_mic->initialize();
+        init = n.guarded_mic->initialize();
     } catch (const std::exception& e) {
-        h.guarded_mic->close();
-        HG_LOGI("mic initialize threw (fail-closed): %s", e.what());
-        return env->NewStringUTF((std::string("mic: initialize failed, capture not started (") + e.what() + ")").c_str());
+        n.guarded_mic->close();
+        return to_jstring(env, std::string("mic: initialize failed (") + e.what() + ")");
     }
-    if (!init.allowed) {
-        return env->NewStringUTF("mic: initialize denied by gate");
-    }
+    if (!init.allowed) return to_jstring(env, "mic: initialize denied by gate");
     GuardResult r;
     try {
-        r = h.guarded_mic->start();
+        r = n.guarded_mic->start();
     } catch (const std::exception& e) {
-        h.guarded_mic->close();
-        HG_LOGI("mic start threw (fail-closed): %s", e.what());
-        return env->NewStringUTF((std::string("mic: start failed, capture not started (") + e.what() + ")").c_str());
+        n.guarded_mic->close();
+        return to_jstring(env, std::string("mic: start failed (") + e.what() + ")");
     }
-    if (!r.allowed) {
-        return env->NewStringUTF((std::string("mic: start denied (") + r.explanation + ")").c_str());
-    }
-    return env->NewStringUTF("mic: capturing (delivery-gated)");
+    if (!r.allowed) return to_jstring(env, std::string("mic: start denied (") + r.explanation + ")");
+    n.accountant.note_capture_started(/*video=*/false, now_ms());
+    std::string out = "mic: capturing at ";
+    out += std::to_string(n.mic->negotiated_sample_rate()) + " Hz, " +
+           std::to_string(n.mic->negotiated_channels()) + " channel(s) (delivery-gated)";
+    HG_LOGI("%s", out.c_str());
+    return to_jstring(env, out);
 }
 
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeStopMic(JNIEnv* env, jobject /*thiz*/) {
-    auto& h = harness();
-    std::lock_guard<std::mutex> lk(h.m);
-    if (h.guarded_mic) { h.guarded_mic->stop(); h.guarded_mic->close(); }
-    std::string out = "mic: stopped; delivered=" + std::to_string(h.mic_delivered.load());
-    return env->NewStringUTF(out.c_str());
+    auto& n = node();
+    std::lock_guard<std::mutex> lk(n.m);
+    if (n.guarded_mic) {
+        n.guarded_mic->stop();
+        n.guarded_mic->close();
+    }
+    const CaptureCounters c = n.accountant.counters();
+    return to_jstring(env, "mic stopped: buffers=" + std::to_string(c.audio_buffers_authorized) +
+                               " dropped=" + std::to_string(c.audio_buffers_dropped) +
+                               " samples=" + std::to_string(c.audio_frames));
 }
 
-// Camera1 delivery gate. Called from Camera1Bridge.onPreviewFrame on the camera
-// callback thread for EVERY preview frame, immediately before the frame would
-// be processed. Returns true only if the delivery gate authorizes this frame;
-// false means capture must stop now (consent withdrawn / revoked / device
-// error) and the frame must be dropped. This is the single consent enforcement
-// point at the real acquisition boundary for the Camera1 backend.
+// Does the audio driver thread demand a stop (consent/permission/disconnect)?
 JNIEXPORT jboolean JNICALL
-Java_org_homeguardian_harness_Camera1Bridge_nativeOnPreviewFrame(JNIEnv* /*env*/, jobject /*thiz*/,
-                                                                 jbyteArray /*data*/, jint /*width*/,
-                                                                 jint /*height*/, jint /*format*/) {
-    auto& h = harness();
-    // Lazily create the guarded camera for the Camera1 path (consent already
-    // granted for camera_test). The device is confirmed only because the
-    // operator explicitly started capture AND the OS granted CAMERA.
-    {
-        std::lock_guard<std::mutex> lk(h.m);
-        if (!h.guarded_camera) {
-            h.camera = std::make_unique<NdkCameraDeviceImpl>();
-            h.camera->set_device_confirmed(true);
-            h.guarded_camera = std::make_unique<ConsentGuardedDevice>(
-                *h.camera, *h.gate, AcquisitionRequest{"harness", "camera_test", "camera"});
-        }
-    }
-    // Delivery-boundary authorization check. authorize_delivery() re-runs the
-    // full consent/permission/device evaluation and, on denial, forces the
-    // device out of capture.
-    bool allowed;
-    {
-        std::lock_guard<std::mutex> lk(h.m);
-        if (!h.guarded_camera) return JNI_FALSE;
-        try {
-            allowed = h.guarded_camera->authorize_delivery();
-        } catch (const std::exception& e) {
-            HG_LOGI("camera1 delivery gate threw (fail-closed): %s", e.what());
-            h.guarded_camera->close();
-            return JNI_FALSE;
-        }
-    }
-    if (allowed) {
-        h.camera_delivered.fetch_add(1);
-        return JNI_TRUE;
-    }
-    HG_LOGI("camera1 delivery gate denied a frame; capture must stop");
-    return JNI_FALSE;
+Java_org_homeguardian_harness_MainActivity_nativeMicStopRequested(JNIEnv* /*env*/, jobject /*thiz*/) {
+    auto& n = node();
+    return (n.mic && n.mic->stop_requested()) ? JNI_TRUE : JNI_FALSE;
 }
+
+// ---- shared status / lifecycle --------------------------------------------
 
 JNIEXPORT jstring JNICALL
-Java_org_homeguardian_harness_MainActivity_nativeWithdrawConsent(JNIEnv* env, jobject /*thiz*/) {
-    auto& h = harness();
-    // Withdraw consent for both test purposes. Any in-flight capture must stop
-    // delivering on the next authorize_delivery() call.
-    h.repo.withdraw("harness", "camera_test");
-    h.repo.withdraw("harness", "mic_test");
-    std::lock_guard<std::mutex> lk(h.m);
-    if (h.guarded_camera) h.guarded_camera->recheck_and_enforce();
-    if (h.guarded_mic) h.guarded_mic->recheck_and_enforce();
-    return env->NewStringUTF("consent withdrawn; capture delivery blocked");
+Java_org_homeguardian_harness_MainActivity_nativeStats(JNIEnv* env, jobject /*thiz*/) {
+    return to_jstring(env, stats_string(node()));
 }
 
-} // extern "C"
+// Called when the Activity leaves the foreground, on shutdown, or when the OS
+// permission is revoked: stop everything and release resources deterministically.
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeStopAll(JNIEnv* env, jobject /*thiz*/) {
+    auto& n = node();
+    std::lock_guard<std::mutex> lk(n.m);
+    if (n.guarded_camera) {
+        n.guarded_camera->stop();
+        n.guarded_camera->close();
+    }
+    if (n.guarded_mic) {
+        n.guarded_mic->stop();
+        n.guarded_mic->close();
+    }
+    n.accountant.note_capture_stopped();
+    return to_jstring(env, "all capture stopped; resources released");
+}
+
+// Non-capture self-test: proves the gate denies without consent and the backends
+// fail closed when unconfirmed. Runs no capture.
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeSelfTest(JNIEnv* env, jobject /*thiz*/) {
+    auto& n = node();
+    std::string out = "self-test:";
+    const auto d = n.gate->check({"node", "camera_acquire", "camera"}, tp_now());
+    out += d.authorized ? " gate=camera-authorized" : " gate=camera-denied(closing)";
+    const auto w = n.gate->check({"node", "nope", "camera"}, tp_now());
+    out += (!w.authorized) ? " unknown-purpose=denied" : " UNEXPECTED-ALLOW";
+    out += " identity=" + std::string(node_identity_valid(n.identity) ? "present" : "not-set");
+    NdkCameraDeviceImpl cam;
+    bool cam_closed = false;
+    try {
+        cam.initialize();
+    } catch (const std::exception&) {
+        cam_closed = true;
+    }
+    out += cam_closed ? " camera-backend=fail-closed" : " CAMERA-BACKEND-OPENED";
+    AAudioCaptureDeviceImpl mic;
+    bool mic_closed = false;
+    try {
+        mic.initialize();
+    } catch (const std::exception&) {
+        mic_closed = true;
+    }
+    out += mic_closed ? " audio-backend=fail-closed" : " AUDIO-BACKEND-OPENED";
+    return to_jstring(env, out);
+}
+
+}  // extern "C"

@@ -860,3 +860,33 @@ When persistence is unavailable the deployment reports itself as degraded
 omits persisted-alert counts rather than reporting fabricated ones. The privacy
 audit trail continues to run in every mode and `enforcement_ok` stayed true for
 all ten verified scenarios, in capture-on and capture-off configurations.
+
+
+## D-02 — what the Android node does and does not do (2026-10-13)
+
+The node exists to acquire frames and PCM samples from a phone the owner controls,
+under explicit consent, and to hand bounded, authorized, timestamped payloads to
+the pipeline. Privacy properties, by construction:
+
+- **Nothing starts by itself.** Capture requires three independent things: an
+  explicit operator tap, the Android runtime permission (granted through the
+  normal system flow, never `adb pm grant`), and a HomeGuardian consent record.
+- **No background capture.** There is no foreground service and no
+  `FOREGROUND_SERVICE` permission; leaving the activity stops and releases every
+  device. Screen-off operation is deliberately not implemented in D-02.
+- **A visible indicator while capturing**: an on-screen RECORDING banner plus live
+  frame/sample counters and the reason the last payload was refused.
+- **Withdrawal works immediately.** Consent withdrawal re-evaluates the gate and
+  forces capture down; permission revocation or a device disconnect does the same
+  through the audio path's stop request.
+- **No media retention.** Frames and PCM buffers are counted in memory for the
+  duration of the callback: no decode, no feature extraction, no file, no upload,
+  no transcription, and no face/speech/fall/emergency inference anywhere in the
+  node. (Feature extraction from real media is milestone D-05 and is bounded to
+  modest explainable signals such as motion energy and audio RMS.)
+- **Identity is not personal.** The node id is an opaque hash of the Android ID;
+  the display name, model, API level and ABI are sanitised and bounded. No
+  accounts, contacts, telephony identifiers, location or media content are read.
+- **Least media by default.** The camera preview is deliberately small
+  (320x240 preferred) and microphone capture is mono 16 kHz unless the operator
+  selects otherwise.
