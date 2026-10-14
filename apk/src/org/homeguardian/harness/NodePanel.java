@@ -211,6 +211,7 @@ public final class NodePanel {
             sb.append("connecting / offline");
         }
         sb.append('\n').append("wi-fi: ").append(wifiState());
+        sb.append('\n').append(consentState);
         sb.append('\n').append("credentials in app storage: ")
                 .append(NodeSession.credentialsPresent(ctx) ? "present" : "MISSING");
         final String cam = permState("android.permission.CAMERA");
@@ -255,6 +256,16 @@ public final class NodePanel {
         }
     }
 
+    // Latest live consent state from the native gate ("consent: camera=... | microphone=...").
+    private String consentState = "not polled yet";
+
+    /** Shows the native gate's own reason for each sensor. Sanitized by the native side. */
+    public void setConsent(String state) {
+        if (state == null || state.isEmpty() || state.equals(consentState)) return;
+        this.consentState = state;
+        refresh("consent state");
+    }
+
     private String wifiState() {
         try {
             final ConnectivityManager cm =
@@ -265,8 +276,13 @@ public final class NodePanel {
             }
             return (info.isConnected() ? "connected via " : "not connected via ")
                     + (info.getTypeName() == null ? "unknown" : info.getTypeName());
+        } catch (SecurityException e) {
+            // This is what "wi-fi: unknown" actually was: getActiveNetworkInfo() needs
+            // ACCESS_NETWORK_STATE, which the manifest did not declare. Name the cause instead of
+            // hiding it behind "unknown".
+            return "unknown (ACCESS_NETWORK_STATE not granted)";
         } catch (RuntimeException e) {
-            return "unknown";
+            return "unknown (" + e.getClass().getSimpleName() + ")";
         }
     }
 

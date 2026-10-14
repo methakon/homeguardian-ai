@@ -338,3 +338,17 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | JNI export gate | 16 Java declarations / 16 unmangled exports; build fails on any mismatch; non-vacuity proven |
 | APK | 884,530 B, armeabi-v7a only, `adb install -r` Success (app data preserved) |
 | H-03 acceptance (import credentials, connect, consent, camera/mic, Wi-Fi delivery, USB unplug) | **PENDING OPERATOR** - not assumed to have passed |
+
+## H-03 consent lifecycle (fixed)
+
+| item | state |
+|---|---|
+| Earlier denial reason (device) | `ambiguous - multiple active grants for the same purpose` |
+| Root cause | the JNI store APPENDED a granted record on every press; the gate refuses >1 active grant |
+| Fix | `SingleActiveGrantConsentRepo`: <=1 active grant per (subject,purpose); idempotent grant; withdrawal removes every granted record |
+| Gate | **unchanged** - a test still forces `ambiguous` when genuinely conflicting grants are supplied |
+| Tests | `[consent_lifecycle]` 13 cases / 45 assertions; full suite **477 / 5,609**, all passing |
+| Denial visibility | reason + explanation in the returned string, the HGNode log, and `nativeConsentState()` polled each tick |
+| `wi-fi: unknown` | **diagnosed**: `getActiveNetworkInfo()` needs `ACCESS_NETWORK_STATE` (was undeclared) -> SecurityException. Declared now (verified in the APK) |
+| APK | 928,459 B, armeabi-v7a only, JNI gate 17 declarations / 17 exports, `adb install -r` Success |
+| Physical sensor counters | **PENDING OPERATOR** - grant consent (deliberately more than once), then Start camera / Start microphone |

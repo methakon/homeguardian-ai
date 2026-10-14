@@ -40,6 +40,7 @@
 #include "core/ConsentGate.h"
 #include "core/ConsentGuardedDevice.h"
 #include "core/ConsentRecord.h"
+#include "persistence/SingleActiveGrantConsentRepo.h"
 #include "core/NodeIdentity.h"
 
 #define HG_LOG_TAG "HGNode"
@@ -62,52 +63,12 @@ inline std::chrono::system_clock::time_point tp_now() {
 }
 
 // In-memory consent repository: a phone node keeps consent in RAM only.
-class MemoryConsentRepo : public IConsentRepository {
-public:
-    void save(const ConsentRecord& r) override {
-        std::lock_guard<std::mutex> lk(m_);
-        records_.push_back(r);
-    }
-    std::optional<ConsentRecord> find_by_id(const std::string&) override { return std::nullopt; }
-    std::vector<ConsentRecord> find_by_subject(const std::string& s) override { return filter(s, ""); }
-    std::vector<ConsentRecord> find_by_purpose(const std::string& s, const std::string& p) override {
-        return filter(s, p);
-    }
-    size_t count() override { std::lock_guard<std::mutex> lk(m_); return records_.size(); }
-    size_t delete_all() override {
-        std::lock_guard<std::mutex> lk(m_);
-        size_t n = records_.size();
-        records_.clear();
-        return n;
-    }
-    void grant(const std::string& subject, const std::string& purpose,
-               const std::vector<std::string>& cats) {
-        save(ConsentRecord::create_granted("node-grant", subject, purpose, cats, "1.0.0", "operator"));
-    }
-    void withdraw(const std::string& subject, const std::string& purpose) {
-        save(ConsentRecord::create_withdrawn("node-withdraw", subject, purpose, "1.0.0", "operator"));
-    }
-    bool granted(const std::string& subject, const std::string& purpose) {
-        std::lock_guard<std::mutex> lk(m_);
-        for (auto it = records_.rbegin(); it != records_.rend(); ++it) {
-            if (it->get_subject_scope() == subject && it->get_purpose() == purpose) {
-                return it->get_decision() == ConsentDecision::granted;
-            }
-        }
-        return false;
-    }
-
-private:
-    std::vector<ConsentRecord> filter(const std::string& s, const std::string& p) {
-        std::lock_guard<std::mutex> lk(m_);
-        std::vector<ConsentRecord> out;
-        for (auto& r : records_)
-            if (r.get_subject_scope() == s && (p.empty() || r.get_purpose() == p)) out.push_back(r);
-        return out;
-    }
-    std::mutex m_;
-    std::vector<ConsentRecord> records_;
-};
+// The consent record store. The previous version APPENDED a granted record on every press of
+// "Grant consent"; a second press therefore produced two active grants, and the gate correctly
+// refused the ambiguity (DenyReason::ambiguous) - the operator saw "mic: initialize denied by
+// gate" with consent apparently granted. SingleActiveGrantConsentRepo keeps at most one active
+// grant per (subject, purpose), so repeated presses are harmless and a withdrawal is final.
+using MemoryConsentRepo = SingleActiveGrantConsentRepo;
 
 // Node singleton. Devices are created only on an explicit operator start.
 struct Node {
@@ -342,7 +303,12 @@ Java_org_homeguardian_harness_MainActivity_nativeStartCamera(JNIEnv* env, jobjec
         n.guarded_camera->close();
         return to_jstring(env, std::string("camera: initialize failed (") + e.what() + ")");
     }
-    if (!init.allowed) return to_jstring(env, "camera: initialize denied by gate");
+    if (!init.allowed) {
+        const std::string why = std::string("camera: initialize denied by gate") + " [reason=" +
+            ConsentGate::reason_to_string(init.deny_reason) + " detail=" + init.explanation + "]";
+        __android_log_print(ANDROID_LOG_WARN, "HGNode", "%s", why.c_str());
+        return to_jstring(env, why);
+    }
     GuardResult r;
     try {
         r = n.guarded_camera->start();
@@ -350,7 +316,12 @@ Java_org_homeguardian_harness_MainActivity_nativeStartCamera(JNIEnv* env, jobjec
         n.guarded_camera->close();
         return to_jstring(env, std::string("camera: start failed (") + e.what() + ")");
     }
-    if (!r.allowed) return to_jstring(env, std::string("camera: start denied (") + r.explanation + ")");
+    if (!r.allowed) {
+        const std::string why = std::string("camera: start denied [reason=") +
+            ConsentGate::reason_to_string(r.deny_reason) + " detail=" + r.explanation + "]";
+        __android_log_print(ANDROID_LOG_WARN, "HGNode", "%s", why.c_str());
+        return to_jstring(env, why);
+    }
     n.accountant.note_capture_started(/*video=*/true, now_ms());
     HG_LOGI("camera capture started (id=%d)", n.camera_id);
     return to_jstring(env, "camera: capturing (delivery-gated)");
@@ -497,7 +468,12 @@ Java_org_homeguardian_harness_MainActivity_nativeStartMic(JNIEnv* env, jobject /
         n.guarded_mic->close();
         return to_jstring(env, std::string("mic: initialize failed (") + e.what() + ")");
     }
-    if (!init.allowed) return to_jstring(env, "mic: initialize denied by gate");
+    if (!init.allowed) {
+        const std::string why = std::string("mic: initialize denied by gate") + " [reason=" +
+            ConsentGate::reason_to_string(init.deny_reason) + " detail=" + init.explanation + "]";
+        __android_log_print(ANDROID_LOG_WARN, "HGNode", "%s", why.c_str());
+        return to_jstring(env, why);
+    }
     GuardResult r;
     try {
         r = n.guarded_mic->start();
@@ -505,7 +481,12 @@ Java_org_homeguardian_harness_MainActivity_nativeStartMic(JNIEnv* env, jobject /
         n.guarded_mic->close();
         return to_jstring(env, std::string("mic: start failed (") + e.what() + ")");
     }
-    if (!r.allowed) return to_jstring(env, std::string("mic: start denied (") + r.explanation + ")");
+    if (!r.allowed) {
+        const std::string why = std::string("mic: start denied [reason=") +
+            ConsentGate::reason_to_string(r.deny_reason) + " detail=" + r.explanation + "]";
+        __android_log_print(ANDROID_LOG_WARN, "HGNode", "%s", why.c_str());
+        return to_jstring(env, why);
+    }
     n.accountant.note_capture_started(/*video=*/false, now_ms());
     std::string out = "mic: capturing at ";
     out += std::to_string(n.mic->negotiated_sample_rate()) + " Hz, " +
@@ -609,6 +590,25 @@ Java_org_homeguardian_harness_MainActivity_nativeSelfTest(JNIEnv* env, jobject /
 // trusting the source layout (see the JNI export verification step in apk/build_apk.sh).
 // ---------------------------------------------------------------------------------------------
 extern "C" {
+// Live consent state for the operator UI and the log: WHY each sensor is or is not authorized.
+// Sanitized by construction - it contains only the gate's closed-vocabulary reason word and its
+// fixed explanation sentence. No credentials, no media, no device identity. It sits INSIDE this
+// extern "C" region on purpose: a definition outside it is C++-mangled and JNI cannot resolve it.
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeConsentState(JNIEnv* env, jobject /*thiz*/) {
+    auto& n = node();
+    auto describe = [&](const char* label, const char* purpose, const char* category) {
+        const GateDecision d = n.gate->check(AcquisitionRequest{"node", purpose, category});
+        std::string out = std::string(label) + "=" + ConsentGate::reason_to_string(d.reason);
+        if (!d.authorized) out += " (" + d.explanation + ")";
+        return out;
+    };
+    const std::string state = "consent: " + describe("camera", "camera_acquire", "camera") + " | " +
+                              describe("microphone", "mic_acquire", "audio");
+    __android_log_print(ANDROID_LOG_INFO, "HGNode", "%s", state.c_str());
+    return to_jstring(env, state);
+}
+
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeDrainObservations(JNIEnv* env, jobject /*thiz*/) {
     auto& n = node();

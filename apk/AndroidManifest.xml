@@ -13,6 +13,11 @@
          declared because no background capture is implemented. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Normal permission (no runtime prompt, no user data): without it
+         ConnectivityManager.getActiveNetworkInfo() throws SecurityException, which is why the
+         panel reported "wi-fi: unknown". The SSID is deliberately NOT read: on API 27+ that
+         would require a location permission, a privacy trade the owner has not agreed to. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

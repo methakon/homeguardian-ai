@@ -99,6 +99,8 @@ public class MainActivity extends Activity {
                     panelIdentified = true;
                 }
                 nodePanel.sample(nativeDrainObservations(), nativeStats());
+                    // Ask the native gate, every tick, WHY each sensor is authorized or not.
+                    nodePanel.setConsent(nativeConsentState());
             }
             refreshCounters();
             // Heartbeat: makes "the ticker executes repeatedly" an OBSERVABLE fact in the log
@@ -133,6 +135,7 @@ public class MainActivity extends Activity {
     private native boolean nativeMicStopRequested();
     private native String nativeStats();
     private native String nativeDrainObservations();
+    private native String nativeConsentState();
     private native String nativeSetObservationIntervalMs(int intervalMs);
     private native String nativeStopAll();
     private native String nativeSelfTest();

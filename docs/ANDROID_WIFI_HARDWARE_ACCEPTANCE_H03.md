@@ -380,3 +380,93 @@ every 500 ms). APK 884,530 B, JNI gate 16 declarations / 16 exports, `adb instal
    It also returns an empty tree while a stale session exists, which is why the panel scrape came
    back blank. Do not use UI scraping as the sole evidence here; the heartbeat exists for that
    reason. `mCurrentFocus` confirmed the app's window owned the screen.
+
+## 10. Consent lifecycle defect: repeated grants made the gate refuse capture
+
+### 10.1 The symptom and the actual denial reason
+
+On the phone: consent appeared GRANTED in the UI, both Android permissions were granted, and
+`mic: initialize denied by gate` (camera frames 0, microphone samples 0).
+
+The gate's reason, from `ConsentGate::check()`:
+
+    DenyReason::ambiguous - "multiple active grants for the same purpose"
+
+### 10.2 Root cause
+
+Two correct-looking pieces combining badly:
+
+    ConsentGate::check() step 4:
+        if (active_grants > 1)  ->  DenyReason::ambiguous   (fails closed: refuses to guess)
+
+    MemoryConsentRepo::grant()   (Android JNI):
+        save(ConsentRecord::create_granted(...))   // APPENDS a granted record on EVERY press
+
+So the SECOND press of "Grant consent" produced a second active grant for the same (subject,
+purpose), and from then on the gate refused the ambiguity for ever. The gate was right; the record
+store feeding it was wrong. Note the gate's ordering also means a withdrawal always wins: it returns
+`decision_not_granted` before it ever counts grants, so a withdrawn purpose can never be authorized
+by a leftover grant.
+
+### 10.3 Fix
+
+`src/persistence/SingleActiveGrantConsentRepo.h` (new, header-only, stdlib-only so it compiles
+identically in the host suite and in the Android JNI):
+
+* **Invariant:** at most ONE `granted` record per `(subject_scope, purpose)`, whatever the click
+  sequence.
+* `grant(...)` supersedes (removes) any existing granted record for that (subject, purpose) and
+  appends exactly one fresh grant. **Idempotent**, and it returns how many it superseded.
+* `withdraw(...)` removes EVERY granted record for that (subject, purpose) and appends one
+  withdrawn record, so a later withdrawal cannot leave an earlier grant effective, and the
+  withdrawal remains as the audit record.
+* Purposes stay independent - granting camera never authorizes microphone.
+
+The JNI now uses it in place of its append-on-press store (`using MemoryConsentRepo =
+SingleActiveGrantConsentRepo;`), so the call sites are unchanged.
+
+**The fail-closed gate is NOT weakened.** `ConsentGate` was not modified. A test deliberately
+bypasses the lifecycle (raw `save()` of two grants) and asserts the gate still reports `ambiguous`,
+so this defect class cannot be "fixed" later by deleting the check.
+
+### 10.4 Denial reason exposed to the operator (fix item 1)
+
+Every denial now carries the gate's sanitized reason and explanation, in the returned string and in
+the HGNode log - for camera and microphone, initialize and start:
+
+    camera: initialize denied by gate [reason=no_consent_record detail=no consent record for subject+purpose]
+    mic: initialize denied by gate    [reason=ambiguous detail=multiple active grants for the same purpose]
+
+A new native `nativeConsentState()` is polled every tick and shown in the panel plus logged, so the
+reason is visible without pressing anything:
+
+    consent: camera=no_consent_record (no consent record for subject+purpose) | microphone=no_consent_record (no consent record for subject+purpose)
+
+It contains only the gate's closed-vocabulary reason word and its fixed explanation - no
+credentials, no media, no device identity.
+
+### 10.5 `wi-fi: unknown` - diagnosed, not guessed
+
+`NodePanel.wifiState()` caught a `RuntimeException` and returned a bare `"unknown"`, hiding the
+cause. The cause was a missing **normal** permission: `ConnectivityManager.getActiveNetworkInfo()`
+requires `ACCESS_NETWORK_STATE`, which the manifest never declared, so it threw
+`SecurityException`. The manifest now declares it (verified inside the built APK with
+`aapt2 dump permissions`), and the catch names its cause instead of hiding it
+(`unknown (ACCESS_NETWORK_STATE not granted)` / `unknown (SecurityException)`).
+
+The **SSID is deliberately not read**: on API 27+ that requires a location permission, which is a
+privacy trade the owner has not agreed to. The panel reports connectivity state and transport type
+instead.
+
+### 10.6 Tests
+
+New `tests/core/test_consent_lifecycle.cpp`, tag `[consent_lifecycle]`: **13 cases / 45 assertions**.
+Covered: single grant authorizes; **5 and 100 repeated grants still authorize with exactly one
+active grant** (the H-03 regression); `grant()` idempotence and supersede count; **the gate still
+refuses two genuine active grants as `ambiguous`**; withdrawal removes every granted record and
+denies; withdrawal is final even when the whole history is replayed into a naive store; repeated
+withdrawals stay denied; consent can be granted again after withdrawal; camera/microphone
+independence; a category the grant does not cover is refused; the global capture switch overrides
+any grant; concurrent presses from 4 threads keep the invariant.
+
+Suite totals: **477 cases / 5,609 assertions**, all passing (was 464/5,564 before this milestone).

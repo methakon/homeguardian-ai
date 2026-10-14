@@ -362,6 +362,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_routine.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_config_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_consent_gate.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_consent_lifecycle.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_simulated_sensor.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_gated_acquisition.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_consent_guarded_device.cpp

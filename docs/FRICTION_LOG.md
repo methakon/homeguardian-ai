@@ -3004,3 +3004,22 @@ Both are the same lesson in a new guise: when a check reports the alarming resul
 check can see a known-positive. Adding an explicit tick heartbeat turned "the ticker executes
 repeatedly" into log evidence (`tick #20/#40/#60`, 10.25 s apart = 20 x 500 ms) instead of an
 inference from a UI scrape.
+
+### Incident 70 - the fail-closed gate was right, and that was the problem
+
+Consent appeared granted on the phone, yet the microphone refused to initialize. The gate's reason
+was `ambiguous - multiple active grants for the same purpose`. The turn's first instinct - "the gate
+is refusing something legitimate, so relax it" - would have been exactly wrong: the gate was doing
+its job. The record store feeding it appended a granted record on every press of the button, so the
+operator's second press permanently manufactured the ambiguity.
+
+Lesson: when a component fails closed, establish WHICH component is wrong before touching either.
+The consumer (the gate) enforced a correct rule; the producer (the repository) did not maintain the
+invariant the consumer relies on. Fix the producer, and pin the consumer's rule with a test that
+deliberately violates the invariant - otherwise a future "fix" can delete the check and every test
+still passes.
+
+Also worth recording: the UI said "consent GRANTED" while the gate refused, because the UI rendered
+its own idea of the click rather than asking the gate. Now the gate itself is polled and displayed
+(`consent: camera=... | microphone=...`), so the operator sees the reason, not the intention.
+
