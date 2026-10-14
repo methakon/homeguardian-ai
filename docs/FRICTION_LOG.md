@@ -3023,3 +3023,50 @@ Also worth recording: the UI said "consent GRANTED" while the gate refused, beca
 its own idea of the click rather than asking the gate. Now the gate itself is polled and displayed
 (`consent: camera=... | microphone=...`), so the operator sees the reason, not the intention.
 
+
+### Incident 71 - a health check that could never pass, on a service it was never written for
+
+`docker ps` showed the ingress `Up About an hour (unhealthy)` while it was serving mutual TLS
+correctly (`hg_device_ingress ready: ... port=8443 ... tls=mutual(min 1.2)`). The health check was
+not broken - it was the HUB's probe (HTTP `/api/health` on 8080), inherited from the shared runtime
+image by a container that runs a different binary on a different port and speaks no HTTP at all.
+
+Two lessons worth keeping:
+
+* **An image-level HEALTHCHECK is inherited by EVERY service built from that image.** When one image
+  serves two roles, the probe belongs to the SERVICE, not the image: override it per service in
+  compose and leave the original where it is correct.
+* **Decide what "healthy" means before writing the probe, then make sure the probe can FAIL.** A TCP
+  port check would have passed for any process holding the port; the check that replaced it verifies
+  the server certificate against the private CA and the expected name, and the acceptance script
+  proves it fails for a wrong name, for a non-TLS listener, and with no CA. A check that has never
+  failed has not been tested.
+
+### Incident 72 - three defects in this change, all caught by the checks rather than by review
+
+1. **The probe's mutual-TLS inference was WRONG, and my own acceptance test refused to ship it.**
+   The first version decided "did the server request a client certificate?" from the return value of
+   `SSL_connect`. Under **TLS 1.3** the client's handshake completes once it has sent its (empty)
+   Certificate + Finished and the server validates it afterwards, so `SSL_connect` returns success
+   and the demand is invisible: the probe reported `mutual_tls_demanded=no` against an ingress that
+   does demand client certificates (proven by the D-03 suite: 24/24, including the refusal of a
+   device that skips the handshake). The check failed the container build - the gate worked - and the
+   fix rests on an API-level signal instead of handshake timing: the handshake **message callback**
+   records a `CertificateRequest`, with the abort reason and a bounded post-handshake read (which
+   surfaces `tlsv13 alert certificate required`) as independent second and third signals. **A
+   perfectly healthy endpoint can make a probe's inference wrong; prefer an API signal over a timing
+   inference.**
+2. **The wrapper hardcoded the wrong CA path, and only the LIVE run found it.** The wrapper looked
+   for `${CERTS}/ca.crt` while the provisioned layout is `${CERTS}/ca/ca.crt` (what `ingress.json`'s
+   `ca_path` says). The container test passed because it invoked the PROBE with an explicit `--ca`,
+   so the WRAPPER - the thing the container actually executes - was never exercised with only a
+   config present. The container reported `CA certificate not readable` and stayed unhealthy. The
+   wrapper now takes the CA path from the ingress config (the deployment's own source of truth), and
+   the acceptance script runs the wrapper itself, with no `--ca` argument, plus a case where the
+   configured CA is missing. **Test the entry point the deployment calls, not just the library under
+   it.**
+3. **A second `environment:` key would have silently replaced the service's real environment.** The
+   compose edit added the health-check knob as a new `environment:` block, but the ingress service
+   already had one (config + data paths). The YAML parse check caught it before the build; the knob
+   now sits in the existing block. **Parse the file you edited, and assert the keys you expect.**
+

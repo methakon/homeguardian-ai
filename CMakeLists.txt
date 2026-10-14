@@ -183,7 +183,7 @@ install(TARGETS homeguardian DESTINATION bin)
 find_package(Threads REQUIRED)
 find_package(OpenSSL QUIET)
 if(OpenSSL_FOUND)
-    message(STATUS "D-03: OpenSSL ${OPENSSL_VERSION} found -> building hg_device_ingress + hg_device_client")
+    message(STATUS "D-03: OpenSSL ${OPENSSL_VERSION} found -> building hg_device_ingress + hg_device_client + hg_ingress_probe")
 
     set(HG_NET_SOURCES
         src/net/DeviceProtocol.cpp
@@ -251,6 +251,26 @@ if(OpenSSL_FOUND)
     )
     target_include_directories(hg_device_client PRIVATE src)
     target_compile_definitions(hg_device_client PRIVATE HOMEGUARDIAN_WITH_TLS=1)
+
+    # hg_ingress_probe : the SERVICE-SPECIFIC health probe for the `ingress` container.
+    # The runtime image's HEALTHCHECK talks HTTP to the HUB's loopback API on 8080; the ingress
+    # container runs hg_device_ingress on 8443 and nothing else, so it inherited a probe that could
+    # never pass and reported "unhealthy" while serving mutual TLS correctly. A plain TCP-connect
+    # check would be no better - it passes against any process holding the port. This probe performs
+    # a real TLS handshake and verifies the server certificate against the private CA AND the
+    # expected name/address (set1_host/set1_ip_asc, TLS 1.2 floor), reporting separately whether the
+    # server demanded a client certificate. There is NO way to skip that verification, and it holds
+    # no device key, so it authenticates no device - it answers "is the ingress up and is it ours".
+    add_executable(hg_ingress_probe
+        src/main_ingress_probe.cpp
+        src/net/IngressHealthProbe.cpp
+    )
+    target_link_libraries(hg_ingress_probe PRIVATE
+        OpenSSL::SSL
+        OpenSSL::Crypto
+    )
+    target_include_directories(hg_ingress_probe PRIVATE src)
+    target_compile_definitions(hg_ingress_probe PRIVATE HOMEGUARDIAN_WITH_TLS=1)
 else()
     message(WARNING
         "D-03: OpenSSL development headers not found -> hg_device_ingress and "

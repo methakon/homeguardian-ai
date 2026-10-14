@@ -352,3 +352,16 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | `wi-fi: unknown` | **diagnosed**: `getActiveNetworkInfo()` needs `ACCESS_NETWORK_STATE` (was undeclared) -> SecurityException. Declared now (verified in the APK) |
 | APK | 928,459 B, armeabi-v7a only, JNI gate 17 declarations / 17 exports, `adb install -r` Success |
 | Physical sensor counters | **PENDING OPERATOR** - grant consent (deliberately more than once), then Start camera / Start microphone |
+
+## Ingress health check (H-03 follow-up) - corrected
+
+| item | state |
+|---|---|
+| Defect | the ingress inherited the HUB's image-level probe (HTTP on 8080) and reported `unhealthy` while serving mutual TLS on 8443 |
+| Fix | service-specific probe `hg_ingress_probe` + `deploy/docker/ingress-healthcheck.sh` + a compose `healthcheck` override; the image-level hub probe is unchanged |
+| What it verifies | real TLS handshake; server cert chained to the private CA AND covering the expected name/address; mutual-TLS demand reported separately - **not** a TCP port check, and **not** device authentication (`device_auth=NOT_PERFORMED`) |
+| Acceptance (container test stage) | `scripts/verify_ingress_healthcheck.sh` - all checks pass, including the negatives (wrong name, non-TLS listener, missing CA, missing configured CA) |
+| Regressions | D-03 TLS acceptance 24/24, TLS identity 9/9, CA isolation 14/14 (1 skipped), full ctest green |
+| Live deployment | `docker inspect` -> `status=running health=healthy` (uid 10001, 0 restarts); the health log carries the probe's real output; the listener the phone dials is up on 192.168.1.6:8443 |
+| Operator prerequisites confirmed | the mounted credential tree must be readable by the container uid (`sudo chown 10001:10001`, else exit 78) and the data volumes writable by it |
+| H-03 physical acquisition / standalone Wi-Fi | **STILL PENDING** - operator-gated, not claimed |

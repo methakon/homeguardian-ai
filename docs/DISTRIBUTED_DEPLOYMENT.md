@@ -817,3 +817,82 @@ Unchanged and non-negotiable: the CA signing key stays offline (never in the run
 an image), the hub keeps no audio/camera privileges, and USB is used for installation and debugging
 only - the data path under test is the phone's own Wi-Fi interface to the ingress port. Live video
 is NOT part of this transport: it carries compact observations.
+
+## Ingress container health check (H-03 follow-up)
+
+### The defect
+
+The runtime image carries ONE image-level health check, and it is the HUB's:
+
+    Dockerfile:  HEALTHCHECK ... CMD ["/usr/local/bin/hg-healthcheck"]
+    healthcheck.sh:  HTTP GET /api/health on 127.0.0.1:$HG_PORT (default 8080)
+
+The `ingress` service runs a DIFFERENT binary (`hg_device_ingress`), on a DIFFERENT port (8443), and
+serves no HTTP at all - but because it is built from the same `runtime` stage it INHERITED that
+probe. The result was a container that reported
+
+    Up About an hour (unhealthy)
+
+while it was in fact serving mutual TLS correctly, with its own readiness line in the log:
+
+    hg_device_ingress ready: bind=0.0.0.0 port=8443 registry_devices=1 paired=1 tls=mutual(min 1.2)
+
+A health check that can never pass is worse than none: it is noise that trains an operator to ignore
+the status. A plain TCP-connect check would have been no better - it passes for ANY process holding
+the port, TLS or not, ours or not, which is exactly the fault class a health check exists to catch.
+
+### The fix
+
+| piece | what it does |
+|---|---|
+| `src/net/IngressHealthProbe.{h,cpp}` + `src/main_ingress_probe.cpp` | a real TLS client probe: connects, completes a handshake, and verifies the SERVER certificate against the configured private CA **and** the expected name/address |
+| `deploy/docker/ingress-healthcheck.sh` | the container entry point for it: discovers the CA from the ingress config's `ca_path` (fallbacks: `${CERTS}/ca.crt`, `${CERTS}/ca/ca.crt`) and runs the probe |
+| `docker-compose.yml` -> `services.ingress.healthcheck` | a **service-specific** check, which overrides the image-level one for this service only |
+| image `HEALTHCHECK` | **left exactly as it was** - it is the hub's probe, and the hub service keeps it (verified in the built image) |
+
+What the probe proves, and what it deliberately does not:
+
+* **Proves**: the endpoint accepts a connection; a TLS handshake reaches the point where the server's
+  certificate is presented; that certificate chains to the configured CA and covers the expected
+  name/address (OpenSSL's own verification: TLS 1.2 floor, `load_verify_locations`,
+  `X509_VERIFY_PARAM_set1_host`/`set1_ip`); and whether the server demands a client certificate.
+* **Does not prove**: device authentication. A hub-side container holds no device private key by
+  design, so the probe presents no client certificate, sends no observation and touches no replay
+  state. Its output says so explicitly: `device_auth=NOT_PERFORMED`.
+* **No disable switch**: there is no option to skip chain/name verification, and the CA file must
+  load or the probe fails (D-03.1 forbids a verification-disable option).
+* **No new listener**: the probe is a CLIENT. Nothing new is exposed.
+
+Example output (live, from the healthy container's own health log):
+
+    hg_ingress_probe: OK endpoint=127.0.0.1:8443 tls=TLSv1.3 server=CN=homeguardian-hub
+      san=DNS:ingress,DNS:localhost,IP:192.168.1.6 server_cert_verified=yes
+      mutual_tls_demanded=yes device_auth=NOT_PERFORMED
+      detail=server identity verified; the server demanded a client certificate (tlsv13 alert certificate required)
+
+If a deployment's certificate SAN does not carry `localhost`, set `HG_INGRESS_HEALTH_HOST` to a name
+it does carry (or `HG_INGRESS_HEALTH_IP`). There is no option to skip the check.
+
+### Verification
+
+    # acceptance (in the container test stage, with a real CA, real certs and real sockets)
+    bash scripts/verify_ingress_healthcheck.sh
+
+    # live deployment
+    docker compose -f deploy/docker/docker-compose.yml up -d ingress
+    docker inspect <container> --format '{{.State.Health.Status}}'      # -> healthy
+    docker inspect <container> --format '{{range .State.Health.Log}}{{.Output}}{{end}}'
+    docker exec <container> /usr/local/bin/hg-ingress-healthcheck       # -> rc 0
+
+### Two deployment prerequisites this surfaced (both are real, neither is a health-check bug)
+
+1. **The mounted credential tree must be readable by the container's uid.** The runtime tree is mode
+   0640 owned by the operator, and the container runs as uid **10001** (`USER 10001:10001`), so the
+   entrypoint exits **78 (EX_CONFIG)** with `ingress config not readable`. This is the already
+   documented provisioning step: `sudo chown 10001:10001 <runtime-dir>/*` (or stage a
+   container-readable copy: directories 0755, files 0644). Verified directly:
+   `docker run -u 10001:10001 ... [ -r /etc/homeguardian/certs/ingress.json ]` -> not readable.
+2. **The data volumes must be writable by the container's uid.** The named volumes are initialized
+   from the image's `/data`, which the image chowns to 10001; running the container as any OTHER uid
+   yields `ingress data directory not writable: /data/ingress`. Use the shipped uid, or a bind mount
+   owned by that uid.

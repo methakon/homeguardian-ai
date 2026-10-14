@@ -141,8 +141,29 @@ services:
       # exactly one host path to provision and one read-only mount to reason about.
       HG_INGRESS_CONFIG: "/etc/homeguardian/certs/ingress.json"
       HG_INGRESS_DATA: "/data/ingress"
+      # Service-specific health probe: the name the server certificate's SAN must cover.
+      # Defaults to "localhost"; there is no option to skip the identity check.
+      HG_INGRESS_HEALTH_HOST: "${HG_INGRESS_HEALTH_HOST:-localhost}"
 
     entrypoint: ["/usr/local/bin/hg-ingress-entrypoint"]
+
+    # SERVICE-SPECIFIC health check. The image-level HEALTHCHECK probes the HUB's loopback HTTP
+    # API on 8080; this container runs hg_device_ingress on 8443 and nothing else, so it inherited
+    # a probe that could never pass - `docker ps` said "unhealthy" while the ingress was serving
+    # mutual TLS correctly. The hub service keeps the image-level probe, unchanged.
+    #
+    # This probe is NOT a TCP port check (a port check passes for any process holding the port).
+    # It runs a real TLS handshake and verifies the server certificate against the mounted private
+    # CA and the expected name, reporting mutual-TLS demand separately. It does not authenticate a
+    # device - this container holds no device key by design - and it opens no new listener.
+    # Override HG_INGRESS_HEALTH_HOST (default "localhost") if a deployment's SAN does not carry
+    # that name; there is no option to skip verification.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/hg-ingress-healthcheck"]
+      interval: 30s
+      timeout: 8s
+      start_period: 10s
+      retries: 3
 
     # Give the ingress time to close SQLite cleanly and let in-flight acks finish.
     stop_grace_period: 20s

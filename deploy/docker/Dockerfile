@@ -60,9 +60,10 @@ RUN for required in third_party/sqlite/sqlite3.c third_party/catch2/src/catch_wi
 ARG HG_NPROC=4
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
  && cmake --build build --target hg_alexa_bridge homeguardian hg_device_ingress hg_device_client \
+           hg_ingress_probe \
       -- -j"${HG_NPROC}" \
  && strip build/hg_alexa_bridge build/homeguardian \
-           build/hg_device_ingress build/hg_device_client
+           build/hg_device_ingress build/hg_device_client build/hg_ingress_probe
 
 # ---------------------------------------------------------------------------
 FROM build AS test
@@ -76,7 +77,10 @@ RUN cmake --build build --target homeguardian_tests -- -j"${HG_NPROC}" \
  && HG_INGRESS_PATH=/src/build/hg_device_ingress \
     HG_CLIENT_PATH=/src/build/hg_device_client \
     bash scripts/verify_tls_identity.sh \
- && bash scripts/verify_ca_isolation.sh
+ && bash scripts/verify_ca_isolation.sh \
+ && HG_INGRESS_PATH=/src/build/hg_device_ingress \
+    HG_PROBE_PATH=/src/build/hg_ingress_probe \
+    bash scripts/verify_ingress_healthcheck.sh
 
 # ---------------------------------------------------------------------------
 # Matches the builder's glibc (see the note above).
@@ -104,16 +108,19 @@ COPY --from=build /src/build/hg_alexa_bridge   /usr/local/bin/hg_alexa_bridge
 COPY --from=build /src/build/homeguardian     /usr/local/bin/homeguardian
 COPY --from=build /src/build/hg_device_ingress /usr/local/bin/hg_device_ingress
 COPY --from=build /src/build/hg_device_client  /usr/local/bin/hg_device_client
+COPY --from=build /src/build/hg_ingress_probe  /usr/local/bin/hg_ingress_probe
 COPY deploy/docker/entrypoint.sh         /usr/local/bin/hg-entrypoint
 COPY deploy/docker/ingress-entrypoint.sh /usr/local/bin/hg-ingress-entrypoint
 COPY deploy/docker/healthcheck.sh        /usr/local/bin/hg-healthcheck
+COPY deploy/docker/ingress-healthcheck.sh /usr/local/bin/hg-ingress-healthcheck
 COPY deploy/docker/config/hub.json       /etc/homeguardian/hub.json
 COPY deploy/docker/config/ingress.json.example /etc/homeguardian/ingress.json.example
 RUN chmod 0755 /usr/local/bin/hg-entrypoint /usr/local/bin/hg-ingress-entrypoint \
-               /usr/local/bin/hg-healthcheck \
+               /usr/local/bin/hg-healthcheck /usr/local/bin/hg-ingress-healthcheck \
  && chmod 0644 /etc/homeguardian/hub.json /etc/homeguardian/ingress.json.example \
  && chmod 0755 /usr/local/bin/hg_alexa_bridge /usr/local/bin/homeguardian \
-               /usr/local/bin/hg_device_ingress /usr/local/bin/hg_device_client
+               /usr/local/bin/hg_device_ingress /usr/local/bin/hg_device_client \
+               /usr/local/bin/hg_ingress_probe
 
 # Configuration paths (override at run time; the config and credentials are
 # mounted read-only — never baked into a layer).
@@ -143,6 +150,9 @@ WORKDIR /data
 # default deployment publishes.
 EXPOSE 8080 8443
 
+# HUB health probe (HTTP /api/health on $HG_PORT). The `ingress` service OVERRIDES this in
+# docker-compose.yml with its own probe: it runs a different binary on a different port, so this
+# one can only ever fail there (it reported "unhealthy" while the ingress was serving TLS).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/usr/local/bin/hg-healthcheck"]
 
