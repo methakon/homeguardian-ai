@@ -2984,3 +2984,23 @@ Writing the JNI gate, all four defects were in the checker, not in the code unde
 
 Each was found by running the checker against a deliberately bad input or reading its own output
 critically - not by reading the source. A gate that has never failed has not been tested.
+
+### Incident 69 - two false negatives from the measuring tools, not from the code
+
+Verifying the JNI fix on the phone produced two wrong readings before the right one:
+
+1. `adb logcat -d | grep -c 'observation interval:'` returned **0** twice while the tick was in fact
+   running. The device's SurfaceFlinger logs BufferQueue at ~56 fps, rotating the ring buffer within
+   seconds, so a plain full-buffer grep silently loses older app lines. `logcat -d -s HGNode` (tag
+   filter, dumped promptly) shows them. A zero from a full-buffer grep on a chatty device is not
+   evidence of absence.
+2. `uiautomator dump` crashed with `FATAL EXCEPTION IN SYSTEM PROCESS: UiAutomationService ...
+   already registered!` (from `com.android.commands.uiautomator`) and returned an empty tree, which
+   made the app's panel look blank. The crash is the TOOL's, not the app's - and a "0 FATAL" claim
+   must say WHOSE process the FATAL belongs to. Read the process name in the crash block before
+   attributing a fault.
+
+Both are the same lesson in a new guise: when a check reports the alarming result, first prove the
+check can see a known-positive. Adding an explicit tick heartbeat turned "the ticker executes
+repeatedly" into log evidence (`tick #20/#40/#60`, 10.25 s apart = 20 x 500 ms) instead of an
+inference from a UI scrape.

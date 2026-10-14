@@ -327,3 +327,14 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Launch | alive, native library loaded, 0 UnsatisfiedLinkError / 0 FATAL / 0 SIGSEGV / 0 ANR |
 | 30-second ticker proof | **BLOCKED - PHONE LOCKED** (`mDreamingLockscreen=true`, activity STOPPED, tick counter 0) |
 | H-03 acceptance (import, connect, consent, camera/mic, Wi-Fi) | **PENDING OPERATOR UNLOCK** |
+
+## H-03 JNI fix - verified on the physical device
+
+| item | state |
+|---|---|
+| UnsatisfiedLinkError | **FIXED + VERIFIED at runtime** (tick runs; both new entry points resolve) |
+| 30-second ticker proof | **PASS**: heartbeats #20/#40/#60/#80, 10.25 s apart (20 x 500 ms), across a background/foreground cycle |
+| Faults during the run | UnsatisfiedLinkError 0, app FATAL 0, SIGSEGV 0, SIGABRT 0 |
+| JNI export gate | 16 Java declarations / 16 unmangled exports; build fails on any mismatch; non-vacuity proven |
+| APK | 884,530 B, armeabi-v7a only, `adb install -r` Success (app data preserved) |
+| H-03 acceptance (import credentials, connect, consent, camera/mic, Wi-Fi delivery, USB unplug) | **PENDING OPERATOR** - not assumed to have passed |

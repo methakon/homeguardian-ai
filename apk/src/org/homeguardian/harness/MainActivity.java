@@ -65,6 +65,7 @@ public class MainActivity extends Activity {
     // H-03: the hub link + node status panel, and the native observation drain it consumes.
     private NodePanel nodePanel;
     private boolean panelIdentified = false;
+    private int tickCount = 0;   // diagnostics: proves the tick loop is alive
     private TextView consentView;
 
     private Spinner facingSpinner;
@@ -100,6 +101,12 @@ public class MainActivity extends Activity {
                 nodePanel.sample(nativeDrainObservations(), nativeStats());
             }
             refreshCounters();
+            // Heartbeat: makes "the ticker executes repeatedly" an OBSERVABLE fact in the log
+            // instead of something inferred from a UI scrape. Every 20 ticks is ~10 s, so a
+            // 30-second run shows several lines. Diagnostics only - no behaviour depends on it.
+            if (++tickCount % 20 == 0) {
+                Log.i(TAG, "tick #" + tickCount);
+            }
             ticker.postDelayed(this, 500);
         }
     };

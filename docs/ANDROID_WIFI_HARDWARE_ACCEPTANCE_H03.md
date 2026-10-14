@@ -345,3 +345,38 @@ the lockscreen must be dismissed by the owner, and this agent does not bypass it
 tick runs every 500 ms, and the expected evidence is a non-zero count of the interval line with
 zero faults - after which the remaining H-03 acceptance steps (import credentials, connect, consent,
 camera/microphone, Wi-Fi delivery) can proceed.
+
+### 9.6 30-second stability: PASS (with the measurement pitfalls recorded)
+
+The JNI fix is verified at runtime, not just in the symbol table. Filtering the log by the app's own
+tag (see the pitfall below):
+
+    10-14 20:27:15.767  20412  I HGNode : tick #20
+    10-14 20:27:26.019  20412  I HGNode : tick #40
+    10-14 20:27:36.264  20412  I HGNode : tick #60
+    10-14 20:27:49.527  20412  I HGNode : tick #80   (after a background -> foreground cycle)
+
+* The tick posts every 500 ms; the heartbeat fires every 20 ticks, and the gaps are 10.25 s, i.e.
+  **exactly 20 x 500 ms** - the loop runs at the coded rate, repeatedly, for the whole run.
+* Process alive for the entire run and still alive after backgrounding and returning
+  (the ticker is removed in `onPause` and re-posted in `onResume`).
+* `UnsatisfiedLinkError` **0**, our app's `FATAL EXCEPTION` **0**, `signal 11` **0**, `signal 6` **0**.
+* Both new entry points resolved at runtime: the tick calls
+  `nativeSetObservationIntervalMs(1000)` (logs `observation interval: 1000 ms`) and, on the same
+  pass, `nativeDrainObservations()` - the exact call that produced the crash before the fix.
+
+Heartbeat line added for this proof (diagnostics only, no behaviour change: the tick already ran
+every 500 ms). APK 884,530 B, JNI gate 16 declarations / 16 exports, `adb install -r` Success.
+
+#### Two measurement traps found here (both produced FALSE results first)
+
+1. **A full-buffer `logcat | grep` reports false negatives on this device.** SurfaceFlinger logs
+   BufferQueue lines at ~56 fps, so the ring buffer rotates in seconds and an app line from 45 s ago
+   is already gone. The decisive counter read `0` twice for this reason and briefly looked like a
+   dead ticker. Filter by the app's tag (`logcat -d -s HGNode`) and dump soon after the event.
+2. **`uiautomator dump` crashes on this device.** It died with
+   `FATAL EXCEPTION IN SYSTEM PROCESS: UiAutomationService ... already registered!` from
+   `com.android.commands.uiautomator` - a tooling crash, NOT the app's (our app's FATAL count is 0).
+   It also returns an empty tree while a stale session exists, which is why the panel scrape came
+   back blank. Do not use UI scraping as the sole evidence here; the heartbeat exists for that
+   reason. `mCurrentFocus` confirmed the app's window owned the screen.
