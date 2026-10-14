@@ -94,7 +94,12 @@ TEST_CASE("audio session: a microphone that stops delivering is not a quiet room
           "[audio][session]") {
     Logger::initialize("error");
     int64_t now = 1700000000000;
-    AudioActivitySession session(AudioActivitySession::Config{}, [&now] { return now; });
+    // In production the bound is a TIME decision (roughly ten seconds of silence), so the test
+    // pins it low to exercise the mechanism instead of waiting. The shipped default is asserted
+    // in its own case below.
+    AudioActivitySession::Config config;
+    config.stalled_after_empty_windows = 3;
+    AudioActivitySession session(config, [&now] { return now; });
 
     const AudioFinding one = session.observe_no_samples();
     REQUIRE(one.kind == AudioFindingKind::insufficient_evidence);  // one stall is not a verdict
@@ -104,7 +109,10 @@ TEST_CASE("audio session: a microphone that stops delivering is not a quiet room
         stalled = session.observe_no_samples();
     }
     REQUIRE(stalled.kind == AudioFindingKind::microphone_stalled);
-    REQUIRE(stalled.sentence == "The microphone stopped delivering samples.");
+    // The wording states the FACT and the bound and names the plausible causes; it must not
+    // diagnose the hardware, because this component cannot see the hardware.
+    REQUIRE(stalled.sentence == "The microphone has delivered no samples for several seconds.");
+    REQUIRE(stalled.reason.find("consecutive windows") != std::string::npos);
     REQUIRE_FALSE(stalled.valid);
     // Nothing was measured, so no provenance may be claimed.
     REQUIRE_FALSE(stalled.real_source);
@@ -114,6 +122,16 @@ TEST_CASE("audio session: a microphone that stops delivering is not a quiet room
     now += 100;
     const AudioFinding recovered = session.observe(quiet_frame(4800).data(), 4800, true);
     REQUIRE(recovered.kind != AudioFindingKind::microphone_stalled);
+}
+
+TEST_CASE("audio session: the shipped stall bound is a time bound, not a retry count",
+          "[audio][session]") {
+    // Roughly ten seconds at the 200 ms read pace. A three-read bound once turned a momentary
+    // gap in the sound-server graph into a hardware verdict, and the caller then sent SIGTERM to
+    // a healthy capture child. Asserting the shipped default keeps a future edit from quietly
+    // undoing that.
+    const AudioActivitySession::Config config{};
+    REQUIRE(config.stalled_after_empty_windows >= 40);
 }
 
 TEST_CASE("audio session: unusable windows are refused with a reason, never scored",
