@@ -2378,3 +2378,66 @@ answers for longer than the offline timeout) and assert the precondition held be
 the transition.
 
 **Status:** fixed
+
+## Incident 33: a malformed credential table aborted the bridge instead of failing closed
+
+**Date:** 2026-10-14
+**Task:** Writing the dashboard-integration verification script, which starts the bridge with a temporary credential file (milestone D-02x)
+
+**Steps:**
+1. Write a creds fixture by hand and start `hg_alexa_bridge --http <config> <creds> --port N`.
+2. Wait for `/api/health` to answer.
+
+**Expected:** the bridge serves, or refuses with a clear reason.
+
+**Actual:** `terminate called after throwing an instance of 'nlohmann::...::type_error' [json.exception.type_error.306] cannot use value() with string` followed by `Aborted (core dumped)`. The credential file is a TABLE keyed by token (`{"<token>": {"principal": ...}}`); the fixture was a flat object, so the loader called `.value()` on a string. The `HG_BRIDGE_SECURE_CREDS=1` path already handled a bad file cleanly (`return 3`), but the default `FileCredentialVerifier` path did not — an unhandled exception escaped `main()` and killed the process before it served anything.
+
+**Severity:** High — a bad input file crashed a shipped binary, the same class as the v21 logger abort; it also meant a malformed credential file produced a core dump instead of a diagnosable refusal.
+
+**Workaround:** the harness fixture was corrected to the real table shape.
+
+**Suggestion:** any load of an external file must be wrapped so the failure mode is a bounded message plus a non-zero exit, never an unhandled exception — and there must be no permissive fallback. Add an adversarial case for a malformed version of every file the binary reads (credentials, config, secrets), asserting: non-zero exit, a fail-closed message, no core dump, and no serving. The check belongs in the acceptance script, not only in a unit test, because it is the process boundary that failed.
+
+**Status:** fixed (bridge now catches the load, prints a generic fail-closed reason, exits 3, and serves nothing)
+
+## Incident 34: the verification harness wrote the wrong credential shape
+
+**Date:** 2026-10-14
+**Task:** First run of `scripts/verify_integration_dashboard.sh` (milestone D-02x)
+
+**Steps:**
+1. Write `{"token":"...","subject":"verify"}` into the temporary creds file.
+2. Start the bridge and poll `/api/health`.
+
+**Expected:** the bridge starts and the status route is exercised.
+
+**Actual:** the bridge aborted (see Incident 33). The harness had invented a plausible-looking shape instead of copying the one `demo.sh` and `deploy/docker/secrets/creds.json.example` already use.
+
+**Severity:** Medium (a harness bug that happened to uncover a real product defect).
+
+**Workaround:** the fixture now mirrors the credential table used by `demo.sh`.
+
+**Suggestion:** derive a fixture from the project's own working example rather than writing a representative one — the same rule that applies to test data. A new harness should copy the shape from the code or an existing script and cite where it came from, so a mismatch is a visible copy error rather than a silent invention.
+
+**Status:** fixed
+
+## Incident 35: the multi-device test asserted a precondition it never established
+
+**Date:** 2026-10-14
+**Task:** Adding the section-J "multiple devices reporting simultaneously" case (milestone D-02x)
+
+**Steps:**
+1. Register three devices; refresh only one of them; sweep 400 s later.
+2. Assert exactly two went offline.
+
+**Expected:** two offline transitions.
+
+**Actual:** three. The default `offline_after` is 90 s, so the "refreshed" device had been silent for 200 s and had also expired. The test's arithmetic assumed the timeout it had not set.
+
+**Severity:** Low (caught on first run).
+
+**Workaround:** the tracker is now constructed with an explicit `offline_after = 300 s`, making the intended silence (200 s vs 400 s) the actual precondition.
+
+**Suggestion:** a time-based assertion must construct the timeout it relies on and state the arithmetic in the test; never let a default decide whether a boundary case passes. This is the third instance of the same family in one milestone (Incident 32 and the reconnect case were the others), which is itself the signal: whenever a test drives a state transition, write the precondition and assert it held before asserting the transition.
+
+**Status:** fixed

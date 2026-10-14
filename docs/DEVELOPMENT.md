@@ -573,3 +573,19 @@ Registering a new core source: add it to the target that REFERENCES it. This mil
 sources are registered in `homeguardian_tests` only, which is why the Release sizes of
 `homeguardian` and `hg_alexa_bridge` did not move. Adding an unreferenced translation unit to a
 shipped target grows the binary without changing behaviour.
+
+
+## Verifying the dashboard status surface (2026-10-14)
+
+```bash
+bash scripts/verify_integration_dashboard.sh [port]   # 31 API assertions + 5 shell checks
+```
+
+The script starts the bridge on a free loopback port with a temporary 0600 credential table,
+asserts the integration surface (counts are zero, every empty surface carries a reason, the
+vocabulary is exactly the permitted set, the hypothesis is labelled a hypothesis, forbidden
+tokens and credentials are absent, a query string is refused), then repeats with a MALFORMED
+credential table and asserts the process refuses cleanly - non-zero exit, a fail-closed message,
+no core dump and no serving. The credential file is a TABLE keyed by token, exactly as `demo.sh`
+writes it; copying that shape rather than inventing one is what the script's own incident entry
+records.

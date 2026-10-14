@@ -1,7 +1,16 @@
-# Skills Validation and Detection Integration (milestone D-02x)
+# Skill Validation Report (S-01, milestone D-02x)
 
 **Branch:** `feature/skills-detection-integration` (created from the verified D-02 tip
 `3c8ff46`, `feature/distributed-homeguardian`)
+
+**Companion documents** (implementation detail, tests, measurements and remaining validation
+requirements per skill):
+
+| Document | Covers |
+|---|---|
+| `docs/ANIMAL_ACTIVITY_DETECTION.md` | S-03: the precursor/activity layer - adopted, adapted, rejected, files, tests, measured behaviour, missing hardware |
+| `docs/HOME_SECURITY_SENSOR_INTEGRATION.md` | S-04: the security observation vocabulary and adapters |
+| `docs/HOME_ASSISTANT_INTEGRATION.md` | S-05: the read-only Home Assistant adapter and its transport |
 **Scope:** inspect three installed skills, validate what they claim, and implement only the
 parts that are technically feasible, testable and honest. Nothing here predicts a calamity.
 
@@ -311,6 +320,31 @@ Synthetic fixtures       ──┘        │  (validate: bounds, timestamps, pr
 
 ---
 
+## 8b. Dashboard surface (section K)
+
+`/api/integrations` is a new read-only route on the loopback bridge. Every value in it is
+DERIVED from real state rather than written down: the Home Assistant block is built from
+`HomeAssistantConfig::problems()` (so the reason the integration is off comes from the adapter's
+own validation), the device count comes from a real `DeviceAvailabilityTracker` instance, and
+the result vocabulary comes from the detection layer's closed label set.
+
+The dashboard renders it as **Sensor & integration status**, with the three provenance labels
+stated verbatim - `LIVE SENSOR DATA`, `SYNTHETIC TEST DATA`, `HYPOTHESIS / UNVALIDATED
+CORRELATION` - and a per-label legend that maps each result id to whether it is an observation, a
+correlation, or a hypothesis. Empty surfaces are shown with their reason ("no acquisition node is
+connected", "only synthetic fixtures exercise this layer"), because an unexplained zero reads as
+a working sensor reporting calm.
+
+The route also carries the uncertainty model (`belief`, `plausibility` and `ignorance` are
+reported separately; conflict above 0.9 suppresses the fusion; the maximum severity this layer
+can produce is `warning`), and the payload contains **no** calamity, identity or fall claim at
+all, so a client cannot render one as a result. `scripts/verify_integration_dashboard.sh`
+enforces that: it asserts the labels and the no-prediction scope are present, that every count is
+zero, that each empty surface has a reason, and that a list of forbidden tokens is absent from
+the response and no credential leaks with it.
+
+---
+
 ## 9. Correction ledger (extended)
 
 The `animal-calamity-precursor-detection` skill already carries seven verified corrections from
@@ -337,11 +371,20 @@ and adds the corrections found while implementing:
 | New sensor suite | `hg_build/homeguardian_tests "[sensors]"` | **7 cases / 487 assertions, all pass** |
 | New Home Assistant suite | `hg_build/homeguardian_tests "[ha]"` | **6 cases / 179 assertions, all pass** |
 | Pipeline integration | `hg_build/homeguardian_tests "[integration][skills]"` | **7 cases / 65 assertions, all pass** |
-| Full host suite | `hg_build/homeguardian_tests` | **413 cases / 3,984 assertions, all pass** (was 387 / 3,053) |
+| Full host suite | `hg_build/homeguardian_tests` | **417 cases / 4,068 assertions, all pass** (was 387 / 3,053) |
 | CTest | `ctest --test-dir hg_build` | 100% (1/1) |
-| Fresh out-of-source Release | all three host targets | build 0 errors; suite passes in Release |
-| ASan + UBSan | `hg_asan/homeguardian_tests` | 413 cases / 3,984 assertions, all pass; **0 sanitizer reports** |
+| Fresh out-of-source Release | all three host targets | build 0 errors; suite passes in Release. Sizes: `homeguardian` 3,210,648 B (unchanged), `hg_alexa_bridge` 3,529,496 B (**+187,216 B / +5.6%**, because the status route links `HomeAssistantAdapter` + `SecurityObservation` + `HttpClient` + `NodeIdentity`), `homeguardian_tests` 7,671,664 B |
+| ASan + UBSan | `hg_asan/homeguardian_tests` | 417 cases / 4,065 assertions, all pass; **0 sanitizer reports** |
+| Section-J gap suite | `hg_build/homeguardian_tests "[gaps]"` | **4 cases / 84 assertions, all pass** |
+| Sensor/integration dashboard surface | `bash scripts/verify_integration_dashboard.sh` | **31 API assertions + 5 shell checks, 0 failed** (incl. an adversarial malformed-credential case) |
+| Docker D-01 regression | `docker build --target runtime` then `bash scripts/verify_docker_hub.sh` | image rebuilt on the current tree (build rc 0); **26 passed, 0 failed, 0 warned** - health, persisted alerts, container-replacement survival, clean SIGTERM, non-root, caps dropped, no published ports, loopback-only listener, secret mount, WAL header, 3.438 MiB idle / 1 thread / 31.0 MiB compressed |
 | Existing behaviour unchanged | `[integration][skills]` allowlist assertions + all pre-existing tags | ten v17/v21 scenarios and H-01s untouched |
+
+Assertion totals move by a few between invocations while the CASE count stays fixed: the
+shipped-config test resolves `config/homeguardian.json` from the working directory and falls back to
+`HG_SOURCE_DIR`, so a Debug run from the repo root reports 4,068 assertions and a Release run from
+the build directory reports 4,065 for the same 417 cases. The case count is the stable figure and is
+what this document quotes elsewhere.
 
 Unit-test coverage of the *negative* space is deliberate: refusals, bounds, unauthorized
 reports, unmapped entities, hostile payloads, header injection, conflict suppression, ties, and

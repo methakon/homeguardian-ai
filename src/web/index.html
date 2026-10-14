@@ -86,6 +86,15 @@
   .kv:last-child { border-bottom: none; }
   .kv .k { color: var(--muted); }
   .kv .v { text-align: right; }
+  /* Provenance legend: LIVE / SYNTHETIC / HYPOTHESIS must never be confused. */
+  .prov { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .prov .tag { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); }
+  .prov .tag.live { color: var(--ok); border-color: #234d2c; }
+  .prov .tag.synth { color: var(--warn); border-color: #4a3d1a; }
+  .prov .tag.hyp { color: var(--muted); border-style: dashed; }
+  .labels { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .labels .row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
+  .labels .g { font-variant: small-caps; }
   footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
   a { color: var(--accent); }
 </style>
@@ -125,6 +134,18 @@
         <button id="resetBtn">⟲ Reset demo data</button>
       </div>
       <div id="scenDesc" class="empty" style="margin-top:8px;"></div>
+    </div>
+
+    <!-- Sensors & integrations: what is ACTUALLY connected, labelled honestly -->
+    <div class="card">
+      <h2>Sensor &amp; integration status</h2>
+      <div id="integrations"><div class="empty">Loading…</div></div>
+      <div class="prov">
+        <span class="tag live">LIVE SENSOR DATA</span>
+        <span class="tag synth">SYNTHETIC TEST DATA</span>
+        <span class="tag hyp">HYPOTHESIS / UNVALIDATED CORRELATION</span>
+      </div>
+      <div class="labels" id="labelLegend"></div>
     </div>
 
     <!-- Conversational -->
@@ -183,6 +204,13 @@
         confidence floor). Raw observations on their own never raise an alert — they are the
         detector's input. This demo does not claim fall detection, medical emergencies, or real
         recognition.</p>
+        <p><b style="color:var(--text)">Animal activity &amp; environmental correlation.</b> Where this
+        build can measure household activity it reports a bounded activity change, an audio-energy
+        deviation, or — at most — a labelled <i>hypothesis</i> of possible animal activity. An
+        environmental reading that moved at the same time is reported as a <i>correlation</i>, and
+        correlation is not causation. No animal species is identified, and this system never
+        predicts a disaster: it produces no earthquake, flood or storm forecast from animal
+        behaviour, and it identifies no person, no fall and no speech content.</p>
       </div>
     </div>
   </div>
@@ -456,6 +484,62 @@ async function refreshAlerts() {
   }
 }
 
+async function refreshIntegrations() {
+  const el = $('integrations');
+  const legend = $('labelLegend');
+  if (!el) return;
+  el.replaceChildren();
+  try {
+    const r = await fetch('/api/integrations');
+    const j = await r.json();
+    const row = (label, text, cls) => {
+      const rr = document.createElement('div'); rr.className = 'status-row';
+      const a = document.createElement('span'); a.textContent = label;
+      const b = document.createElement('span'); b.className = 'pill ' + cls; b.textContent = text;
+      rr.appendChild(a); rr.appendChild(b); return rr;
+    };
+    const nodes = j.sensor_devices || {};
+    el.appendChild(row('Sensor devices connected', String(nodes.connected === undefined ? 0 : nodes.connected), 'off'));
+    const ha = j.home_assistant || {};
+    el.appendChild(row('Home Assistant', ha.enabled ? (ha.configured ? 'Configured (read-only)' : 'Enabled, incomplete') : 'Disabled', ha.enabled ? 'on' : 'off'));
+    el.appendChild(row('Home Assistant requests issued', String(ha.requests_issued === undefined ? 0 : ha.requests_issued), 'off'));
+    const animal = j.animal_activity || {};
+    el.appendChild(row('Animal activity observations', animal.live_data ? 'Live' : 'None live', animal.live_data ? 'on' : 'off'));
+    const sec = j.security_observations || {};
+    el.appendChild(row('Security observations', sec.live_data ? 'Live' : 'None live', sec.live_data ? 'on' : 'off'));
+    const env = j.environmental_correlations || {};
+    el.appendChild(row('Environmental correlations', String(env.count === undefined ? 0 : env.count), 'off'));
+    const ev = j.evidence || {};
+    el.appendChild(row('Live fusion runs', String(ev.live_fusion_runs === undefined ? 0 : ev.live_fusion_runs), 'off'));
+    // Why a surface is empty matters more than the emptiness: show the reason.
+    const notes = document.createElement('div');
+    notes.className = 'empty';
+    notes.textContent = [nodes.reason, ha.reason, animal.reason, sec.reason].filter(Boolean).join(' · ');
+    el.appendChild(notes);
+
+    if (legend) {
+      legend.replaceChildren();
+      const labels = (animal.labels || []);
+      for (const l of labels) {
+        const d = document.createElement('div'); d.className = 'row';
+        const a = document.createElement('span'); a.textContent = String(l.id || '');
+        const b = document.createElement('span'); b.className = 'g';
+        const kind = String(l.kind || '');
+        b.textContent = kind === 'hypothesis' ? 'HYPOTHESIS / UNVALIDATED CORRELATION'
+                      : kind === 'correlation' ? 'CORRELATION (grade ' + String(l.grade || '?') + ')'
+                      : kind === 'observation' ? 'OBSERVATION (grade ' + String(l.grade || '?') + ')'
+                      : 'no result';
+        d.appendChild(a); d.appendChild(b); legend.appendChild(d);
+      }
+    }
+  } catch (e) {
+    const err = document.createElement('div');
+    err.className = 'err';
+    err.textContent = 'Integration status unavailable — is the demo server running?';
+    el.appendChild(err);
+  }
+}
+
 async function refresh() {
   try {
     const r = await fetch('/api/status');
@@ -464,6 +548,7 @@ async function refresh() {
   } catch (e) {
     renderStatus(null);
   }
+  await refreshIntegrations();
   await refreshAlerts();
 }
 

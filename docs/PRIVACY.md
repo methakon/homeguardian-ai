@@ -919,3 +919,16 @@ the pipeline. Privacy properties, by construction:
   layer. The integration is read-only and disabled until configured and explicitly authorized.
 - **No identity of household members is derived** from any observation, and no observation
   scores a human being.
+
+
+## Dashboard disclosure (2026-10-14)
+
+The status panel discloses rather than implies. It shows which surfaces are live versus synthetic,
+labels the one faunal output as a hypothesis, states that an environmental association is a
+correlation rather than causation, and says plainly what the system does not do: no species
+identification, no person identification, no fall detection, no speech content, and no
+earthquake/flood/storm prediction from animal behaviour. The API payload behind it carries none of
+those claims, so they cannot be rendered as results even by mistake, and the verification script
+asserts that absence. Every empty surface is shown with its reason, because an unexplained zero
+would read as a working sensor reporting calm - the most misleading state a monitoring panel can
+display.

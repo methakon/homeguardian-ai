@@ -87,6 +87,10 @@ public:
         // there is a change to explain: the unfalsifiable claim yields to the one
         // with a physical correlate. Both beliefs are still reported.
         double environmental_explains_strength = 0.5;
+        // Missing-observation handling: no fresh observation for this long means
+        // the suite reports INSUFFICIENT EVIDENCE instead of repeating a stale
+        // finding as if it were current. A stale result is not an update.
+        std::chrono::seconds stale_after{300};
         double possible_animal_belief = 0.5;         // belief required for the hypothesis label
         size_t possible_animal_min_sources = 2;      // independent confirming sources
         Config() = default;
@@ -123,7 +127,9 @@ public:
 
     // ---- evaluate ----
 
-    PrecursorFusion fusion() const;
+    // `now` is injected so staleness is deterministic in tests and scenarios.
+    PrecursorFusion fusion(std::chrono::system_clock::time_point now =
+                               std::chrono::system_clock::now()) const;
 
     // Observations for the existing pipeline: one per active detector plus the
     // fusion result. Bounded, provenance-tagged, with explainable features.
@@ -157,6 +163,8 @@ private:
     bool has_vector_ = false;
     bool has_environmental_ = false;
     double environmental_strength_ = 0.0;
+    std::chrono::system_clock::time_point last_observation_at_{};
+    bool has_any_observation_ = false;
 };
 
 }  // namespace homeguardian

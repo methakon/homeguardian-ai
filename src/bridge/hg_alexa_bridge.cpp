@@ -26,6 +26,7 @@
 #include "core/AppState.h"
 #include "core/Application.h"
 #include "core/AlexaCredentialStore.h"
+#include "core/HomeAssistantAdapter.h"
 #include "core/Config.h"
 #include "core/Logger.h"
 #include "core/PersistenceAudit.h"
@@ -550,6 +551,91 @@ json contract_call(const std::string& token, const char* op,
 // verifier and persistence as every other path. It does not duplicate the event
 // pipeline and does not synthesize data: /api/status and /api/run-scenario read
 // real backend + SQLite state. Simulator-only. Returns a process exit code.
+// ---------------------------------------------------------------------------
+// Sensor / integration status payload.
+//
+// Every value here is DERIVED from real state: the Home Assistant adapter's own
+// fail-closed configuration validation, a real (empty) device-availability
+// registry, and the closed result vocabulary the detection layer can emit. No
+// value asserts that hardware exists, and the forbidden claims (calamity
+// prediction, species identification, intruder identification, fall detection,
+// speech content) are absent from the payload entirely so that a client cannot
+// render them as results.
+// ---------------------------------------------------------------------------
+static json integrations_payload() {
+    json out = json::object();
+    out["ok"] = true;
+
+    // Home Assistant: disabled by default. The reason text comes from the
+    // adapter's own problems() validation rather than a hardcoded sentence, so it
+    // cannot drift away from the implementation.
+    HomeAssistantConfig ha;
+    const std::vector<std::string> ha_problems = ha.problems();
+    json ha_json = json::object();
+    ha_json["enabled"] = ha.enabled;
+    ha_json["configured"] = ha.enabled && ha_problems.empty();
+    ha_json["read_only"] = true;
+    ha_json["actuation"] = false;
+    ha_json["requests_issued"] = 0;  // this process has never called the API
+    ha_json["entities_allowed"] = ha.entity_allowlist.size();
+    ha_json["reason"] = ha_problems.empty() ? std::string("configured") : ha_problems.front();
+    ha_json["transport_policy"] =
+        "read-only entity state; https is refused because no TLS is linked in this build";
+    out["home_assistant"] = ha_json;
+
+    // Sensor nodes: the registry is real and empty, because no node transport
+    // exists yet (D-03). The count is read from the tracker, not written down.
+    DeviceAvailabilityTracker devices;
+    json nodes = json::object();
+    nodes["connected"] = devices.device_count();
+    nodes["registry_capacity"] = DeviceAvailabilityTracker::defaults().max_devices;
+    nodes["node_transport"] = "not implemented (D-03 secure device transport)";
+    nodes["live_media"] = false;
+    nodes["reason"] = "no acquisition node is connected; no live media reaches the hub";
+    out["sensor_devices"] = nodes;
+
+    // Animal-activity vocabulary with its evidence grade, so a client can label a
+    // hypothesis as a hypothesis instead of presenting it as a finding.
+    json animal = json::object();
+    animal["live_data"] = false;
+    animal["reason"] =
+        "only synthetic fixtures exercise this layer; no live media reaches the hub";
+    json labels = json::array();
+    labels.push_back({{"id", "activity_change_detected"}, {"grade", "A"}, {"kind", "observation"}});
+    labels.push_back({{"id", "audio_activity_deviation"}, {"grade", "A"}, {"kind", "observation"}});
+    labels.push_back({{"id", "possible_animal_activity"}, {"grade", "hypothesis"}, {"kind", "hypothesis"}});
+    labels.push_back({{"id", "environmental_correlation"}, {"grade", "B"}, {"kind", "correlation"}});
+    labels.push_back({{"id", "insufficient_evidence"}, {"grade", "-"}, {"kind", "none"}});
+    animal["labels"] = labels;
+    out["animal_activity"] = animal;
+
+    json security = json::object();
+    security["live_data"] = false;
+    security["reason"] = "no sensor node and no Home Assistant entity is connected";
+    security["source_types"] = json::array(
+        {"motion", "contact", "presence", "camera_availability", "microphone_availability",
+         "device_availability", "tamper", "environmental_threshold"});
+    out["security_observations"] = security;
+
+    out["environmental_correlations"] = {
+        {"count", 0}, {"reason", "no authorized environmental source is configured"}};
+
+    // Uncertainty model, stated for the UI rather than left implicit.
+    json evidence = json::object();
+    evidence["confidence_scale"] = "0.0-1.0";
+    evidence["reports"] = "belief, plausibility and ignorance are reported separately";
+    evidence["conflict_rule"] = "conflict mass above 0.9 suppresses the fusion instead of averaging";
+    evidence["live_fusion_runs"] = 0;
+    evidence["max_severity_from_this_layer"] = "warning";
+    out["evidence"] = evidence;
+
+    // The exact strings a client must use for provenance.
+    out["provenance"] = {{"real", "LIVE SENSOR DATA"},
+                         {"synthetic", "SYNTHETIC TEST DATA"},
+                         {"hypothesis", "HYPOTHESIS / UNVALIDATED CORRELATION"}};
+    return out;
+}
+
 int run_http_mode(Application& app, PersistenceAudit* audit,
                   IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider,
                   const std::string& token, uint16_t port, int retention_days) {
@@ -621,6 +707,8 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
             lap("alerts");
         } else if (req.op == "scenarios") {
             out = scenarios_payload();
+        } else if (req.op == "integrations") {
+            out = integrations_payload();
             lap("scenarios");
         } else {
             // Unreachable through the HTTP router (op is transport-assigned);
@@ -727,21 +815,33 @@ int main(int argc, char* argv[]) {
     //    enforcement) for development/tests where the fixture is not 0600.
     // Both use the same JSON schema; neither logs or returns secret values.
     std::unique_ptr<IAlexaCredentialVerifier> verifier;
-    if (std::getenv("HG_BRIDGE_SECURE_CREDS") != nullptr) {
-        auto store = std::make_unique<AlexaCredentialStore>();
-        auto load_res = store->load(creds_path);
-        if (!load_res.ok) {
-            // Fail closed: refuse to serve with an insecurely provisioned or
-            // unreadable credential store. Do NOT fall back to the permissive
-            // local verifier. The generic reason carries no secret or path.
-            std::cerr << "credential store failed to load securely: "
-                      << load_res.reason << "\n";
-            return 3;
+    try {
+        if (std::getenv("HG_BRIDGE_SECURE_CREDS") != nullptr) {
+            auto store = std::make_unique<AlexaCredentialStore>();
+            auto load_res = store->load(creds_path);
+            if (!load_res.ok) {
+                // Fail closed: refuse to serve with an insecurely provisioned or
+                // unreadable credential store. Do NOT fall back to the permissive
+                // local verifier. The generic reason carries no secret or path.
+                std::cerr << "credential store failed to load securely: "
+                          << load_res.reason << "\n";
+                return 3;
+            }
+            verifier = std::move(store);
+        } else {
+            verifier = std::make_unique<FileCredentialVerifier>(
+                FileCredentialVerifier::load(creds_path));
         }
-        verifier = std::move(store);
-    } else {
-        verifier = std::make_unique<FileCredentialVerifier>(
-            FileCredentialVerifier::load(creds_path));
+    } catch (const std::exception&) {
+        // A malformed or unreadable credential table must fail CLOSED and CLEANLY.
+        // Previously an unhandled parse exception escaped main() and aborted the
+        // process (SIGABRT, core dump) before a single request was served - the
+        // same class of defect as the v21 logger abort. The message is generic on
+        // purpose: it must not echo the path or any file content, and there is no
+        // permissive fallback and no unauthenticated serving.
+        std::cerr << "credential load failed (fail-closed, no fallback): "
+                     "malformed or unreadable credential table\n";
+        return 3;
     }
     AppStatusProvider provider(app, audit, capture_enabled);
 

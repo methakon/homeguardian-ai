@@ -97,12 +97,16 @@ void PrecursorSuite::reset() {
     vector_result_ = VectorDriftDetector::Result{};
     has_motion_ = has_audio_ = has_deviation_ = has_vector_ = has_environmental_ = false;
     environmental_strength_ = 0.0;
+    last_observation_at_ = {};
+    has_any_observation_ = false;
 }
 
 ActivityChangeDetector::Result PrecursorSuite::observe_motion(
     double changed_fraction, std::chrono::system_clock::time_point now) {
     motion_result_ = motion_detector_.observe(changed_fraction, now);
     has_motion_ = true;
+    last_observation_at_ = now;
+    has_any_observation_ = true;
     return motion_result_;
 }
 
@@ -119,6 +123,8 @@ ActivityChangeDetector::Result PrecursorSuite::observe_audio_features(
     }
     audio_result_ = audio_detector_.observe(f.rms, now);
     has_audio_ = true;
+    last_observation_at_ = now;
+    has_any_observation_ = true;
     // Statistical deviation over the same bounded feature, using the existing
     // AnomalyMonitor (a different target from the level detector: deviation from
     // the learned band, not "presence of activity").
@@ -139,20 +145,37 @@ VectorDriftDetector::Result PrecursorSuite::observe_vector(
     const std::vector<double>& v, std::chrono::system_clock::time_point now) {
     vector_result_ = vector_detector_.observe(v, now);
     has_vector_ = true;
+    last_observation_at_ = now;
+    has_any_observation_ = true;
     return vector_result_;
 }
 
 void PrecursorSuite::observe_environmental(double deviation_strength,
-                                           std::chrono::system_clock::time_point /*now*/) {
+                                           std::chrono::system_clock::time_point now) {
     double s = deviation_strength;
     if (!(s > 0.0)) s = 0.0;
     if (s > 1.0) s = 1.0;
     environmental_strength_ = s;
     has_environmental_ = true;
+    last_observation_at_ = now;
+    has_any_observation_ = true;
 }
 
-PrecursorFusion PrecursorSuite::fusion() const {
+PrecursorFusion PrecursorSuite::fusion(std::chrono::system_clock::time_point now) const {
     PrecursorFusion out;
+
+    // A stale suite reports insufficient evidence rather than repeating an old
+    // finding: silence is not agreement.
+    if (has_any_observation_ && cfg_.stale_after.count() > 0 &&
+        now - last_observation_at_ > cfg_.stale_after) {
+        out.label = PrecursorLabel::insufficient_evidence;
+        out.hypothesis = hypothesis_to_string(Hypothesis::routine);
+        out.suppressed = false;
+        out.explanation = "no fresh observation within " +
+                          std::to_string(cfg_.stale_after.count()) +
+                          "s; a stale finding is not an update";
+        return out;
+    }
 
     MassFunction m_motion = activity_mass(motion_result_, has_motion_);
     MassFunction m_audio = activity_mass(audio_result_, has_audio_);

@@ -1384,3 +1384,17 @@ Design rules added by this layer:
   unauthorized, and every mapped observation carries real provenance plus consent context.
 - **Advisory by default.** New detector ids are not in `DetectionFusionRule`'s default evidence
   allowlist, so the historical scenario behaviour is unchanged and the opt-in is explicit.
+
+
+## Dashboard status surface (2026-10-14)
+
+The loopback bridge now serves `/api/integrations` in addition to `/api/health`, `/api/status`,
+`/api/alerts`, `/api/scenarios` and `/api/run-scenario`. It is read-only and changes no state, and
+every value in it is derived: the Home Assistant block from `HomeAssistantConfig::problems()`, the
+sensor-device count from a real `DeviceAvailabilityTracker`, the result vocabulary from the
+detection layer's closed label set. The page renders it with the three provenance labels
+(LIVE SENSOR DATA / SYNTHETIC TEST DATA / HYPOTHESIS / UNVALIDATED CORRELATION) and a per-label
+legend, and states the never-produced claims in the page copy rather than in the API, so the
+payload cannot carry one. Per-skill detail: `docs/SKILL_VALIDATION_REPORT.md`,
+`docs/ANIMAL_ACTIVITY_DETECTION.md`, `docs/HOME_SECURITY_SENSOR_INTEGRATION.md`,
+`docs/HOME_ASSISTANT_INTEGRATION.md`.

@@ -174,6 +174,13 @@ install(TARGETS homeguardian DESTINATION bin)
 add_executable(hg_alexa_bridge
     ${HG_WEB_ASSETS}          # generated: dependency ordering + rebuild trigger
     src/bridge/hg_alexa_bridge.cpp
+    # Sensor/integration status route: the adapter's own config validation and the
+    # real (empty) device registry are reported to the dashboard, so these two
+    # translation units ARE referenced by the bridge.
+    src/core/HomeAssistantAdapter.cpp
+    src/core/SecurityObservation.cpp
+    src/core/HttpClient.cpp
+    src/core/NodeIdentity.cpp   # sanitize_label(), used by the adapter's mappings
     src/core/AlexaContract.cpp
     src/core/AlexaCredentialStore.cpp
     src/core/Application.cpp
@@ -266,6 +273,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_security_sensors.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_ha_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_observation_integration.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_skill_gaps.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp

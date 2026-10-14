@@ -678,3 +678,48 @@ branch that returns `Severity::critical`.
   exceeds `warning`.
 - Anyone wanting the new detectors to raise alerts must do so explicitly and can see exactly
   which ids they enabled.
+
+
+## ADR-011: The dashboard reports only derived state, and an empty surface must say why
+
+**Status:** Accepted
+**Date:** 2026-10-14
+
+### Context
+
+The brief asks the dashboard to show connected sensor devices, the Home Assistant connection,
+animal-activity observations, security observations, statistical anomalies, environmental
+correlations, provenance, confidence/evidence and consent state - while clearly separating live
+data, synthetic test data and unvalidated hypotheses. At the time of writing, nothing is
+connected: no phone (D-02 physical acceptance is blocked) and no Home Assistant instance exists.
+
+### Decision
+
+Add a read-only `/api/integrations` route whose every value is derived from real state rather than
+written down: the Home Assistant block comes from `HomeAssistantConfig::problems()`, the device
+count from a real `DeviceAvailabilityTracker` instance, and the label set from the detection
+layer's closed vocabulary. Every surface that is empty carries a reason string. The three
+provenance labels are rendered verbatim, and the payload contains no calamity, identity or fall
+claim at all.
+
+### Rationale
+
+- A hardcoded status panel would drift from the implementation within one milestone; deriving it
+  means the panel cannot claim what the code does not do. The reason string for Home Assistant
+  being off is the adapter's own validation message, so the UI and the adapter cannot disagree.
+- An unexplained zero is the most dangerous display in a monitoring product: it is
+  indistinguishable from a working sensor reporting calm. "0 devices connected - no node transport
+  yet (D-03)" is honest; "0" alone is not.
+- Keeping the forbidden vocabulary out of the payload (rather than listing it as "never produced")
+  means a client cannot render a disaster prediction even by mistake, and the verification script
+  can assert its absence.
+
+### Consequences
+
+- The dashboard tells the truth about a system with no hardware attached, which is the current
+  reality; when D-03 lands, the same route starts reporting non-zero counts with no UI change.
+- The verification script (`scripts/verify_integration_dashboard.sh`) becomes the guard: it fails
+  if a count becomes non-zero without a connected source, if a surface loses its reason, if the
+  vocabulary drifts, or if a forbidden token appears.
+- The new route also exposed a real fail-closed defect (a malformed credential table aborted the
+  bridge), now fixed and asserted adversarially.

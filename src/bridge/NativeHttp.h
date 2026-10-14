@@ -187,6 +187,10 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         return invoke({"alerts", "", 5, false});
     if (path == "/api/scenarios")
         return invoke({"scenarios", "", 5, false});
+    // Sensor/integration status: read-only, no state change. Reports what is
+    // ACTUALLY connected (currently: nothing) rather than implying hardware.
+    if (path == "/api/integrations")
+        return invoke({"integrations", "", 5, false});
     if (path == "/api/run-scenario" ||
         path.substr(0, 18) == "/api/run-scenario?") {
         // State-advancing route: bounded, allowlisted query only. Accepts at
