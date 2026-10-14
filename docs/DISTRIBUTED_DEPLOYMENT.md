@@ -413,3 +413,23 @@ current figures (image size, idle/peak RSS, CPU, startup, one-device bandwidth).
 | container `unhealthy` but running | the health probe could not read `{"ok":true}` from `/api/health`; check `docker compose logs hub` — with a read-only or full `/data` the hub runs degraded and reports `unavailable` (v21 behaviour) |
 | dashboard shows no alerts | nothing has run yet; trigger a scenario (§1.7) or `docker compose down -v` reset the volume |
 | `port is already allocated` | you are using the loopback override and something else owns host 8080 |
+
+
+## 9. Observation ingestion for the hub (added 2026-10-14, D-02x)
+
+The hub now has a validated ingestion vocabulary for the D-03/D-04 transport to carry:
+
+- `SecurityObservation::from_json()` is the STRICT wire parser: every field is type-checked and
+  bounded, unknown enumerated values are rejected rather than defaulted, and the acquisition
+  timestamp must not be after the ingestion timestamp. Its `to_json()` is the matching encoder.
+  A malicious or corrupted payload cannot inflate the pipeline.
+- `DeviceAvailabilityTracker` and `SensorDeduplicator` are the liveness and duplicate-suppression
+  primitives a multi-node hub needs; both are bounded so a hostile source cannot grow their
+  state.
+- `HomeAssistantAdapter` is the reference implementation of an external read-only source:
+  disabled by default, explicit allowlist, explicit authorization before any request, real
+  provenance, availability tracking, and no actuation path.
+- D-03 should carry `SecurityObservation` payloads (plus the precursor observations) over its
+  authenticated, encrypted transport, and register the new translation units in the hub target
+  at that point - they are intentionally not linked into `hg_alexa_bridge` yet (see
+  `docs/SKILLS_INTEGRATION_VALIDATION.md` §6).

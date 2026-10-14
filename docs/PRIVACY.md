@@ -890,3 +890,32 @@ the pipeline. Privacy properties, by construction:
 - **Least media by default.** The camera preview is deliberately small
   (320x240 preferred) and microphone capture is mono 16 kHz unless the operator
   selects otherwise.
+
+
+## Precursor and sensor-observation layer — privacy properties (2026-10-14, D-02x)
+
+- **No person-directed inference of any kind.** No facial-emotion analysis, no voice
+  stress/deception analysis, no body-vibration or thermal "stress" profiling, no face
+  recognition or identity matching, no speaker identity. The `home-security-sensor-nodes`
+  skill's own exclusion list is adopted as a hard project boundary, and its reasoning is
+  recorded: those methods fail independent validation (~75-79% in controlled lab settings) and
+  are a consent problem regardless of accuracy.
+- **No species identification and no speech content.** Audio is reduced to scalars (RMS, peak,
+  zero-crossing rate) that are computed in place and discarded; nothing is transcribed,
+  retained, uploaded or classified. Image data is reduced to a per-pixel change statistic on
+  the luma plane. `possible_animal_activity` is an explicit hypothesis about a multi-sensor
+  activity pattern, and its own note says it is not a species identification.
+- **No raw media persistence.** The layer consumes bounded buffers and emits scalars and bounded
+  feature payloads. Enforced by construction: the extractors copy nothing.
+- **Environmental data requires authorization.** `EnvironmentalAdapter::validate()` refuses a
+  sample with no authorization context or one that does not record a grant; an unauthorized
+  measurement is not ingested at all.
+- **Every sensor observation carries its consent context**: subject, purpose and the
+  authorization decision at ingestion. An unauthorized report is stored with status
+  `unavailable` and claims no detection.
+- **Home Assistant tokens are treated as secrets**: read from a mounted file that is refused if
+  group/other-readable, held privately by the transport, never logged, never placed in an
+  observation or feature payload, never returned by `describe()`, and never baked into an image
+  layer. The integration is read-only and disabled until configured and explicitly authorized.
+- **No identity of household members is derived** from any observation, and no observation
+  scores a human being.

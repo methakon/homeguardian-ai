@@ -552,3 +552,129 @@ Building an imitation and calling it genuine would be a false claim.
   MCP Toolkit, a supported marketplace, AWS hosting) — an owner-level action.
 - The existing `AlexaContract` + skill-handler prototypes are the reuse target if
   the owner approves the official skill route.
+
+
+## ADR-008: Adopt the skill's bounded detection methods; reject species and calamity claims
+
+**Status:** Accepted
+**Date:** 2026-10-14
+
+### Context
+
+Three skills were supplied for inspection. `animal-calamity-precursor-detection` offers a full
+pipeline (log-mel + YAMNet embeddings, YOLOv8, Farneback optical flow, cosine vector drift,
+Dempster-Shafer fusion, MQTT/Alexa delivery) and its own correction ledger already marks parts of
+its source document as debunked or overstated. `home-security-sensor-nodes` offers phones as
+sensor nodes with hub-side inference (Frigate/YOLO/MediaPipe). The project is C++20 with no ML
+runtime, no OpenCV, no model weights, and a standing rule against downloading weights without a
+licensing and resource review.
+
+### Decision
+
+Adopt the methods that are pure, bounded, deterministic and testable now: bounded audio/motion
+features, an activity baseline, cosine vector drift, Dempster-Shafer fusion with conflict mass K,
+an environmental correlation adapter, and the skills' evidence discipline. Defer every
+model-dependent method. Reject species identification and every calamity-prediction channel as an
+alerting path, and make the rejection structural by removing the calamity hypothesis from the DST
+frame rather than merely documenting it.
+
+### Rationale
+
+- The adopted methods need no dataset, no weights and no runtime beyond the standard library, so
+  they are implementable and verifiable today; the deferred ones are blocked on reviews the
+  project forbids skipping.
+- The skill's own ledger documents that ant seismology is debunked (ants react to shaking above
+  M2.0), that the Haicheng case is overstated, and that gecko-call meaning is superstition. A
+  system that emits a life-safety claim from those channels would be asserting something its own
+  source material retracts.
+- Rejected: a model-dependent path (no review), a species classifier (no dataset), and any
+  disaster prediction (unrepresentable in the frame).
+
+### Consequences
+
+- HomeGuardian gains real, tested detection components without a single new dependency.
+- The strongest faunal output is a labelled hypothesis (`possible_animal_activity`) at
+  informational severity; anything more would require a dataset and a review that do not exist.
+- Species, ultrasonic (rodent USV), infrasound and optical-flow channels are recorded as
+  hardware- or data-blocked, so a later reader does not mistake them for oversights.
+
+## ADR-009: Home Assistant integration is native, read-only, default-off and plaintext-gated
+
+**Status:** Accepted
+**Date:** 2026-10-14
+
+### Context
+
+A `Home Assistant hub` skill was requested but does not exist in this environment. The nearest
+artefact is the installed Hermes plugin `homeassistant` (v2.0.1, MIT): a Python gateway for the
+agent with REST tools, a WebSocket subscription and `notify.notify` delivery. HomeGuardian is a
+C++20 hub in a container with no Python at runtime, and its loopback-only listener was never
+designed for external traffic.
+
+### Decision
+
+Implement a small native C++ adapter that reads entity state over the REST API
+(`GET /api/states/<entity_id>`) with an explicit entity allowlist, a token read from a mounted
+0600 secret file, availability tracking, de-duplication and real-vs-synthetic provenance. It is
+disabled by default, requires an explicit authorization decision before any request, is
+read-only (GET-only, no service calls), and refuses an `https://` base URL because no TLS is
+linked, with an additional explicit `allow_plaintext` opt-in for an `http://` endpoint.
+
+### Rationale
+
+- The plugin is the wrong layer (agent gateway, not a C++ hub component) and the wrong runtime
+  (Python), so it is not a dependency.
+- REST polling is the smallest surface that satisfies the milestone's ten required behaviours;
+  WebSocket events, MQTT and any actuation are deferred or refused.
+- Refusing `https://` is deliberate: silently downgrading to plaintext while sending a bearer
+  token would be worse than refusing to run. An explicit opt-in keeps the operator aware of the
+  exposure.
+- Rejected: linking the Python plugin (runtime cost, wrong layer), actuator control (out of scope
+  until separately approved), and baked-in credentials (tokens stay in a mounted secret).
+
+### Consequences
+
+- The integration is usable on a trusted LAN today and cannot actuate anything.
+- TLS, WebSocket events and MQTT remain explicit future work; the adapter's transport seam
+  (`IHomeAssistantTransport`) is where they plug in without touching the mapping, de-duplication
+  or liveness logic.
+
+## ADR-010: New detector ids are advisory by default, and critical stays unreachable
+
+**Status:** Accepted
+**Date:** 2026-10-14
+
+### Context
+
+The precursor and sensor observations introduce new detector ids (`motion-activity`,
+`audio-activity`, `audio-activity-deviation`, `vector-drift`, `precursor-fusion`,
+`environmental-correlation`, `sensor.*`). `DetectionFusionRule` votes only on an explicit
+evidence allowlist, and `Severity::critical` is currently reachable only through the explicitly
+synthetic `synthetic-critical-impact` scenario. The ten historical scenarios and the H-01s
+scenario must keep behaving identically.
+
+### Decision
+
+Add no new detector id to the default evidence allowlist. Keep the new evidence advisory:
+validated, counted, auditable and visible, but not a fusion vote unless an operator opts in
+explicitly via `set_evidence_detector_ids`. Map every new observation to informational severity,
+with tamper and loss-of-sensor as the only warnings, and give the security severity function no
+branch that returns `Severity::critical`.
+
+### Rationale
+
+- The L-12 lesson already established that a differently-targeted detector must not be fused
+  wholesale; a behaviour change hidden inside a new observation type is exactly that failure with
+  extra steps.
+- A single motion, contact or availability report is not sufficient evidence for a high-priority
+  claim; escalation belongs to correlation, which the existing `AlertPolicy` already owns.
+- Making critical unreachable in code (rather than by convention) is what keeps "camera motion is
+  not a fall" true after the next change.
+
+### Consequences
+
+- The historical scenarios are byte-identical (asserted in `[integration][skills]`), and the
+  opt-in path is covered by a test that shows allowlisted precursor evidence can alert and never
+  exceeds `warning`.
+- Anyone wanting the new detectors to raise alerts must do so explicitly and can see exactly
+  which ids they enabled.

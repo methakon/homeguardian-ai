@@ -405,3 +405,28 @@ Work happens on the dedicated branch `feature/distributed-homeguardian`.
 |----|------|-------------|---------------------|--------|
 | V-02 | `scripts/verify_android_node.sh` | D-02 | 18 host-side checks: native library builds for armeabi-v7a and exports all JNI entry points; APK builds/aligned/verifies; manifest declares exactly CAMERA + RECORD_AUDIO, both features optional, no FOREGROUND_SERVICE; dex has no invokedynamic (API 27 verifier); `[d02]` contracts and the full host suite pass; reports APK/library sizes and the attached-device count | DONE |
 | V-01 | `scripts/verify_docker_hub.sh` | D-01 | Starts the real container and asserts health, real-core responses, persisted alerts, survival across container replacement, clean SIGTERM exit, no published ports / non-root / caps dropped / no docker.sock / loopback-only listener, WAL header in the volume, and reports image size + RSS + CPU + threads | DONE |
+
+
+## Phase W — Skills validation and detection integration (added 2026-10-14, D-02x)
+
+Owner-directed: inspect three installed skills (`animal-calamity-precursor-detection`,
+`home-security-sensor-nodes`, and a requested `Home Assistant hub`), validate what they claim,
+and implement only the feasible, testable, honest parts.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| W-01 | Skill discovery + compatibility matrix | - | Every skill located by exact path or reported missing with its exact identifier; matrix covers provenance, functions, detection methods, overlap, dependencies, privacy, reliability and an adopt/adapt/defer/reject decision | **DONE** (`docs/SKILLS_INTEGRATION_VALIDATION.md` §1-2; the third skill does not exist and is reported as such) |
+| W-02 | Bounded precursor detection layer | W-01 | Activity baseline, temporal deviation (REUSING the existing `AnomalyMonitor`), audio activity, motion change, multi-source correlation and an environmental correlation adapter - all pure C++20, bounded, deterministic, host-tested | **DONE** (`src/core/{BoundedFeatures,ActivityDetectors,DempsterShafer,PrecursorDetection,EnvironmentalCorrelation}.*`) |
+| W-03 | Evidence grading (A/B/C) and per-method records | W-01 | Every candidate method classified by evidence quality with hardware floor, window, confounders, FP risks, dataset availability, resource cost and privacy implications recorded; folklore kept as hypothesis only | **DONE** (`SKILLS_INTEGRATION_VALIDATION.md` §3) |
+| W-04 | Security sensor observation model + adapters | W-01 | Device id, source type, acquisition + ingestion timestamps, real/synthetic provenance, confidence/quality, consent/authorization context and a bounded validated payload for every observation; no fabricated telemetry | **DONE** (`src/core/SecurityObservation.*` incl. availability tracking and de-duplication) |
+| W-05 | Home Assistant integration adapter | W-01 | All ten required behaviours proven: address config, secure credential storage, entity discovery, explicit allowlist, authorized conversion to validated observations, liveness tracking, reconnect without fabricated events, duplicate suppression, provenance preservation, disabled by default | **DONE** (`src/core/HomeAssistantAdapter.*` + `src/core/HttpClient.*`; read-only, plaintext-gated, no actuation) |
+| W-06 | Pipeline integration without a second alert engine | W-04, W-05 | New observations convert to the standard `Event`, flow through the existing `Pipeline`/rules/`AlertPolicy`; new detector ids ADVISORY by default so historical scenarios are byte-identical; opt-in via the existing explicit allowlist | **DONE** (`tests/core/test_observation_integration.cpp`) |
+| W-07 | Conservative severity + uncertainty model | W-06 | info = verified event; warning = validated abnormality (tamper, loss of a sensor); **critical unreachable** from any new path; `synthetic-critical-impact` stays synthetic; no species/intruder/fall/calamity claim anywhere | **DONE** (`SecurityObservation::suggested_severity` matrix test + fusion mapping + `[integration][skills]`) |
+| W-08 | Verification | W-02..W-07 | New suites pass; full host suite passes; ctest 100%; fresh out-of-source Release builds all three targets; ASan/UBSan clean; existing scenario behaviour unchanged | **DONE** (413 cases / 3,984 assertions; see STATUS) |
+| W-09 | Deferred work recorded with unblock conditions | W-01 | YAMNet/embeddings, YOLO, optical flow, MediaPipe, Frigate, MQTT, WebSocket events and Alexa each recorded with the exact condition that would unblock them | **DONE** (`SKILLS_INTEGRATION_VALIDATION.md` §11) |
+
+### Boundary — kept explicit
+
+No model weights were downloaded, no ML runtime was added, no species classifier exists, and no
+life-safety prediction is produced. Species, seismic, infrasound and ultrasonic channels are
+recorded as hardware- or data-blocked rather than approximated.

@@ -262,6 +262,10 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_anomaly_monitor.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_synthetic_impact.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_node_capture.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_precursor_detection.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_security_sensors.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_ha_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_observation_integration.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -276,6 +280,14 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/SyntheticImpactRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/CaptureAccounting.cpp
         ${CMAKE_SOURCE_DIR}/src/core/NodeIdentity.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/BoundedFeatures.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ActivityDetectors.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/DempsterShafer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/PrecursorDetection.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/EnvironmentalCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SecurityObservation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/HomeAssistantAdapter.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
         ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ConsentGate.cpp

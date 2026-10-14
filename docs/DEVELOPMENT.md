@@ -552,3 +552,24 @@ Pitfalls hit while implementing D-02:
 4. **aapt spells optional features differently.** A manifest feature declared
    `required="false"` is reported as `uses-feature-not-required:` (not
    `uses-feature:`), so a checker grepping the wrong key reports a false failure.
+
+
+## Testing the skills-integration layer (2026-10-14, D-02x)
+
+```bash
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[precursor]"            # 6 cases / 200 assertions
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[sensors]"              # 7 cases / 487 assertions
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[ha]"                   # 6 cases / 179 assertions
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[integration][skills]"  # 7 cases /  65 assertions
+```
+
+The `[ha]` suite includes a **real loopback exchange**: a one-shot HTTP server is bound to
+127.0.0.1 on an ephemeral port inside the test process, so the socket path, the request head,
+the status line and the response body are exercised without any external service. The
+production transport is otherwise injected through `IHomeAssistantTransport`, so the adapter
+contracts (allowlist, de-duplication, liveness, provenance) are deterministic and network-free.
+
+Registering a new core source: add it to the target that REFERENCES it. This milestone's
+sources are registered in `homeguardian_tests` only, which is why the Release sizes of
+`homeguardian` and `hg_alexa_bridge` did not move. Adding an unreferenced translation unit to a
+shipped target grows the binary without changing behaviour.

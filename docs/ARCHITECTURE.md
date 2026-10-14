@@ -1339,3 +1339,48 @@ Design rules this milestone adds:
   code the host tests drive, so the contract is verified without hardware.
 - **No background capture exists** in this milestone: no foreground service, and
   leaving the activity stops every device.
+
+
+## Skills-integration layer (2026-10-14, D-02x)
+
+Three new capability groups, all pure C++20 with no added dependency, all bounded:
+
+```
+ permitted PCM ──► extract_audio_features ──► ActivityChangeDetector (level/trend)
+ permitted luma ─► extract_motion_features ─► ActivityChangeDetector (motion)
+                                          └─► AnomalyMonitor  (z-score; EXISTING)
+ any bounded vector ─────────────────────────► VectorDriftDetector (cosine regime shift)
+                                                        │
+                            bps (motion / audio / environmental)
+                                                        ▼
+                                        DempsterShafer::combine  (conflict K)
+                                                        ▼
+                                       PrecursorSuite::fusion  -> result vocabulary
+                                                        ▼
+ authorized environmental sample ──► EnvironmentalAdapter ──► CorrelationWindow
+ node / Home Assistant / fixture ──► SecurityObservation ──► to_observation()
+                                                        ▼
+                                    Observation::to_event()  (EXISTING conversion)
+                                                        ▼
+                          EXISTING Pipeline -> rules -> AlertPolicy -> SQLite -> HTTP
+```
+
+Design rules added by this layer:
+
+- **The fusion frame cannot express a calamity.** `Hypothesis` has exactly three members
+  (`routine`, `activity_change`, `environmental_anomaly`) and a test asserts the count, so a
+  seismic/flood "precursor" hypothesis is unrepresentable rather than merely discouraged.
+- **Ignorance is first-class.** Warming up is expressed as a vacuous mass (the detector does not
+  vote), and `belief`/`plausibility`/`ignorance` are reported together so the reader sees the
+  interval the fusion is working with.
+- **Contradiction suppresses.** `K > 0.9` leaves the combination un-normalised and reports
+  `suppressed`; averaging across disagreement is exactly what the skill warns against.
+- **Availability is a transition, not a heartbeat.** `DeviceAvailabilityTracker` is silent while
+  a device is healthy and emits one transition per state change, so a dead sensor stays
+  distinguishable from a silent one; a reconnect is an availability observation and never a
+  state replay.
+- **The hub talks to Home Assistant read-only.** `HttpClient` is GET-only over plaintext with an
+  explicit opt-in gate; `HomeAssistantAdapter` refuses to run disabled, misconfigured or
+  unauthorized, and every mapped observation carries real provenance plus consent context.
+- **Advisory by default.** New detector ids are not in `DetectionFusionRule`'s default evidence
+  allowlist, so the historical scenario behaviour is unchanged and the opt-in is explicit.

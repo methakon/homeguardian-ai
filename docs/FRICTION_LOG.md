@@ -2244,3 +2244,137 @@ Twice in this milestone a failure came from the *check*, not the artefact:
 **Rule.** Before "fixing" a product to satisfy a check, confirm the check is
 asking the right question — and prefer a check that fails loudly on the *wrong
 key* (a required-vs-optional regex) over one that fails on absence.
+
+## Incident 29: Dempster-Shafer belief summed the supersets instead of the subsets
+
+**Date:** 2026-10-14
+**Task:** Implementing the DST fusion ported from the `animal-calamity-precursor-detection` skill (milestone D-02x)
+
+**Steps:**
+1. Implement `DempsterShafer::combine` (Dempster's rule with conflict mass K) and `belief()` over an
+   8-element power set.
+2. Write a unit test asserting that total ignorance carries no belief:
+   `belief(vacuous(), activity_change) == 0.0`.
+3. Run `[precursor][dst]`.
+
+**Expected:** `belief()` of a hypothesis equals the mass committed to it, so a vacuous mass
+function (all mass on Theta) reports zero belief.
+
+**Actual:** the test reported `1.0 == Approx(0.0)`. `belief()` was summing the masses of the
+hypothesis's **supersets** — which is *commonality*, not belief. `Bel(A)` is defined as the sum
+over the **subsets** of A. Because Theta is a superset of every singleton, total ignorance
+appeared as total certainty: the single most dangerous possible inversion in the whole fusion,
+since it would have reported maximum confidence exactly when the sensors knew nothing.
+
+**Severity:** High — it would have inverted the meaning of every reported belief.
+
+**Workaround:** none needed once diagnosed; the fix was a one-line change of the mask test
+(`(s & ~mask) == 0` instead of `(s & mask) == mask`).
+
+**Suggestion:** when porting a mathematical rule, assert its **degenerate cases** before any
+realistic one — for DST that means "vacuous mass must give belief 0 and plausibility 0", "a
+simple support function must give belief equal to its stated mass", and "identical sources must
+not increase conflict". Also report the belief/plausibility interval together: the pair makes an
+inversion of one of them obvious, whereas a lone belief number does not.
+
+**Status:** fixed
+
+## Incident 30: a precedence rule that could never fire
+
+**Date:** 2026-10-14
+**Task:** Deciding whether an environmental reading or an animal-activity hypothesis should be reported (milestone D-02x)
+
+**Steps:**
+1. Implement `PrecursorSuite::fusion()` with the intent "an environmental explanation takes
+   precedence over the animal hypothesis", expressed as: the environmental hypothesis must be the
+   top hypothesis of the DST combination **and** its belief must clear a threshold.
+2. Write a test that feeds a strong motion+audio regime change and an environmental deviation of
+   0.9, then asserts the `environmental_correlation` label.
+3. Run `[precursor][suite]`.
+
+**Expected:** the environmental reading explains the change.
+
+**Actual:** the label came back as `possible_animal_activity`. The rule was unreachable: two
+strong activity sources combine to ~0.98 mass on `activity_change`, so a single environmental
+mass of 0.8 can never top the fusion. The gate was written against the *fusion result* when the
+decision actually needed the *environmental reading's own strength*.
+
+**Severity:** Medium — a dead branch that silently disabled the conservative path, leaving only
+the weakest-evidence label reachable.
+
+**Workaround:** the precedence is now decided on the environmental sample's own strength plus the
+existence of a change to explain; the DST beliefs for both hypotheses are still reported, so
+nothing is hidden by the change.
+
+**Suggestion:** for any rule of the form "X takes precedence over Y", assert that the rule is
+**reachable**. A branch that can never be entered is indistinguishable from a passing test
+unless a test drives exactly that case; write the reachability test at the same time as the rule,
+not after a failure.
+
+**Status:** fixed
+
+## Incident 31: an observation copied from a moved-from object
+
+**Date:** 2026-10-14
+**Task:** Emitting an availability observation alongside a Home Assistant entity observation (milestone D-02x)
+
+**Steps:**
+1. In `HomeAssistantAdapter::poll_once`, build the entity observation, then
+   `result.observations.push_back(std::move(observation))` and afterwards construct the
+   first-sight availability observation as `SecurityObservation availability = observation;`,
+   overriding only the fields that differ.
+2. Write a test asserting that every observation from a poll carries the consent context.
+3. Run `[ha][adapter]`.
+
+**Expected:** the availability observation is a copy of the entity observation with a different
+source type and state.
+
+**Actual:** `REQUIRE(o.consent_purpose == "security_monitor")` failed with `""`. The copy was
+made **after** the original had been moved into the result vector, so every `std::string` field
+was empty (device id, source, consent subject/purpose) while the scalar fields — enum, bool,
+time point — survived. The consequence was an observation with no device identity and
+`Provenance::synthetic` on a real source, i.e. a record that would have attributed a real Home
+Assistant entity's availability to a synthetic producer.
+
+**Severity:** High — silent corruption of provenance and identity in the audit trail.
+
+**Workaround:** the availability observation is now constructed explicitly, field by field.
+
+**Suggestion:** never derive a second record from an object that has already been moved. Build
+both records from the source data, or copy before the move — and make the assertion that catches
+it structural: a test that every persisted/emitted record carries a non-empty device id,
+provenance and consent context. The whole class of defect is invisible to a test that only checks
+the interesting fields of the interesting record.
+
+**Status:** fixed
+
+## Incident 32: two tests that asserted the wrong premise
+
+**Date:** 2026-10-14
+**Task:** Reviewing the first failures of the new suites (milestone D-02x)
+
+**Steps:**
+1. Run `[sensors]`: `REQUIRE(parsed->acquired_at == original.acquired_at)` failed with a
+   nanosecond-resolution difference (`.407000000` vs `.407400937`).
+2. Run `[ha]`: the reconnect test reported no reconnect transition.
+
+**Expected:** an exact timestamp round trip, and a reconnect after a liveness loss.
+
+**Actual:** (1) the wire format deliberately carries epoch **milliseconds**, so a nanosecond-exact
+comparison could never hold — the test, not the encoder, was wrong. (2) The reconnect section
+never made the entity go silent: the stub transport still answered every read, so no device ever
+became offline and there was nothing to reconnect. A test premise, not a product defect.
+
+**Severity:** Low (both caught before commit).
+
+**Workaround:** compare at the wire format's granularity (`duration_cast<milliseconds>` on both
+sides) and give the reconnect section a real silence (`responses.clear()`) so liveness actually
+decays.
+
+**Suggestion:** when a value crosses a serialisation boundary, assert at the boundary's
+granularity and say so in the test — an exact-equality assertion on a lossy encoding is a test
+bug waiting to fail. For a state-transition test, drive the **precondition** explicitly (here: no
+answers for longer than the offline timeout) and assert the precondition held before asserting
+the transition.
+
+**Status:** fixed
