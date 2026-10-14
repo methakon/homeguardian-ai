@@ -207,31 +207,68 @@ TEST_CASE("microphone capture refuses to start without explicit operator authori
 TEST_CASE("microphone capture reports the exact command it would run, and dries out",
           "[audio][capture]") {
     Logger::initialize("error");
-    PwAudioCaptureDevice::Config config;
-    config.device = "alsa_input.pci-0000_00_1b.0.analog-stereo";
-    config.sample_rate = 48000;
-    config.channels = 1;
-    config.dry_run = true;  // never spawn: this test asserts the PLAN, not a capture
-    PwAudioCaptureDevice device(config);
 
-    const auto argv = device.capture_command_line();
-    REQUIRE(argv.size() >= 5);
-    REQUIRE(argv.front() == "pw-record");
-    REQUIRE(std::find(argv.begin(), argv.end(), std::string("--rate=48000")) != argv.end());
-    REQUIRE(std::find(argv.begin(), argv.end(), std::string("--channels=1")) != argv.end());
-    REQUIRE(std::find(argv.begin(), argv.end(),
-                      std::string("--target=") + config.device) != argv.end());
-    REQUIRE(argv.back() == "-");
+    SECTION("the default tool is parec, and the argv matches parec's own interface") {
+        PwAudioCaptureDevice::Config config;
+        config.device = "alsa_input.pci-0000_00_1b.0.analog-stereo";
+        config.sample_rate = 48000;
+        config.channels = 1;
+        config.dry_run = true;  // never spawn: this test asserts the PLAN, not a capture
+        PwAudioCaptureDevice device(config);
 
-    device.authorize_capture(true);
-    device.initialize();
-    REQUIRE_NOTHROW(device.start());
-    REQUIRE(device.state() == DeviceState::Capturing);
-    device.stop();
-    REQUIRE(device.state() == DeviceState::Stopped);
-    device.close();
-    REQUIRE(device.state() == DeviceState::Idle);
-    REQUIRE(device.stats().frames_captured == 0);  // dry_run captured nothing, and says so
+        const auto argv = device.capture_command_line();
+        REQUIRE(argv.front() == "parec");
+        // parec needs --raw; pw-record does NOT accept it (it exits "unrecognized option", and
+        // the session then reports a dead microphone - Incident 54). The two tools take
+        // different flags, so the builder is asserted for BOTH.
+        REQUIRE(std::find(argv.begin(), argv.end(), std::string("--raw")) != argv.end());
+        REQUIRE(std::find(argv.begin(), argv.end(), std::string("--format=s16le")) != argv.end());
+        REQUIRE(std::find(argv.begin(), argv.end(), std::string("--rate=48000")) != argv.end());
+        REQUIRE(std::find(argv.begin(), argv.end(), std::string("--channels=1")) != argv.end());
+        REQUIRE(std::find(argv.begin(), argv.end(),
+                          std::string("--device=") + config.device) != argv.end());
+        // parec writes to stdout by default; it must NOT receive pw-record's trailing '-'.
+        REQUIRE(argv.back() != "-");
+
+        device.authorize_capture(true);
+        device.initialize();
+        REQUIRE_NOTHROW(device.start());
+        REQUIRE(device.state() == DeviceState::Capturing);
+        device.stop();
+        REQUIRE(device.state() == DeviceState::Stopped);
+        device.close();
+        REQUIRE(device.state() == DeviceState::Idle);
+        REQUIRE(device.stats().frames_captured == 0);  // dry_run captured nothing, and says so
+    }
+
+    SECTION("pw-record is supported with ITS flags, not parec's") {
+        PwAudioCaptureDevice::Config config;
+        config.capture_command = "pw-record";
+        config.device = "alsa_input.pci-0000_00_1b.0.analog-stereo";
+        config.dry_run = true;
+        PwAudioCaptureDevice device(config);
+        const auto argv = device.capture_command_line();
+        REQUIRE(argv.front() == "pw-record");
+        REQUIRE(std::find(argv.begin(), argv.end(), std::string("--raw")) == argv.end());
+        REQUIRE(std::find(argv.begin(), argv.end(), std::string("--format=s16")) != argv.end());
+        REQUIRE(std::find(argv.begin(), argv.end(),
+                          std::string("--target=") + config.device) != argv.end());
+        REQUIRE(argv.back() == "-");  // pw-record needs the output named
+    }
+
+    SECTION("an output MONITOR is refused as a microphone") {
+        PwAudioCaptureDevice::Config config;
+        // A monitor is a loopback of what the machine is PLAYING, not room sound. Accepting it
+        // would report the local speaker as the environment and feed announcements back into
+        // detection.
+        config.device = "alsa_output.pci-0000_00_1b.0.iec958-stereo.monitor";
+        PwAudioCaptureDevice device(config);
+        REQUIRE_FALSE(device.refused_reason().empty());
+        device.authorize_capture(true);
+        device.initialize();
+        REQUIRE_THROWS(device.start());
+        REQUIRE(device.state() != DeviceState::Capturing);
+    }
 }
 
 TEST_CASE("speaker refuses to play while the microphone is live, and never claims to be Alexa",
