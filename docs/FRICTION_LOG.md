@@ -2938,3 +2938,49 @@ refusal, do not fight it, and never loosen a security check to make a start succ
 sit behind `if(OpenSSL_FOUND)` and this host has no OpenSSL headers (`OPENSSL_INCLUDE_DIR-NOTFOUND`).
 The correct path is the documented compile container (`hgdev:compile`), which built the client in
 one step. Do not "fix" this by installing OpenSSL on the host or by disabling the guard.
+
+### Incident 67 - JNI functions appended outside the extern "C" region, and a verification that could not see it
+
+Two H-03 entry points were added at the END of `apk/jni/hg_harness_jni.cpp`, but the file's
+`extern "C" {` opens at line 260 and closes at line 593 - so the new functions (lines 601 and 622)
+got C++ linkage, their symbols were mangled, and the device threw
+`UnsatisfiedLinkError: No implementation found for ... nativeDrainObservations()` on the very first
+UI tick, before any capture started.
+
+The worse half is the verification. The wiring was reported as "verified inside the shipped
+artifact" because `strings classes.dex | grep -c nativeDrainObservations` was non-zero. That greps
+the Java DECLARATION, which is present in the DEX whether or not the native side can satisfy it, so
+the check was structurally incapable of detecting this defect - a green result on the wrong
+artifact, which is the same class of error as several earlier incidents in this log.
+
+Lessons, now enforced by code rather than by intention:
+* For JNI, the artifact that matters is the compiled ELF's dynamic symbol table. The build now reads
+  it (`scripts/verify_jni_exports.sh`) and fails on any Java native declaration without an exact
+  unmangled export.
+* A checker must be able to FAIL. That gate additionally fails when it finds ZERO declarations,
+  because a pattern that matches nothing would otherwise report success while checking nothing -
+  which is exactly what happened on its first version (see the next incident).
+* When adding a function to a file with conditional linkage regions, check which region the
+  insertion lands in and prove the symbol from the binary, not from the source layout.
+
+### Incident 68 - the new gate failed three ways before it was trustworthy
+
+Writing the JNI gate, all four defects were in the checker, not in the code under test:
+
+1. **Double-escaped regex -> vacuous pass.** The pattern reached the file as `\\[\\]` instead of
+   `\\[\\]`-as-intended for ERE, matched nothing, and the gate printed "OK: every Java native
+   declaration has an exact JNI export" after checking ZERO declarations. Fixed structurally: the
+   gate now FAILS when the declaration count is zero, and the pattern avoids escapes entirely by
+   matching the parenthesis as `[(]`.
+2. **A string literal matched as a declaration.** `"native stop requested (consent/permission/device)"`
+   yielded a phantom method named `requested`. The extraction is now anchored on a line that begins
+   with an access modifier and reaches `native` without crossing `;` or `=`; verified by listing the
+   16 names it extracts and comparing them with the 16 exports.
+3. **A wrong variable in the build script.** The gate call used `$REPO`, which `build_apk.sh` does
+   not define (it uses `$ROOT`), so the build died with `unbound variable` instead of checking
+   anything.
+4. **A multi-line sed without continuations** split the script argument from the filename, so bash
+   ran the sed program as a command. Single line now.
+
+Each was found by running the checker against a deliberately bad input or reading its own output
+critically - not by reading the source. A gate that has never failed has not been tested.

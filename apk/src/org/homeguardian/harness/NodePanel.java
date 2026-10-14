@@ -27,6 +27,13 @@ import android.widget.TextView;
  */
 public final class NodePanel {
 
+    /** Implemented by the Activity: the panel cannot call a native method itself, so it asks. */
+    public interface Host {
+        String setObservationIntervalMs(int ms);
+    }
+
+    private Host host;
+
     private final Context ctx;
     private final LinearLayout root;
     private final EditText hostEdit;
@@ -76,6 +83,30 @@ public final class NodePanel {
             }
         }));
 
+        final EditText intervalEdit = new EditText(ctx);
+        intervalEdit.setHint("observation interval ms (100-60000)");
+        intervalEdit.setSingleLine(true);
+        intervalEdit.setText("1000");
+        root.addView(intervalEdit);
+        root.addView(button("Apply observation interval", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (host == null) {
+                    stateView.setText("interval control unavailable (no host attached)");
+                    return;
+                }
+                int ms;
+                try {
+                    ms = Integer.parseInt(intervalEdit.getText().toString().trim());
+                } catch (RuntimeException e) {
+                    stateView.setText("interval must be a number of milliseconds");
+                    return;
+                }
+                // The native side clamps to 100..60000 and reports what it actually set.
+                stateView.setText(host.setObservationIntervalMs(ms));
+            }
+        }));
+
         root.addView(button("Import credentials", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -99,6 +130,10 @@ public final class NodePanel {
 
     public View build() {
         return root;
+    }
+
+    public void setHost(Host host) {
+        this.host = host;
     }
 
     public void setIdentity(String deviceId, String displayName) {

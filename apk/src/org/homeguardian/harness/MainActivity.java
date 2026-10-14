@@ -92,6 +92,9 @@ public class MainActivity extends Activity {
             if (nodePanel != null) {
                 if (!panelIdentified) {
                     nodePanel.setIdentity(nativeIdentity(), DeviceIdentity.defaultDisplayName());
+                    // Exercise the second new JNI entry point once at identification, so a
+                    // linkage defect in it cannot hide until an operator presses a button.
+                    Log.i(TAG, nativeSetObservationIntervalMs(1000));
                     panelIdentified = true;
                 }
                 nodePanel.sample(nativeDrainObservations(), nativeStats());
@@ -138,6 +141,13 @@ public class MainActivity extends Activity {
         // shows only what it can actually learn (transport counters, Wi-Fi, battery, thermal,
         // permissions) and never an observation value or a credential.
         nodePanel = new NodePanel(this);
+        nodePanel.setHost(new NodePanel.Host() {
+            @Override
+            public String setObservationIntervalMs(int ms) {
+                // The real native call: clamps server-side and returns what it applied.
+                return nativeSetObservationIntervalMs(ms);
+            }
+        });
         root.addView(nodePanel.build());
         int pad = (int) (12 * getResources().getDisplayMetrics().density);
         root.setPadding(pad, pad, pad, pad);

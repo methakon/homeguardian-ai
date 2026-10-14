@@ -315,3 +315,15 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Camera/mic on hardware | **PENDING OPERATOR** |
 | USB unplug acceptance | NOT STARTED (must follow Wi-Fi delivery) |
 | Remote live CCTV | NOT YET IMPLEMENTED |
+
+## H-03 JNI defect (fixed) - status
+
+| item | state |
+|---|---|
+| UnsatisfiedLinkError | **FIXED** (extern "C" region; symbols now unmangled, verified from the ELF) |
+| Build-time JNI gate | ADDED (`scripts/verify_jni_exports.sh`, run by the APK build): 16 declarations / 16 exports |
+| Gate non-vacuity | PROVEN (fails on zero declarations and on a .so with no JNI entry points) |
+| APK + reinstall | 884,425 B, armeabi-v7a only; `adb install -r` Success, app data preserved |
+| Launch | alive, native library loaded, 0 UnsatisfiedLinkError / 0 FATAL / 0 SIGSEGV / 0 ANR |
+| 30-second ticker proof | **BLOCKED - PHONE LOCKED** (`mDreamingLockscreen=true`, activity STOPPED, tick counter 0) |
+| H-03 acceptance (import, connect, consent, camera/mic, Wi-Fi) | **PENDING OPERATOR UNLOCK** |

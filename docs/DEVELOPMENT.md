@@ -712,3 +712,20 @@ strings /tmp/apkx/classes.dex | grep -c NodeSession            # >0
 strings /tmp/apkx/lib/armeabi-v7a/libhg_harness.so | grep -c extract_motion_features
 strings /tmp/apkx/classes.dex | grep -c 'invoke-custom'        # must be 0 (API 27 verifier)
 ```
+
+## JNI export gate (H-03)
+
+```bash
+export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/android-ndk-r26d
+bash apk/build_apk.sh          # runs the gate before packaging; a missing/mangled export fails the build
+
+# run it on its own against any built library
+bash scripts/verify_jni_exports.sh hg_apk_build/lib/libhg_harness.so \
+  apk/src/org/homeguardian/harness \
+  $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm
+```
+
+A Java `native` method binds to `Java_<pkg>_<Class>_<method>`. A definition outside an `extern "C"`
+region is C++-mangled (`_Z52Java_...`) and JNI cannot resolve it - the device then throws
+`UnsatisfiedLinkError` on the first call. The gate compares the Java declarations with the symbols
+REALLY defined in the compiled ELF, so this class of defect cannot ship again.

@@ -269,3 +269,79 @@ USB unplug.
 * Nothing from the phone has reached the hub over Wi-Fi yet.
 * USB-unplug behaviour, reconnect, screen-off/foreground-service behaviour: untested.
 * Remote live CCTV: **NOT YET IMPLEMENTED** (this transport carries compact scalars).
+
+## 9. CRITICAL DEFECT: UnsatisfiedLinkError on the first UI tick (fixed)
+
+### 9.1 The defect and its root cause
+
+On the device the app died on its first periodic tick:
+
+    java.lang.UnsatisfiedLinkError: No implementation found for
+      org.homeguardian.harness.MainActivity.nativeDrainObservations()
+      at MainActivity$1.run(MainActivity.java:97)
+
+Root cause, exactly as the brief located it: the two H-03 entry points were appended AFTER the
+file's `extern "C"` region, which opens at line 260 and closes at line **593**. The functions sit at
+lines **601** and **622**, i.e. outside it, so they compiled with **C++ linkage** and their symbols
+were mangled to forms like
+
+    _Z52Java_org_homeguardian_harness_MainActivity_nativeDrainObservationsP7_JNIEnvP8_jobject
+
+JNI looks up the plain name `Java_..._nativeDrainObservations`, finds nothing, and throws on the
+first call. Both functions are now inside their own `extern "C"` region; method names were NOT
+changed.
+
+### 9.2 Why this shipped, and the verification that was wrong
+
+The wiring was previously reported as "verified inside the shipped artifact" on the basis of
+`strings classes.dex | grep -c nativeDrainObservations`. **That checks the Java DECLARATION, which
+is present in the DEX whether or not the native side can ever satisfy it.** It was the wrong
+artifact for the claim. The artifact that proves JNI linkage is the ELF's dynamic symbol table, and
+the build now reads exactly that.
+
+### 9.3 The gate (build-time, ELF-based)
+
+`scripts/verify_jni_exports.sh` compares every Java `native` declaration with the unmangled symbols
+**actually defined** in the compiled `libhg_harness.so`, using the NDK's `llvm-nm`. `apk/build_apk.sh`
+runs it before packaging, so a mangled or missing entry point fails the BUILD, not the phone. It can
+also be run on its own:
+
+    bash scripts/verify_jni_exports.sh hg_apk_build/lib/libhg_harness.so \
+         apk/src/org/homeguardian/harness $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm
+
+Current result: **16 Java native declarations, 16 unmangled exports, exact match.**
+
+    Java_org_homeguardian_harness_MainActivity_nativeDrainObservations          PRESENT (unmangled)
+    Java_org_homeguardian_harness_MainActivity_nativeSetObservationIntervalMs  PRESENT (unmangled)
+    (no _Z...Java_* mangled variants remain in the .so)
+
+The gate is deliberately NOT vacuous: it fails when it finds ZERO declarations (a broken pattern
+must not read as a pass) and it fails against a library with no JNI entry points - both cases were
+exercised.
+
+### 9.4 Reachability of the second entry point
+
+`nativeSetObservationIntervalMs` is called by the app itself at identification and by an
+**Apply observation interval** control in the panel (the native side clamps to 100-60000 ms and
+returns what it applied), so neither new entry point can hide behind an untested path.
+
+### 9.5 Physical status after the fix
+
+    APK            884,425 B, signed, lib/armeabi-v7a only (0 arm64/x86 entries)
+    reinstall      adb install -r -> Success (app data preserved; nothing uninstalled)
+    launch         process alive, native library loaded, node identity reported
+    faults         UnsatisfiedLinkError 0 | No implementation found 0 | FATAL EXCEPTION 0
+                   signal 11 0 | signal 6 0 | ANR in 0
+
+**The 30-second ticker proof is NOT yet established and is not claimed.** The app's ticker posts in
+`onResume` and is removed in `onPause`; the device is currently on the **lockscreen**
+(`mDreamingLockscreen=true`, activity `state=STOPPED, visible=false`), so `onResume` never runs and
+the tick never executes - confirmed by the decisive counter: the tick's own log line
+(`observation interval:`) appears **0** times. With the screen merely woken but still locked, that
+counter stays 0, and it is the only honest proof that the tick path works.
+
+**Operator action required: unlock the phone and keep it awake.** Waking the screen is not enough;
+the lockscreen must be dismissed by the owner, and this agent does not bypass it. Once unlocked, the
+tick runs every 500 ms, and the expected evidence is a non-zero count of the interval line with
+zero faults - after which the remaining H-03 acceptance steps (import credentials, connect, consent,
+camera/microphone, Wi-Fi delivery) can proceed.

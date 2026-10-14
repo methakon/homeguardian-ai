@@ -597,7 +597,18 @@ Java_org_homeguardian_harness_MainActivity_nativeSelfTest(JNIEnv* env, jobject /
 // H-03: the observation drain. Java pulls compact observations and hands them to the D-03
 // transport. NDJSON, one observation per line, numeric scalars only - never PIXELS, never PCM,
 // never a path or a credential.
+//
+// C LINKAGE IS NOT OPTIONAL HERE. These two were first appended after the file's
+// `}  // extern "C"`, so their symbols were compiled C++-mangled
+// (_Z52Java_org_homeguardian_harness_MainActivity_nativeDrainObservationsP7_JNIEnvP8_jobject)
+// and the device threw
+//   java.lang.UnsatisfiedLinkError: No implementation found for
+//   org.homeguardian.harness.MainActivity.nativeDrainObservations()
+// on the FIRST tick, before any capture started. Every JNI entry point in this file must be
+// inside an extern "C" region - and the build now PROVES it from the compiled ELF rather than
+// trusting the source layout (see the JNI export verification step in apk/build_apk.sh).
 // ---------------------------------------------------------------------------------------------
+extern "C" {
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeDrainObservations(JNIEnv* env, jobject /*thiz*/) {
     auto& n = node();
@@ -631,3 +642,5 @@ Java_org_homeguardian_harness_MainActivity_nativeSetObservationIntervalMs(JNIEnv
     }
     return to_jstring(env, "observation interval: " + std::to_string(bounded) + " ms");
 }
+
+}  // extern "C" (H-03 observation drain + interval control)

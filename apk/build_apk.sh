@@ -67,6 +67,13 @@ JSON_DIR="$(find "$ROOT"/hg_build/_deps -type d -path '*nlohmann_json*/include' 
   -shared -o "$BUILD_DIR/lib/libhg_harness.so" \
   -lcamera2ndk -laaudio -lmediandk -llog -landroid
 
+echo "==> Verify JNI exports against the Java native declarations (from the compiled ELF)"
+# The check itself lives in scripts/verify_jni_exports.sh so it can also be run on its own
+# against any built .so. It reads the ELF symbol table, never the source text.
+bash "$ROOT/scripts/verify_jni_exports.sh" "$BUILD_DIR/lib/libhg_harness.so" \
+  "$APK_DIR/src/org/homeguardian/harness" "$TOOLCHAIN/llvm-nm" || exit 1
+
+
 echo "==> Compile Java (target Java 8 bytecode for dx compatibility)"
 JAVAC_SRC=$(find "$APK_DIR/src" -name '*.java')
 "$JAVA_HOME/bin/javac" --release 8 -classpath "$PLATFORM/android.jar" -d "$BUILD_DIR/classes" $JAVAC_SRC
