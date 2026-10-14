@@ -752,3 +752,49 @@ not weakened for any of these numbers.
 | Suite concurrency | PASS (both instances, no leftovers) |
 | Retention regression | 8 / 8 |
 | Build-context secret exclusion probe | 6 / 6 |
+
+## D-03.2 deployment notes
+
+`replay_state_path` is now MANDATORY (see `deploy/docker/config/ingress.json.example`):
+
+* default: `device_replay_state.json` beside `audit_db_path`, which for the shipped compose
+  file means `/data/device_replay_state.json` on the volume shared with the hub — the
+  watermark must survive a container replacement, so it belongs on persistent storage;
+* an unset path makes the ingress REFUSE to start, with the reason on stderr;
+* `allow_ephemeral_replay_protection: true` runs without it, and is REFUSED unless
+  `bind_address` is loopback (`127.0.0.1` / `::1` / `localhost`). It is an isolated-test
+  escape hatch; the ingress announces it at startup when used.
+
+At startup the ingress reports what it restored, and states the ordering rule it now
+follows:
+
+    ingress: durable replay protection: 3 device watermark(s) restored from /data/device_replay_state.json
+    ingress: an observation is only ever recorded as complete AFTER it has been processed;
+             an attempt that is interrupted leaves no durable trace and its retry is accepted
+
+Measured after D-03.2 (host, Release binaries in the container):
+
+| Metric | D-03.1 | D-03.2 |
+|--------|--------|--------|
+| Runtime image | 131 MB | 131 MB |
+| `hg_device_ingress` | 2,777,832 B | 2,794,248 B |
+| `hg_device_client` | 224,288 B | 224,288 B (unchanged) |
+| Android APK | 802,608 B | 802,667 B |
+| Ingress idle RSS | 12,560 kB | 12,488 kB |
+| RSS under a 200-observation burst | +2,472 kB | +1,648 kB |
+| Round trip per observation | 3.06 ms | 162.5 ms |
+| Sustained throughput | 327 obs/s | 6 obs/s |
+| Ingress CPU during the burst | 73.5 % of one core | 1.3 % of one core |
+
+The extra bytes are the two-phase record, the fsync/directory-sync path and the policy
+check. No TLS, consent or SQLite-durability setting was weakened.
+
+**The throughput change is the cost of making the durability real, and it is stated rather
+than hidden.** D-03.1 claimed an fsync it never performed, so its 3.06 ms round trip measured
+a page-cache write. D-03.2 performs `fsync(file)` + `rename` + `fsync(directory)` for the one
+durable write per accepted observation, which on this host costs ~160 ms per observation -
+the same order as the ~93 ms SQLite fsync whose cost the project already accepted for alert
+durability. CPU stays at 1.3 %, i.e. the boundary is I/O-bound, not compute-bound. An earlier
+revision of this milestone also persisted the in-flight marker, which doubled that cost
+(200 ms / 5 obs/s) for no benefit; the marker is now in memory only. A device sending a burst
+is bounded by the 64-observation queue, which applies back-pressure rather than growing.

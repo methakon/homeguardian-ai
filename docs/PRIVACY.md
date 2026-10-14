@@ -972,3 +972,11 @@ display.
   flush queued observations, so nothing collected after a withdrawal is transmitted.
 - Ingested observations remain non-authoritative for alarms unless the operator
   explicitly allowlists their detector ids (`evidence_detector_ids`), unchanged from D-03.
+
+## D-03.2 privacy notes
+
+- The durable replay state stores device ids, sequence counters and the last completed
+  observation id. No payloads, no feature values, no media, no credentials, no timestamps.
+- The in-flight marker is in memory only and is never written anywhere.
+- `processing_failed` details are bounded and non-sensitive (they name the failing stage,
+  not the observation content).

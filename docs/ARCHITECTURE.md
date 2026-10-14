@@ -1491,3 +1491,31 @@ Two rules the diagram encodes:
 2. **Durable state is written before delivery.** A crash between the two cannot make an
    accepted observation replayable, and a failure before delivery is `processing_failed`,
    never an acceptance.
+
+## Ingress processing and replay flow (D-03.2)
+
+```
+device (mTLS, cert CN = device id)
+   |  welcome { device_id, last_sequence }        <- the device's resume point
+   |  observation ------------------------------.
+   v                                           |
+[validate] authorization (live) + bounds + values
+   |  repeat of the last COMPLETED observation? --> answer it, DO NOT reprocess
+   |  sequence behind the watermark?           --> replayed_sequence
+   v
+[begin]  in memory: this attempt is IN FLIGHT (guards this process only)
+   |
+[process] sink -> detectors -> fusion -> alert  <-- throws => abandon + processing_failed
+   |
+[complete] DURABLE: the one write, watermark advances <-- fails => processing_failed (no false ack)
+   |
+   ack { observation_id, sequence, accepted, reason }
+```
+
+Two rules the diagram encodes, both of which were wrong before D-03.2:
+
+1. **The durable watermark may only move AFTER processing succeeded.** Recording first made
+   a failure indistinguishable from success in durable state, so the retry the hub asked for
+   was refused as a replay.
+2. **A duplicate answer must never re-run the work.** An unacknowledged observation is
+   answered from the record; only genuinely new sequences are processed.

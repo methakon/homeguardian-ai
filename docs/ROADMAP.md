@@ -469,3 +469,21 @@ recorded as hardware- or data-blocked rather than approximated.
 Next: X-12 (physical device acceptance, requires a connected phone and explicit operator
 permission). D-04 multi-phone expansion and ML remain out of scope until D-03.1 passes
 review.
+
+## Phase X — X-12 D-03.2 replay and processing consistency (complete)
+
+- X-12.1 Two-phase durable record (begin/complete/abandon) so the watermark cannot advance
+  ahead of the work. Done.
+- X-12.2 Idempotent answer for an unacknowledged repeat of the last completed observation.
+  Done.
+- X-12.3 Real fsync-before-rename plus directory fsync, with every failure reported and
+  in-memory rollback. Done.
+- X-12.4 Mandatory replay protection; loopback-only isolated-test opt-out; TLS-free policy
+  unit so the host suite tests it. Done.
+- X-12.5 Fault injection at every boundary (validation, begin, sink, complete, repeat,
+  concurrency, unwritable store, dead-process marker). Done.
+- X-12.6 Android: `duplicate_observation` reclassified as retryable, matching the hub's
+  in-flight-timeout semantics. Done (compile-verified).
+
+Next: X-13 (physical device acceptance, requires a connected phone and explicit operator
+permission). D-04 remains out of scope until D-03.2 passes review.

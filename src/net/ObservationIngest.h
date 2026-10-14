@@ -66,6 +66,9 @@ public:
         bool out_of_order = false;
         bool real = false;                  // the provenance the hub RECORDED
         bool provenance_claim_unsubstantiated = false;
+        // True when this acceptance is an IDEMPOTENT ANSWER for an observation the hub
+        // had already completed and durably recorded. Nothing was processed again.
+        bool idempotent_repeat = false;
     };
 
     // Deterministic clock injection: tests and scenarios must not depend on wall
@@ -75,14 +78,49 @@ public:
     // it into the existing pipeline; tests inject their own.
     using Sink = std::function<void(const SecurityObservation&)>;
 
-    // Called with the device id and sequence of an observation that has passed every
-    // check, IMMEDIATELY BEFORE it is delivered. Returning false refuses the
-    // observation (processing_failed) and it is NOT delivered. This is the server's
-    // durable-replay-protection hook: the watermark is persisted before delivery, so
-    // "the hub restarted" can never make an already-accepted observation acceptable
-    // again - the one window a post-delivery write would leave open.
-    using CommitHook = std::function<bool(const std::string& device_id, uint64_t sequence,
-                                          std::string* reason)>;
+    // DURABLE REPLAY-PROTECTION HOOKS (two-phase).
+    //
+    // D-03.1 used ONE hook called before delivery. That made a downstream failure
+    // indistinguishable from success in the durable state: the hub answered
+    // `processing_failed`, the device retried, and the retry was refused as a replay
+    // because the watermark had already moved. The sequence was silently lost.
+    //
+    // The ingest therefore asks for a BEGIN before processing and a COMPLETE after it,
+    // and answers a repeat of an already-completed observation idempotently:
+    //
+    //   is_completed_repeat(device, sequence, observation_id)
+    //       true = the hub recorded this exact observation as completed. Answer the device
+    //       with the recorded acceptance and DO NOT process it again. This is the
+    //       uncertain-outcome window (completed durably, acknowledgment never received).
+    //   begin(device, sequence, observation_id, *reason)
+    //       false = refuse. Covers a replayed sequence, a concurrent attempt at the same
+    //       sequence, and an unusable durable store (which fails CLOSED).
+    //   complete(device, sequence, observation_id, *reason)
+    //       false = the acceptance could not be recorded durably, so it is NOT reported as
+    //       one; the device's retry is the recovery path and is not treated as a replay.
+    //   abandon(device, sequence)
+    //       best effort: processing failed, so drop the in-flight marker.
+    // The outcome of asking the durable store to start processing one observation.
+    enum class DurableBegin {
+        marked,            // in flight: process it, then call complete()
+        already_completed, // this exact observation is recorded as completed
+        replayed,          // at or behind the completed watermark
+        concurrent,        // the same sequence is already in flight
+        unavailable,       // the durable store cannot be used: fail closed
+    };
+
+    struct ReplayHooks {
+        std::function<bool(const std::string& device_id, uint64_t sequence,
+                           const std::string& observation_id)>
+            is_completed_repeat;
+        std::function<DurableBegin(const std::string& device_id, uint64_t sequence,
+                                   const std::string& observation_id, std::string* reason)>
+            begin;
+        std::function<bool(const std::string& device_id, uint64_t sequence,
+                           const std::string& observation_id, std::string* reason)>
+            complete;
+        std::function<void(const std::string& device_id, uint64_t sequence)> abandon;
+    };
 
     static Config defaults() { return Config{}; }
     static Clock system_clock_ms();
@@ -97,12 +135,13 @@ public:
     // Deliver everything currently queued. Returns the number delivered.
     size_t drain(const Sink& sink);
 
-    // Durable replay-protection hook (see CommitHook above). Unset = in-memory only.
-    void set_commit_hook(CommitHook hook) { commit_hook_ = std::move(hook); }
+    // Durable replay-protection hooks (see ReplayHooks above). Unset = in-memory only.
+    void set_replay_hooks(ReplayHooks hooks) { replay_hooks_ = std::move(hooks); }
 
     size_t pending() const { return pending_.size(); }
     size_t rejected_count() const { return rejected_; }
     size_t accepted_count() const { return accepted_; }
+    size_t idempotent_repeat_count() const { return idempotent_repeats_; }
     size_t claim_unsubstantiated_count() const { return claim_unsubstantiated_; }
     RejectReason last_reject_reason() const { return last_reject_; }
     const Config& config() const { return cfg_; }
@@ -117,9 +156,10 @@ private:
     Config cfg_;
     Clock clock_;
     std::deque<SecurityObservation> pending_{};
-    CommitHook commit_hook_{};
+    ReplayHooks replay_hooks_{};
     std::map<std::string, std::deque<std::string>> recent_ids_{};
     size_t accepted_ = 0;
+    size_t idempotent_repeats_ = 0;
     size_t rejected_ = 0;
     size_t claim_unsubstantiated_ = 0;
     RejectReason last_reject_ = RejectReason::none;

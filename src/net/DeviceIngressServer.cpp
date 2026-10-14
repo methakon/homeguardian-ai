@@ -2,6 +2,8 @@
 
 #include <sys/stat.h>
 
+#include "net/IngressConfigPolicy.h"
+
 #include <chrono>
 #include <iostream>
 #include <vector>
@@ -86,12 +88,21 @@ DeviceIngressServer::~DeviceIngressServer() {
     listener_.close_listener();
 }
 
+bool DeviceIngressServer::validate_replay_configuration(const Config& config, std::string* error) {
+    ReplayPolicyInput input;
+    input.replay_state_path = config.replay_state_path;
+    input.allow_ephemeral_replay_protection = config.allow_ephemeral_replay_protection;
+    input.bind_address = config.tls.bind_address;
+    return net::validate_replay_configuration(input, error);
+}
+
 bool DeviceIngressServer::setup_replay_protection(std::string* error) {
+    if (!validate_replay_configuration(config_, error)) return false;
     if (config_.replay_state_path.empty()) {
-        std::cerr << "ingress: WARNING durable replay protection is DISABLED "
-                     "(no replay_state_path): a restart would reset the sequence "
-                     "watermarks, so a previously accepted observation could be "
-                     "accepted again." << std::endl;
+        std::cerr << "ingress: durable replay protection is DISABLED for this run "
+                     "(allow_ephemeral_replay_protection with a loopback bind). This is an "
+                     "ISOLATED TEST configuration: a restart would reset the sequence "
+                     "watermarks." << std::endl;
         return true;
     }
     ReplayState::Config replay_config;
@@ -116,13 +127,50 @@ bool DeviceIngressServer::setup_replay_protection(std::string* error) {
     }
     std::cout << "ingress: durable replay protection: " << replay_->size()
               << " device watermark(s) restored from " << replay_->path() << std::endl;
+    // Nothing durable is left behind by an unfinished attempt: only completion writes. An
+    // attempt whose outcome was never recorded therefore leaves no state at all, and the
+    // device's retry is accepted rather than refused as a replay.
+    std::cout << "ingress: an observation is only ever recorded as complete AFTER it has been "
+                 "processed; an attempt that is interrupted leaves no durable trace and its "
+                 "retry is accepted"
+              << std::endl;
 
-    // Persist BEFORE delivery, so a crash between delivery and the write cannot make an
-    // accepted observation replayable after a restart.
-    ingest_.set_commit_hook([this](const std::string& device_id, uint64_t sequence,
-                                   std::string* reason) {
-        return replay_->record(device_id, sequence, reason);
-    });
+    // TWO-PHASE HOOKS. begin() before processing, complete() after it, abandon() when
+    // processing failed. Nothing here advances the watermark on a failure, which is the
+    // whole point: a refused observation must never consume a sequence.
+    ObservationIngest::ReplayHooks hooks;
+    hooks.is_completed_repeat = [this](const std::string& device_id, uint64_t sequence,
+                                       const std::string& observation_id) {
+        return replay_->is_completed_repeat(device_id, sequence, observation_id);
+    };
+    hooks.begin = [this](const std::string& device_id, uint64_t sequence,
+                         const std::string& observation_id, std::string* reason) {
+        switch (replay_->begin(device_id, sequence, observation_id, reason)) {
+            case ReplayState::BeginOutcome::marked:
+                return ObservationIngest::DurableBegin::marked;
+            case ReplayState::BeginOutcome::completed_repeat:
+                return ObservationIngest::DurableBegin::already_completed;
+            case ReplayState::BeginOutcome::replayed:
+                return ObservationIngest::DurableBegin::replayed;
+            case ReplayState::BeginOutcome::duplicate:
+                return ObservationIngest::DurableBegin::concurrent;
+            case ReplayState::BeginOutcome::disabled:
+                // Only reachable in the isolated-test configuration, where there is no
+                // durable state to begin.
+                return ObservationIngest::DurableBegin::marked;
+            case ReplayState::BeginOutcome::unavailable:
+            default:
+                return ObservationIngest::DurableBegin::unavailable;
+        }
+    };
+    hooks.complete = [this](const std::string& device_id, uint64_t sequence,
+                            const std::string& observation_id, std::string* reason) {
+        return replay_->complete(device_id, sequence, observation_id, reason);
+    };
+    hooks.abandon = [this](const std::string& device_id, uint64_t sequence) {
+        replay_->abandon(device_id, sequence);
+    };
+    ingest_.set_replay_hooks(std::move(hooks));
     return true;
 }
 

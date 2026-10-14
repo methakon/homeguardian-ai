@@ -74,6 +74,9 @@ struct IngressConfig {
     // How quickly an authorization change (revocation, consent, capture) takes effect
     // on an established connection. Bounded by the per-observation re-check.
     int authorization_refresh_ms = 250;
+    // Isolated-test escape hatch: run with NO durable replay state. Refused for a
+    // non-loopback bind, so a deployment cannot end up here.
+    bool allow_ephemeral_replay_protection = false;
 };
 
 bool load_config(const std::string& path, IngressConfig* config, std::string* error) {
@@ -105,6 +108,8 @@ bool load_config(const std::string& path, IngressConfig* config, std::string* er
     config->revocation_path = parsed.value("revocation_path", config->revocation_path);
     config->authorization_refresh_ms =
         parsed.value("authorization_refresh_ms", config->authorization_refresh_ms);
+    config->allow_ephemeral_replay_protection =
+        parsed.value("allow_ephemeral_replay_protection", config->allow_ephemeral_replay_protection);
     if (config->authorization_refresh_ms < 0 || config->authorization_refresh_ms > 60000) {
         return fail("authorization_refresh_ms must be between 0 and 60000");
     }
@@ -285,6 +290,7 @@ int main(int argc, char** argv) {
     server_config.max_workers = config.max_workers;
     server_config.verbose = config.verbose;
     server_config.replay_state_path = config.replay_state_path;
+    server_config.allow_ephemeral_replay_protection = config.allow_ephemeral_replay_protection;
     server_config.authorization_refresh_ms = config.authorization_refresh_ms;
 
     DeviceIngressServer server(server_config, registry, ingest, detectors,

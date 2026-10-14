@@ -189,6 +189,7 @@ if(OpenSSL_FOUND)
         src/net/DeviceRegistry.cpp
         src/net/ObservationIngest.cpp
         src/net/ReplayState.cpp
+        src/net/IngressConfigPolicy.cpp
         src/net/IngestDetectors.cpp
         src/net/TlsTransport.cpp
         src/net/DeviceIngressServer.cpp
@@ -387,6 +388,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/net/DeviceRegistry.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ObservationIngest.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ReplayState.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/IngressConfigPolicy.cpp
         ${CMAKE_SOURCE_DIR}/src/net/IngestDetectors.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
         ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp

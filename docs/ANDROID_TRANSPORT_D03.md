@@ -81,3 +81,20 @@ The transport now enforces the acknowledgment contract rather than trusting it:
 Verification status: compile-verified (signed APK builds, dex contains
 `ObservationTransport`). The behaviours above are exercised by the C++ transport contract
 tests and the native client; they are NOT yet exercised on a physical device.
+
+## D-03.2 Android acknowledgement classification
+
+`duplicate_observation` moved from the PERMANENT set to the RETRYABLE set:
+
+* the hub refuses a sequence while another attempt at it is in flight, and accepts it once
+  that attempt ages out (`in_flight_timeout_ms`), so the refusal is transient by design;
+* a node that treated it as permanent would drop an observation the hub was willing to take,
+  which is the silent-loss failure mode this milestone is about, moved to the client.
+
+Also unchanged from D-03.1 and still enforced: acknowledgements are matched to the exact
+observation id, sequence and protocol version; consent withdrawal/capture disable/revocation
+suspend the transport and flush the queue; the sequence counter adopts the hub's
+`last_sequence` from the welcome so an application restart resumes rather than replaying.
+
+Verification: compile-verified (signed APK builds, 802,667 B, `ObservationTransport` present
+in the dex). Not exercised on a physical device.

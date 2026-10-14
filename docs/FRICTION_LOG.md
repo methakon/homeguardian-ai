@@ -2764,3 +2764,42 @@ binaries-absent path could not exit cleanly.
 
 Fix: guard the trap. Lesson: the "cannot measure here" path is code too, and it is the
 path most likely to be exercised on a host without the optional dependency.
+
+## Incident 50 — The durability comment described an fsync the code never performed
+
+Symptom: none. That is what made it worth recording. `ReplayState::write_atomically` carried
+the comment "write a sibling temporary file, fsync it, then rename over the target", and
+`grep -c fsync src/net/ReplayState.cpp` returned 0. The atomicity claim held (the rename is
+real), the durability claim did not: the temporary file's bytes could still be in the page
+cache when the rename became visible, so a power loss could leave the new name pointing at
+contents that never reached the disk - which on recovery looks exactly like a lost
+watermark.
+
+Cause: the comment was written from the intended design while the implementation used
+`std::ofstream`, which offers no way to sync. Nothing failed, so nothing corrected it.
+
+Fix: an explicit POSIX path - `open`/`write` loop (short writes and `EINTR` handled),
+`fsync(fd)`, `rename(2)`, then `fsync` on the containing DIRECTORY, because the directory
+entry is what survives a power loss. Each step's failure is returned with its errno text and
+rolls the in-memory state back. Lesson: a durability claim in a comment is a claim about
+syscalls; if the syscall is not in the file, the claim is false. Review comments next to
+I/O with the same suspicion as code.
+
+## Incident 51 — A durable record that ran ahead of the work turned a failure into silent loss
+
+Symptom: found by an external audit of the committed source, not by a test. The D-03.1
+commit hook persisted the sequence watermark BEFORE delivery. When the sink failed, the hub
+answered `processing_failed` - and the watermark had already moved, so the device's retry
+was refused as `replayed_sequence`. The observation was gone, the device was told to retry,
+and the hub refused the retry. Both halves looked correct in isolation; the bug lived in
+their order.
+
+Cause: "record before delivery, so a crash cannot make an observation replayable" solved the
+replay-after-crash risk by creating a loss-on-failure risk, and the D-03.1 tests only
+exercised the failure path against a hook that FAILED - never against a hook that SUCCEEDED
+followed by a sink that failed. The test suite proved the parts, not the composition.
+
+Fix: the two-phase record (ADR-018) plus a test that fails a completion and then asserts the
+retry is not `replayed_sequence`. Lesson: when a durable write is placed on either side of
+an operation, test BOTH orderings with the failure on the far side, and assert the retry's
+outcome, not only the first attempt's.

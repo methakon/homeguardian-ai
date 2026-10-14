@@ -406,3 +406,126 @@ not advance. SQLite keeps WAL with `synchronous=FULL`.
   identity).
 - `authorization_refresh_ms` bounds how quickly a revocation reaches an established
   connection; it is a latency bound, not an instant.
+
+## D-03.2 — processing/acknowledgment contract and durable replay durability
+
+Baseline: D-03.1 at `6de98021d4216d608c265ab45b762e3192363124`.
+
+### The defect this corrects
+
+D-03.1 recorded the durable replay watermark BEFORE delivering the observation to the sink.
+If the sink failed, the hub answered `processing_failed` — and the watermark had already
+moved, so the device's retry was refused as `replayed_sequence`. The observation was lost,
+and the only party told was the device, whose retry was now illegal. A durable record that
+runs ahead of the work it records turns a failure into silent loss.
+
+### The contract (chosen and documented)
+
+`accepted` means, in order: authenticated, authorized, bounded, validated, handed to the
+sink WITHOUT the sink throwing, and durably recorded as completed. It does not mean the
+sink's own store holds an alert forever (the sink owns that store), and it does not mean
+exactly-once processing.
+
+The durable record is TWO-PHASE, so that the watermark can never move ahead of the work:
+
+    begin(device, sequence, observation_id)     in memory: this attempt is IN FLIGHT
+    <process: sink / detectors / pipeline>      no durable effect yet
+    complete(device, sequence, observation_id)  durable: the ONE write, the watermark moves
+
+* `begin` marks the attempt in flight IN MEMORY. Its only job is to stop a second attempt at
+  the same sequence inside this process, so making it durable bought nothing and doubled the
+  fsync cost of every observation (measured: 5 observations/s with two durable writes per
+  observation, CPU 0.97% - pure I/O). A concurrent attempt is refused while the marker is
+  fresh (`duplicate_observation`); a marker older than the in-flight timeout means the
+  attempt stalled, so the retry may proceed.
+* `complete` is called ONLY after processing succeeded, and it is the one durable write
+  on the happy path. If it cannot be persisted, the acceptance is not reported: the hub does
+  not claim a durability it cannot stand behind.
+* `abandon` clears the in-memory marker when processing failed, so the sequence is not
+  consumed.
+* A repeat of the last completed observation is answered from the durable record
+  (`completed_repeat`): the acknowledgement was lost, the work was already done, and nothing
+  is processed a second time.
+
+### Every uncertain outcome, stated
+
+| Event | Watermark | Device sees | On retry |
+|-------|-----------|-------------|----------|
+| Validation fails | unchanged | refusal (specific reason) | normal processing |
+| Durable store unusable at completion | unchanged | `processing_failed` | accepted, processed again (fail-closed, no loss) |
+| Sink throws | unchanged (`abandon`) | `processing_failed` | accepted, processed once |
+| `complete` cannot be persisted | unchanged (marker kept) | `processing_failed` | accepted, processed again — a bounded duplicate |
+| Crash after `complete`, before the ack | advanced | no response | ANSWERED as `completed_repeat`; nothing reprocessed |
+| Crash after `begin`, before `complete` | unchanged (the marker was never durable) | no response | accepted, processed again |
+| Crash between the sink's own commit and `complete` | unchanged | no response | processed again unless the device repeats the same observation id (then answered idempotently) |
+
+Exactly-once is NOT claimed. The guarantee is: **at-least-once processing, a watermark that
+never advances on failure, and an idempotent answer for a repeat of the last completed
+observation.** The residual duplicate is the last row above and is bounded to one
+observation per crash.
+
+An interrupted attempt leaves NO durable trace: only completion writes, so a crash
+mid-observation leaves either the previous watermark or the new one and nothing else. That
+is why the retry after a crash is always accepted rather than refused - there is no record
+to misunderstand. The ingress states this at startup instead of implying a recovery record
+it does not keep.
+
+### Durability: the code now does what it says
+
+`ReplayState::write_atomically` claims fsync-before-rename and previously performed NONE
+(its own comment said "fsync it"; there was no `fsync` call anywhere in the file). It now
+performs every step explicitly, and reports each failure:
+
+1. write the sibling temporary file (`open`/`write` loop, short writes and `EINTR` handled),
+2. `fsync` the file, so its bytes are stable before it becomes THE state,
+3. `rename(2)` over the target — atomic within a directory,
+4. `fsync` the containing DIRECTORY, so the rename itself survives a power loss.
+
+Step 4 is the one usually omitted: without it the file's contents can be durable while the
+directory entry still points at the previous name, which on recovery is indistinguishable
+from a lost watermark. A failure at any step is returned with the errno text, the temporary
+file is removed, and in-memory state is rolled back so memory and disk cannot diverge.
+
+### Replay protection is mandatory
+
+`replay_state_path` is required. An unset path is REFUSED, not warned about, because
+"nobody configured it" must not be able to disable replay protection. The only way to run
+without it is `allow_ephemeral_replay_protection: true`, which is refused unless
+`bind_address` is loopback — an isolated test. The rule lives in
+`src/net/IngressConfigPolicy.{h,cpp}`, deliberately TLS-free so the host suite tests it, and
+`DeviceIngressServer::validate_replay_configuration` delegates to it.
+
+### The measured cost of the one durable write
+
+| Metric | D-03.1 | D-03.2 |
+|--------|--------|--------|
+| Round trip per observation | 3.06 ms | 162.5 ms |
+| Sustained throughput | 327 obs/s | 6 obs/s |
+| Ingress CPU during a 200-observation burst | 73.5 % of one core | 1.3 % of one core |
+| Ingress idle RSS | 12,560 kB | 12,488 kB |
+
+D-03.1's 3.06 ms measured a page-cache write: the fsync its comment promised was never
+performed (Incident 50). With `fsync(file)` + `rename` + `fsync(directory)` per accepted
+observation, the boundary is I/O-bound at ~160 ms per observation on this host - the same
+order as the ~93 ms SQLite fsync the project already accepted for alert durability. The
+first revision of this milestone also made the in-flight marker durable, which doubled the
+cost (200 ms / 5 obs/s) without buying anything, since the marker only guards one process;
+completion is now the single durable write. Back-pressure is the bounded 64-observation
+queue; nothing here weakens TLS, consent enforcement or SQLite durability.
+
+### Fault-injection coverage
+
+`tests/net/test_device_transport.cpp` now injects a failure at every boundary:
+
+* validation failure — nothing durable is written, nothing delivered;
+* `begin` unavailable — `processing_failed`, nothing delivered, no completion attempted;
+* sink throws — `abandon` called, watermark unchanged, the retry delivered exactly once;
+* `complete` fails — not reported as an acceptance, the retry is NOT `replayed_sequence`;
+* repeat of a completed observation — answered, not reprocessed (sink not called, and not
+  counted as a new acceptance);
+* concurrent attempt at the same sequence — refused while the marker is fresh;
+* store that cannot be written — `unavailable` with a reason (fault injected by making the
+  state path's parent a regular file, which works even when the suite runs as root);
+* interrupted attempt (begin without complete) — no durable trace, retry accepted;
+* completion that cannot be written — `complete` false, the acceptance not reported, and a
+  retry is not `replayed_sequence`.

@@ -228,3 +228,20 @@ New guarantees, each covered by a test that fails if the behaviour regresses:
 Residual risk (stated, not hidden): physical Android capture is unverified; the Android
 keystore is not used; the hub's own dashboard remains loopback-only inside the container;
 live Home Assistant still needs TLS.
+
+## D-03.2 corrections to the D-03.1 guarantees
+
+* **Honest acknowledgment, corrected.** D-03.1 claimed "a processing failure is never
+  reported as an acceptance" and it was true - but the durable watermark still advanced
+  first, so the failure was reported as a REFUSAL the device could not recover from. The
+  corrected guarantee: a processing failure never consumes a sequence, never reports an
+  acceptance, and the device's retry is always accepted (bounded at-least-once).
+* **Durability claim, corrected.** The documented fsync-before-rename is now performed:
+  file fsync, rename, directory fsync, each with a reported failure (Incident 50).
+* **Replay protection, now mandatory.** An unset `replay_state_path` refuses startup rather
+  than warning; the isolated-test opt-out is refused on any non-loopback bind (ADR-019).
+* **Uncertain outcomes are explicit.** In-flight work at shutdown is discarded, reported at
+  startup, and never used to refuse a retry.
+
+Unchanged: exactly-once is NOT claimed anywhere, and the residual duplicate window is
+documented with the crash point that causes it.

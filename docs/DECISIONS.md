@@ -900,3 +900,42 @@ dropped and the watermark does not advance.
 **Consequences.** A refusal is never reported as an acceptance; a device that is revoked,
 unpaired or denied consent stops contributing on its next observation without a restart;
 devices are unaffected by each other's authorization changes.
+
+## ADR-018 — Two-phase durable replay record, with an at-least-once contract
+
+**Context.** D-03.1 persisted the sequence watermark before delivering to the sink. A sink
+failure therefore answered `processing_failed` while the watermark had already advanced, so
+the device's retry was refused as a replay and the observation was silently lost. The
+alternative - simply recording after delivery - reopens the window the watermark exists to
+close: a crash between processing and recording lets the same observation be processed
+again, and an attacker who can crash the hub gets a replay primitive.
+
+**Decision.** Split the record in two. `begin(device, sequence, observation_id)` marks an
+attempt in flight IN MEMORY before processing (deliberately not durable - it only guards
+this process, and persisting it doubled the fsync cost of every observation);
+`complete(...)` advances the watermark durably, and only after processing succeeded;
+`abandon(...)` clears the marker when it did not. A repeat of the
+last completed observation is answered from the record instead of being reprocessed. The
+contract is explicitly at-least-once with idempotent acknowledgment of an unacknowledged
+repeat - NOT exactly-once, and the remaining crash window is documented rather than hidden.
+Concurrent attempts at the same sequence are refused while the in-flight marker is fresh; a
+marker older than `in_flight_timeout_ms` is a dead attempt and the retry proceeds.
+
+**Consequences.** A processing failure never consumes a sequence, an acceptance is never
+reported for work that failed, and an unacknowledged observation is answered rather than
+duplicated. The cost is one durable write per observation attempt (two on the happy path),
+bounded to the device count.
+
+## ADR-019 — Durable replay protection is mandatory; the opt-out is loopback-only
+
+**Context.** `setup_replay_protection()` accepted an empty `replay_state_path` and printed a
+warning. A live boundary could therefore run with replay protection disabled by omission,
+and a warning in a container log is not a control.
+
+**Decision.** An unset path is refused. The only way to run without durable replay state is
+`allow_ephemeral_replay_protection: true`, which is itself refused unless the bind address
+is loopback. The policy is a pure function in `src/net/IngressConfigPolicy.{h,cpp}` - free
+of TLS and sockets - so the host suite tests it rather than requiring a container.
+
+**Consequences.** A live deployment cannot lose replay protection silently. Isolated tests
+keep a documented path, and the ingress announces when it is used.

@@ -30,6 +30,7 @@ ObservationIngest::ObservationIngest(DeviceRegistry& registry, Config cfg, Clock
 
 void ObservationIngest::reset_counters() {
     accepted_ = 0;
+    idempotent_repeats_ = 0;
     rejected_ = 0;
     claim_unsubstantiated_ = 0;
     last_reject_ = RejectReason::none;
@@ -145,6 +146,22 @@ ObservationIngest::Result ObservationIngest::accept(const PeerContext& peer,
                           message.acquired_at_ms < device->last_observation_at_ms;
 
     // 8. Replay and duplicate suppression.
+    //
+    //    FIRST the uncertain-outcome case. If the hub durably COMPLETED this very
+    //    observation and the acknowledgment never reached the device, the retry must be
+    //    ANSWERED, not refused: the watermark legitimately already covers this sequence, so
+    //    this check has to precede the sequence test or an unacknowledged observation would
+    //    be silently refused forever. Nothing is processed again.
+    if (replay_hooks_.is_completed_repeat &&
+        replay_hooks_.is_completed_repeat(peer.authenticated_device_id, message.sequence,
+                                          message.observation_id)) {
+        result.accepted = true;
+        result.reason = RejectReason::none;
+        result.idempotent_repeat = true;
+        result.detail = "already processed; answered from the durable record";
+        ++idempotent_repeats_;
+        return result;
+    }
     if (!registry_.sequence_is_new(peer.authenticated_device_id, message.sequence)) {
         return reject(RejectReason::replayed_sequence, "sequence is not newer than the last accepted");
     }
@@ -202,48 +219,89 @@ ObservationIngest::Result ObservationIngest::accept(const PeerContext& peer,
         return reject(RejectReason::invalid_value, std::string("observation invalid: ") + e.what());
     }
 
-    // 12. DELIVER FIRST, then commit the stream state.
+    // 12. TWO-PHASE DURABLE RECORD: BEGIN -> process -> COMPLETE.
     //
-    //     WHAT "accepted" MEANS (documented contract): the observation was
-    //     authenticated, authorized, bounded, validated and handed to the delivery
-    //     sink. It does NOT promise that an alert was durably committed - the sink
-    //     persists where it chooses and this function cannot see that outcome. What
-    //     it DOES promise is that a reported acceptance is not a lie about the
-    //     processing step: if the sink throws, the observation is refused with
-    //     processing_failed, the watermark does NOT advance, and the device may
-    //     retry. Committing first (as this code did) made a downstream failure
-    //     indistinguishable from success and silently swallowed the retry.
-    pending_.push_back(std::move(observation));
-    if (commit_hook_) {
+    //     WHAT "accepted" MEANS (documented contract): the observation was authenticated,
+    //     authorized, bounded and validated, the sink accepted it without throwing, and the
+    //     hub recorded its completion durably. It does NOT claim that the sink's own store
+    //     holds an alert forever (the sink owns that), and it does NOT claim exactly-once
+    //     processing - see docs/DISTRIBUTED_DEVICE_TRANSPORT_D03.md for the full contract and
+    //     for the crash window that remains.
+    //
+    //     ORDERING RULE: the watermark may only ever move AFTER processing succeeded, never
+    //     before. Committing first (as this code did) let a downstream failure look like
+    //     success in the durable state, so the device's retry was refused as a replay and the
+    //     observation was lost with nobody told.
+    bool durable_in_flight = false;
+    if (replay_hooks_.begin) {
         std::string why;
-        if (!commit_hook_(peer.authenticated_device_id, message.sequence, &why)) {
-            // Durable replay state could not be advanced. Refuse rather than deliver:
-            // an acceptance that is not durable would be replayed after a restart.
-            pending_.pop_back();
-            return reject(RejectReason::processing_failed,
-                          why.empty() ? "durable replay state unavailable" : why);
+        const DurableBegin began = replay_hooks_.begin(peer.authenticated_device_id,
+                                                       message.sequence, message.observation_id, &why);
+        switch (began) {
+            case DurableBegin::marked:
+                durable_in_flight = true;
+                break;
+            case DurableBegin::already_completed:
+                // A concurrent attempt completed it between the pre-check and here.
+                result.accepted = true;
+                result.reason = RejectReason::none;
+                result.idempotent_repeat = true;
+                result.detail = "already processed; answered from the durable record";
+                ++idempotent_repeats_;
+                return result;
+            case DurableBegin::concurrent:
+                return reject(RejectReason::duplicate_observation,
+                              why.empty() ? "the same sequence is already in flight" : why);
+            case DurableBegin::replayed:
+                return reject(RejectReason::replayed_sequence,
+                              why.empty() ? "sequence is at or behind the completed watermark" : why);
+            case DurableBegin::unavailable:
+            default:
+                return reject(RejectReason::processing_failed,
+                              why.empty() ? "durable replay state unavailable" : why);
         }
     }
+
+    pending_.push_back(std::move(observation));
     if (sink) {
         try {
             drain(sink);
         } catch (const std::exception& e) {
-            // DROP the failed item. It was refused (the device is told
-            // processing_failed), so leaving it queued would deliver it a second time
-            // when the device retries the same sequence - a duplicate the pipeline
-            // would see as a second observation. Recovery is the device's retry, which
-            // is why the watermark below has not moved.
+            // DROP the failed item: it was refused, so leaving it queued would deliver it a
+            // second time when the device retries. Then ABANDON the durable marker, because
+            // nothing consumed this sequence - the retry must be accepted, not called a
+            // replay.
             if (!pending_.empty()) pending_.pop_front();
+            if (durable_in_flight && replay_hooks_.abandon) {
+                replay_hooks_.abandon(peer.authenticated_device_id, message.sequence);
+            }
             return reject(RejectReason::processing_failed,
                           std::string("downstream processing failed: ") + e.what());
         } catch (...) {
             if (!pending_.empty()) pending_.pop_front();
+            if (durable_in_flight && replay_hooks_.abandon) {
+                replay_hooks_.abandon(peer.authenticated_device_id, message.sequence);
+            }
             return reject(RejectReason::processing_failed, "downstream processing failed");
         }
     }
 
-    // 13. Commit the stream state only now that delivery actually happened, so
-    //     neither a refused message nor a failed delivery consumes a sequence.
+    // 13. COMPLETE only after processing succeeded. If the completion cannot be recorded,
+    //     the acceptance is NOT reported: an acceptance the hub cannot stand behind is
+    //     exactly the lie this contract forbids. The in-flight marker is deliberately left in
+    //     place so the retry is accepted (bounded at-least-once) rather than refused as a
+    //     replay (silent loss).
+    if (durable_in_flight) {
+        std::string why;
+        if (!replay_hooks_.complete(peer.authenticated_device_id, message.sequence,
+                                    message.observation_id, &why)) {
+            return reject(RejectReason::processing_failed,
+                          why.empty() ? "durable replay state could not be advanced" : why);
+        }
+    }
+
+    // 14. Commit the stream state, so neither a refused message nor a failed delivery
+    //     consumes a sequence.
     registry_.commit_sequence(peer.authenticated_device_id, message.sequence);
     registry_.note_observation_timestamp(peer.authenticated_device_id, message.acquired_at_ms);
     remember_id(peer.authenticated_device_id, message.observation_id);

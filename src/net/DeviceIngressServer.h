@@ -45,9 +45,13 @@ public:
         size_t max_queued_connections = 16;  // bounded accept queue
         size_t max_workers = 2;              // bounded worker threads
         // Durable replay protection: where the per-device sequence watermark is
-        // persisted. Empty disables persistence (in-memory only) and says so at
-        // startup; a production boundary should always set it.
+        // persisted. MANDATORY for the ingress - without it, restarting the hub makes an
+        // already-accepted observation acceptable again. The ONLY way to run without it is
+        // `allow_ephemeral_replay_protection` below PLUS a loopback bind, which is an
+        // isolated-test configuration and is refused for any other bind address.
         std::string replay_state_path;
+        // Explicit, loud opt-out for isolated tests only. Still refuses a non-loopback bind.
+        bool allow_ephemeral_replay_protection = false;
         // How often the operator's authorization files are re-checked for changes.
         // The check is a stat() per observation and a re-read only when the file
         // changed, so this is a latency bound on "how fast does a revocation take
@@ -112,8 +116,14 @@ private:
     // continuing under the stale permission it last read.
     bool authorization_available_locked(std::string* detail) const;
 
-    // Load durable replay watermarks and install the pre-delivery commit hook.
+    // Load durable replay watermarks and install the two-phase replay hooks.
     bool setup_replay_protection(std::string* error);
+
+public:
+    // Replay protection is mandatory for a live ingress. Pure and therefore testable
+    // without sockets: returns false with a reason when the configuration would run the
+    // boundary without durable replay protection where it matters.
+    static bool validate_replay_configuration(const Config& config, std::string* error);
 
     Config config_;
     DeviceRegistry& registry_;

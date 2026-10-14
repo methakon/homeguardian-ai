@@ -666,3 +666,16 @@ tools/provision_ca.sh init --ca-dir ~/offline-ca --runtime-dir deploy/docker/cer
 tools/provision_ca.sh issue <device-id> --ca-dir ~/offline-ca \
   --runtime-dir deploy/docker/certs --device-dir ~/device-keys
 ```
+
+## D-03.2 verification commands
+
+```bash
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[net][replay]"    # two-phase record, idempotent repeat
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[net][processing]" # fault injection per boundary
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[net][policy]"     # replay protection is mandatory
+```
+
+The ingress now REFUSES to start with an empty `replay_state_path` unless
+`allow_ephemeral_replay_protection` is set AND the bind address is loopback. If a test or
+scratch run fails with `replay_state_path is required`, that is the control working: pass a
+path, or opt out explicitly on loopback.

@@ -242,6 +242,29 @@ grep -q "reason=identity_mismatch" <<<"$OUT" \
   || bad "identity mismatch was not refused" "$(grep -oE 'reason=[a-z_]+' <<<"$OUT" | sort -u | tr '\n' ' ')"
 
 # ---------------------------------------------------------------- negative controls
+# ---------------------------------------------------------------- live-session revocation
+# Revocation must take effect on an OPEN connection, not only at connection setup: the
+# client is still sending while the operator revokes it mid-stream.
+client --mode normal --count 14 --interval-ms 500 >"$STAGE/live.log" 2>&1 &
+CLIENT_PID=$!
+sleep 3
+python3 - "$CERTDIR/revocations.json" "$DEVICE" <<'PY'
+import json, sys
+json.dump([{"device_id": sys.argv[2], "reason": "revoked mid-session"}], open(sys.argv[1], "w"), indent=2)
+PY
+wait "$CLIENT_PID"
+if grep -q "reason=device_revoked" "$STAGE/live.log"; then
+  ok "a device revoked MID-SESSION is refused on its next observation"
+elif grep -q "done accepted=14" "$STAGE/live.log"; then
+  bad "revocation did not reach an established connection"
+else
+  bad "mid-session revocation was inconclusive" "$(grep -o 'reason=[a-z_]*' "$STAGE/live.log" | tail -1)"
+fi
+printf '[]\n' > "$CERTDIR/revocations.json"
+# NOTE ORDER: this runs BEFORE the revoke/un-revoke cycle below. Revoking clears the
+# device's pairing and un-revoking does not restore it, so a mid-session revocation
+# asserted after that cycle would be refused as device_unpaired, not device_revoked -
+# the assertion would be measuring the wrong refusal.
 printf '[{"device_id":"%s","reason":"e2e revocation test"}]\n' "$DEVICE" > "$CERTDIR/revocations.json"
 OUT="$(client --mode normal --count 1 --expect-reject)"
 grep -q "device_revoked" <<<"$OUT" && ok "after revocation the device is refused without a restart" \
@@ -262,25 +285,6 @@ else
   bad "unregistered device was not refused" "$(tail -1 <<<"$OUT" | cut -c1-90)"
 fi
 
-# ---------------------------------------------------------------- live-session revocation
-# Revocation must take effect on an OPEN connection, not only at connection setup: the
-# client is still sending while the operator revokes it mid-stream.
-client --mode normal --count 14 --interval-ms 500 >"$STAGE/live.log" 2>&1 &
-CLIENT_PID=$!
-sleep 3
-python3 - "$CERTDIR/revocations.json" "$DEVICE" <<'PY'
-import json, sys
-json.dump([{"device_id": sys.argv[2], "reason": "revoked mid-session"}], open(sys.argv[1], "w"), indent=2)
-PY
-wait "$CLIENT_PID"
-if grep -q "reason=device_revoked" "$STAGE/live.log"; then
-  ok "a device revoked MID-SESSION is refused on its next observation"
-elif grep -q "done accepted=14" "$STAGE/live.log"; then
-  bad "revocation did not reach an established connection"
-else
-  bad "mid-session revocation was inconclusive" "$(grep -o 'reason=[a-z_]*' "$STAGE/live.log" | tail -1)"
-fi
-printf '[]\n' > "$CERTDIR/revocations.json"
 
 # ---------------------------------------------------------------- ports + isolation
 porthub="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$HUB_CID")"

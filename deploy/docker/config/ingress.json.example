@@ -18,8 +18,10 @@
   "handshake_timeout_ms": 5000,
   "_evidence_note": "OPT-IN. Absent or empty keeps the built-in conservative default ({\"activity-energy\"}), under which device observations are recorded, audited and displayed but cast NO fusion vote and can never raise an alert by themselves. Listing the ingested detector ids (they are \"sensor.<source_type>\", e.g. \"sensor.motion\" for a motion observation) lets that evidence participate in fusion. No setting here can produce Severity::critical.",
   "evidence_detector_ids": [],
-  "_replay_note": "D-03.1. The per-device sequence watermark is persisted HERE so that restarting the hub is not a way to replay an already accepted observation. It is a counter, never a timestamp. Default: beside audit_db_path. Empty string DISABLES durable replay protection, which the ingress reports loudly at startup because a restart would then reset the watermarks.",
+  "_replay_note": "D-03.2. The per-device sequence watermark is persisted HERE and is MANDATORY: without it, restarting the hub would make an already-accepted observation acceptable again. The record is two-phase (begin before processing, complete after it), so a processing failure never consumes a sequence, and a repeat of the last completed observation is answered idempotently instead of being processed twice. It is a counter, never a timestamp. Default: beside audit_db_path.",
   "replay_state_path": "/data/device_replay_state.json",
+  "_ephemeral_note": "D-03.2. Isolated-test escape hatch ONLY. Setting this true runs the ingress with NO durable replay state; it is still REFUSED unless bind_address is loopback (127.0.0.1 / ::1 / localhost), so a deployment cannot run without replay protection by accident. Never set it on a real boundary.",
+  "allow_ephemeral_replay_protection": false,
   "_authorization_note": "D-03.1. Authorization (revocation, consent, capture) is re-checked at delivery time, so withdrawing consent or revoking a device takes effect on an established connection within this many milliseconds. It is bounded by a re-read deadline, not by filesystem timestamp granularity.",
   "authorization_refresh_ms": 250,
   "verbose": false

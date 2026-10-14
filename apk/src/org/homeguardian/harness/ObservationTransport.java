@@ -125,7 +125,7 @@ public class ObservationTransport {
             "bad_frame", "bad_version", "bad_json", "oversized", "unknown_kind",
             "unknown_source_type", "unknown_observation_type", "invalid_value",
             "malformed_timestamp", "stale_timestamp", "replayed_sequence",
-            "duplicate_observation", "device_unknown", "device_revoked",
+            "device_unknown", "device_revoked",
             "device_unpaired", "identity_mismatch", "unauthorized"));
 
     /** Reasons that mean "authorization is gone": stop, drop everything, wait for the operator. */
@@ -135,7 +135,11 @@ public class ObservationTransport {
 
     /** Reasons worth retrying: the hub was busy or could not durably commit. */
     private static final Set<String> RETRYABLE_REASONS = new HashSet<String>(Arrays.asList(
-            "queue_full", "processing_failed"));
+            "queue_full", "processing_failed",
+            // Transient by design: the hub refuses a sequence while another attempt at it is
+            // in flight, and accepts it again once that attempt ages out. Treating it as
+            // permanent would drop an observation the hub was willing to take.
+            "duplicate_observation"));
 
     private static final int MAX_ATTEMPTS_PER_OBSERVATION = 4;
 

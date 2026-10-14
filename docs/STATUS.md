@@ -216,3 +216,19 @@ suite concurrency PASS; retention 8/8; context-exclusion probe 6/6; footprint me
 
 Still blocked: physical Android acceptance (no device), Alexa (Amazon), live Home
 Assistant (needs TLS).
+
+## D-03.2 — replay/processing consistency (complete)
+
+Corrected the ordering defect the external audit found (a durable watermark that advanced
+before processing, turning a sink failure into silent loss), made the documented durability
+real (file fsync + directory fsync, failures reported), and made replay protection mandatory
+for a live ingress with a loopback-only isolated-test opt-out.
+
+Executed: host suite 432 cases / 4,642 assertions; ctest 100%; ASan/UBSan clean; TLS
+acceptance 24/24 (incl. 3 new mandatory-replay cases); TLS identity 9/9; CA isolation 14/14;
+end-to-end 38/38; D-01 26/26; suite concurrency PASS; retention 8/8. Fault injection at
+every boundary: validation, begin, sink, complete, repeat, concurrency, unwritable store,
+dead-process marker.
+
+Still blocked: physical Android acceptance (no device); Alexa (Amazon); live Home Assistant
+(needs TLS).

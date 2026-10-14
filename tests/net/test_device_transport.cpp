@@ -8,6 +8,7 @@
 #include "net/DeviceRegistry.h"
 #include "net/IngestDetectors.h"
 #include "net/ReplayState.h"
+#include "net/IngressConfigPolicy.h"
 #include "net/ObservationIngest.h"
 
 #include <chrono>
@@ -993,18 +994,62 @@ TEST_CASE("authorization is re-evaluated during a live session (D-03.1 section D
     }
 }
 
-TEST_CASE("replay state survives a restart and is not built on trust (D-03.1 section E)",
+// Wire an ingest to a ReplayState exactly as DeviceIngressServer does, so these tests
+// exercise the REAL outcome mapping instead of a simplified stand-in.
+ObservationIngest::ReplayHooks replay_hooks_for(ReplayState& state) {
+    ObservationIngest::ReplayHooks hooks;
+    hooks.is_completed_repeat = [&state](const std::string& device_id, uint64_t sequence,
+                                         const std::string& observation_id) {
+        return state.is_completed_repeat(device_id, sequence, observation_id);
+    };
+    hooks.begin = [&state](const std::string& device_id, uint64_t sequence,
+                           const std::string& observation_id, std::string* reason) {
+        switch (state.begin(device_id, sequence, observation_id, reason)) {
+            case ReplayState::BeginOutcome::marked:
+                return ObservationIngest::DurableBegin::marked;
+            case ReplayState::BeginOutcome::completed_repeat:
+                return ObservationIngest::DurableBegin::already_completed;
+            case ReplayState::BeginOutcome::replayed:
+                return ObservationIngest::DurableBegin::replayed;
+            case ReplayState::BeginOutcome::duplicate:
+                return ObservationIngest::DurableBegin::concurrent;
+            case ReplayState::BeginOutcome::disabled:
+                return ObservationIngest::DurableBegin::marked;
+            case ReplayState::BeginOutcome::unavailable:
+            default:
+                return ObservationIngest::DurableBegin::unavailable;
+        }
+    };
+    hooks.complete = [&state](const std::string& device_id, uint64_t sequence,
+                              const std::string& observation_id, std::string* reason) {
+        return state.complete(device_id, sequence, observation_id, reason);
+    };
+    hooks.abandon = [&state](const std::string& device_id, uint64_t sequence) {
+        state.abandon(device_id, sequence);
+    };
+    return hooks;
+}
+
+TEST_CASE("replay state is durable, two-phase and honest about uncertain outcomes (D-03.2)",
           "[net][replay]") {
     const std::string path = temp_path("replay-state.json");
     std::string why;
 
-    SECTION("a watermark round-trips through a restart") {
+    SECTION("a watermark round-trips through a restart, and only COMPLETION advances it") {
         {
             ReplayState first(ReplayState::Config{path, 8});
             REQUIRE(first.load(&why) == ReplayState::LoadOutcome::absent);  // first run
-            REQUIRE(first.record("hg-1", 7, &why));
-            REQUIRE(first.record("hg-1", 9, &why));  // raises
-            REQUIRE(first.record("hg-1", 4, &why));  // NEVER lowers
+            // BEGIN alone must not consume a sequence: an attempt that has not finished has
+            // no business moving the watermark.
+            REQUIRE(first.begin("hg-1", 7, "obs-7", &why) == ReplayState::BeginOutcome::marked);
+            REQUIRE(first.watermarks().at("hg-1") == 0);
+            REQUIRE(first.complete("hg-1", 7, "obs-7", &why));
+            REQUIRE(first.watermarks().at("hg-1") == 7);
+            REQUIRE(first.begin("hg-1", 9, "obs-9", &why) == ReplayState::BeginOutcome::marked);
+            REQUIRE(first.complete("hg-1", 9, "obs-9", &why));
+            REQUIRE(first.watermarks().at("hg-1") == 9);
+            // NEVER lowers, and re-completing is idempotent.
+            REQUIRE(first.complete("hg-1", 4, "obs-4", &why));
             REQUIRE(first.watermarks().at("hg-1") == 9);
         }
         ReplayState restarted(ReplayState::Config{path, 8});
@@ -1013,32 +1058,51 @@ TEST_CASE("replay state survives a restart and is not built on trust (D-03.1 sec
         ::unlink(path.c_str());
     }
 
-    SECTION("a seeded watermark refuses a replay of an already accepted observation") {
+    SECTION("an unacknowledged repeat is ANSWERED and a stale replay is refused") {
         Fixture f;
         {
             ReplayState state(ReplayState::Config{path, 8});
             state.load(&why);
-            REQUIRE(state.record(f.device_id, 5, &why));
+            REQUIRE(state.begin(f.device_id, 5, "obs-5", &why) == ReplayState::BeginOutcome::marked);
+            REQUIRE(state.complete(f.device_id, 5, "obs-5", &why));
         }
         ReplayState restarted(ReplayState::Config{path, 8});
         REQUIRE(restarted.load(&why) == ReplayState::LoadOutcome::loaded);
+        REQUIRE(restarted.is_completed_repeat(f.device_id, 5, "obs-5"));
+        REQUIRE_FALSE(restarted.is_completed_repeat(f.device_id, 5, "obs-other"));
         for (const auto& entry : restarted.watermarks()) {
             REQUIRE(f.registry.seed_sequence_watermark(entry.first, entry.second));
         }
         const int64_t now_ms = ObservationIngest::system_clock_ms()();
         const auto clock = [now_ms] { return now_ms; };
         ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+        ingest.set_replay_hooks(replay_hooks_for(restarted));
         std::vector<SecurityObservation> stored;
         const auto sink = [&](const SecurityObservation& o) { stored.push_back(o); };
 
-        // The exact observation the hub accepted BEFORE the restart: refused.
-        const auto replayed =
+        // 1. The SAME observation the hub already completed and recorded, retried after the
+        //    acknowledgment was lost: answered from the durable record, NOT processed again.
+        const auto repeat =
             ingest.accept(f.peer(), observation_message(f.device_id, 5, now_ms - 1000), sink);
-        REQUIRE_FALSE(replayed.accepted);
-        REQUIRE(replayed.reason == RejectReason::replayed_sequence);
-        // A genuinely new sequence is still accepted.
-        REQUIRE(ingest.accept(f.peer(), observation_message(f.device_id, 6, now_ms - 1000), sink)
+        REQUIRE(repeat.accepted);
+        REQUIRE(repeat.idempotent_repeat);
+        REQUIRE(stored.empty());                // nothing was delivered a second time
+        REQUIRE(ingest.accepted_count() == 0);  // and it is not counted as a new acceptance
+        REQUIRE(ingest.idempotent_repeat_count() == 1);
+
+        // 2. A DIFFERENT observation claiming the same sequence is a replay: refused.
+        DeviceMessage impostor = observation_message(f.device_id, 5, now_ms - 1000);
+        impostor.observation_id = "obs-other";
+        const auto stale = ingest.accept(f.peer(), impostor, sink);
+        REQUIRE_FALSE(stale.accepted);
+        REQUIRE(stale.reason == RejectReason::replayed_sequence);
+
+        // 3. A genuinely new sequence is still accepted, processed and completed.
+        REQUIRE(ingest
+                    .accept(f.peer(), observation_message(f.device_id, 6, now_ms - 1000), sink)
                     .accepted);
+        REQUIRE(stored.size() == 1);
+        REQUIRE(restarted.watermarks().at(f.device_id) == 6);
         ::unlink(path.c_str());
     }
 
@@ -1064,9 +1128,11 @@ TEST_CASE("replay state survives a restart and is not built on trust (D-03.1 sec
     SECTION("the persisted state is bounded") {
         ReplayState bounded(ReplayState::Config{path, 2});
         REQUIRE(bounded.load(&why) == ReplayState::LoadOutcome::absent);
-        REQUIRE(bounded.record("a", 1, &why));
-        REQUIRE(bounded.record("b", 1, &why));
-        REQUIRE_FALSE(bounded.record("c", 1, &why));  // refuses rather than grows
+        REQUIRE(bounded.begin("a", 1, "obs-a", &why) == ReplayState::BeginOutcome::marked);
+        REQUIRE(bounded.complete("a", 1, "obs-a", &why));
+        REQUIRE(bounded.begin("b", 1, "obs-b", &why) == ReplayState::BeginOutcome::marked);
+        // A third device does not fit: refused rather than grown.
+        REQUIRE(bounded.begin("c", 1, "obs-c", &why) == ReplayState::BeginOutcome::unavailable);
         REQUIRE(bounded.size() == 2);
         ::unlink(path.c_str());
         ::unlink((path + ".tmp").c_str());
@@ -1076,7 +1142,8 @@ TEST_CASE("replay state survives a restart and is not built on trust (D-03.1 sec
         {
             ReplayState state(ReplayState::Config{path, 8});
             state.load(&why);
-            REQUIRE(state.record("hg-2", 3, &why));
+            REQUIRE(state.begin("hg-2", 3, "obs-3", &why) == ReplayState::BeginOutcome::marked);
+            REQUIRE(state.complete("hg-2", 3, "obs-3", &why));
         }
         // Simulate a crash mid-write: a partial temporary file beside a good one.
         {
@@ -1088,6 +1155,223 @@ TEST_CASE("replay state survives a restart and is not built on trust (D-03.1 sec
         REQUIRE(after_crash.watermarks().at("hg-2") == 3);  // the good file, not the fragment
         ::unlink(path.c_str());
         ::unlink((path + ".tmp").c_str());
+    }
+
+    SECTION("an interrupted attempt leaves NO durable trace, so the retry is never blocked") {
+        {
+            ReplayState state(ReplayState::Config{path, 8});
+            state.load(&why);
+            // The process dies here: begin() is in-memory, complete() never ran, so the
+            // state file exists but carries no watermark at all.
+            REQUIRE(state.begin("hg-3", 4, "obs-4", &why) == ReplayState::BeginOutcome::marked);
+        }
+        ReplayState recovered(ReplayState::Config{path, 8});
+        const auto outcome = recovered.load(&why);
+        // Nothing durable was ever written, so there is no state file and `absent` is the
+        // correct, expected reading - not an error and not a malformed file.
+        REQUIRE(outcome == ReplayState::LoadOutcome::absent);
+        REQUIRE(recovered.watermarks().count("hg-3") == 0);  // the sequence was NOT consumed
+        // And the retry is therefore accepted and completed, with no loss and no replay hole.
+        REQUIRE(recovered.begin("hg-3", 4, "obs-4", &why) == ReplayState::BeginOutcome::marked);
+        REQUIRE(recovered.complete("hg-3", 4, "obs-4", &why));
+        REQUIRE(recovered.watermarks().at("hg-3") == 4);  // and now it is
+        ::unlink(path.c_str());
+    }
+
+    SECTION("a concurrent attempt at the same sequence is refused while the marker is fresh") {
+        ReplayState state(ReplayState::Config{path, 8});
+        state.load(&why);
+        REQUIRE(state.begin("hg-4", 2, "obs-2", &why) == ReplayState::BeginOutcome::marked);
+        REQUIRE(state.begin("hg-4", 2, "obs-2", &why) == ReplayState::BeginOutcome::duplicate);
+        // The same sequence with a DIFFERENT observation is refused too: one attempt per
+        // sequence, whichever identity it claims.
+        REQUIRE(state.begin("hg-4", 2, "obs-2b", &why) == ReplayState::BeginOutcome::duplicate);
+        REQUIRE(state.duplicate_refusals() == 2);
+        ::unlink(path.c_str());
+        ::unlink((path + ".tmp").c_str());
+    }
+
+    SECTION("a completion that cannot be written is reported, never silently ignored") {
+        // Fault injection that also works as root: the state path's PARENT is a regular
+        // file, so creating the temporary file fails with ENOTDIR.
+        const std::string blocker = temp_path("blocker-file");
+        {
+            std::ofstream out(blocker, std::ios::trunc);
+            out << "not a directory";
+        }
+        ReplayState broken(ReplayState::Config{blocker + "/state.json", 8});
+        // begin() is in-memory, so it succeeds; the ONE durable write is completion, and
+        // that is where an unusable store must be caught.
+        REQUIRE(broken.begin("hg-6", 1, "obs-1", &why) == ReplayState::BeginOutcome::marked);
+        REQUIRE_FALSE(broken.complete("hg-6", 1, "obs-1", &why));
+        REQUIRE_FALSE(why.empty());
+        REQUIRE(broken.write_failure_count() >= 1);
+        REQUIRE(broken.flush(&why) == false);
+        ::unlink(blocker.c_str());
+    }
+}
+
+TEST_CASE("fault injection at every boundary of the accept path (D-03.2 section 1)",
+          "[net][processing]") {
+    const int64_t now_ms = ObservationIngest::system_clock_ms()();
+    const auto clock = [now_ms] { return now_ms; };
+    Fixture f;
+
+    SECTION("a validation failure never touches the durable store") {
+        ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+        int begin_calls = 0;
+        int delivered = 0;
+        ObservationIngest::ReplayHooks hooks;
+        hooks.begin = [&begin_calls](const std::string&, uint64_t, const std::string&,
+                                     std::string*) {
+            ++begin_calls;
+            return ObservationIngest::DurableBegin::marked;
+        };
+        hooks.complete = [](const std::string&, uint64_t, const std::string&, std::string*) {
+            return true;
+        };
+        ingest.set_replay_hooks(hooks);
+        DeviceMessage bad = observation_message(f.device_id, 1, now_ms - 1000);
+        bad.source_type = "not-a-listed-source-type";
+        const auto result = ingest.accept(f.peer(), bad, [&](const SecurityObservation&) {
+            ++delivered;
+        });
+        REQUIRE_FALSE(result.accepted);
+        REQUIRE(begin_calls == 0);  // nothing durable was written for a refused observation
+        REQUIRE(delivered == 0);
+    }
+
+    SECTION("a durable BEGIN failure fails closed and delivers nothing") {
+        ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+        int delivered = 0;
+        int complete_calls = 0;
+        ObservationIngest::ReplayHooks hooks;
+        hooks.begin = [](const std::string&, uint64_t, const std::string&, std::string* reason) {
+            if (reason != nullptr) *reason = "durable store unavailable";
+            return ObservationIngest::DurableBegin::unavailable;
+        };
+        hooks.complete = [&complete_calls](const std::string&, uint64_t, const std::string&,
+                                           std::string*) {
+            ++complete_calls;
+            return true;
+        };
+        ingest.set_replay_hooks(hooks);
+        const auto result = ingest.accept(f.peer(), observation_message(f.device_id, 1, now_ms - 1000),
+                                          [&](const SecurityObservation&) { ++delivered; });
+        REQUIRE_FALSE(result.accepted);
+        REQUIRE(result.reason == RejectReason::processing_failed);
+        REQUIRE(delivered == 0);
+        REQUIRE(complete_calls == 0);
+        REQUIRE(ingest.pending() == 0);
+    }
+
+    SECTION("a sink failure abandons the marker, and the retry is accepted once") {
+        ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+        int abandons = 0;
+        int completes = 0;
+        ObservationIngest::ReplayHooks hooks;
+        hooks.begin = [](const std::string&, uint64_t, const std::string&, std::string*) {
+            return ObservationIngest::DurableBegin::marked;
+        };
+        hooks.complete = [&completes](const std::string&, uint64_t, const std::string&,
+                                      std::string*) {
+            ++completes;
+            return true;
+        };
+        hooks.abandon = [&abandons](const std::string&, uint64_t) { ++abandons; };
+        ingest.set_replay_hooks(hooks);
+
+        const auto failed = ingest.accept(f.peer(), observation_message(f.device_id, 1, now_ms - 1000),
+                                          [](const SecurityObservation&) {
+                                              throw std::runtime_error("alert store down");
+                                          });
+        REQUIRE_FALSE(failed.accepted);
+        REQUIRE(failed.reason == RejectReason::processing_failed);
+        REQUIRE(abandons == 1);   // the sequence was NOT consumed
+        REQUIRE(completes == 0);
+        REQUIRE(ingest.pending() == 0);
+
+        // The retry is accepted and delivered exactly once.
+        std::vector<SecurityObservation> stored;
+        REQUIRE(ingest
+                    .accept(f.peer(), observation_message(f.device_id, 1, now_ms - 1000),
+                            [&](const SecurityObservation& o) { stored.push_back(o); })
+                    .accepted);
+        REQUIRE(stored.size() == 1);
+        REQUIRE(completes == 1);
+    }
+
+    SECTION("a COMPLETE failure is never reported as an acceptance, and the retry survives") {
+        ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+        int completes = 0;
+        ObservationIngest::ReplayHooks hooks;
+        hooks.begin = [](const std::string&, uint64_t, const std::string&, std::string*) {
+            return ObservationIngest::DurableBegin::marked;  // the watermark is still behind
+        };
+        hooks.complete = [&completes](const std::string&, uint64_t, const std::string&,
+                                      std::string* reason) {
+            ++completes;
+            if (reason != nullptr) *reason = "cannot sync the replay state directory";
+            return false;
+        };
+        ingest.set_replay_hooks(hooks);
+
+        int delivered = 0;
+        const auto result = ingest.accept(f.peer(), observation_message(f.device_id, 1, now_ms - 1000),
+                                          [&](const SecurityObservation&) { ++delivered; });
+        REQUIRE_FALSE(result.accepted);                       // no falsely successful ack
+        REQUIRE(result.reason == RejectReason::processing_failed);
+        REQUIRE(delivered == 1);                              // processing did happen
+        REQUIRE(result.detail.find("replay state") != std::string::npos);
+
+        // The retry is NOT refused as a replay (which would be silent loss): the watermark
+        // never moved, so it is processed again. It is also not falsely acknowledged, because
+        // the store still cannot be written.
+        const auto retried = ingest.accept(
+            f.peer(), observation_message(f.device_id, 1, now_ms - 1000),
+            [&](const SecurityObservation&) { ++delivered; });
+        REQUIRE_FALSE(retried.accepted);
+        REQUIRE(retried.reason == RejectReason::processing_failed);
+        REQUIRE(retried.reason != RejectReason::replayed_sequence);  // the key distinction
+        REQUIRE(completes == 2);
+        REQUIRE(delivered == 2);
+    }
+}
+
+TEST_CASE("durable replay protection is mandatory for a live ingress (D-03.2 section 3)",
+          "[net][replay][policy]") {
+    std::string why;
+    SECTION("a configured path is accepted for any bind") {
+        ReplayPolicyInput input;
+        input.replay_state_path = "/data/device_replay_state.json";
+        input.bind_address = "0.0.0.0";
+        REQUIRE(validate_replay_configuration(input, &why));
+        REQUIRE(why.empty());
+    }
+    SECTION("an unset path is REFUSED, not warned about") {
+        ReplayPolicyInput input;
+        input.bind_address = "0.0.0.0";
+        REQUIRE_FALSE(validate_replay_configuration(input, &why));
+        REQUIRE(why.find("replay_state_path") != std::string::npos);
+    }
+    SECTION("the isolated-test opt-out is refused on a deployment bind") {
+        ReplayPolicyInput input;
+        input.allow_ephemeral_replay_protection = true;
+        input.bind_address = "0.0.0.0";
+        REQUIRE_FALSE(validate_replay_configuration(input, &why));
+        REQUIRE(why.find("non-loopback") != std::string::npos);
+        input.bind_address = "192.168.1.10";
+        REQUIRE_FALSE(validate_replay_configuration(input, &why));
+    }
+    SECTION("the isolated-test opt-out is allowed only on loopback") {
+        ReplayPolicyInput input;
+        input.allow_ephemeral_replay_protection = true;
+        input.bind_address = "127.0.0.1";
+        REQUIRE(validate_replay_configuration(input, &why));
+        input.bind_address = "::1";
+        REQUIRE(validate_replay_configuration(input, &why));
+        input.bind_address = "localhost";
+        REQUIRE(validate_replay_configuration(input, &why));
     }
 }
 
@@ -1147,31 +1431,39 @@ TEST_CASE("a downstream failure is never reported as an acceptance (D-03.1 secti
         REQUIRE(stored.size() == 1);
     }
 
-    SECTION("a failing commit hook refuses the observation before it is delivered") {
+    SECTION("a durable record that cannot be completed is not reported as an acceptance") {
         ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
         int delivered = 0;
         const auto sink = [&](const SecurityObservation&) { ++delivered; };
-        int hook_calls = 0;
-        ingest.set_commit_hook([&](const std::string&, uint64_t, std::string* reason) {
-            ++hook_calls;
+        int begins = 0;
+        int completes = 0;
+        ObservationIngest::ReplayHooks hooks;
+        hooks.begin = [&begins](const std::string&, uint64_t, const std::string&, std::string*) {
+            ++begins;
+            return ObservationIngest::DurableBegin::marked;
+        };
+        hooks.complete = [&completes](const std::string&, uint64_t, const std::string&,
+                                      std::string* reason) {
+            ++completes;
             if (reason != nullptr) *reason = "durable replay state unavailable";
-            return false;
-        });
+            return false;  // the store cannot be written
+        };
+        hooks.abandon = [](const std::string&, uint64_t) {};
+        ingest.set_replay_hooks(hooks);
         const auto result =
             ingest.accept(f.peer(), observation_message(f.device_id, 2, now_ms - 1000), sink);
         REQUIRE_FALSE(result.accepted);
         REQUIRE(result.reason == RejectReason::processing_failed);
-        REQUIRE(hook_calls == 1);
-        REQUIRE(delivered == 0);  // an acceptance that is not durable is not delivered
+        REQUIRE(begins == 1);
+        REQUIRE(completes == 1);
+        REQUIRE(delivered == 1);  // it WAS processed; it just is not acknowledged as durable
 
-        // With the durable state healthy again, the same sequence is accepted.
-        ingest.set_commit_hook([&](const std::string&, uint64_t, std::string* reason) {
-            if (reason != nullptr) reason->clear();
-            return true;
-        });
-        REQUIRE(ingest.accept(f.peer(), observation_message(f.device_id, 2, now_ms - 1000), sink)
+        // With the durable state healthy again, the same sequence is accepted - and is NOT
+        // treated as a replay, because the watermark never advanced.
+        ingest.set_replay_hooks(ObservationIngest::ReplayHooks{});
+        REQUIRE(ingest.accept(f.peer(), observation_message(f.device_id, 3, now_ms - 1000), sink)
                     .accepted);
-        REQUIRE(delivered == 1);
+        REQUIRE(delivered == 2);
     }
 }
 

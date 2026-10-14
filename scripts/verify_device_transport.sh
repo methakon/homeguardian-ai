@@ -123,6 +123,7 @@ cat > "$WORK/ingress.json" <<JSON
   "registry_path": "$WORK/devices.json",
   "revocation_path": "$WORK/revocations.json",
   "audit_db_path": "$WORK/ingest_audit.db",
+  "replay_state_path": "$WORK/device_replay_state.json",
   "alert_retention_days": 30,
   "max_connections": 4,
   "max_queued_connections": 4,
@@ -135,7 +136,7 @@ JSON
 
 # ---------------------------------------------------------------- fail-closed start
 cat > "$WORK/bad.json" <<JSON
-{"certificate_path":"$CERTS/nope.crt","private_key_path":"$CERTS/server.key","ca_path":"$CERTS/ca/ca.crt","port":$PORT,"audit_db_path":"$WORK/bad_audit.db"}
+{"certificate_path":"$CERTS/nope.crt","private_key_path":"$CERTS/server.key","ca_path":"$CERTS/ca/ca.crt","port":$PORT,"audit_db_path":"$WORK/bad_audit.db","replay_state_path":"$WORK/bad_replay_state.json"}
 JSON
 # Run it from $WORK so a missing certificate is the ONLY fault under test: the
 # boundary has to refuse, not crash, and the refusal has to name a reason.
@@ -150,6 +151,42 @@ elif grep -qi "fail-closed" <<<"$BAD_OUT"; then
 else
   bad "failure was not explained" "$(tail -1 <<<"$BAD_OUT")"
 fi
+
+# ---------------------------------------------------------------- replay protection is mandatory
+# D-03.2. Without durable replay state, restarting the hub makes an already-accepted
+# observation acceptable again, so the boundary must not be able to run that way by
+# omission. Note the path is set to the EMPTY STRING: merely omitting the key is not the
+# case under test, because main_ingress then derives a default beside audit_db_path.
+# The bind addresses used here are deliberately unroutable: validation refuses BEFORE any
+# listener is opened, so no interface is ever exposed by these cases.
+NOREPLAY_COMMON="\"certificate_path\":\"$CERTS/server.crt\",\"private_key_path\":\"$CERTS/server.key\",\"ca_path\":\"$CERTS/ca/ca.crt\",\"port\":$PORT,\"registry_path\":\"$WORK/devices.json\",\"revocation_path\":\"$WORK/revocations.json\",\"audit_db_path\":\"$WORK/noreplay_audit.db\",\"replay_state_path\":\"\""
+printf '{%s,"bind_address":"10.255.255.1"}\n' "$NOREPLAY_COMMON" > "$WORK/noreplay.json"
+OUT="$(timeout 10 "$INGRESS" --config "$WORK/noreplay.json" 2>&1)"; RC=$?
+if [[ "$RC" != "0" ]] && grep -q "replay_state_path is required" <<<"$OUT"; then
+  ok "an unset replay_state_path REFUSES to start (mandatory, not a warning)"
+else
+  bad "the ingress started without durable replay protection" "rc=$RC $(tail -1 <<<"$OUT")"
+fi
+printf '{%s,"bind_address":"10.255.255.1","allow_ephemeral_replay_protection":true}\n' "$NOREPLAY_COMMON" \
+  > "$WORK/noreplay2.json"
+OUT="$(timeout 10 "$INGRESS" --config "$WORK/noreplay2.json" 2>&1)"; RC=$?
+if [[ "$RC" != "0" ]] && grep -q "non-loopback" <<<"$OUT"; then
+  ok "the isolated-test opt-out is refused on a deployment bind address"
+else
+  bad "a deployment bind ran without replay protection" "rc=$RC $(tail -1 <<<"$OUT")"
+fi
+# The opt-out IS honoured for an isolated test: loopback only, and it says so.
+printf '{%s,"bind_address":"127.0.0.1","allow_ephemeral_replay_protection":true}\n' "$NOREPLAY_COMMON" \
+  > "$WORK/noreplay3.json"
+"$INGRESS" --config "$WORK/noreplay3.json" >"$WORK/noreplay3.log" 2>&1 &
+EPHEMERAL_PID=$!
+for _ in $(seq 1 40); do grep -q "ready" "$WORK/noreplay3.log" 2>/dev/null && break; sleep 0.25; done
+if grep -q "ISOLATED TEST configuration" "$WORK/noreplay3.log"; then
+  ok "the loopback-only opt-out starts and declares itself an isolated test"
+else
+  bad "the isolated-test opt-out did not start" "$(tail -2 "$WORK/noreplay3.log" | tr '\n' ' ')"
+fi
+kill -TERM "$EPHEMERAL_PID" 2>/dev/null; wait "$EPHEMERAL_PID" 2>/dev/null
 
 # ---------------------------------------------------------------- start
 cd "$WORK"
