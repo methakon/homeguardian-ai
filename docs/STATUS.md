@@ -271,3 +271,17 @@ Bluetooth output (H-01 tone): OPERATOR CONFIRMED audible.
 Spoken feedback (H-02A): implemented and unit-tested; physical speech acceptance BLOCKED pending
 `sudo apt-get install -y espeak-ng`. Numbers that need the engine (first/subsequent utterance
 latency, synthesis memory) are recorded as NOT MEASURED rather than estimated.
+
+## H-02B corrections - test results (feature/h02a-local-voice-feedback)
+
+| suite | result |
+|---|---|
+| full C++ suite | **464 cases / 5,564 assertions**, all passing |
+| `[voice]` | **21 cases / 151 assertions** (4 new regression tests; no test plays a sound) |
+| ctest | 100% (70.81 s) |
+
+Real speech: `engine_name` = espeak-ng, `completed_within_wait=true`, `playback_jobs=1`, rc 0,
+3.79 s per sentence, 7.5 MB peak RSS, 2% CPU. Real microphone->detection->speech session:
+`voice_spoke: "Unusual sound activity was detected. The source has not been identified."` from a
+real sustained_increase finding. HomeGuardian's spoken sentence is NOT marked physically verified
+until the operator confirms hearing it.

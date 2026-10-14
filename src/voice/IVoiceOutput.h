@@ -24,6 +24,17 @@ public:
     virtual bool speech_available(std::string* why) const = 0;
 
     virtual bool busy() const = 0;
+
+    // DETERMINISTIC completion tracking, because `busy()` is a hint and not a completion signal:
+    // between the enqueue and the worker picking the job up, `busy()` is FALSE. A caller that
+    // waits on `busy()` therefore returns immediately, cancels the worker, and kills a job that
+    // had not started - which is exactly how a queued sentence was lost.
+    //
+    // The marker is a MONOTONE count of finished jobs. A job dropped for capacity counts as
+    // finished, so a waiter can never hang on a job that will never run.
+    virtual uint64_t completion_marker() const = 0;
+    // Bounded wait for `marker` to be reached. Returns false on timeout; never blocks forever.
+    virtual bool wait_for_completion(uint64_t marker, int timeout_ms) = 0;
     virtual bool muted() const = 0;
     virtual void set_muted(bool muted) = 0;
     virtual void stop_speaking() = 0;

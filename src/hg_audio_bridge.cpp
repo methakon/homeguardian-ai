@@ -130,6 +130,11 @@ void print_usage(const char* argv0) {
 
 }  // namespace
 
+// The bounded wait for a spoken sentence to complete. Long enough for a real synthesizer on a
+// Bluetooth sink to finish a short sentence, short enough that a hung engine cannot hang the
+// caller forever.
+constexpr int kSpeechWaitMs = 20000;
+
 int main(int argc, char** argv) {
     Logger::initialize("warn");
 
@@ -269,6 +274,12 @@ int main(int argc, char** argv) {
             return 1;
         }
         speaker.start();
+        // COMPLETION IS TRACKED, NOT GUESSED. `busy()` is false between the enqueue and the
+        // worker taking the job, so waiting on it returned instantly and the old code then
+        // stopped the speaker - cancelling a sentence that had not started. Wait for the
+        // monotone completion index instead, with a bounded deadline.
+        const uint64_t marker = speaker.completion_marker();
+        const uint64_t played_before = speaker.stats().played;
         int64_t now = static_cast<int64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
@@ -277,19 +288,32 @@ int main(int argc, char** argv) {
             speaker.stop();
             return 1;
         }
-        // Wait for the worker to finish the sentence before reporting.
-        for (int waited = 0; waited < 200 && speaker.busy(); ++waited) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const bool completed = speaker.wait_for_completion(marker + 1, kSpeechWaitMs);
+        const uint64_t played_now = speaker.stats().played;
+        const uint64_t refused_now = speaker.stats().refused;
+        const int last_exit = speaker.stats().last_exit_code;
+        speaker.stop();  // joins the worker; nothing is left running
+        std::cout << "engine: " << speaker.engine_name(LocalSpeaker::JobKind::speech) << "\n"
+                  << "sentence: \"" << sentence << "\"\n"
+                  << "completed_within_wait=" << (completed ? "true" : "false")
+                  << " playback_jobs=" << played_now
+                  << " (before=" << played_before << ")"
+                  << " refused=" << refused_now
+                  << " last_exit=" << last_exit << "\n";
+        if (!completed) {
+            std::cerr << "the sentence did not finish within " << kSpeechWaitMs
+                      << " ms; nothing is claimed about it.\n";
+            return 1;
         }
-        speaker.stop();
-        std::cout << "queued the sentence via " << speaker.engine_name(LocalSpeaker::JobKind::speech)
-                  << ": \"" << sentence << "\"\n"
-                  << "playback jobs=" << speaker.stats().played
-                  << " refused=" << speaker.stats().refused
-                  << " last_exit=" << speaker.stats().last_exit_code << "\n"
-                  << "OPERATOR: this exit status is NOT evidence of audibility - please confirm\n"
+        if (played_now <= played_before) {
+            // ZERO PLAYBACK IS NEVER SUCCESS, whatever the exit status of anything involved.
+            std::cerr << "no playback job completed: the sentence was NOT played (refused="
+                      << refused_now << ", last_exit=" << last_exit << ")\n";
+            return 1;
+        }
+        std::cout << "OPERATOR: this exit status is NOT evidence of audibility - please confirm\n"
                   << "whether you heard the sentence, and report it as confirmed or not.\n";
-        return speaker.stats().played > 0 ? 0 : 1;
+        return 0;
     }
 
     if (test_tone) {
@@ -400,7 +424,17 @@ int main(int argc, char** argv) {
             // The REAL finding decides the sentence (closed vocabulary), and the policy decides
             // whether now is the moment. The output only ENQUEUES, so the detection loop is
             // never blocked by playback.
-            voice_control.announce_finding(finding, now_ms);
+            const std::string before_sentence = voice_control.status(now_ms).last_message;
+            if (voice_control.announce_finding(finding, now_ms)) {
+                // Evidence, not inference: say WHICH approved sentence went to the speaker, so a
+                // transcript can be checked against the finding that produced it. This is the
+                // phrasebook's wording, NOT the dashboard sentence in the JSON above.
+                std::cout << "voice_spoke: \""
+                          << voice_control.status(now_ms).last_message << "\"\n" << std::flush;
+            } else if (voice_control.status(now_ms).last_message != before_sentence) {
+                std::cout << "voice_spoke: \""
+                          << voice_control.status(now_ms).last_message << "\"\n" << std::flush;
+            }
         }
         if (finding.kind == AudioFindingKind::sustained_increase ||
             finding.kind == AudioFindingKind::microphone_stalled) {

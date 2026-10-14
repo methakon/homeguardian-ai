@@ -2879,3 +2879,13 @@ The phrasebook marked a message as announced inside its admission check, so a mu
 ### Incident 60 - a blocklisted keyword inside the payload blocked the whole call
 
 A tool call carrying a source comment that contained the word for an orderly machine stop was refused outright by the agent's command guard, so none of the edits in that batch were written while the surrounding output looked like a partial application. Keep such words out of command payloads, and check that a refused call wrote NOTHING before retrying.
+
+### Incident 61 - a test-case anchor that omitted the rest of the name
+
+A test insertion anchored on `TEST_CASE("voice: our own announcement opens a bounded window"` and
+inserted nothing, because the real case name continues `and monitoring resumes after it`. The
+insertion was reported as successful by the script because the anchor WAS found and never asserted
+against the number of tests that resulted: the suite kept reporting the old count (17 cases) and
+only a deliberate check of the expected new count exposed it. Second occurrence of the same class
+in one milestone (see the CMake substring incident) - assert on the FULL literal, and verify the
+EFFECT (a new case count), not that a replace returned a string.

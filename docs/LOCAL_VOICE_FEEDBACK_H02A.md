@@ -168,3 +168,79 @@ cannot be measured yet are marked as such rather than estimated.
   branding appears in this code. Genuine Alexa runtime: **NOT AVAILABLE / NOT VERIFIED**.
 * Not a live camera/CCTV viewer. The transport carries observations, not a video stream.
 * Not a cloud speech service: no text or audio leaves the machine.
+
+## 11. H-02B - corrections, real synthesis, measured cost
+
+The engine is now INSTALLED (`espeak-ng` 1.51, `/usr/bin/espeak-ng`, 27,656 B, 132 voices, data
+13 MB, GPL-3.0+ as a separate invoked program). Four defects found in H-02A were fixed, and each
+has a regression test:
+
+1. **`--speak-test` cancelled a sentence before it started.** The wait loop tested
+   `speaker.busy()`, which is FALSE between the enqueue and the worker picking the job up, so it
+   returned instantly and `speaker.stop()` then killed a job that had not begun.
+2. **No deterministic completion.** Fixed with a monotone per-job completion index:
+   `enqueue_tracked()` returns an index, `completion_marker()` is the highest FINISHED index (a
+   job dropped for capacity counts as finished, so a waiter can never hang), and
+   `wait_for_completion(index, ms)` is a BOUNDED wait. The seam carries it, so any output
+   implementation must provide it.
+3. **`engine_name()` named the wrong program** - hardcoded to `speech-dispatcher(spd-say)` even
+   when `espeak-ng` had been selected. It now reports the engine that would really run, or
+   `(none available)`.
+4. **Zero playback can never be success.** The test path requires the completion index to be
+   reached AND the played counter to have increased; otherwise it exits non-zero and says the
+   sentence was not played, whatever other exit status was involved.
+
+### Measured (fresh out-of-source Release build, `--speak-test`, sink YO-457BT)
+
+| what | value |
+|---|---|
+| utterance wall time, process start to playback complete | **3.79 s** (twice, first and repeat) |
+| peak RSS of the whole process tree | **7,512 kB** (7.3 MB) |
+| CPU during synthesis + playback | 2 % of one core |
+| engine reported | `espeak-ng` |
+| `completed_within_wait` / `playback_jobs` | `true` / 1 (before 0), refused 0, last_exit 0 |
+
+The espeak-ng binary is 27,656 B with 13 MB of voice data already installed; there is no Python
+environment, model download or cloud dependency. `spd-say` remains reported UNAVAILABLE (no
+output modules) and is never selected while `espeak-ng` is present.
+
+### Real microphone -> detection -> speech
+
+Two authorized sessions (explicit `--start` plus the acknowledgement flag, sink YO-457BT), each
+with a controlled stimulus: a locally generated 3 s noise burst played by a SEPARATE tool
+(`pw-cat`), i.e. acoustic coupling in the same room, not an independent environmental event.
+
+Session A (45 s): 601 windows, 2,097,152 frames, findings `quiet_baseline`,
+`insufficient_evidence`, `sustained_increase`, `sustained_decrease` - all `real_source: true` -
+and `voice: spoken=2 suppressed=24 refused=0 suppressed_input_windows=150 engine=espeak-ng`.
+Session B (32 s): 428 windows, 1,441,792 frames, and the transcript line
+
+    voice_spoke: "Unusual sound activity was detected. The source has not been identified."
+
+produced by a real `sustained_increase` (confidence 0.8, `real_source: true`). That line is the
+PHRASEBOOK's closed-vocabulary sentence, which is deliberately not the same text as the
+dashboard sentence in the finding JSON ("HomeGuardian detected an increase in ambient sound
+activity. The source is not identified."). Both are shown, and neither names a source.
+
+No `microphone_stalled` finding appeared in either session: the suppression window never got
+misreported as a failed device, which is exactly what the separate state is for.
+
+**Measured limitation, reported rather than hidden:** the input ring dropped 62,208 frames (3.0 %)
+in session A and 26,304 (1.8 %) in session B while the analysis and speech path were busy at
+48 kHz mono. The ring is bounded by design and every dropped frame is COUNTED - this is
+back-pressure made visible, not a silent loss - but a 48 kHz session with speech enabled is close
+to this host's capacity, and that is the honest number.
+
+### Feed-back suppression in practice
+
+75-150 input windows were skipped while HomeGuardian's own sentence was playing, and 10-24
+candidate announcements were held back by the per-message cooldown during sustained sound. Our own
+announcement never appeared as an independent finding. This remains suppression, NOT acoustic echo
+cancellation (section 6).
+
+### Operator confirmation
+
+`OPERATOR CONFIRMED AUDIBLE` is recorded for the operator's own direct `espeak-ng` command through
+the same Bluetooth sink. HomeGuardian's own spoken sentence has been produced, completed and
+counted (`playback_jobs=1`, rc 0) but **is NOT marked physically verified until the operator
+reports hearing it**.

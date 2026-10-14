@@ -56,6 +56,7 @@ public:
         std::string text;              // speech only
         int rate = 160;                // speech only: words per minute
         std::string voice;             // speech only: engine voice; empty = engine default
+        uint64_t index = 0;            // internal: assigned by enqueue_tracked
     };
 
     struct Config {
@@ -126,6 +127,10 @@ public:
     // Queue one job. Returns false when refused (feedback guard active, muted, or the queue is
     // full and the job could not be admitted).
     bool enqueue(const Job& job);
+
+    // Queue a job and return its monotone completion index (0 = refused). Wait for it with
+    // `wait_for_completion`, NEVER with `busy()` - see IVoiceOutput.
+    uint64_t enqueue_tracked(const Job& job);
     bool play_tone(double frequency_hz, uint32_t duration_ms);
     bool speak(const std::string& text);
 
@@ -163,6 +168,11 @@ public:
     size_t queued() const;
     bool busy() const { return playing_.load(); }
 
+    // The highest FINISHED job index (see IVoiceOutput::completion_marker).
+    uint64_t completion_marker() const override;
+    bool wait_for_completion(uint64_t marker, int timeout_ms) override;
+    uint64_t jobs_enqueued() const;
+
     // The exact argv that would be executed for a job (tests inspect it; nothing claims a
     // result from a preview).
     std::vector<std::string> command_line_for(const Job& job) const;
@@ -189,6 +199,8 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<Job> queue_;
+    uint64_t next_index_ = 0;   // guarded by mutex_
+    uint64_t finished_ = 0;     // guarded by mutex_: highest finished (or dropped) index
     std::thread worker_;
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_requested_{false};

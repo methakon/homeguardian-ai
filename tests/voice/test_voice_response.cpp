@@ -37,6 +37,7 @@ public:
         if (spoken.size() >= refuse_after) return false;
         spoken.emplace_back(text, rate);
         is_busy = true;
+        ++marker;
         return true;
     }
     bool speech_available(std::string* out_why) const override {
@@ -49,6 +50,10 @@ public:
     void stop_speaking() override { is_busy = false; }
     std::string engine_label() const override { return "fake-engine"; }
     std::string output_device() const override { return "fake-sink"; }
+    // Deterministic completion: the fake finishes exactly what it accepts.
+    uint64_t completion_marker() const override { return marker; }
+    bool wait_for_completion(uint64_t want, int) override { return marker >= want; }
+    uint64_t marker = 0;
 };
 
 }  // namespace
@@ -348,6 +353,83 @@ TEST_CASE("voice: a REFUSED delivery does not consume the announcement slot",
     // nothing was spoken before.
     REQUIRE(controller.announce_finding(finding, 1500));
     REQUIRE(output.spoken.size() == 1);
+}
+
+TEST_CASE("voice: a queued job is NOT cancelled before the worker starts it",
+          "[voice][output][regression]") {
+    // The defect: `busy()` is FALSE between the enqueue and the worker taking the job, so a
+    // caller that waited on busy() returned at once and then stopped the speaker - killing a
+    // sentence that had not begun. The fix is a completion INDEX with a bounded wait.
+    LocalSpeaker::Config config;
+    config.player_command = "true";   // a silent, deterministic stand-in for the player
+    config.scratch_dir = "/tmp";
+    LocalSpeaker speaker(config);
+    speaker.start();
+    LocalSpeaker::Job job;
+    job.kind = LocalSpeaker::JobKind::tone;
+    const uint64_t index = speaker.enqueue_tracked(job);
+    REQUIRE(index > 0);
+    REQUIRE(speaker.wait_for_completion(index, 5000));
+    REQUIRE(speaker.stats().played == 1);
+    REQUIRE(speaker.stats().cancelled == 0);
+    REQUIRE(speaker.completion_marker() >= index);
+    speaker.stop();
+}
+
+TEST_CASE("voice: the completion wait is bounded, and a skipped job cannot hang a waiter",
+          "[voice][output][regression]") {
+    LocalSpeaker::Config config;
+    config.player_command = "true";
+    config.queue_capacity = 1;   // force eviction
+    LocalSpeaker speaker(config);   // NOT started: no worker runs, so nothing is played
+    for (int i = 0; i < 3; ++i) {
+        LocalSpeaker::Job job;
+        job.kind = LocalSpeaker::JobKind::tone;
+        speaker.enqueue_tracked(job);
+    }
+    REQUIRE(speaker.stats().dropped == 2);              // bounded queue, oldest dropped
+    REQUIRE(speaker.wait_for_completion(2, 100));       // dropped jobs are marked finished
+    REQUIRE_FALSE(speaker.wait_for_completion(3, 50));  // still queued, no worker: times out
+    speaker.set_muted(true);
+    LocalSpeaker::Job job;
+    job.kind = LocalSpeaker::JobKind::tone;
+    REQUIRE(speaker.enqueue_tracked(job) == 0);         // refused: index 0, nothing to wait on
+    REQUIRE_FALSE(speaker.wait_for_completion(4, 50));
+}
+
+TEST_CASE("voice: the reported engine is the one that would really run",
+          "[voice][output][regression]") {
+    LocalSpeaker::Config config;
+    LocalSpeaker speaker(config);
+    // The defect: engine_name() was hardcoded to the LAST-RESORT program, so it named
+    // speech-dispatcher even when espeak-ng had been selected.
+    REQUIRE(speaker.engine_name(LocalSpeaker::JobKind::tone) == "homeguardian-generated-tone");
+    std::string why;
+    if (speaker.speech_available(&why)) {
+        REQUIRE(speaker.engine_name(LocalSpeaker::JobKind::speech) == "espeak-ng");
+        REQUIRE(speaker.engine_name(LocalSpeaker::JobKind::speech) !=
+                "speech-dispatcher(spd-say)");
+    } else {
+        REQUIRE_FALSE(why.empty());
+        REQUIRE(speaker.engine_name(LocalSpeaker::JobKind::speech) == "(none available)");
+    }
+}
+
+TEST_CASE("voice: a refused sentence never counts as spoken", "[voice][control][regression]") {
+    // `playback jobs=0` must never look like success: the controller reports refusals, and the
+    // output's completion marker does not advance for a refused job.
+    FakeOutput output;
+    output.available = false;
+    VoiceResponseController::Config config;
+    VoiceResponseController controller(config, &output);
+    AudioFinding finding = finding_of(AudioFindingKind::sustained_increase, true, 0.9);
+    finding.statistical_deviation = true;
+    const uint64_t before = output.completion_marker();
+    REQUIRE_FALSE(controller.announce_finding(finding, 1000));
+    REQUIRE(output.spoken.empty());
+    REQUIRE(output.completion_marker() == before);
+    REQUIRE(controller.status(1000).spoken == 0);
+    REQUIRE(controller.status(1000).refused == 1);
 }
 
 TEST_CASE("voice: our own announcement opens a bounded window and monitoring resumes after it",

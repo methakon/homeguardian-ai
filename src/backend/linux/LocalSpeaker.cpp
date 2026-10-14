@@ -107,28 +107,53 @@ void LocalSpeaker::cancel() noexcept {
     }
 }
 
-bool LocalSpeaker::enqueue(const Job& job) {
+bool LocalSpeaker::enqueue(const Job& job) { return enqueue_tracked(job) != 0; }
+
+uint64_t LocalSpeaker::enqueue_tracked(const Job& job) {
     if (muted_.load()) {
         // Mute is explicit and independent of microphone consent: the operator may keep
         // listening while silencing the speaker, or the reverse.
         ++stats_.refused;
-        return false;
+        return 0;
     }
     if (microphone_active_.load()) {
         // Feedback guard: refuse rather than squeal into a live microphone.
         ++stats_.refused;
-        return false;
+        return 0;
     }
+    uint64_t index = 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        Job queued = job;
+        queued.index = ++next_index_;
+        index = queued.index;
         if (queue_.size() >= config_.queue_capacity) {
-            queue_.pop_front();  // BOUNDED: oldest dropped, and counted
+            // BOUNDED: the oldest is dropped and counted, and it is marked FINISHED so a caller
+            // waiting on its index is released instead of hanging on a job that will never run.
+            if (finished_ < queue_.front().index) finished_ = queue_.front().index;
+            queue_.pop_front();
             ++stats_.dropped;
         }
-        queue_.push_back(job);
+        queue_.push_back(queued);
     }
-    cv_.notify_one();
-    return true;
+    cv_.notify_all();
+    return index;
+}
+
+uint64_t LocalSpeaker::completion_marker() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return finished_;
+}
+
+uint64_t LocalSpeaker::jobs_enqueued() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return next_index_;
+}
+
+bool LocalSpeaker::wait_for_completion(uint64_t marker, int timeout_ms) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms > 0 ? timeout_ms : 1),
+                        [this, marker] { return finished_ >= marker; });
 }
 
 bool LocalSpeaker::play_tone(double frequency_hz, uint32_t duration_ms) {
@@ -148,7 +173,12 @@ bool LocalSpeaker::speak(const std::string& text) {
 
 std::string LocalSpeaker::engine_name(JobKind kind) const {
     if (kind == JobKind::tone) return "homeguardian-generated-tone";
-    return "speech-dispatcher(spd-say)";
+    // Report the engine that would REALLY run. This used to be hardcoded to the last-resort
+    // program, so it named speech-dispatcher even when espeak-ng had been selected - a status
+    // line describing a program that was not the one speaking.
+    const SpeechEngine engine = choose_speech_engine(command_exists);
+    if (engine.available) return engine.program;
+    return "(none available)";
 }
 
 std::string LocalSpeaker::engine_available(JobKind kind, std::string* why) const {
@@ -338,7 +368,15 @@ void LocalSpeaker::worker_loop() {
             ++stats_.played;
         } else {
             ++stats_.refused;
+            note_failure(error);
         }
+        {
+            // Mark FINISHED whether it played or failed, and wake any waiter: a failed playback
+            // must release the caller (so it can report failure), not leave it waiting.
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (finished_ < job.index) finished_ = job.index;
+        }
+        cv_.notify_all();
     }
 }
 
