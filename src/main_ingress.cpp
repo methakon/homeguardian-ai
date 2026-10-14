@@ -67,6 +67,13 @@ struct IngressConfig {
     // Listing the ingested ids (e.g. "sensor.motion") is an explicit operator
     // decision to let that evidence participate in fusion.
     std::vector<std::string> evidence_detector_ids;
+    // Durable replay protection: the per-device sequence watermark lives here so a hub
+    // restart cannot make an already-accepted observation acceptable again. Defaults
+    // to a file beside the audit database; empty disables it (reported loudly).
+    std::string replay_state_path;
+    // How quickly an authorization change (revocation, consent, capture) takes effect
+    // on an established connection. Bounded by the per-observation re-check.
+    int authorization_refresh_ms = 250;
 };
 
 bool load_config(const std::string& path, IngressConfig* config, std::string* error) {
@@ -96,7 +103,23 @@ bool load_config(const std::string& path, IngressConfig* config, std::string* er
     config->tls.max_workers = static_cast<size_t>(parsed.value("max_workers", 2));
     config->registry_path = parsed.value("registry_path", config->registry_path);
     config->revocation_path = parsed.value("revocation_path", config->revocation_path);
+    config->authorization_refresh_ms =
+        parsed.value("authorization_refresh_ms", config->authorization_refresh_ms);
+    if (config->authorization_refresh_ms < 0 || config->authorization_refresh_ms > 60000) {
+        return fail("authorization_refresh_ms must be between 0 and 60000");
+    }
     config->audit_db_path = parsed.value("audit_db_path", config->audit_db_path);
+    // Default the durable replay state to a file beside the audit database (parsed
+    // ABOVE, so an operator-chosen database path is what decides this), so a deployment
+    // gets restart-safe replay protection unless it opts out.
+    if (parsed.contains("replay_state_path")) {
+        config->replay_state_path = parsed.value("replay_state_path", std::string());
+    } else {
+        const size_t slash = config->audit_db_path.find_last_of('/');
+        const std::string directory =
+            slash == std::string::npos ? std::string(".") : config->audit_db_path.substr(0, slash);
+        config->replay_state_path = directory + "/device_replay_state.json";
+    }
     config->retention_days = parsed.value("alert_retention_days", config->retention_days);
     config->max_pending = static_cast<size_t>(parsed.value("max_pending_observations", 64));
     config->max_queued_connections =
@@ -261,10 +284,12 @@ int main(int argc, char** argv) {
     server_config.max_queued_connections = config.max_queued_connections;
     server_config.max_workers = config.max_workers;
     server_config.verbose = config.verbose;
+    server_config.replay_state_path = config.replay_state_path;
+    server_config.authorization_refresh_ms = config.authorization_refresh_ms;
 
     DeviceIngressServer server(server_config, registry, ingest, detectors,
                                DeviceIngressServer::Sinks{deliver, deliver_derived},
-                               config.audit_db_path, config.revocation_path);
+                               config.audit_db_path, config.revocation_path, config.registry_path);
     g_server = &server;
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);

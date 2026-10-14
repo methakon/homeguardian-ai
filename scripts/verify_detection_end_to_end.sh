@@ -33,6 +33,11 @@ STAGE="${1:-$(mktemp -d)}"
 # repository tree, and compose is pointed at it through HG_CERTS_DIR. Writing test
 # material into a live deployment path destroyed a mounted secret once (Incident 42).
 CERTDIR="${HG_CERTS_DIR:-$STAGE/certs}"
+# $CERTDIR is the DEPLOYABLE runtime directory - the only credential tree Docker ever
+# mounts. The CA signing key and the device private keys live OUTSIDE it (D-03.1 C):
+# a compromise of the running ingress therefore cannot mint new devices.
+CA_DIR="$STAGE/offline-ca"
+DEVICE_DIR="$STAGE/device-keys"
 export HG_CERTS_DIR="$CERTDIR"
 DEVICE="hg-e2e0000000000e2e"
 DB="/data/homeguardian_bridge_audit.db"
@@ -71,12 +76,20 @@ make_deployable() {
   chmod 755 "$CERTDIR" "$CERTDIR/ca" "$CERTDIR/devices" 2>/dev/null || true
   chmod 644 "$CERTDIR"/*.json "$CERTDIR"/*.crt "$CERTDIR"/server.key "$CERTDIR"/ca/ca.crt 2>/dev/null || true
   chmod 644 "$CERTDIR"/devices/*.crt "$CERTDIR"/devices/*.key 2>/dev/null || true
+  # The device keys live OUTSIDE the credential tree (D-03.1 C). The client container
+  # runs as the image's non-root user, so it must be able to traverse the directory and
+  # read the one key belonging to the device it is impersonating. On a real node that key
+  # is the phone's own private material and never leaves it.
+  chmod 755 "$DEVICE_DIR" 2>/dev/null || true
+  chmod 644 "$DEVICE_DIR"/*.key 2>/dev/null || true
 }
 
 mkdir -p "$CERTDIR"
-bash "$REPO/tools/provision_ca.sh" init "$CERTDIR" >/dev/null 2>&1
-bash "$REPO/tools/provision_ca.sh" issue "$DEVICE" "$CERTDIR" >/dev/null 2>&1
-CRED="$(bash "$REPO/tools/provision_ca.sh" show "$DEVICE" "$CERTDIR" | awk '/credential_id/{print $3}')"
+bash "$REPO/tools/provision_ca.sh" init --ca-dir "$CA_DIR" --runtime-dir "$CERTDIR" \
+  --device-dir "$DEVICE_DIR" --server-names "DNS:ingress,DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
+bash "$REPO/tools/provision_ca.sh" issue "$DEVICE" --ca-dir "$CA_DIR" --runtime-dir "$CERTDIR" \
+  --device-dir "$DEVICE_DIR" >/dev/null 2>&1
+CRED="$(bash "$REPO/tools/provision_ca.sh" show "$DEVICE" --runtime-dir "$CERTDIR" | awk '/credential_id/{print $3}')"
 [[ -n "$CRED" ]] && ok "provisioned the CA and one device certificate" || { bad "provisioning"; exit 1; }
 
 # The device is paired, consented and capture-enabled IN WRITING (ADR-013), and the
@@ -123,19 +136,23 @@ in_ing 'echo up' | grep -q up && ok "ingress entrypoint accepted its mounts" || 
 # The device client refuses a DNS name by design: the device path resolves nothing,
 # so the boundary can never be reached through a name that could be re-pointed. The
 # test therefore hands it the ingress container's IPv4 address explicitly.
-ING_IP="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$ING_CID" | awk '{print $1}')"
-[[ -n "$ING_IP" ]] && ok "resolved the ingress address for the client ($ING_IP; the client accepts IPv4 literals only)" \
-                   || bad "could not determine the ingress address"
+# The client dials the NAME and the certificate must carry that name as a SAN: a name
+# is only usable as an identity BECAUSE the SAN is verified against it.
+HUB_NAME="ingress"
+ok "the client dials '$HUB_NAME'; the hub certificate must carry it as a DNS SAN"
 
 BEFORE="$(alert_total)"; [[ -n "$BEFORE" ]] && ok "hub API reports its alert total before the device speaks ($BEFORE)" \
                                           || bad "could not read /api/alerts"
 
+# NOTE: a Docker bind mount cannot be nested inside another read-only mount, so the
+# device private keys are mounted at /devkeys - deliberately OUTSIDE /certs, which is
+# the only tree a hub container ever sees.
 # ---------------------------------------------------------------- the device speaks
 NET="${PROJECT}_default"
 client() {
-  docker run --rm --network "$NET" -v "$CERTDIR:/certs:ro" --entrypoint /usr/local/bin/hg_device_client "$IMAGE" \
-    --host "$ING_IP" --port 8443 --ca /certs/ca/ca.crt \
-    --cert "/certs/devices/$DEVICE.crt" --key "/certs/devices/$DEVICE.key" \
+  docker run --rm --network "$NET" -v "$CERTDIR:/certs:ro" -v "$DEVICE_DIR:/devkeys:ro" --entrypoint /usr/local/bin/hg_device_client "$IMAGE" \
+    --host "$HUB_NAME" --port 8443 --ca /certs/ca/ca.crt \
+    --cert "/certs/devices/$DEVICE.crt" --key "/devkeys/$DEVICE.key" \
     --device-id "$DEVICE" "$@" 2>&1
 }
 
@@ -156,6 +173,45 @@ AFTER="$(alert_total)"
 
 # the decisive evidence: the hub's OWN API now serves an alert driven by ingested
 # evidence, and the ingested detector id is present in the shared store on disk.
+# ---------------------------------------------------------------- cross-restart replay
+# THE POINT: "restart the hub" must not be a replay primitive. An observation is
+# accepted, the ingress container is RESTARTED, and the exact same observation is sent
+# again - it must be refused as a replay, from durable state.
+OUT="$(client --mode normal --count 1)"
+grep -q "done accepted=1" <<<"$OUT" && ok "an observation is accepted before the restart" \
+                                    || bad "pre-restart accept" "$(grep -o 'reason=[a-z_]*' <<<"$OUT" | tail -1)"
+
+compose restart ingress >/dev/null 2>&1
+# The ingress has no Docker healthcheck (only the hub does), so readiness is: the
+# container is running AND it printed its own startup line. Waiting on a health status
+# that does not exist would only ever time out.
+ingress_ready() {
+  for _ in $(seq 1 60); do
+    if docker inspect --format '{{.State.Running}}' "$ING_CID" 2>/dev/null | grep -qx true \
+       && docker logs "$ING_CID" 2>&1 | grep -q "durable replay protection"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+ingress_ready && ok "the restarted ingress is running and reported its startup state" \
+              || bad "ingress did not return to a ready state"
+docker logs "$ING_CID" 2>&1 | grep -q "durable replay protection" \
+  && ok "the restarted ingress reports its durable replay state" \
+  || warn "the ingress did not report durable replay protection"
+OUT="$(client --mode normal --count 1 --sequence-start 3)"
+if grep -q "reason=replayed_sequence" <<<"$OUT"; then
+  ok "a sequence the hub already accepted is REFUSED after a restart (no replay by restart)"
+elif grep -q "done accepted=1" <<<"$OUT"; then
+  bad "a previously accepted observation was accepted again after a restart"
+else
+  bad "post-restart replay check behaved unexpectedly" "$(grep -o 'reason=[a-z_]*' <<<"$OUT" | tail -1)"
+fi
+OUT="$(client --mode normal --count 1)"
+grep -q "done accepted=1" <<<"$OUT" && ok "the device RESUMES above the watermark and is served again" \
+                                    || bad "resume after restart" "$(grep -o 'reason=[a-z_]*' <<<"$OUT" | tail -1)"
+
 BODY="$(api /api/alerts)"
 [[ "$BODY" == *"detection-fusion"* ]] && ok "the hub serves a fusion alert raised by the ingested stream" \
                                       || warn "no detection-fusion alert in the served history" "$(grep -o '"total":[0-9]*' <<<"$BODY" | head -1)"
@@ -178,9 +234,9 @@ in_ing "test -f $DB && echo present" | grep -q present \
 # a revoke/un-revoke cycle the device is deliberately left UNPAIRED (un-revoking
 # lifts the ban, it does not re-grant permissions), so the refusal there would be
 # device_unpaired and the assertion would be measuring the wrong thing.
-OUT="$(docker run --rm --network "$NET" -v "$CERTDIR:/certs:ro" --entrypoint /usr/local/bin/hg_device_client "$IMAGE" \
-  --host "$ING_IP" --port 8443 --ca /certs/ca/ca.crt --cert "/certs/devices/$DEVICE.crt" \
-  --key "/certs/devices/$DEVICE.key" --device-id hg-has-no-such-device --mode normal --count 1 2>&1)"
+OUT="$(docker run --rm --network "$NET" -v "$CERTDIR:/certs:ro" -v "$DEVICE_DIR:/devkeys:ro" --entrypoint /usr/local/bin/hg_device_client "$IMAGE" \
+  --host "$HUB_NAME" --port 8443 --ca /certs/ca/ca.crt --cert "/certs/devices/$DEVICE.crt" \
+  --key "/devkeys/$DEVICE.key" --device-id hg-has-no-such-device --mode normal --count 1 2>&1)"
 grep -q "reason=identity_mismatch" <<<"$OUT" \
   && ok "a registered device claiming another identity is refused (identity_mismatch)" \
   || bad "identity mismatch was not refused" "$(grep -oE 'reason=[a-z_]+' <<<"$OUT" | sort -u | tr '\n' ' ')"
@@ -192,16 +248,39 @@ grep -q "device_revoked" <<<"$OUT" && ok "after revocation the device is refused
                                    || bad "revocation did not take effect" "$(grep -oE 'reason=[a-z_]+' <<<"$OUT" | sort -u | tr '\n' ' ')"
 printf '[]\n' > "$CERTDIR/revocations.json"
 
-bash "$REPO/tools/provision_ca.sh" issue hg-e2e-unknown000001 "$CERTDIR" >/dev/null 2>&1
+bash "$REPO/tools/provision_ca.sh" issue hg-e2e-unknown000001 --ca-dir "$CA_DIR" \
+  --runtime-dir "$CERTDIR" --device-dir "$DEVICE_DIR" >/dev/null 2>&1
 make_deployable   # the issue run tightened the tree again
-OUT="$(docker run --rm --network "$NET" -v "$CERTDIR:/certs:ro" --entrypoint /usr/local/bin/hg_device_client "$IMAGE" \
-  --host "$ING_IP" --port 8443 --ca /certs/ca/ca.crt --cert /certs/devices/hg-e2e-unknown000001.crt \
-  --key /certs/devices/hg-e2e-unknown000001.key --device-id hg-e2e-unknown000001 --mode normal --count 1 2>&1)"
+chmod 755 "$DEVICE_DIR" 2>/dev/null || true
+chmod 644 "$DEVICE_DIR"/*.key 2>/dev/null || true
+OUT="$(docker run --rm --network "$NET" -v "$CERTDIR:/certs:ro" -v "$DEVICE_DIR:/devkeys:ro" --entrypoint /usr/local/bin/hg_device_client "$IMAGE" \
+  --host "$HUB_NAME" --port 8443 --ca /certs/ca/ca.crt --cert /certs/devices/hg-e2e-unknown000001.crt \
+  --key /devkeys/hg-e2e-unknown000001.key --device-id hg-e2e-unknown000001 --mode normal --count 1 2>&1)"
 if grep -qE "reason=(device_unknown|device_unpaired|identity_mismatch)" <<<"$OUT"; then
   ok "an unregistered device is refused at the boundary"
 else
   bad "unregistered device was not refused" "$(tail -1 <<<"$OUT" | cut -c1-90)"
 fi
+
+# ---------------------------------------------------------------- live-session revocation
+# Revocation must take effect on an OPEN connection, not only at connection setup: the
+# client is still sending while the operator revokes it mid-stream.
+client --mode normal --count 14 --interval-ms 500 >"$STAGE/live.log" 2>&1 &
+CLIENT_PID=$!
+sleep 3
+python3 - "$CERTDIR/revocations.json" "$DEVICE" <<'PY'
+import json, sys
+json.dump([{"device_id": sys.argv[2], "reason": "revoked mid-session"}], open(sys.argv[1], "w"), indent=2)
+PY
+wait "$CLIENT_PID"
+if grep -q "reason=device_revoked" "$STAGE/live.log"; then
+  ok "a device revoked MID-SESSION is refused on its next observation"
+elif grep -q "done accepted=14" "$STAGE/live.log"; then
+  bad "revocation did not reach an established connection"
+else
+  bad "mid-session revocation was inconclusive" "$(grep -o 'reason=[a-z_]*' "$STAGE/live.log" | tail -1)"
+fi
+printf '[]\n' > "$CERTDIR/revocations.json"
 
 # ---------------------------------------------------------------- ports + isolation
 porthub="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$HUB_CID")"

@@ -72,7 +72,11 @@ RUN cmake --build build --target homeguardian_tests -- -j"${HG_NPROC}" \
  && ctest --test-dir build --output-on-failure \
  && HG_INGRESS_PATH=/src/build/hg_device_ingress \
     HG_CLIENT_PATH=/src/build/hg_device_client \
-    bash scripts/verify_device_transport.sh
+    bash scripts/verify_device_transport.sh \
+ && HG_INGRESS_PATH=/src/build/hg_device_ingress \
+    HG_CLIENT_PATH=/src/build/hg_device_client \
+    bash scripts/verify_tls_identity.sh \
+ && bash scripts/verify_ca_isolation.sh
 
 # ---------------------------------------------------------------------------
 # Matches the builder's glibc (see the note above).

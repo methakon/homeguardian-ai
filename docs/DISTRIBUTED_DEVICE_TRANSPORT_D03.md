@@ -322,3 +322,87 @@ Security, consent and SQLite durability were not weakened for any of it: TLS 1.2
 Next recommended step: **D-04 — multiple nodes**, which is where per-device isolation, clock skew,
 reconnect storms and multi-source correlation actually get exercised; and, in parallel, the operator
 step of provisioning a real phone certificate and running the first physical acceptance.
+
+## D-03.1 — security and reliability hardening
+
+Baseline: D-03 at `b52e41d987f16de38b7695fab02451784c251a29` (TLS acceptance 21/21,
+end-to-end 32/32, 426 C++ cases / 4,464 assertions, ASan/UBSan clean).
+
+### What changed, by category
+
+**1. Server identity (P0).** The Android transport called `startHandshake()` without
+endpoint identification, and the native client validated the chain but never the
+endpoint. Both now verify the peer against the address actually dialled: Android uses
+`SSLParameters.setEndpointIdentificationAlgorithm("HTTPS")` plus an explicit SAN match,
+the C++ client uses `X509_VERIFY_PARAM_set1_host` / `set1_ip` with
+`X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`. `tools/provision_ca.sh` writes the operator's
+`--server-names` into the SAN (a CN is not accepted as a substitute). There is no option
+to disable verification.
+
+**2. Credential isolation (P0).** Provisioning now writes to three separate trees:
+`--ca-dir` (CA signing key, offline), `--runtime-dir` (public CA cert, server cert and
+key, device registry, revocation state, ingress config — what Docker mounts), and
+`--device-dir` (device private keys, mounted by no hub container). The deployable tree
+never contains `ca.key`. `chmod 644 server.key` is no longer any part of the design;
+`tools/provision_ca.sh` reports the ownership requirement instead.
+
+**3. Authorization at delivery time (P1).** `DeviceRegistry::refresh_authorization()`
+re-reads ONLY the operator's authorization fields (paired, revoked, credential binding,
+consent, capture) and never the runtime facts the hub observed for itself (sequence
+watermark, liveness). `DeviceIngressServer` re-checks before every accepted observation,
+rate-limited by `authorization_refresh_ms` (default 250) and forced on a deadline, so an
+edit is seen even where filesystem timestamps are too coarse to notice it. A malformed
+or missing authorization file sets a fault and observations are refused
+(`reason=unauthorized`) rather than continued under stale permission.
+
+**4. Replay protection across restarts (P1).** `src/net/ReplayState.{h,cpp}` persists a
+per-device sequence watermark (a counter, never a timestamp) with an atomic
+temp-file+rename write, bounded to 64 devices and to `max_devices` entries. The
+watermark is written BEFORE delivery (`ObservationIngest::set_commit_hook`), restored at
+startup, and seeded into the registry. An unreadable store fails closed: the ingress
+refuses to start rather than begin with empty watermarks.
+
+**5. Restart semantics for a real device (P1).** A durable counter alone would lock out a
+legitimately restarted application, so the welcome now carries `last_sequence` and a
+client that was not pinned to a specific sequence resumes above it. A replayed
+observation is still refused; reconnecting still cannot reset protection.
+
+**6. Acknowledgment, queue and lifecycle (P1, Android).** Every acknowledgment must match
+the exact observation id and sequence and the protocol major version. Refusals are
+classified: suspending (consent withdrawn, capture disabled, revoked, unpaired,
+identity mismatch, unknown device) stops the transport and flushes the queue; permanent
+(bad frame, duplicate, oversize, ...) drops the observation; retryable (queue full,
+processing failure) retries to a bound of 4 attempts. `stop()` bumps a generation,
+closes the active socket and joins; a stale worker exits on the generation change. The
+sequence counter adopts the hub's watermark from the welcome. Non-finite or out-of-range
+features are refused before queueing. Password files are read with a 512-byte bound and
+the keystore password buffer is wiped after use. No credential or raw media is logged.
+
+**7. Processing and persistence consistency (P1).** `accepted` means authenticated,
+authorized, bounded, validated and handed to the sink. It does NOT promise a durable
+alert. A commit-hook failure or a sink exception produces
+`RejectReason::processing_failed`, the observation is dropped (not left queued, which
+would double-deliver when the device retries the same sequence), and the watermark does
+not advance. SQLite keeps WAL with `synchronous=FULL`.
+
+### Guarantees
+
+- A certificate from the trusted CA does not by itself authorize a server: the endpoint
+  must match a SAN entry.
+- The CA signing key is in neither runtime image nor any running container.
+- Compromise of the ingress container does not expose the offline signing key.
+- Authorization is evaluated at delivery, not only at connection setup.
+- A previously accepted observation cannot become a new accepted observation because a
+  process restarted.
+- A processing failure is never reported as an acceptance.
+
+### Limitations
+
+- Physical Android acceptance is still BLOCKED (no device attached): the transport is
+  compile-verified and its contract is unit-tested, not exercised on a phone.
+- PKCS#12 material sits in app-private storage rather than the Android Keystore.
+- The replay watermark is per device id; a device whose certificate is re-provisioned
+  under a NEW id starts with a fresh watermark (documented, not a defect: the id is the
+  identity).
+- `authorization_refresh_ms` bounds how quickly a revocation reaches an established
+  connection; it is a latency bound, not an instant.

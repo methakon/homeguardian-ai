@@ -136,6 +136,7 @@ const char* reject_reason_to_string(RejectReason reason) {
         case RejectReason::capture_disabled: return "capture_disabled";
         case RejectReason::queue_full: return "queue_full";
         case RejectReason::unauthorized: return "unauthorized";
+        case RejectReason::processing_failed: return "processing_failed";
     }
     return "unauthorized";
 }
@@ -179,6 +180,10 @@ nlohmann::json encode(const DeviceMessage& message) {
             break;
         case MessageKind::welcome:
             out["device_id"] = message.device_id_claim;  // the identity the hub derived
+            // Where this device must resume. Non-sensitive (it is the device's own
+            // counter), and the only correct way for a restarted app to rejoin without
+            // either replaying or being locked out.
+            out["last_sequence"] = message.resume_after_sequence;
             break;
         case MessageKind::observation:
             out["observation_id"] = message.observation_id;
@@ -240,6 +245,7 @@ std::optional<RejectReason> reject_reason_from_string(const std::string& value) 
         {"capture_disabled", RejectReason::capture_disabled},
         {"queue_full", RejectReason::queue_full},
         {"unauthorized", RejectReason::unauthorized},
+        {"processing_failed", RejectReason::processing_failed},
     };
     for (const auto& entry : table) {
         if (value == entry.first) return entry.second;
@@ -329,6 +335,9 @@ std::optional<DeviceMessage> decode(const nlohmann::json& payload, RejectReason*
         }
         if (payload.contains("observation_id") && bounded_string(payload["observation_id"], 96)) {
             message.observation_id = payload["observation_id"].get<std::string>();
+        }
+        if (payload.contains("last_sequence") && payload["last_sequence"].is_number_unsigned()) {
+            message.resume_after_sequence = payload["last_sequence"].get<uint64_t>();
         }
         if (payload.contains("reason") && payload["reason"].is_string()) {
             const auto parsed = reject_reason_from_string(payload["reason"].get<std::string>());

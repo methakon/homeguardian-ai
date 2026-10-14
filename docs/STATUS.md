@@ -201,3 +201,18 @@ default and none is implemented.
 - **Phase F2.2 commit:** `50e43ea`
 - **F2.2 hardening commit:** `94e6714`
 - **F22-08 commit:** `2caf62e`
+
+## D-03.1 — security and reliability hardening (complete)
+
+Implemented and verified: server identity verification on both sides, split credential
+storage (offline CA / runtime / device keys), delivery-time authorization with fail-closed
+handling, durable restart-surviving replay protection with a resume point, Android
+acknowledgment/queue/lifecycle correctness, and honest processing-failure reporting.
+
+Executed: host suite 430 cases / 4,565 assertions; ctest 100 % (Debug and container
+Release); TLS acceptance 21/21; identity matrix 9/9; CA isolation 14/14; end-to-end
+detection 38/38 (including replay-after-restart and mid-session revocation); D-01 26/26;
+suite concurrency PASS; retention 8/8; context-exclusion probe 6/6; footprint measured.
+
+Still blocked: physical Android acceptance (no device), Alexa (Amazon), live Home
+Assistant (needs TLS).

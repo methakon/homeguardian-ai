@@ -2699,3 +2699,68 @@ why the order matters.
 that runs after a state-changing step must either restore the state or assert against the state it
 actually has - otherwise it reports a false negative on correct behaviour, which is just as
 misleading as a false positive.
+
+## Incident 45 — A read-only mount cannot host another mountpoint (D-03.1)
+
+Symptom: every client invocation in the end-to-end harness failed with
+`docker: Error response from daemon: ... make mountpoint "/certs/device-keys": read-only
+file system`, and since the harness printed only the client's exit status the failure read
+as "delivery FAIL".
+
+Cause: the device private keys were mounted at `/certs/device-keys` — INSIDE the
+read-only `/certs` mount created by the same `docker run`.
+
+Fix: mount them at `/devkeys`, deliberately outside the credential tree (which is also
+what the isolation requirement wants). Lesson: nested bind mounts are not a way to
+subdivide a read-only mount.
+
+## Incident 46 — A durable replay watermark refuses the harness's own re-used sequences
+
+Symptom: TLS acceptance fell to 20/21 with `reinstate did not restore service
+reason=replayed_sequence` on the container's first D-03.1 run.
+
+Cause: the harness's mock client always started at sequence 1, so after the watermark
+became durable every later case that reused sequence 1 was correctly refused as a replay.
+The test was right about the code and wrong about the world.
+
+Fix: keep the durable watermark, and add the resume point (ADR-016). The mock client,
+like the Android transport, adopts the hub's `last_sequence` from the welcome unless the
+operator pins a sequence explicitly (which is exactly what a replay test does). Lesson:
+when durability changes, every client that assumed a fresh counter needs a documented
+way to resume, or the "fix" locks out real devices.
+
+## Incident 47 — Fixed-name test fixtures raced under the concurrency regression
+
+Symptom: the suite-concurrency regression reported `non-zero exit: a=2 b=0`, with
+`tests/core/test_config_e.cpp:52` failing in one of two concurrent instances.
+
+Cause: that test wrote fixture files with fixed names
+(`temp_test_config_e.json`, `test_invalid_*.json`) into the working directory, a shared
+resource when two instances run there.
+
+Fix: every fixture path is per-process (`/tmp/hg_cfg_e_<pid>_...`). The regression then
+reports PASS for both instances with no leftovers. Lesson: a fixed filename in a test is
+shared mutable state; the concurrency check exists to find exactly this.
+
+## Incident 48 — Stale shell exports poisoned an acceptance run
+
+Symptom: the end-to-end run reported `ingress not running`, a client that could not load
+its key, and container names under a different compose project.
+
+Cause: `HG_PROJECT` and `HG_CERTS_DIR` were still exported in the shell from an earlier
+diagnostic turn; the harness honours both.
+
+Fix: run the harness with a clean environment (`env -u HG_PROJECT -u HG_CERTS_DIR ...`).
+Lesson: environment-variable harnesses inherit whatever the last experiment left behind;
+assert the inputs rather than assuming a fresh shell.
+
+## Incident 49 — A guard that skipped the exit path
+
+Symptom: `measure_device_transport.sh` printed its documented SKIP line and then died with
+`INGRESS_PID: unbound variable`.
+
+Cause: the EXIT trap referenced `$INGRESS_PID` unguarded under `set -u`, so the
+binaries-absent path could not exit cleanly.
+
+Fix: guard the trap. Lesson: the "cannot measure here" path is code too, and it is the
+path most likely to be exercised on a host without the optional dependency.

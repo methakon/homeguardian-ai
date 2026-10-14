@@ -342,6 +342,114 @@ bool DeviceRegistry::apply_revocation_file(const std::string& path, std::string*
     return true;
 }
 
+// Re-read the operator's AUTHORIZATION decisions without touching anything the hub
+// observed for itself. See the header for why those are different kinds of fact.
+DeviceRegistry::RefreshOutcome DeviceRegistry::refresh_authorization(
+    const std::string& path, std::vector<std::string>* transitions, std::string* reason) {
+    auto fail = [reason](RefreshOutcome outcome, const std::string& why) {
+        if (reason != nullptr) *reason = why;
+        return outcome;
+    };
+    auto note_change = [transitions](const std::string& text) {
+        // Bounded, non-sensitive: a device id and a field transition. No keys, no
+        // credentials, no consent subject text.
+        if (transitions != nullptr && transitions->size() < 64) transitions->push_back(text);
+    };
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return fail(RefreshOutcome::absent, "authorization file is no longer readable");
+    nlohmann::json parsed = nlohmann::json::parse(in, nullptr, false);
+    if (parsed.is_discarded()) {
+        return fail(RefreshOutcome::malformed, "authorization file is not valid JSON");
+    }
+    if (!parsed.is_object() || !parsed.contains("devices") || !parsed["devices"].is_array()) {
+        return fail(RefreshOutcome::malformed, "authorization file has no devices array");
+    }
+    if (parsed["devices"].size() > cfg_.max_devices) {
+        return fail(RefreshOutcome::unbounded, "authorization file exceeds the registry bound");
+    }
+
+    for (const auto& entry : parsed["devices"]) {
+        if (!entry.is_object()) return fail(RefreshOutcome::malformed, "device entry is not an object");
+        const std::string id = entry.value("device_id", std::string());
+        if (id.empty() || id.size() > kMaxIdChars) {
+            return fail(RefreshOutcome::malformed, "device entry has no usable device_id");
+        }
+        Device* device = find_mutable(id);
+        if (device == nullptr) {
+            // A device that APPEARED while the service was running: pairing a new phone
+            // must not require restarting the whole stack.
+            if (devices_.size() >= cfg_.max_devices) {
+                return fail(RefreshOutcome::unbounded, "the registry is at capacity");
+            }
+            Device fresh;
+            fresh.device_id = id;
+            devices_.push_back(std::move(fresh));
+            device = find_mutable(id);
+            if (device == nullptr) return fail(RefreshOutcome::malformed, "could not register the device");
+            note_change(id + ": registered");
+        }
+
+        const std::string credential = entry.value("credential_id", std::string());
+        if (credential.empty() || credential.size() > kMaxIdChars) {
+            return fail(RefreshOutcome::malformed, std::string("credential_id invalid for ") + id);
+        }
+        if (credential != device->credential_id) {
+            // A changed fingerprint is a ROTATION: the old certificate stops matching
+            // this record and is refused from this moment.
+            device->credential_id = credential;
+            note_change(id + ": credential rebound (rotation)");
+        }
+
+        const bool paired = entry.value("paired", false);
+        const bool revoked = entry.value("revoked", false);
+        const bool consent = entry.value("consent_granted", false) && !revoked;
+        const bool capture = entry.value("capture_enabled", false) && paired && consent && !revoked;
+
+        if (revoked != device->revoked) {
+            device->revoked = revoked;
+            note_change(id + (revoked ? ": revoked" : ": revocation lifted"));
+        }
+        if (paired != device->paired) {
+            device->paired = paired;
+            note_change(id + (paired ? ": paired" : ": unpaired"));
+        }
+        if (consent != device->consent_granted) {
+            device->consent_granted = consent;
+            note_change(id + (consent ? ": consent granted" : ": consent withdrawn"));
+        }
+        if (consent) {
+            const std::string subject = entry.value("consent_subject", std::string());
+            const std::string purpose = entry.value("consent_purpose", std::string());
+            if (subject.size() <= kMaxIdChars) device->consent_subject = subject;
+            if (purpose.size() <= kMaxIdChars) device->consent_purpose = purpose;
+        }
+        if (capture != device->capture_enabled) {
+            device->capture_enabled = capture;
+            note_change(id + (capture ? ": capture enabled" : ": capture disabled"));
+        }
+        if (!consent || revoked) {
+            // Belt and braces: withdrawal and revocation both stop capture here, even
+            // if the file still claims capture_enabled.
+            if (device->capture_enabled) {
+                device->capture_enabled = false;
+                note_change(id + ": capture disabled (consent/revocation)");
+            }
+            if (revoked) device->online = false;
+        }
+    }
+    if (reason != nullptr) reason->clear();
+    return RefreshOutcome::refreshed;
+}
+
+bool DeviceRegistry::seed_sequence_watermark(const std::string& device_id, uint64_t last_sequence) {
+    Device* device = find_mutable(device_id);
+    if (device == nullptr) return false;
+    // Never lower a watermark: durable state may only raise it.
+    if (last_sequence > device->last_sequence) device->last_sequence = last_sequence;
+    return true;
+}
+
 DeviceRegistry::AuthResult DeviceRegistry::authenticate(const std::string& device_id,
                                                         const std::string& credential_id) const {
     if (credential_id.empty()) return AuthResult::no_credential;

@@ -57,3 +57,27 @@ with a real client over real TLS, including adversarial modes a cooperative Andr
 produce (replay, future timestamps, unlisted source types, oversized frames, missing handshake).
 `hg_device_client` is that client. When a phone is available, the same script's steps are repeated
 from the device, and D-03's physical acceptance stops being BLOCKED at that point.
+
+## D-03.1 Android transport changes
+
+The transport now enforces the acknowledgment contract rather than trusting it:
+
+- An acknowledgment is matched to the exact observation id, sequence and protocol major
+  version; a mismatch is treated as a violation and never counted as a delivery.
+- Refusals are classified into suspending / permanent / retryable, with a bounded retry
+  count (4) and a documented drop for each class. An unrecognised reason is treated as
+  permanent: retrying a refusal whose meaning is unknown is how a node loops.
+- Consent withdrawal, capture disable and revocation suspend transmission and flush the
+  queued observations, because sending work collected under a permission that no longer
+  holds would be the wrong answer.
+- `stop()` bumps a generation, closes the active socket and joins with a bounded wait, so
+  shutdown cannot leave a worker running and a restart cannot leave two.
+- The sequence counter adopts the hub's `last_sequence` from the welcome, which is what
+  makes an application restart legitimate instead of a replay.
+- Features are validated (finite, in range) before queueing; the password file read is
+  bounded to 512 bytes and the keystore password buffer is wiped after use.
+- Nothing logs credentials or raw media.
+
+Verification status: compile-verified (signed APK builds, dex contains
+`ObservationTransport`). The behaviours above are exercised by the C++ transport contract
+tests and the native client; they are NOT yet exercised on a physical device.

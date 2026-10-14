@@ -1,7 +1,10 @@
 #include "net/DeviceIngressServer.h"
 
+#include <sys/stat.h>
+
 #include <chrono>
 #include <iostream>
+#include <vector>
 
 namespace homeguardian::net {
 
@@ -23,12 +26,13 @@ DeviceMessage error_message(RejectReason reason, const std::string& detail) {
     return m;
 }
 
-DeviceMessage welcome_message(const std::string& device_id) {
+DeviceMessage welcome_message(const std::string& device_id, uint64_t resume_after_sequence) {
     DeviceMessage m;
     m.protocol_version_major = kProtocolVersionMajor;
     m.protocol_version_minor = kProtocolVersionMinor;
     m.kind = MessageKind::welcome;
     m.device_id_claim = device_id;
+    m.resume_after_sequence = resume_after_sequence;
     return m;
 }
 
@@ -63,14 +67,16 @@ RejectReason reason_for(DeviceRegistry::AuthResult auth) {
 DeviceIngressServer::DeviceIngressServer(Config config, DeviceRegistry& registry,
                                          ObservationIngest& ingest, IngestDetectors& detectors,
                                          Sinks sinks, std::string audit_db_path,
-                                         std::string revocation_path)
+                                         std::string revocation_path,
+                                         std::string registry_path)
     : config_(std::move(config)),
       registry_(registry),
       ingest_(ingest),
       detectors_(detectors),
       sinks_(std::move(sinks)),
       audit_db_path_(std::move(audit_db_path)),
-      revocation_path_(std::move(revocation_path)) {}
+      revocation_path_(std::move(revocation_path)),
+      registry_path_(std::move(registry_path)) {}
 
 DeviceIngressServer::~DeviceIngressServer() {
     request_stop();
@@ -80,7 +86,116 @@ DeviceIngressServer::~DeviceIngressServer() {
     listener_.close_listener();
 }
 
+bool DeviceIngressServer::setup_replay_protection(std::string* error) {
+    if (config_.replay_state_path.empty()) {
+        std::cerr << "ingress: WARNING durable replay protection is DISABLED "
+                     "(no replay_state_path): a restart would reset the sequence "
+                     "watermarks, so a previously accepted observation could be "
+                     "accepted again." << std::endl;
+        return true;
+    }
+    ReplayState::Config replay_config;
+    replay_config.path = config_.replay_state_path;
+    replay_config.max_devices = 64;
+    replay_ = std::make_unique<ReplayState>(std::move(replay_config));
+
+    std::string why;
+    const ReplayState::LoadOutcome outcome = replay_->load(&why);
+    if (outcome == ReplayState::LoadOutcome::malformed ||
+        outcome == ReplayState::LoadOutcome::unbounded) {
+        // FAIL CLOSED. Starting with an empty watermark after the durable state became
+        // unreadable would be the replay hole this feature exists to close.
+        if (error != nullptr) {
+            *error = std::string("replay state is unusable (fail-closed): ") + why +
+                     " - fix or remove " + replay_->path() + " deliberately";
+        }
+        return false;
+    }
+    for (const auto& entry : replay_->watermarks()) {
+        registry_.seed_sequence_watermark(entry.first, entry.second);
+    }
+    std::cout << "ingress: durable replay protection: " << replay_->size()
+              << " device watermark(s) restored from " << replay_->path() << std::endl;
+
+    // Persist BEFORE delivery, so a crash between delivery and the write cannot make an
+    // accepted observation replayable after a restart.
+    ingest_.set_commit_hook([this](const std::string& device_id, uint64_t sequence,
+                                   std::string* reason) {
+        return replay_->record(device_id, sequence, reason);
+    });
+    return true;
+}
+
+void DeviceIngressServer::refresh_authorization_locked() {
+    const int64_t now = now_ms();
+    const int64_t interval = config_.authorization_refresh_ms > 0
+                                 ? static_cast<int64_t>(config_.authorization_refresh_ms)
+                                 : 250;
+
+    auto changed = [](const std::string& path, int64_t* mtime, size_t* size) {
+        struct stat info {};
+        if (::stat(path.c_str(), &info) != 0) return true;  // gone: a change we must see
+        const int64_t m = static_cast<int64_t>(info.st_mtime);
+        const size_t s = static_cast<size_t>(info.st_size);
+        if (m == *mtime && s == *size) return false;
+        *mtime = m;
+        *size = s;
+        return true;
+    };
+
+    const bool registry_changed =
+        registry_path_.empty() ? false : changed(registry_path_, &registry_mtime_, &registry_size_);
+    const bool revocation_changed = revocation_path_.empty()
+                                        ? false
+                                        : changed(revocation_path_, &revocation_mtime_, &revocation_size_);
+    // A full re-read is ALSO forced on a deadline, so an edit that a coarse filesystem
+    // timestamp would hide still takes effect within the interval.
+    const bool due = last_authorization_read_ms_ == 0 ||
+                     (now - last_authorization_read_ms_) >= interval;
+    if (!registry_changed && !revocation_changed && !due) return;
+    last_authorization_read_ms_ = now;
+
+    std::string why;
+    if (!registry_path_.empty()) {
+        std::vector<std::string> transitions;
+        const DeviceRegistry::RefreshOutcome outcome =
+            registry_.refresh_authorization(registry_path_, &transitions, &why);
+        switch (outcome) {
+            case DeviceRegistry::RefreshOutcome::refreshed:
+                if (!authorization_fault_.empty()) {
+                    std::cout << "ingress: authorization state recovered" << std::endl;
+                }
+                authorization_fault_.clear();
+                for (const std::string& transition : transitions) {
+                    // Non-sensitive audit line: a device id and which field moved.
+                    std::cout << "ingress: authorization change: " << transition << std::endl;
+                }
+                break;
+            case DeviceRegistry::RefreshOutcome::absent:
+                authorization_fault_ = "authorization state unavailable (registry file is gone)";
+                std::cerr << "ingress: " << authorization_fault_ << std::endl;
+                break;
+            default:
+                authorization_fault_ = "authorization state unusable: " + why;
+                std::cerr << "ingress: " << authorization_fault_ << std::endl;
+                break;
+        }
+    }
+    std::string ignore;
+    if (!registry_.apply_revocation_file(revocation_path_, &ignore)) {
+        authorization_fault_ = "revocation state unusable: " + ignore;
+        std::cerr << "ingress: " << authorization_fault_ << std::endl;
+    }
+}
+
+bool DeviceIngressServer::authorization_available_locked(std::string* detail) const {
+    if (authorization_fault_.empty()) return true;
+    if (detail != nullptr) *detail = authorization_fault_;
+    return false;
+}
+
 bool DeviceIngressServer::start(std::string* error) {
+    if (!setup_replay_protection(error)) return false;
     if (!listener_.setup(config_.tls, error)) return false;
     if (config_.max_workers == 0) config_.max_workers = 1;
     for (size_t i = 0; i < config_.max_workers; ++i) {
@@ -92,6 +207,15 @@ bool DeviceIngressServer::start(std::string* error) {
 void DeviceIngressServer::request_stop() {
     stopping_.store(true);
     queue_cv_.notify_all();
+    if (replay_) {
+        // Flush once more at shutdown so the last accepted sequence is durable even if
+        // a write was skipped, and record a failed final write loudly.
+        std::string why;
+        if (!replay_->flush(&why)) {
+            std::cerr << "ingress: WARNING could not flush replay state at shutdown: " << why
+                      << std::endl;
+        }
+    }
 }
 
 void DeviceIngressServer::run() {
@@ -196,11 +320,16 @@ void DeviceIngressServer::handle_connection(std::unique_ptr<TlsConnection> conne
         return;
     }
 
+    uint64_t resume_after = 0;
     {
         std::lock_guard<std::mutex> lock(core_mutex_);
         registry_.note_heartbeat(peer.device_id, now_ms(), message.capabilities);
+        const DeviceRegistry::Device* device = registry_.find(peer.device_id);
+        if (device != nullptr) resume_after = device->last_sequence;
     }
-    if (!connection->write_message(welcome_message(peer.device_id))) return;
+    // Tell the device its resume point. Deliberately the device's OWN watermark and
+    // nothing else: it reveals no other device's state and no authorization detail.
+    if (!connection->write_message(welcome_message(peer.device_id, resume_after))) return;
 
     // 4. Serve the observation stream until the peer goes quiet, closes, or sends
     //    something malformed.
@@ -247,8 +376,22 @@ void DeviceIngressServer::handle_connection(std::unique_ptr<TlsConnection> conne
         ObservationIngest::Result result;
         {
             std::lock_guard<std::mutex> lock(core_mutex_);
-            result = ingest_.accept(context, message, sinks_.accepted);
-            pump_detectors_locked();
+            // Authorization is re-evaluated AT DELIVERY TIME, not just at connection
+            // setup: a device revoked, unpaired, or denied consent while this
+            // connection is open is refused on its NEXT observation, and the other
+            // devices are untouched.
+            refresh_authorization_locked();
+            std::string fault;
+            if (!authorization_available_locked(&fault)) {
+                result.accepted = false;
+                result.reason = RejectReason::unauthorized;
+                result.detail = fault;
+                result.observation_id = message.observation_id;
+                result.sequence = message.sequence;
+            } else {
+                result = ingest_.accept(context, message, sinks_.accepted);
+                pump_detectors_locked();
+            }
         }
 
         if (result.accepted) {

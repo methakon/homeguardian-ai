@@ -28,6 +28,24 @@ if [ ! -d "$HG_INGRESS_DATA" ]; then
 fi
 [ -w "$HG_INGRESS_DATA" ]   || die "ingress data directory not writable: $HG_INGRESS_DATA"
 [ -d "$HG_INGRESS_CERTS" ]  || die "certificate directory missing: $HG_INGRESS_CERTS"
+
+# The mounted directory must carry NO signing authority. The CA private key belongs
+# in the operator's offline directory; if it ever appears here, the container would
+# be one compromise away from minting certificates for arbitrary devices, so this
+# refuses to start rather than running with that exposure.
+for candidate in "$HG_INGRESS_CERTS/ca/ca.key" "$HG_INGRESS_CERTS/ca.key"; do
+  if [ -e "$candidate" ]; then
+    die "REFUSING to start: $candidate is a CA PRIVATE KEY in the mounted credential directory. \
+Move it to the offline provisioning directory (tools/provision_ca.sh --ca-dir) and mount only \
+the deployable material. See docs/DISTRIBUTED_DEPLOYMENT.md."
+  fi
+done
+if [ -d "$HG_INGRESS_CERTS/ca" ]; then
+  for stray in "$HG_INGRESS_CERTS"/ca/*.key; do
+    [ -e "$stray" ] || continue
+    die "REFUSING to start: $stray is signing material inside the mounted credential directory."
+  done
+fi
 [ -x /usr/local/bin/hg_device_ingress ] || die "the ingress binary is missing from the image"
 
 # Warn (do not fail) on world/group-readable key material: the ingress itself

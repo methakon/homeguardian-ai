@@ -117,6 +117,28 @@ public:
                      const std::string& purpose, int64_t now_ms);
     bool set_capture_enabled(const std::string& device_id, bool enabled);
 
+    // Re-read ONLY the operator-controlled authorization fields (paired, revoked,
+    // credential binding, consent, capture) from the registry file.
+    //
+    // Runtime observations are deliberately NOT touched: the sequence watermark, the
+    // acquisition-timestamp watermark and liveness describe the WORLD, and reading
+    // them back from an operator file would assert something the hub cannot know.
+    // This is what makes a revocation or a consent withdrawal take effect on the NEXT
+    // observation without restarting the service.
+    //
+    // The outcome is explicit so the caller can fail closed:
+    //   refreshed - the file parsed; authorization now reflects its contents
+    //   absent    - the file is gone (NOT "nothing changed")
+    //   malformed - unreadable or invalid; the caller must refuse, not continue
+    //   unbounded - more entries than the registry can hold
+    enum class RefreshOutcome { refreshed, absent, malformed, unbounded };
+    RefreshOutcome refresh_authorization(const std::string& path,
+                                         std::vector<std::string>* transitions,
+                                         std::string* reason);
+
+    // Seed the replay watermark from durable state at startup. Never lowers it.
+    bool seed_sequence_watermark(const std::string& device_id, uint64_t last_sequence);
+
     // ---- stream state ----
     // True when `sequence` is newer than the device's watermark. Does NOT advance
     // it: the accept path must check first and commit only after every other

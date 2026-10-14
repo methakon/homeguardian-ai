@@ -18,5 +18,9 @@
   "handshake_timeout_ms": 5000,
   "_evidence_note": "OPT-IN. Absent or empty keeps the built-in conservative default ({\"activity-energy\"}), under which device observations are recorded, audited and displayed but cast NO fusion vote and can never raise an alert by themselves. Listing the ingested detector ids (they are \"sensor.<source_type>\", e.g. \"sensor.motion\" for a motion observation) lets that evidence participate in fusion. No setting here can produce Severity::critical.",
   "evidence_detector_ids": [],
+  "_replay_note": "D-03.1. The per-device sequence watermark is persisted HERE so that restarting the hub is not a way to replay an already accepted observation. It is a counter, never a timestamp. Default: beside audit_db_path. Empty string DISABLES durable replay protection, which the ingress reports loudly at startup because a restart would then reset the watermarks.",
+  "replay_state_path": "/data/device_replay_state.json",
+  "_authorization_note": "D-03.1. Authorization (revocation, consent, capture) is re-checked at delivery time, so withdrawing consent or revoking a device takes effect on an established connection within this many milliseconds. It is bounded by a re-read deadline, not by filesystem timestamp granularity.",
+  "authorization_refresh_ms": 250,
   "verbose": false
 }

@@ -694,3 +694,61 @@ device's own CPU/memory cost, the LAN hop latency, the radio power cost of a
 sustained session, and reconnect timing from a real phone. The measurements above
 describe the hub side and the container, which is exactly what this host can observe.
 
+
+## D-03.1 deployment model: split credential storage
+
+The deployment mounts exactly ONE credential tree into the ingress container, the
+`--runtime-dir`:
+
+| Tree | Contents | Mounted into a container? |
+|------|----------|---------------------------|
+| `--ca-dir` | `ca.key`, signing materials | **Never** |
+| `--runtime-dir` | `ca/ca.crt`, `server.crt`, `server.key`, `devices.json`, `revocations.json`, `ingress.json` | ingress, read-only |
+| `--device-dir` | per-device private keys | Never (the device keeps its own) |
+
+Provisioning is idempotent and refuses to overwrite a non-empty runtime tree without
+`--force`. `HG_CERTS_DIR` still selects the runtime directory for compose.
+
+New ingress configuration keys (see `deploy/docker/config/ingress.json.example`):
+
+- `replay_state_path` — durable per-device sequence watermark. Defaults to
+  `device_replay_state.json` beside `audit_db_path`; it must be on the SAME persistent
+  volume as the audit database so it survives a container replacement. Empty disables it
+  and the ingress says so loudly at startup.
+- `authorization_refresh_ms` — how quickly a revocation, consent withdrawal or capture
+  disable reaches an established connection (default 250, bounded 0…60000).
+
+### Measured on this host (D-03.1)
+
+| Metric | Value |
+|--------|-------|
+| Ingress idle RSS | 12,560 kB (D-03: 12,456 kB) |
+| Ingress idle threads | 3 (unchanged) |
+| Ingress idle CPU | 0.0 % |
+| RSS idle -> 200-observation burst | 12,560 -> 15,032 kB |
+| Burst round-trip per observation | 3.06 ms |
+| Sustained throughput | 327 observations/s |
+| Ingress CPU during the burst | 73.5 % of one core |
+| Runtime image | 131MB |
+| `hg_device_ingress` | 2777832 bytes |
+| `hg_device_client` | 224288 bytes |
+| Android APK | 802,608 bytes (D-03: 799,370) |
+
+Not measurable without hardware: the phone's own CPU/memory cost, the LAN hop latency
+and sustained-radio battery cost. TLS, consent enforcement and `synchronous=FULL` were
+not weakened for any of these numbers.
+
+### Test matrix (D-03.1, all executed)
+
+| Suite | Result |
+|-------|--------|
+| Host C++ suite | 430 cases / 4,565 assertions |
+| ctest (Debug and container Release) | 100 % pass |
+| D-01 Docker hub acceptance | 26 / 26, 0 warned |
+| TLS acceptance (real CA, real sockets) | 21 / 21 |
+| TLS server identity matrix | 9 / 9 (1 case skipped: no IPv6 on the host) |
+| CA isolation | 14 / 14 (1 skipped) |
+| End-to-end detection + replay + mid-session revocation | 38 / 38 |
+| Suite concurrency | PASS (both instances, no leftovers) |
+| Retention regression | 8 / 8 |
+| Build-context secret exclusion probe | 6 / 6 |

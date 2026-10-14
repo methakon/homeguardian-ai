@@ -20,6 +20,9 @@
 #include "net/DeviceRegistry.h"
 #include "net/IngestDetectors.h"
 #include "net/ObservationIngest.h"
+#include "net/ReplayState.h"
+
+#include <memory>
 #include "net/TlsTransport.h"
 
 #include <atomic>
@@ -41,6 +44,15 @@ public:
         TlsServerConfig tls;
         size_t max_queued_connections = 16;  // bounded accept queue
         size_t max_workers = 2;              // bounded worker threads
+        // Durable replay protection: where the per-device sequence watermark is
+        // persisted. Empty disables persistence (in-memory only) and says so at
+        // startup; a production boundary should always set it.
+        std::string replay_state_path;
+        // How often the operator's authorization files are re-checked for changes.
+        // The check is a stat() per observation and a re-read only when the file
+        // changed, so this is a latency bound on "how fast does a revocation take
+        // effect", not a polling cost.
+        int authorization_refresh_ms = 250;
         bool verbose = false;
     };
 
@@ -69,7 +81,8 @@ public:
 
     DeviceIngressServer(Config config, DeviceRegistry& registry, ObservationIngest& ingest,
                         IngestDetectors& detectors, Sinks sinks, std::string audit_db_path,
-                        std::string revocation_path = std::string());
+                        std::string revocation_path = std::string(),
+                        std::string registry_path = std::string());
     ~DeviceIngressServer();
 
     DeviceIngressServer(const DeviceIngressServer&) = delete;
@@ -88,6 +101,20 @@ private:
     void handle_connection(std::unique_ptr<TlsConnection> connection);
     void pump_detectors_locked();
 
+    // Re-check the operator's authorization files and apply any change. Cheap when
+    // nothing changed (two stat() calls) and rate-limited regardless, so a revocation
+    // takes effect within `authorization_refresh_ms` even if the filesystem's mtime
+    // granularity would hide a same-second edit. Must be called with core_mutex_ held.
+    void refresh_authorization_locked();
+
+    // True when authorization state is currently usable. False (with a reason) means
+    // the operator's file is gone or unparseable, and the boundary REFUSES rather than
+    // continuing under the stale permission it last read.
+    bool authorization_available_locked(std::string* detail) const;
+
+    // Load durable replay watermarks and install the pre-delivery commit hook.
+    bool setup_replay_protection(std::string* error);
+
     Config config_;
     DeviceRegistry& registry_;
     ObservationIngest& ingest_;
@@ -95,6 +122,18 @@ private:
     Sinks sinks_;
     std::string audit_db_path_;
     std::string revocation_path_;
+    std::string registry_path_;
+    // Authorization-file change detection. (mtime, size) per file plus a full-read
+    // deadline, so detection is reliable without re-parsing on every message.
+    int64_t registry_mtime_ = -1;
+    size_t registry_size_ = 0;
+    int64_t revocation_mtime_ = -1;
+    size_t revocation_size_ = 0;
+    int64_t last_authorization_read_ms_ = 0;
+    std::string authorization_fault_;
+    // Durable replay protection. Null only when the operator disabled it, which is
+    // reported loudly at startup.
+    std::unique_ptr<ReplayState> replay_;
     TlsListener listener_{};
     Stats stats_{};
 

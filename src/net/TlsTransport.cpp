@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -117,15 +118,44 @@ bool ssl_read_exact_ex(SSL* ssl, uint8_t* data, size_t size, bool* saw_progress)
     return true;
 }
 
+// True when `host` is a dotted IPv4 literal. IPv6 is not supported by this
+// transport, and saying so explicitly beats a silent resolution attempt.
+bool is_ipv4_literal(const std::string& host) {
+    struct in_addr parsed {};
+    return ::inet_pton(AF_INET, host.c_str(), &parsed) == 1;
+}
+
+// Resolve the target. A name is accepted, and it is the IDENTITY the certificate
+// is then verified against (see configure_expected_identity): accepting a name is
+// only safe BECAUSE that binding is enforced, which is why the resolution and the
+// verification live next to each other.
+bool resolve_host(const std::string& host, uint16_t port, struct sockaddr_in* out,
+                  std::string* error) {
+    out->sin_family = AF_INET;
+    out->sin_port = htons(port);
+    if (is_ipv4_literal(host)) {
+        return ::inet_pton(AF_INET, host.c_str(), &out->sin_addr) == 1;
+    }
+    struct addrinfo hints {};
+    hints.ai_family = AF_INET;  // IPv4 only: this transport is IPv4
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* resolved = nullptr;
+    const int rc = ::getaddrinfo(host.c_str(), nullptr, &hints, &resolved);
+    if (rc != 0 || resolved == nullptr) {
+        if (error != nullptr) *error = "could not resolve the hub name";
+        if (resolved != nullptr) ::freeaddrinfo(resolved);
+        return false;
+    }
+    *out = *reinterpret_cast<struct sockaddr_in*>(resolved->ai_addr);
+    out->sin_port = htons(port);
+    ::freeaddrinfo(resolved);
+    return true;
+}
+
 bool connect_tcp(const std::string& host, uint16_t port, int timeout_ms, int* out_fd,
                  std::string* error) {
     struct sockaddr_in address {};
-    address.sin_family = AF_INET;
-    address.sin_port = htons(port);
-    if (::inet_pton(AF_INET, host.c_str(), &address.sin_addr) != 1) {
-        if (error != nullptr) *error = "host must be a dotted IPv4 address";
-        return false;
-    }
+    if (!resolve_host(host, port, &address, error)) return false;
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         if (error != nullptr) *error = "socket() failed";
@@ -141,8 +171,43 @@ bool connect_tcp(const std::string& host, uint16_t port, int timeout_ms, int* ou
     return true;
 }
 
+// True when the certificate carries `host` as a Subject Alternative Name.
+//
+// SANs ONLY: CN fallback is explicitly refused (X509_CHECK_FLAG_NEVER_CHECK_SUBJECT).
+// A CN is self-asserted text in the same document as the public key, so honoring a
+// mismatched CN would let a certificate issued for one name authorize a different
+// endpoint. The required regression case "missing appropriate SAN" depends on this
+// flag, not on the match itself.
+bool certificate_matches_identity(X509* certificate, const std::string& host,
+                                  std::string* error) {
+    const int flags = X509_CHECK_FLAG_NEVER_CHECK_SUBJECT;
+    int matched = 0;
+    const char* kind = nullptr;
+    if (is_ipv4_literal(host)) {
+        matched = X509_check_ip_asc(certificate, host.c_str(), flags);
+        kind = "IP SAN";
+    } else {
+        matched = X509_check_host(certificate, host.c_str(), 0, flags, nullptr);
+        kind = "DNS SAN";
+    }
+    if (matched == 1) return true;
+    if (error != nullptr) {
+        *error = matched < 0 ? std::string("could not evaluate the certificate's ") + kind
+                             : std::string("the hub certificate carries no matching ") + kind +
+                                   " for the configured endpoint";
+    }
+    return false;
+}
+
 // Verify the peer certificate chain and produce the identity the hub will use.
-bool evaluate_peer(SSL* ssl, PeerIdentity* identity, std::string* error) {
+//
+// `expected_host` is set by the CLIENT only: a server does not verify a client's
+// hostname, and an empty value means "chain only" (the server's mode). When set,
+// the identity is enforced twice - by OpenSSL during the handshake (the verify
+// parameter is configured before SSL_connect) and explicitly here, so the
+// guarantee is visible in this file rather than implied by a library default.
+bool evaluate_peer(SSL* ssl, PeerIdentity* identity, const std::string* expected_host,
+                   std::string* error) {
     X509* certificate = SSL_get1_peer_certificate(ssl);
     if (certificate == nullptr) {
         if (error != nullptr) *error = "peer presented no certificate";
@@ -156,6 +221,13 @@ bool evaluate_peer(SSL* ssl, PeerIdentity* identity, std::string* error) {
         }
         X509_free(certificate);
         return false;
+    }
+    if (expected_host != nullptr && !expected_host->empty()) {
+        if (!certificate_matches_identity(certificate, *expected_host, error)) {
+            X509_free(certificate);
+            return false;
+        }
+        identity->server_identity_verified = true;
     }
     identity->verified_against_ca = true;
     identity->credential_id = fingerprint_sha256(certificate);
@@ -404,7 +476,8 @@ std::unique_ptr<TlsConnection> TlsListener::accept_one(std::string* error) {
 
     PeerIdentity identity;
     std::string verify_error;
-    if (config_.require_client_certificate && !evaluate_peer(ssl, &identity, &verify_error)) {
+    if (config_.require_client_certificate &&
+        !evaluate_peer(ssl, &identity, nullptr, &verify_error)) {
         if (error != nullptr) *error = verify_error;
         SSL_free(ssl);
         ::close(fd);
@@ -453,6 +526,7 @@ bool TlsClient::connect(const std::string& host, uint16_t port, const std::strin
     };
     if (!tls_library_init(error)) return false;
 
+    if (host.empty()) return fail("no hub endpoint configured to verify against");
     ctx_ = SSL_CTX_new(TLS_client_method());
     if (ctx_ == nullptr) return fail(last_ssl_error("SSL_CTX_new failed"));
     if (SSL_CTX_set_min_proto_version(ctx_, TLS1_2_VERSION) != 1) {
@@ -481,11 +555,37 @@ bool TlsClient::connect(const std::string& host, uint16_t port, const std::strin
     ssl_ = SSL_new(ctx_);
     if (ssl_ == nullptr) return fail(last_ssl_error("SSL_new failed"));
     SSL_set_fd(ssl_, fd_);
-    if (SSL_connect(ssl_) != 1) return fail(last_ssl_error("TLS handshake failed"));
+
+    // Bind the certificate to the endpoint BEFORE the handshake, so a hub that
+    // presents a CA-signed certificate for a DIFFERENT host is rejected during the
+    // handshake rather than being trusted because its chain was valid. There is no
+    // flag that turns this off.
+    {
+        X509_VERIFY_PARAM* param = SSL_get0_param(ssl_);
+        if (param == nullptr) return fail("no verify parameters on the TLS session");
+        if (is_ipv4_literal(host)) {
+            if (X509_VERIFY_PARAM_set1_ip_asc(param, host.c_str()) != 1) {
+                return fail("could not bind the expected IP address");
+            }
+        } else {
+            X509_VERIFY_PARAM_set_hostflags(param, X509_CHECK_FLAG_NEVER_CHECK_SUBJECT);
+            if (X509_VERIFY_PARAM_set1_host(param, host.c_str(), 0) != 1) {
+                return fail("could not bind the expected hub name");
+            }
+        }
+    }
+    if (SSL_connect(ssl_) != 1) {
+        const long code = SSL_get_verify_result(ssl_);
+        if (code != X509_V_OK) {
+            return fail(std::string("the hub's certificate does not identify ") + host + ": " +
+                        X509_verify_cert_error_string(code));
+        }
+        return fail(last_ssl_error("TLS handshake failed"));
+    }
 
     PeerIdentity identity;
     std::string verify_error;
-    if (!evaluate_peer(ssl_, &identity, &verify_error)) return fail(verify_error);
+    if (!evaluate_peer(ssl_, &identity, &host, &verify_error)) return fail(verify_error);
     peer_ = identity;
 
     struct timeval tv {};

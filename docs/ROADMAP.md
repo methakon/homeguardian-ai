@@ -451,3 +451,21 @@ recorded as hardware- or data-blocked rather than approximated.
 | X-08 | Acceptance tooling | X-05 | Real-TLS end-to-end with a mock device client, including adversarial modes; runs inside the container where OpenSSL exists | **DONE** (`src/main_device_client.cpp`, `scripts/verify_device_transport.sh`, 21/21) |
 | X-10 | Footprint measurement | X-05 | Idle/peak RAM, CPU, threads, latency, throughput, queue bounds measured rather than estimated; hardware-dependent numbers explicitly not claimed | **DONE** (`scripts/measure_device_transport.sh`, results in `docs/DISTRIBUTED_DEPLOYMENT.md`) |
 | X-09 | Android transport | X-01 | Bounded queue + framed mutual TLS in the APK, compact observations only, no credential in a payload or log | **PARTIAL** - implemented and compile-verified; no phone attached, so physical delivery is BLOCKED |
+
+## Phase X — X-11 D-03.1 security and reliability hardening (complete)
+
+- X-11.1 Server identity verification (Android SAN + endpoint identification; OpenSSL
+  hostname/IP verification; SAN-aware provisioning). Done.
+- X-11.2 Credential isolation: offline CA tree, runtime tree, device-key tree. Done.
+- X-11.3 Delivery-time authorization refresh with fail-closed malformed state. Done.
+- X-11.4 Durable replay protection across restarts, plus the resume point that keeps a
+  legitimate application restart working. Done.
+- X-11.5 Android acknowledgment matching, refusal classification, queue flush and
+  lifecycle/generation handling. Done (compile-verified; device acceptance blocked).
+- X-11.6 Explicit `processing_failed` outcome and pre-delivery persistence ordering. Done.
+- X-11.7 Test hygiene found by the battery: per-process fixtures (concurrency), guarded
+  traps, container-model restart/revocation checks. Done.
+
+Next: X-12 (physical device acceptance, requires a connected phone and explicit operator
+permission). D-04 multi-phone expansion and ML remain out of scope until D-03.1 passes
+review.

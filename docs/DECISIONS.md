@@ -851,3 +851,52 @@ binary:
   deployment constraint worth stating in the docs: do not put `/data` on network storage.
 - Conservative behavior is preserved by default: an operator who wants ingested motion to alert must
   say so, and the hub prints the active allowlist at startup so the decision is never invisible.
+
+## ADR-015 — Split credential storage: offline CA, runtime tree, device keys
+
+**Context.** The D-03 provisioning tree held the CA private signing key beside the
+material the ingress container mounts, and the deployment documentation suggested
+`chmod 644 server.key` as the way to let uid 10001 read it. Either a container compromise
+or a world-readable key would reach material that can mint new devices.
+
+**Decision.** Three trees with different trust levels: the CA signing key stays in an
+offline directory that no container mounts; the runtime directory holds only what the
+ingress needs; device private keys live with the device, outside both. Ownership (not
+world-readability) is the mechanism for uid 10001.
+
+**Consequences.** A compromise of the ingress cannot mint devices. Provisioning gains two
+path options and must be idempotent; deployment documentation must describe signing,
+deployment, rotation and revocation separately.
+
+## ADR-016 — Durable sequence watermark, and the resume point that goes with it
+
+**Context.** D-03 loaded the sequence watermark from the registry at startup, so
+restarting the hub reopened the replay window. A purely durable counter, however, would
+refuse every observation from a legitimately restarted application that begins again at
+sequence 1.
+
+**Decision.** Persist a per-device counter (never a timestamp) atomically, bounded, with
+fail-closed loading, written BEFORE delivery. The welcome carries the device's own
+watermark as `last_sequence`, and a client resumes above it. Identity remains the
+certificate-derived device id.
+
+**Consequences.** Restart is not a replay primitive and an app restart still works.
+Reconnecting cannot reset protection (the watermark is durable and the resume point is
+the hub's own state). Sequence rollover is handled by the counter type; clock changes are
+irrelevant because no timestamp is involved.
+
+## ADR-017 — Authorization at delivery time; `processing_failed` as a distinct outcome
+
+**Context.** Authorization was evaluated at connection setup and `accepted` was returned
+before downstream processing finished, so a refusal could be reported as an acceptance
+and a stalled connection could keep a revoked device feeding detectors.
+
+**Decision.** Re-check authorization before every accepted observation (rate-limited,
+forced on a deadline, failing closed on malformed state). Define `accepted` as
+authenticated + authorized + bounded + validated + handed to the sink, and introduce
+`RejectReason::processing_failed` for a downstream failure. On failure the observation is
+dropped and the watermark does not advance.
+
+**Consequences.** A refusal is never reported as an acceptance; a device that is revoked,
+unpaired or denied consent stops contributing on its next observation without a restart;
+devices are unaffected by each other's authorization changes.

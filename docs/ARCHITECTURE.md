@@ -1461,3 +1461,33 @@ Trust chain, in the order the hub checks it:
    local filesystem and a 5 s busy timeout. Whether ingested evidence may VOTE in fusion is an
    explicit operator setting (`evidence_detector_ids`); by default it is recorded and displayed but
    casts no vote, and nothing on this path can reach `Severity::critical` (ADR-014).
+
+## Ingress authorization and replay flow (D-03.1)
+
+```
+device (mTLS, cert CN = device id)
+   |  hello
+   v
+[connection setup]  chain + endpoint identity verified
+   |  welcome { device_id, last_sequence }        <- the device's resume point
+   |  observation -----------------------------.
+   v                                           |
+[per-observation]                               |
+   refresh_authorization_locked()               |  stat registry/revocation, re-read on
+     - registry: paired/revoked/consent/capture |  change or on a 250 ms deadline
+     - revocation list                          |
+   authorization fault? -> refuse (unauthorized, fail closed)
+   else ingest.accept():                        |
+     validate -> commit hook (ReplayState,      |
+       atomic write BEFORE delivery)            |
+     -> sink / detectors / fusion -> alert      |
+   ack { observation_id, sequence, accepted, reason }
+```
+
+Two rules the diagram encodes:
+
+1. **Authorization is evaluated where the observation is delivered**, not only where the
+   connection was accepted. A revocation therefore reaches an open connection.
+2. **Durable state is written before delivery.** A crash between the two cannot make an
+   accepted observation replayable, and a failure before delivery is `processing_failed`,
+   never an acceptance.

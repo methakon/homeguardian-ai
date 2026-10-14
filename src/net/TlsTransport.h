@@ -50,6 +50,9 @@ struct PeerIdentity {
     std::string device_id;       // certificate CN
     std::string credential_id;   // SHA-256 fingerprint of the peer certificate (hex)
     bool verified_against_ca = false;
+    // Set by the CLIENT only: the certificate was matched against the endpoint it
+    // was asked to connect to (SAN, never CN). A server-side peer leaves it false.
+    bool server_identity_verified = false;
     std::string error;           // bounded reason when not authenticated
 };
 

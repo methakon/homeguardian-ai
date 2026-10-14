@@ -17,8 +17,10 @@ WORK="${1:-$(mktemp -d)}"
 BURST="${HG_BURST:-200}"
 
 cleanup() {
-  [[ -n "${INGRESS_PID:-}" ]] && kill -TERM "$INGRESS_PID" 2>/dev/null
-  wait "$INGRESS_PID" 2>/dev/null
+  if [[ -n "${INGRESS_PID:-}" ]]; then
+    kill -TERM "$INGRESS_PID" 2>/dev/null
+    wait "$INGRESS_PID" 2>/dev/null
+  fi
   [[ "${HG_KEEP_WORK:-0}" == "1" ]] || rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -30,9 +32,13 @@ if [[ ! -x "$INGRESS" || ! -x "$CLIENT" ]]; then
 fi
 
 mkdir -p "$WORK/certs"; CERTS="$WORK/certs"; umask 077
-bash "$PROVISION" init "$CERTS" >/dev/null 2>&1
-bash "$PROVISION" issue hg-measure0000001 "$CERTS" >/dev/null 2>&1
-CRED="$(bash "$PROVISION" show hg-measure0000001 "$CERTS" | awk '/credential_id/{print $3}')"
+# Split storage (D-03.1 section C): the signing key stays offline, the device key out
+# of the runtime tree. The measured ingress is the one a deployment actually runs.
+bash "$PROVISION" init --ca-dir "$WORK/offline-ca" --runtime-dir "$CERTS" \
+  --device-dir "$WORK/device-keys" --server-names "DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
+bash "$PROVISION" issue hg-measure0000001 --ca-dir "$WORK/offline-ca" --runtime-dir "$CERTS" \
+  --device-dir "$WORK/device-keys" >/dev/null 2>&1
+CRED="$(bash "$PROVISION" show hg-measure0000001 --runtime-dir "$CERTS" | awk '/credential_id/{print $3}')"
 cat > "$WORK/devices.json" <<JSON
 {"devices":[{"device_id":"hg-measure0000001","display_name":"measure","device_type":"android",
  "credential_id":"$CRED","paired":true,"revoked":false,
@@ -89,7 +95,7 @@ CPU_A="$(cpu_ticks "$INGRESS_PID")"
 BURST_START="$(date +%s.%N)"
 OUT="$("$CLIENT" --host 127.0.0.1 --port "$PORT" --ca "$CERTS/ca/ca.crt" \
         --cert "$CERTS/devices/hg-measure0000001.crt" \
-        --key "$CERTS/devices/hg-measure0000001.key" \
+        --key "$WORK/device-keys/hg-measure0000001.key" \
         --device-id hg-measure0000001 --mode normal --count "$BURST" --interval-ms 0 2>&1)"
 BURST_END="$(date +%s.%N)"
 CPU_B="$(cpu_ticks "$INGRESS_PID")"

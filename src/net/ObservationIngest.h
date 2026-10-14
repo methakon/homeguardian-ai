@@ -75,6 +75,15 @@ public:
     // it into the existing pipeline; tests inject their own.
     using Sink = std::function<void(const SecurityObservation&)>;
 
+    // Called with the device id and sequence of an observation that has passed every
+    // check, IMMEDIATELY BEFORE it is delivered. Returning false refuses the
+    // observation (processing_failed) and it is NOT delivered. This is the server's
+    // durable-replay-protection hook: the watermark is persisted before delivery, so
+    // "the hub restarted" can never make an already-accepted observation acceptable
+    // again - the one window a post-delivery write would leave open.
+    using CommitHook = std::function<bool(const std::string& device_id, uint64_t sequence,
+                                          std::string* reason)>;
+
     static Config defaults() { return Config{}; }
     static Clock system_clock_ms();
 
@@ -87,6 +96,9 @@ public:
 
     // Deliver everything currently queued. Returns the number delivered.
     size_t drain(const Sink& sink);
+
+    // Durable replay-protection hook (see CommitHook above). Unset = in-memory only.
+    void set_commit_hook(CommitHook hook) { commit_hook_ = std::move(hook); }
 
     size_t pending() const { return pending_.size(); }
     size_t rejected_count() const { return rejected_; }
@@ -105,6 +117,7 @@ private:
     Config cfg_;
     Clock clock_;
     std::deque<SecurityObservation> pending_{};
+    CommitHook commit_hook_{};
     std::map<std::string, std::deque<std::string>> recent_ids_{};
     size_t accepted_ = 0;
     size_t rejected_ = 0;

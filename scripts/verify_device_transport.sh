@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# D-03.1: the CA signing key is NEVER in $CERTS, so a compromise of the running
+# ingress cannot reach the key that can mint new devices.
 # verify_device_transport.sh - the D-03 end-to-end proof for the TLS device
 # ingestion boundary.
 #
@@ -55,11 +57,21 @@ CERTS="$WORK/certs"
 umask 077
 
 # ---------------------------------------------------------------- material
-bash "$PROVISION" init "$CERTS" >/dev/null 2>&1 || { bad "CA provisioning"; exit 1; }
-bash "$PROVISION" issue hg-aaaaaaaaaaaaaaa1 "$CERTS" >/tmp/hg_d03_dev1.txt 2>&1
-bash "$PROVISION" issue hg-bbbbbbbbbbbbbbb2 "$CERTS" >/tmp/hg_d03_dev2.txt 2>&1
-CRED1="$(bash "$PROVISION" show hg-aaaaaaaaaaaaaaa1 "$CERTS" | awk '/credential_id/{print $3}')"
-CRED2="$(bash "$PROVISION" show hg-bbbbbbbbbbbbbbb2 "$CERTS" | awk '/credential_id/{print $3}')"
+# Split storage (D-03.1 section C): the CA signing key lives in an OFFLINE directory
+# that is never mounted, while $CERTS is the deployable runtime directory handed to
+# the container. Device private keys go to their own directory, outside both.
+CA_DIR="$WORK/offline-ca"
+DEVICE_DIR="$WORK/device-keys"
+# The hub identity is its SAN and the client dials 127.0.0.1, so the certificate
+# must carry that IP. Identity is verified, never assumed.
+bash "$PROVISION" init --ca-dir "$CA_DIR" --runtime-dir "$CERTS" --device-dir "$DEVICE_DIR" \
+  --server-names "DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1 \
+  || { bad "CA provisioning"; exit 1; }
+ISSUE=(--ca-dir "$CA_DIR" --runtime-dir "$CERTS" --device-dir "$DEVICE_DIR")
+bash "$PROVISION" issue hg-aaaaaaaaaaaaaaa1 "${ISSUE[@]}" >/tmp/hg_d03_dev1.txt 2>&1
+bash "$PROVISION" issue hg-bbbbbbbbbbbbbbb2 "${ISSUE[@]}" >/tmp/hg_d03_dev2.txt 2>&1
+CRED1="$(bash "$PROVISION" show hg-aaaaaaaaaaaaaaa1 "${ISSUE[@]}" | awk '/credential_id/{print $3}')"
+CRED2="$(bash "$PROVISION" show hg-bbbbbbbbbbbbbbb2 "${ISSUE[@]}" | awk '/credential_id/{print $3}')"
 [[ -n "$CRED1" && -n "$CRED2" ]] && ok "private CA + two per-device certificates issued" \
                                  || bad "certificate provisioning"
 
@@ -158,7 +170,7 @@ reasons() { grep -oE "reason=[a-z_]+" <<<"$1" | sort -u | tr '\n' ' '; }
 client() {  # client <cert-id> <mode> [extra args...]
   local id="$1"; local mode="$2"; shift 2
   "$CLIENT" --host 127.0.0.1 --port "$PORT" --ca "$CERTS/ca/ca.crt" \
-            --cert "$CERTS/devices/$id.crt" --key "$CERTS/devices/$id.key" \
+            --cert "$CERTS/devices/$id.crt" --key "$DEVICE_DIR/$id.key" \
             --device-id "$id" --mode "$mode" "$@" 2>&1
 }
 
@@ -180,7 +192,7 @@ grep -qE "reason=(identity_mismatch|unauthorized|device_unknown|device_unpaired)
   || bad "wrong-credential device was not refused" "$(tail -2 <<<"$OUT" | tr '\n' ' ')"
 
 # a device that is not in the registry at all (issue a third cert, never register it)
-bash "$PROVISION" issue hg-ccccccccccccccc3 "$CERTS" >/dev/null 2>&1
+bash "$PROVISION" issue hg-ccccccccccccccc3 "${ISSUE[@]}" >/dev/null 2>&1
 OUT="$(client hg-ccccccccccccccc3 normal --count 1 --expect-reject)"
 grep -qE "reason=(device_unknown|device_unpaired|identity_mismatch|unauthorized)" <<<"$OUT" \
   && ok "an unregistered device is refused" || bad "unregistered device was not refused" "$(tail -1 <<<"$OUT")"

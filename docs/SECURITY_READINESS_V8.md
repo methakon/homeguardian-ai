@@ -205,3 +205,26 @@ No authentication or consent path was relaxed in v21.
 | Least privilege at runtime | Ingress container: non-root, `cap_drop: ALL`, `no-new-privileges`, no Docker socket, no privileged mode, 128 MB / 0.5 CPU / 128 pids ceilings, own volume, certs mounted `:ro`, `restart: unless-stopped`, 20 s stop grace for a clean SQLite close | `docker-compose.yml`; clean SIGTERM asserted in acceptance |
 | No secret in JSON or logs | Observations have no credential field; the ingress logs ids and reason codes | Acceptance log inspection |
 | Fail closed on misconfiguration | Missing certificate/key/CA/registry or an out-of-range limit refuses startup (exit 78) | Acceptance: the ingress refuses to start with a missing certificate |
+
+## D-03.1 hardening (delta)
+
+New guarantees, each covered by a test that fails if the behaviour regresses:
+
+1. **Endpoint identity.** A chain-valid certificate is not authorization to serve; the
+   peer must match the dialled address's SAN. Cases: matching DNS SAN, matching IP SAN,
+   correct CA with wrong SNI/address, missing SAN with matching CN, untrusted CA, expired
+   server certificate, expired client certificate.
+2. **Offline CA signing key.** The signing key is absent from the runtime image and from
+   every running container; probes assert this against both containers and the image.
+3. **Delivery-time authorization.** Revocation, consent withdrawal and capture disable
+   reach an OPEN connection; a malformed authorization update fails closed; other devices
+   stay operational.
+4. **Durable replay protection.** An accepted observation is not acceptable again after a
+   restart; the state is a bounded counter; an unreadable state fails closed; an
+   interrupted write leaves the previous state intact; a legitimate restart resumes.
+5. **Honest acknowledgment.** A downstream failure is `processing_failed`, never an
+   acceptance, and the watermark does not advance.
+
+Residual risk (stated, not hidden): physical Android capture is unverified; the Android
+keystore is not used; the hub's own dashboard remains loopback-only inside the container;
+live Home Assistant still needs TLS.

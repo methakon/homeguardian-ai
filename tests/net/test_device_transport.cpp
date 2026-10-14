@@ -7,6 +7,7 @@
 #include "net/DeviceProtocol.h"
 #include "net/DeviceRegistry.h"
 #include "net/IngestDetectors.h"
+#include "net/ReplayState.h"
 #include "net/ObservationIngest.h"
 
 #include <chrono>
@@ -853,6 +854,324 @@ TEST_CASE("accepted observations flow through the existing pipeline with real pr
                     .accept(allowed,
                             observation_message("hg-2222222222222222", 2, now_ms - 900), sink)
                     .accepted);
+    }
+}
+
+TEST_CASE("authorization is re-evaluated during a live session (D-03.1 section D)",
+          "[net][authorization]") {
+    const int64_t now_ms = ObservationIngest::system_clock_ms()();
+    const auto clock = [now_ms] { return now_ms; };
+
+    std::vector<SecurityObservation> stored;
+    const auto sink = [&](const SecurityObservation& o) { stored.push_back(o); };
+
+    Fixture f;
+    ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+    const std::string registry_path = temp_path("live-registry.json");
+
+    SECTION("a consent withdrawal applied mid-session blocks the NEXT observation") {
+        REQUIRE(ingest.accept(f.peer(), observation_message(f.device_id, 1, now_ms - 1000), sink)
+                    .accepted);
+        REQUIRE(stored.size() == 1);
+        REQUIRE(f.registry.find(f.device_id)->last_sequence == 1);
+
+        // The operator withdraws consent WHILE the connection is open.
+        {
+            std::ofstream out(registry_path, std::ios::trunc);
+            out << "{\"devices\":[{\"device_id\":\"" << f.device_id << "\",\"credential_id\":\""
+                << f.credential << "\",\"paired\":true,\"consent_granted\":false}]}";
+        }
+        std::vector<std::string> transitions;
+        std::string why;
+        REQUIRE(f.registry.refresh_authorization(registry_path, &transitions, &why) ==
+                DeviceRegistry::RefreshOutcome::refreshed);
+        REQUIRE_FALSE(transitions.empty());
+        REQUIRE_FALSE(f.registry.find(f.device_id)->consent_granted);
+        // Re-reading authorization must NOT touch what the hub observed for itself.
+        REQUIRE(f.registry.find(f.device_id)->last_sequence == 1);
+
+        const auto result =
+            ingest.accept(f.peer(), observation_message(f.device_id, 2, now_ms - 900), sink);
+        REQUIRE_FALSE(result.accepted);
+        REQUIRE(result.reason == RejectReason::consent_withdrawn);
+        REQUIRE(stored.size() == 1);  // nothing new reached the pipeline
+        ::unlink(registry_path.c_str());
+    }
+
+    SECTION("capture disable mid-session blocks the NEXT observation") {
+        {
+            std::ofstream out(registry_path, std::ios::trunc);
+            out << "{\"devices\":[{\"device_id\":\"" << f.device_id << "\",\"credential_id\":\""
+                << f.credential << "\",\"paired\":true,\"consent_granted\":true,"
+                << "\"capture_enabled\":false}]}";
+        }
+        std::string why;
+        REQUIRE(f.registry.refresh_authorization(registry_path, nullptr, &why) ==
+                DeviceRegistry::RefreshOutcome::refreshed);
+        const auto result =
+            ingest.accept(f.peer(), observation_message(f.device_id, 3, now_ms - 800), sink);
+        REQUIRE_FALSE(result.accepted);
+        REQUIRE(result.reason == RejectReason::capture_disabled);
+        ::unlink(registry_path.c_str());
+    }
+
+    SECTION("revocation mid-session blocks the NEXT observation, not the connection") {
+        {
+            std::ofstream out(registry_path, std::ios::trunc);
+            out << "{\"devices\":[{\"device_id\":\"" << f.device_id << "\",\"credential_id\":\""
+                << f.credential << "\",\"paired\":true,\"consent_granted\":true,"
+                << "\"capture_enabled\":true,\"revoked\":true}]}";
+        }
+        std::string why;
+        REQUIRE(f.registry.refresh_authorization(registry_path, nullptr, &why) ==
+                DeviceRegistry::RefreshOutcome::refreshed);
+        REQUIRE(f.registry.find(f.device_id)->revoked);
+        // Revocation clears the permissions too, so no residual flag leaves the device
+        // partially authorized.
+        REQUIRE_FALSE(f.registry.find(f.device_id)->consent_granted);
+        REQUIRE_FALSE(f.registry.find(f.device_id)->capture_enabled);
+        const auto result =
+            ingest.accept(f.peer(), observation_message(f.device_id, 4, now_ms - 700), sink);
+        REQUIRE_FALSE(result.accepted);
+        REQUIRE(result.reason == RejectReason::device_revoked);
+        ::unlink(registry_path.c_str());
+    }
+
+    SECTION("a malformed or missing authorization file reports itself, so the caller can fail closed") {
+        std::string why;
+        REQUIRE(f.registry.refresh_authorization(temp_path("does-not-exist.json"), nullptr, &why) ==
+                DeviceRegistry::RefreshOutcome::absent);
+        {
+            std::ofstream out(registry_path, std::ios::trunc);
+            out << "{not json";
+        }
+        REQUIRE(f.registry.refresh_authorization(registry_path, nullptr, &why) ==
+                DeviceRegistry::RefreshOutcome::malformed);
+        REQUIRE_FALSE(why.empty());
+        {
+            std::ofstream out(registry_path, std::ios::trunc);
+            out << "{\"devices\":\"not-an-array\"}";
+        }
+        REQUIRE(f.registry.refresh_authorization(registry_path, nullptr, &why) ==
+                DeviceRegistry::RefreshOutcome::malformed);
+        ::unlink(registry_path.c_str());
+    }
+
+    SECTION("one device losing authorization does not disturb another") {
+        DeviceRegistry::Device second = make_device("hg-2222222222222222", "22");
+        std::string why;
+        REQUIRE(f.registry.pair(second, &why));
+        REQUIRE(f.registry.set_consent("hg-2222222222222222", true, "hg-2222222222222222",
+                                       "security_monitor", now_ms));
+        REQUIRE(f.registry.set_capture_enabled("hg-2222222222222222", true));
+
+        {
+            std::ofstream out(registry_path, std::ios::trunc);
+            out << "{\"devices\":["
+                << "{\"device_id\":\"" << f.device_id << "\",\"credential_id\":\"" << f.credential
+                << "\",\"paired\":true,\"consent_granted\":false},"
+                << "{\"device_id\":\"hg-2222222222222222\",\"credential_id\":\"22\","
+                << "\"paired\":true,\"consent_granted\":true,\"capture_enabled\":true}]}";
+        }
+        REQUIRE(f.registry.refresh_authorization(registry_path, nullptr, &why) ==
+                DeviceRegistry::RefreshOutcome::refreshed);
+        REQUIRE_FALSE(f.registry.find(f.device_id)->consent_granted);
+        REQUIRE(f.registry.find("hg-2222222222222222")->consent_granted);
+
+        const auto refused =
+            ingest.accept(f.peer(), observation_message(f.device_id, 5, now_ms - 600), sink);
+        REQUIRE_FALSE(refused.accepted);
+
+        PeerContext other;
+        other.authenticated_device_id = "hg-2222222222222222";
+        other.credential_id = "22";
+        other.peer_authenticated = true;
+        const auto permitted = ingest.accept(
+            other, observation_message("hg-2222222222222222", 1, now_ms - 600), sink);
+        REQUIRE(permitted.accepted);
+        ::unlink(registry_path.c_str());
+    }
+}
+
+TEST_CASE("replay state survives a restart and is not built on trust (D-03.1 section E)",
+          "[net][replay]") {
+    const std::string path = temp_path("replay-state.json");
+    std::string why;
+
+    SECTION("a watermark round-trips through a restart") {
+        {
+            ReplayState first(ReplayState::Config{path, 8});
+            REQUIRE(first.load(&why) == ReplayState::LoadOutcome::absent);  // first run
+            REQUIRE(first.record("hg-1", 7, &why));
+            REQUIRE(first.record("hg-1", 9, &why));  // raises
+            REQUIRE(first.record("hg-1", 4, &why));  // NEVER lowers
+            REQUIRE(first.watermarks().at("hg-1") == 9);
+        }
+        ReplayState restarted(ReplayState::Config{path, 8});
+        REQUIRE(restarted.load(&why) == ReplayState::LoadOutcome::loaded);
+        REQUIRE(restarted.watermarks().at("hg-1") == 9);
+        ::unlink(path.c_str());
+    }
+
+    SECTION("a seeded watermark refuses a replay of an already accepted observation") {
+        Fixture f;
+        {
+            ReplayState state(ReplayState::Config{path, 8});
+            state.load(&why);
+            REQUIRE(state.record(f.device_id, 5, &why));
+        }
+        ReplayState restarted(ReplayState::Config{path, 8});
+        REQUIRE(restarted.load(&why) == ReplayState::LoadOutcome::loaded);
+        for (const auto& entry : restarted.watermarks()) {
+            REQUIRE(f.registry.seed_sequence_watermark(entry.first, entry.second));
+        }
+        const int64_t now_ms = ObservationIngest::system_clock_ms()();
+        const auto clock = [now_ms] { return now_ms; };
+        ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+        std::vector<SecurityObservation> stored;
+        const auto sink = [&](const SecurityObservation& o) { stored.push_back(o); };
+
+        // The exact observation the hub accepted BEFORE the restart: refused.
+        const auto replayed =
+            ingest.accept(f.peer(), observation_message(f.device_id, 5, now_ms - 1000), sink);
+        REQUIRE_FALSE(replayed.accepted);
+        REQUIRE(replayed.reason == RejectReason::replayed_sequence);
+        // A genuinely new sequence is still accepted.
+        REQUIRE(ingest.accept(f.peer(), observation_message(f.device_id, 6, now_ms - 1000), sink)
+                    .accepted);
+        ::unlink(path.c_str());
+    }
+
+    SECTION("an unusable file fails closed instead of silently starting empty") {
+        {
+            std::ofstream out(path, std::ios::trunc);
+            out << "{corrupt";
+        }
+        ReplayState broken(ReplayState::Config{path, 8});
+        REQUIRE(broken.load(&why) == ReplayState::LoadOutcome::malformed);
+        REQUIRE_FALSE(why.empty());
+        {
+            std::ofstream out(path, std::ios::trunc);
+            out << "{\"devices\":[{\"device_id\":\"dupe\",\"last_sequence\":3},"
+                << "{\"device_id\":\"dupe\",\"last_sequence\":11}]}";
+        }
+        ReplayState duplicates(ReplayState::Config{path, 8});
+        REQUIRE(duplicates.load(&why) == ReplayState::LoadOutcome::loaded);
+        REQUIRE(duplicates.watermarks().at("dupe") == 11);  // highest wins, not last
+        ::unlink(path.c_str());
+    }
+
+    SECTION("the persisted state is bounded") {
+        ReplayState bounded(ReplayState::Config{path, 2});
+        REQUIRE(bounded.load(&why) == ReplayState::LoadOutcome::absent);
+        REQUIRE(bounded.record("a", 1, &why));
+        REQUIRE(bounded.record("b", 1, &why));
+        REQUIRE_FALSE(bounded.record("c", 1, &why));  // refuses rather than grows
+        REQUIRE(bounded.size() == 2);
+        ::unlink(path.c_str());
+        ::unlink((path + ".tmp").c_str());
+    }
+
+    SECTION("an interrupted write leaves the previous state intact") {
+        {
+            ReplayState state(ReplayState::Config{path, 8});
+            state.load(&why);
+            REQUIRE(state.record("hg-2", 3, &why));
+        }
+        // Simulate a crash mid-write: a partial temporary file beside a good one.
+        {
+            std::ofstream out(path + ".tmp", std::ios::trunc);
+            out << "{\"devices\":[{\"device_id\":\"hg-2\",\"last_seq";
+        }
+        ReplayState after_crash(ReplayState::Config{path, 8});
+        REQUIRE(after_crash.load(&why) == ReplayState::LoadOutcome::loaded);
+        REQUIRE(after_crash.watermarks().at("hg-2") == 3);  // the good file, not the fragment
+        ::unlink(path.c_str());
+        ::unlink((path + ".tmp").c_str());
+    }
+}
+
+TEST_CASE("the welcome tells a restarted device where to resume (D-03.1 section E)",
+          "[net][protocol]") {
+    // Both halves: the hub WRITES the resume point and the device READS it. A field the
+    // writer emits without a reader-side test is exactly the defect Incident 37 was.
+    DeviceMessage welcome;
+    welcome.protocol_version_major = kProtocolVersionMajor;
+    welcome.protocol_version_minor = kProtocolVersionMinor;
+    welcome.kind = MessageKind::welcome;
+    welcome.device_id_claim = "hg-1111111111111111";
+    welcome.resume_after_sequence = 40000;
+    RejectReason reject = RejectReason::bad_json;
+    std::string reason;
+
+    const nlohmann::json encoded = encode(welcome);
+    REQUIRE(encoded["last_sequence"] == 40000);
+    // The REPLAY check happens on the wire, so round-trip through the real decoder.
+    const auto framed = frame(encoded);
+    REQUIRE(framed.has_value());
+    const auto decoded = decode(encode(welcome), &reject, &reason);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->kind == MessageKind::welcome);
+    REQUIRE(decoded->device_id_claim == "hg-1111111111111111");
+    REQUIRE(decoded->resume_after_sequence == 40000);
+    (void)framed;
+}
+
+TEST_CASE("a downstream failure is never reported as an acceptance (D-03.1 section G)",
+          "[net][processing]") {
+    const int64_t now_ms = ObservationIngest::system_clock_ms()();
+    const auto clock = [now_ms] { return now_ms; };
+    Fixture f;
+
+    SECTION("a sink that throws yields processing_failed and does NOT consume the sequence") {
+        ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+        int calls = 0;
+        const auto throwing = [&](const SecurityObservation&) {
+            ++calls;
+            throw std::runtime_error("persistence unavailable");
+        };
+        const auto result =
+            ingest.accept(f.peer(), observation_message(f.device_id, 1, now_ms - 1000), throwing);
+        REQUIRE_FALSE(result.accepted);
+        REQUIRE(result.reason == RejectReason::processing_failed);
+        REQUIRE(calls == 1);
+        // The watermark must NOT have advanced: the device has to be able to retry the
+        // same sequence after the failure clears.
+        REQUIRE(f.registry.find(f.device_id)->last_sequence == 0);
+
+        std::vector<SecurityObservation> stored;
+        const auto good = [&](const SecurityObservation& o) { stored.push_back(o); };
+        const auto retried =
+            ingest.accept(f.peer(), observation_message(f.device_id, 1, now_ms - 1000), good);
+        REQUIRE(retried.accepted);
+        REQUIRE(stored.size() == 1);
+    }
+
+    SECTION("a failing commit hook refuses the observation before it is delivered") {
+        ObservationIngest ingest(f.registry, ObservationIngest::defaults(), clock);
+        int delivered = 0;
+        const auto sink = [&](const SecurityObservation&) { ++delivered; };
+        int hook_calls = 0;
+        ingest.set_commit_hook([&](const std::string&, uint64_t, std::string* reason) {
+            ++hook_calls;
+            if (reason != nullptr) *reason = "durable replay state unavailable";
+            return false;
+        });
+        const auto result =
+            ingest.accept(f.peer(), observation_message(f.device_id, 2, now_ms - 1000), sink);
+        REQUIRE_FALSE(result.accepted);
+        REQUIRE(result.reason == RejectReason::processing_failed);
+        REQUIRE(hook_calls == 1);
+        REQUIRE(delivered == 0);  // an acceptance that is not durable is not delivered
+
+        // With the durable state healthy again, the same sequence is accepted.
+        ingest.set_commit_hook([&](const std::string&, uint64_t, std::string* reason) {
+            if (reason != nullptr) reason->clear();
+            return true;
+        });
+        REQUIRE(ingest.accept(f.peer(), observation_message(f.device_id, 2, now_ms - 1000), sink)
+                    .accepted);
+        REQUIRE(delivered == 1);
     }
 }
 

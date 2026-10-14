@@ -202,8 +202,48 @@ ObservationIngest::Result ObservationIngest::accept(const PeerContext& peer,
         return reject(RejectReason::invalid_value, std::string("observation invalid: ") + e.what());
     }
 
-    // 12. Commit the stream state only now that everything else passed, so a
-    //     refused message can never consume a sequence number.
+    // 12. DELIVER FIRST, then commit the stream state.
+    //
+    //     WHAT "accepted" MEANS (documented contract): the observation was
+    //     authenticated, authorized, bounded, validated and handed to the delivery
+    //     sink. It does NOT promise that an alert was durably committed - the sink
+    //     persists where it chooses and this function cannot see that outcome. What
+    //     it DOES promise is that a reported acceptance is not a lie about the
+    //     processing step: if the sink throws, the observation is refused with
+    //     processing_failed, the watermark does NOT advance, and the device may
+    //     retry. Committing first (as this code did) made a downstream failure
+    //     indistinguishable from success and silently swallowed the retry.
+    pending_.push_back(std::move(observation));
+    if (commit_hook_) {
+        std::string why;
+        if (!commit_hook_(peer.authenticated_device_id, message.sequence, &why)) {
+            // Durable replay state could not be advanced. Refuse rather than deliver:
+            // an acceptance that is not durable would be replayed after a restart.
+            pending_.pop_back();
+            return reject(RejectReason::processing_failed,
+                          why.empty() ? "durable replay state unavailable" : why);
+        }
+    }
+    if (sink) {
+        try {
+            drain(sink);
+        } catch (const std::exception& e) {
+            // DROP the failed item. It was refused (the device is told
+            // processing_failed), so leaving it queued would deliver it a second time
+            // when the device retries the same sequence - a duplicate the pipeline
+            // would see as a second observation. Recovery is the device's retry, which
+            // is why the watermark below has not moved.
+            if (!pending_.empty()) pending_.pop_front();
+            return reject(RejectReason::processing_failed,
+                          std::string("downstream processing failed: ") + e.what());
+        } catch (...) {
+            if (!pending_.empty()) pending_.pop_front();
+            return reject(RejectReason::processing_failed, "downstream processing failed");
+        }
+    }
+
+    // 13. Commit the stream state only now that delivery actually happened, so
+    //     neither a refused message nor a failed delivery consumes a sequence.
     registry_.commit_sequence(peer.authenticated_device_id, message.sequence);
     registry_.note_observation_timestamp(peer.authenticated_device_id, message.acquired_at_ms);
     remember_id(peer.authenticated_device_id, message.observation_id);
@@ -214,9 +254,6 @@ ObservationIngest::Result ObservationIngest::accept(const PeerContext& peer,
     result.provenance_claim_unsubstantiated = provenance.claim_unsubstantiated;
     ++accepted_;
     if (provenance.claim_unsubstantiated) ++claim_unsubstantiated_;
-
-    pending_.push_back(std::move(observation));
-    if (sink) drain(sink);
     return result;
 }
 

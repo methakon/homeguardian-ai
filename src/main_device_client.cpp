@@ -48,6 +48,9 @@ struct Options {
     int count = 3;
     int interval_ms = 0;
     uint64_t sequence_start = 1;
+    // Whether the operator pinned a sequence. When they did not, the client resumes
+    // from the hub's welcome, which is how a real restarted application rejoins.
+    bool sequence_start_pinned = false;
     double value = 0.25;
     bool expect_all_accepted = true;
 };
@@ -81,7 +84,11 @@ bool parse(int argc, char** argv, Options* options) {
         else if (arg == "--port") { if (!next(&value)) return false; options->port = static_cast<uint16_t>(std::stoi(value)); }
         else if (arg == "--count") { if (!next(&value)) return false; options->count = std::stoi(value); }
         else if (arg == "--interval-ms") { if (!next(&value)) return false; options->interval_ms = std::stoi(value); }
-        else if (arg == "--sequence-start") { if (!next(&value)) return false; options->sequence_start = std::stoull(value); }
+        else if (arg == "--sequence-start") {
+            if (!next(&value)) return false;
+            options->sequence_start = std::stoull(value);
+            options->sequence_start_pinned = true;
+        }
         else if (arg == "--value") { if (!next(&value)) return false; options->value = std::stod(value); }
         else if (arg == "--expect-reject") { options->expect_all_accepted = false; }
         else if (arg == "--help" || arg == "-h") { usage(); return false; }
@@ -190,6 +197,15 @@ int main(int argc, char** argv) {
         return 6;
     }
     std::cout << "client: welcome for device " << welcome.device_id_claim << "\n";
+    if (!options.sequence_start_pinned) {
+        // Resume ABOVE everything the hub has already accepted from this device, so a
+        // restarted client is served rather than refused as a replay.
+        options.sequence_start = welcome.resume_after_sequence + 1;
+        std::cout << "client: resuming at sequence " << options.sequence_start
+                  << " (hub watermark " << welcome.resume_after_sequence << ")\n";
+    } else {
+        std::cout << "client: sequence pinned at " << options.sequence_start << "\n";
+    }
 
     if (options.mode == "goodbye") {
         DeviceMessage bye;

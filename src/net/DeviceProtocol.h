@@ -86,7 +86,13 @@ enum class RejectReason {
     consent_withdrawn,
     capture_disabled,     // the operator has not enabled acquisition on the device
     queue_full,           // bounded ingest queue rejected the work
-    unauthorized
+    unauthorized,
+    // The observation passed every check but the DOWNSTREAM processing (sink,
+    // pipeline, persistence) failed. It is reported as a REFUSAL, not an
+    // acceptance: a downstream error must never look like a successful, durable
+    // delivery, and the stream watermark must not advance past it, so the device can
+    // retry the same sequence.
+    processing_failed
 };
 
 const char* reject_reason_to_string(RejectReason reason);
@@ -104,6 +110,10 @@ struct DeviceMessage {
 
     // hello/welcome
     std::string device_id_claim;      // a CLAIM; the hub re-derives identity
+    // welcome only: the highest sequence the hub has ALREADY accepted from this
+    // device. The device resumes above it, which is what lets a restarted Android
+    // application rejoin without reopening the replay hole D-03.1 closes.
+    uint64_t resume_after_sequence = 0;
     std::string display_name_claim;
     std::vector<std::string> capabilities;  // bounded, e.g. "camera","microphone"
 

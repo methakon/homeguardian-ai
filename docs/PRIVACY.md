@@ -959,3 +959,16 @@ display.
 - **Certificates are operator-provisioned and read-only in the container** (mounted `:ro`), and
   `deploy/docker/certs/`, `*.key` and `*.crt` are gitignored: key material never enters the
   repository or an image layer.
+
+## D-03.1 privacy notes
+
+- The durable replay state contains device ids and counters only: no media, no feature
+  values, no credentials, no timestamps.
+- The welcome's `last_sequence` is the device's OWN watermark; it reveals nothing about
+  any other device and no authorization detail.
+- Authorization transition audit lines name a device id and which operator field moved
+  (revoked, consent, capture). They carry no observation content.
+- Consent withdrawal and capture disable now take effect on an established connection and
+  flush queued observations, so nothing collected after a withdrawal is transmitted.
+- Ingested observations remain non-authoritative for alarms unless the operator
+  explicitly allowlists their detector ids (`evidence_detector_ids`), unchanged from D-03.

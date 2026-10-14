@@ -631,3 +631,38 @@ which builds, runs `ctest`, and then runs the D-03 TLS acceptance against a fres
   the fly by `tools/provision_ca.sh`.
 - **A SKIP must say what to install.** A missing toolchain is reported with the reason, never as a
   green result.
+
+## Running the D-03.1 battery
+
+```bash
+# host suite (the TLS targets are skipped loudly without libssl-dev)
+cmake --build hg_build --target homeguardian_tests -j4
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests
+
+# everything that needs OpenSSL: built and run INSIDE the test stage
+docker build -f deploy/docker/Dockerfile --target test -t homeguardian-ai:test .
+#   -> ctest, TLS acceptance, TLS identity matrix, CA isolation
+
+# deployment surfaces
+docker build -f deploy/docker/Dockerfile --target runtime -t homeguardian-hub:local .
+bash scripts/verify_docker_hub.sh            # D-01 acceptance
+env -u HG_PROJECT -u HG_CERTS_DIR bash scripts/verify_detection_end_to_end.sh
+bash scripts/verify_build_context_exclusions.sh
+HG_BRIDGE_PATH=$PWD/hg_build/hg_alexa_bridge bash scripts/verify_retention.sh
+HG_TESTS_PATH=$PWD/hg_build/homeguardian_tests bash scripts/verify_suite_concurrency.sh
+
+# footprint (needs the TLS binaries, so run it in the test image)
+docker run --rm -v "$PWD:/repo:ro" \
+  -e HG_INGRESS_PATH=/src/build/hg_device_ingress \
+  -e HG_CLIENT_PATH=/src/build/hg_device_client \
+  homeguardian-ai:test bash /repo/scripts/measure_device_transport.sh
+```
+
+Provisioning (split storage — note the three directories):
+
+```bash
+tools/provision_ca.sh init --ca-dir ~/offline-ca --runtime-dir deploy/docker/certs \
+  --device-dir ~/device-keys --server-names "DNS:homeguardian.local,IP:192.168.1.10"
+tools/provision_ca.sh issue <device-id> --ca-dir ~/offline-ca \
+  --runtime-dir deploy/docker/certs --device-dir ~/device-keys
+```
