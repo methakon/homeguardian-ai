@@ -5,6 +5,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <poll.h>
+
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -136,10 +138,9 @@ void PwAudioCaptureDevice::spawn_capture_child(std::string* error) {
     child_pid_ = static_cast<int>(pid);
     child_stdout_ = pipe_fds[0];
     child_stderr_fd_ = err_pipe[0];
-    for (int fd : {child_stdout_, child_stderr_fd_}) {
-        const int flags = ::fcntl(fd, F_GETFL, 0);
-        if (flags >= 0) ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
+    // DELIBERATELY no fcntl(O_NONBLOCK) here: the read description is shared with the child
+    // through dup2, so setting it would also make the CHILD's writes non-blocking and stop the
+    // tool after its first pipe buffer. The reader thread uses poll() for readiness instead.
 }
 
 void PwAudioCaptureDevice::start() {
@@ -169,27 +170,54 @@ void PwAudioCaptureDevice::start() {
         state_ = DeviceState::Error;
         throw std::runtime_error("could not start microphone capture: " + last_error_);
     }
+    reader_stop_ = false;
+    reader_done_ = false;
+    reader_ = std::thread([this] { reader_loop(); });
     state_ = DeviceState::Capturing;
 }
 
-void PwAudioCaptureDevice::pump_child_output() {
-    drain_child_stderr();
-    if (child_stdout_ < 0) return;
+void PwAudioCaptureDevice::reader_loop() {
+    // Blocking reads, readiness from poll(). The child's descriptors keep their normal
+    // blocking semantics, so ITS writes block when the pipe is full - which is what a
+    // producer/consumer pair is supposed to do - instead of failing after 64 KB.
     int16_t chunk[4096];
-    for (;;) {
+    while (!reader_stop_.load()) {
+        if (child_stdout_ < 0) break;
+        struct pollfd fds[2];
+        fds[0].fd = child_stdout_;
+        fds[0].events = POLLIN;
+        fds[0].revents = 0;
+        fds[1].fd = child_stderr_fd_;
+        fds[1].events = POLLIN;
+        fds[1].revents = 0;
+        const nfds_t count = child_stderr_fd_ >= 0 ? 2 : 1;
+        const int ready = ::poll(fds, count, 100);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            last_error_ = std::string("poll() on the capture child failed: ") + std::strerror(errno);
+            break;
+        }
+        if (ready == 0) continue;  // nothing yet: re-check the stop flag
+        if (count == 2 && (fds[1].revents & (POLLIN | POLLHUP))) drain_child_stderr();
+        if (!(fds[0].revents & (POLLIN | POLLHUP))) continue;
+
         const ssize_t n = ::read(child_stdout_, chunk, sizeof(chunk));
         if (n > 0) {
             const size_t samples = static_cast<size_t>(n) / kPcmBytesPerSample;
-            for (size_t i = 0; i < samples; ++i) {
-                ring_.push_back(chunk[i]);
-                ++stats_.frames_captured;
-                if (ring_.size() > config_.ring_capacity_frames * config_.channels) {
-                    // BOUNDED: the oldest sample is dropped, never the newest, and the drop
-                    // is counted so back-pressure is visible instead of invisible.
-                    ring_.pop_front();
-                    ++stats_.frames_dropped;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                for (size_t i = 0; i < samples; ++i) {
+                    ring_.push_back(chunk[i]);
+                    ++stats_.frames_captured;
+                    if (ring_.size() > config_.ring_capacity_frames * config_.channels) {
+                        // BOUNDED: the oldest sample is dropped, never the newest, and the
+                        // drop is counted so back-pressure is visible instead of invisible.
+                        ring_.pop_front();
+                        ++stats_.frames_dropped;
+                    }
                 }
             }
+            ring_cv_.notify_all();
             continue;
         }
         if (n == 0) {
@@ -212,14 +240,15 @@ void PwAudioCaptureDevice::pump_child_output() {
                 last_error_ = "capture child exited (status " +
                               std::to_string(stats_.last_exit_code) + "): " + child_stderr_;
             }
-            return;
+            break;
         }
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return;  // nothing more right now
         if (errno == EINTR) continue;
         last_error_ = std::string("read from the capture child failed: ") + std::strerror(errno);
         ++stats_.disconnects;
-        return;
+        break;
     }
+    reader_done_.store(true);
+    ring_cv_.notify_all();  // wake a consumer waiting for samples that will never come
 }
 
 void PwAudioCaptureDevice::drain_child_stderr() {
@@ -250,28 +279,29 @@ void PwAudioCaptureDevice::drain_child_stderr() {
 size_t PwAudioCaptureDevice::read_frames(int16_t* out, size_t frames_requested) {
     if (out == nullptr || frames_requested == 0) return 0;
     if (frames_requested > kMaxFramesPerRead) frames_requested = kMaxFramesPerRead;
-    std::lock_guard<std::mutex> lock(mutex_);
+    // unique_lock, not lock_guard: the bounded wait below must be able to release the mutex
+    // while it waits, and only unique_lock can do that.
+    std::unique_lock<std::mutex> lock(mutex_);
     if (state_ != DeviceState::Capturing) return 0;
 
-    // BOUNDED WAIT for samples. The first read after start() gets a generous grace period
-    // because a capture tool needs time to deliver its first buffer; later reads wait less.
-    // Only after that window is an empty read evidence of anything.
-    if (!config_.dry_run) {
+    // BOUNDED WAIT on the ring. The READER THREAD owns the pipes, so this function never
+    // touches a descriptor and never sleeps in a poll loop - it waits for data or for the
+    // reader to finish. The first read after start() gets a longer grace period because a
+    // capture tool needs time to deliver its first buffer.
+    if (!config_.dry_run && ring_.empty() && !reader_done_.load()) {
         const int wait_budget_ms = first_read_ ? config_.first_read_grace_ms : config_.read_wait_ms;
-        const auto deadline = std::chrono::steady_clock::now() +
-                              std::chrono::milliseconds(wait_budget_ms > 0 ? wait_budget_ms : 200);
-        while (ring_.empty() && child_pid_ > 0 && std::chrono::steady_clock::now() < deadline) {
-            pump_child_output();
-            if (!ring_.empty()) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        first_read_ = false;
+        ring_cv_.wait_for(lock,
+                          std::chrono::milliseconds(wait_budget_ms > 0 ? wait_budget_ms : 200),
+                          [this] { return !ring_.empty() || reader_done_.load(); });
     }
-    pump_child_output();
-    if (state_ == DeviceState::Capturing && child_pid_ < 0 && !config_.dry_run && ring_.empty()) {
-        // The child is gone and nothing is buffered: report the device loss rather than
+    first_read_ = false;
+    if (state_ == DeviceState::Capturing && reader_done_.load() && !config_.dry_run &&
+        ring_.empty()) {
+        // The reader finished and nothing is buffered: report the device loss rather than
         // returning silence that would look like a quiet room.
-        last_error_ = "the capture device stopped delivering samples (disconnected or released)";
+        if (last_error_.empty()) {
+            last_error_ = "the capture device stopped delivering samples (disconnected or released)";
+        }
         state_ = DeviceState::Error;
         return 0;
     }
@@ -311,24 +341,41 @@ void PwAudioCaptureDevice::terminate_child() noexcept {
     }
 }
 
+void PwAudioCaptureDevice::stop_reader() noexcept {
+    // Signal first, then join. The join must NOT happen while the caller holds mutex_, or a
+    // reader waiting for that mutex could deadlock the joiner.
+    reader_stop_.store(true);
+    ring_cv_.notify_all();
+    if (reader_.joinable()) reader_.join();
+}
+
 void PwAudioCaptureDevice::stop() noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
-    terminate_child();
-    if (state_ == DeviceState::Capturing) state_ = DeviceState::Stopped;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        terminate_child();  // kills the child, so a blocking read returns EOF
+        if (state_ == DeviceState::Capturing) state_ = DeviceState::Stopped;
+    }
+    stop_reader();
 }
 
 void PwAudioCaptureDevice::close() noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
-    terminate_child();
-    ring_.clear();
-    state_ = DeviceState::Idle;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        terminate_child();
+        ring_.clear();
+        state_ = DeviceState::Idle;
+    }
+    stop_reader();
 }
 
 void PwAudioCaptureDevice::fail() noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
-    terminate_child();
-    if (last_error_.empty()) last_error_ = "device failure was injected";
-    state_ = DeviceState::Error;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        terminate_child();
+        if (last_error_.empty()) last_error_ = "device failure was injected";
+        state_ = DeviceState::Error;
+    }
+    stop_reader();
 }
 
 void PwAudioCaptureDevice::set_error(const std::string& why) noexcept {

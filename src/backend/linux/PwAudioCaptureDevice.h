@@ -32,11 +32,13 @@
 #include "core/IMediaDevice.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace homeguardian {
@@ -112,7 +114,17 @@ public:
 private:
     void spawn_capture_child(std::string* error);
     void terminate_child() noexcept;
-    void pump_child_output();            // drain available PCM into the ring
+    // A DEDICATED READER THREAD owns the child's pipes and does blocking reads via poll().
+    //
+    // WHY NOT read from the consumer's thread with O_NONBLOCK: O_NONBLOCK is a property of
+    // the OPEN FILE DESCRIPTION, and dup2 makes the child's stdout share that description with
+    // this process's read end. Setting it here therefore also made the CHILD's writes
+    // non-blocking, so once the pipe filled its next write failed and the capture tool stopped
+    // producing - after exactly one pipe buffer (65,536 bytes), with the child alive, no EOF
+    // and nothing on stderr. A reader thread with blocking reads and poll() for readiness
+    // leaves the child's descriptors completely alone.
+    void reader_loop();
+    void stop_reader() noexcept;          // signal + join, never while holding the mutex
     void drain_child_stderr();           // ALWAYS drain diagnostics: a full pipe blocks the child
     void set_error(const std::string& why) noexcept;
 
@@ -128,6 +140,11 @@ private:
     bool first_read_ = true;
     std::string last_error_;
     std::deque<int16_t> ring_;           // interleaved int16 samples
+    std::condition_variable ring_cv_;
+    std::thread reader_;
+    // Atomics because the stopper and the reader race on them by design.
+    std::atomic<bool> reader_stop_{false};
+    std::atomic<bool> reader_done_{false};
     Stats stats_;
 };
 

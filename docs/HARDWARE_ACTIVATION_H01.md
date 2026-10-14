@@ -254,3 +254,25 @@ tree contains no phone vendor ID at all (only Intel hubs, a CSR8510 and a Dell B
 receiver, the HP W100 camera and a USB keyboard). A phone *is* present in the room, but over
 **Bluetooth** (an "S25 Ultra" is paired at `00:00:46:88:4C:50`) - which is an audio pairing
 and cannot carry ADB. Nothing was installed, and no device property was invented.
+
+## 12. Sustained-capture investigation (narrowed, not closed)
+
+The one-pipe-buffer limit was investigated properly rather than guessed at:
+
+* **Found and fixed:** the adapter set `O_NONBLOCK` on its read end with `fcntl`. That flag
+  belongs to the OPEN FILE DESCRIPTION, which `dup2` shares with the child - so the capture
+  tool's writes became non-blocking too. Reading now happens on a **dedicated reader thread**
+  that uses `poll()` for readiness and leaves the child's descriptors alone. The thread wakes
+  the consumer through a condition variable, and `stop()`/`close()`/`fail()` kill the child
+  first and only then join, so no join can deadlock against the buffer mutex.
+* **Narrowed:** with that in place the reader reaches EOF after exactly 65,536 bytes and the
+  child is reaped with **exit status 0**. So the child exits cleanly after ~0.68 s of audio,
+  while the identical command run from a shell streams 589,824 bytes in 5 s. The remaining
+  difference is in how the child is spawned or supervised, not in how it is read.
+* **Next diagnostic (not yet run):** trace the child's exit (`strace -f -e trace=exit_group`
+  around the spawn), compare with `pw-record`'s form as a cross-check, and test
+  `--latency`/`--verbose` variants.
+
+Status: the wired microphone is proven to produce real PCM and real features (32,768 samples,
+`rms 0.060-0.068`, `peak 0.10-0.14`, `provenance: real`), and a **sustained** session is
+**NOT** proven. Stated as a limitation, not as a pass.
