@@ -2889,3 +2889,21 @@ against the number of tests that resulted: the suite kept reporting the old coun
 only a deliberate check of the expected new count exposed it. Second occurrence of the same class
 in one milestone (see the CMake substring incident) - assert on the FULL literal, and verify the
 EFFECT (a new case count), not that a replace returned a string.
+
+### Incident 62 - a scripted edit list with a malformed entry silently skipped the write
+
+An edit helper expected (old, new, name) triples and one entry was a TWO-tuple, so it raised while
+unpacking AFTER the first pair had already been applied to the in-memory string but BEFORE the file
+was written. Net effect: the successful-looking earlier edit never landed, and the failure surfaced
+two steps later as an unrelated missing-symbol compile error. Two lessons: validate the shape of an
+edit list up front (or use one edit per call), and never treat "the script printed some ok lines" as
+evidence the file changed - check the file.
+
+### Incident 63 - the built artifact was read from a directory it is not written to
+
+An artifact check unzipped `apk/build/homeguardian-harness.apk`, but `build_apk.sh` writes to
+`hg_apk_build/` at the repo root (gitignored by the `hg_*_build/` rule). The verification reported
+"0 occurrences" for every class and symbol - which reads exactly like "the wiring is missing" - when
+in fact the build was fine and the path was wrong. A verification step must assert it is looking at
+a file that exists (non-empty `ls` before parsing), or its silence is indistinguishable from a real
+negative result.

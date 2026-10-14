@@ -798,3 +798,22 @@ durability. CPU stays at 1.3 %, i.e. the boundary is I/O-bound, not compute-boun
 revision of this milestone also persisted the in-flight marker, which doubled that cost
 (200 ms / 5 obs/s) for no benefit; the marker is now in memory only. A device sending a burst
 is bounded by the 64-observation queue, which applies back-pressure rather than growing.
+
+## H-03: the Android node as a Wi-Fi device (pending hardware acceptance)
+
+This is the node-side counterpart to the deployment described above. Two deployment facts must be
+settled WITH THE DEVICE PRESENT; they are recorded here as requirements rather than as done:
+
+1. **The hub's real LAN address.** The ingress publishes exactly 8443/tcp. The phone dials the hub's
+   LAN IP, and that address must be present as a SAN in the server certificate
+   (`tools/provision_ca.sh --server-names "DNS:ingress,DNS:localhost,IP:<HUB LAN IP>"`). Provisioning
+   with the wrong address produces a correct refusal, not a fallback.
+2. **The device's own certificate.** One PKCS#12 per phone, in the device directory that no hub
+   container mounts, copied into the app's private storage as `device.p12`, `device.p12.pass`,
+   `ca.p12`, `ca.p12.pass`. The hub authorizes the device by the certificate's CN/fingerprint, not
+   by anything in the payload.
+
+Unchanged and non-negotiable: the CA signing key stays offline (never in the runtime tree, never in
+an image), the hub keeps no audio/camera privileges, and USB is used for installation and debugging
+only - the data path under test is the phone's own Wi-Fi interface to the ingress port. Live video
+is NOT part of this transport: it carries compact observations.
