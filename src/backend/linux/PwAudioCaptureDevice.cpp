@@ -125,6 +125,15 @@ void PwAudioCaptureDevice::spawn_capture_child(std::string* error) {
             ::close(err_pipe[0]);
             ::close(err_pipe[1]);
         }
+        // CLOSE EVERY INHERITED DESCRIPTOR above stderr.
+        //
+        // A forked child inherits the parent's whole descriptor table. The Python harness that
+        // streams fine sets close_fds=True; this adapter's child inherited everything I hold,
+        // and that difference is what made the capture tool exit cleanly after exactly one pipe
+        // buffer while the identical command streamed from a shell. Child processes get the
+        // descriptors they need (0/1/2) and nothing else.
+        for (int fd = 3; fd < 1024; ++fd) ::close(fd);
+
         const std::vector<std::string> argv = capture_command_line();
         std::vector<char*> raw;
         raw.reserve(argv.size() + 1);

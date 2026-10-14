@@ -255,24 +255,67 @@ receiver, the HP W100 camera and a USB keyboard). A phone *is* present in the ro
 **Bluetooth** (an "S25 Ultra" is paired at `00:00:46:88:4C:50`) - which is an audio pairing
 and cannot carry ADB. Nothing was installed, and no device property was invented.
 
-## 12. Sustained-capture investigation (narrowed, not closed)
+## 12. Sustained capture: root cause, and a correction to an earlier claim
 
-The one-pipe-buffer limit was investigated properly rather than guessed at:
+**Status: PASS.** A 35 s authorized session captured **1,605,632 samples over 489 windows**
+(33.4 s of audio at 48 kHz mono, i.e. realistic timing), with `dropped=0`, no stall verdicts,
+a clean stop and no leaked subprocesses. The earlier ceiling was 32,768 samples.
 
-* **Found and fixed:** the adapter set `O_NONBLOCK` on its read end with `fcntl`. That flag
-  belongs to the OPEN FILE DESCRIPTION, which `dup2` shares with the child - so the capture
-  tool's writes became non-blocking too. Reading now happens on a **dedicated reader thread**
-  that uses `poll()` for readiness and leaves the child's descriptors alone. The thread wakes
-  the consumer through a condition variable, and `stop()`/`close()`/`fail()` kill the child
-  first and only then join, so no join can deadlock against the buffer mutex.
-* **Narrowed:** with that in place the reader reaches EOF after exactly 65,536 bytes and the
-  child is reaped with **exit status 0**. So the child exits cleanly after ~0.68 s of audio,
-  while the identical command run from a shell streams 589,824 bytes in 5 s. The remaining
-  difference is in how the child is spawned or supervised, not in how it is read.
-* **Next diagnostic (not yet run):** trace the child's exit (`strace -f -e trace=exit_group`
-  around the spawn), compare with `pw-record`'s form as a cross-check, and test
-  `--latency`/`--verbose` variants.
+### 12.1 Correction: the `O_NONBLOCK` explanation was wrong
 
-Status: the wired microphone is proven to produce real PCM and real features (32,768 samples,
-`rms 0.060-0.068`, `peak 0.10-0.14`, `provenance: real`), and a **sustained** session is
-**NOT** proven. Stated as a limitation, not as a pass.
+An earlier report claimed that setting `O_NONBLOCK` on the adapter's read end also made the
+**capture child's** writes non-blocking, because `dup2` shares the open file description. That
+is wrong, and it was verified rather than argued about: a small program sets `O_NONBLOCK` on a
+pipe's read end and reports both ends. The write end stays blocking (read end 0 -> 1, write end
+0 -> 0). Read and write ends of a pipe are *different* open file descriptions. Only a `dup` of
+the **same** end shares flags (demonstrated: `dup` of the write end, then a flag change on the
+copy, is visible on the original). The claim is retracted here and does not appear in the
+source comments as a rationale.
+
+The reader-thread redesign that accompanied it is kept on its own merits - blocking I/O on a
+dedicated thread with `poll()` is the right structure, and it removes the sleep-loop the
+consumer used to run - but it did **not** cause the fix, and it is not described as having done
+so.
+
+### 12.2 The actual root cause: our own SIGTERM, sent on a false verdict
+
+`strace -f` on the adapter settles it. The capture child was **alive and waiting** in its
+PipeWire poll loop when it received:
+
+```
+975949 --- SIGTERM {si_code=SI_USER, si_pid=975948} ---   # 975948 is the adapter itself
+```
+
+It then shut down gracefully and exited 0 - which is exactly the "clean exit status 0" that was
+mistaken for the capture tool quitting on its own. The sequence was:
+
+1. The PipeWire graph delivered a burst, then went momentarily quiet (source suspended/being
+   reconfigured) and the adapter's ring was empty.
+2. The stall verdict fired after **3 empty reads (~600 ms)**.
+3. The caller stopped the session, which sends SIGTERM.
+4. The device was killed by us, mid-session, after 0.68 s of audio.
+
+The diagnostic matrix that isolated it to our spawn rather than the tool: direct shell
+**393,216 B / 6 s**; a minimal Python subprocess harness (which sets `close_fds=True`)
+**401,408 B / 6 s, rc=0**; our adapter **32,768 B and then a stall**. The difference was never
+the reading path - it was that we declared the device dead and killed it.
+
+### 12.3 The fix
+
+The stall bound is now a **time bound, not a retry count**: `stalled_after_empty_windows = 50`
+(~10 s at the 200 ms read pace). A device that is quiet for a moment is not a broken device, and
+a momentary gap in the sound-server graph is not a hardware fault. The finding's wording was
+corrected with it: it now states the fact and the bound ("delivered no samples for N consecutive
+windows", with the two plausible causes named) instead of asserting a diagnosis ("the microphone
+stopped delivering samples").
+
+Child-process hygiene added along the way and kept: the forked child closes inherited
+descriptors above stderr before `execvp`, so it does not hold the parent's pipes or terminal.
+
+### 12.4 What is still unproven
+
+* The 35 s figure is one session on this machine. Sustained capture across a **device
+  disconnect/reconnect** and across a sound-server restart is not demonstrated.
+* Bluetooth audibility is an operator judgement, not a measurement (section 13).
+* No claim is made that the graph pause itself is understood - only that pausing is normal and
+  that our reaction to it was wrong.

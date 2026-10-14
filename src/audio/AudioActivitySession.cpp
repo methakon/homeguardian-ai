@@ -73,15 +73,22 @@ AudioFinding AudioActivitySession::observe_no_samples() {
     const int64_t now_ms = clock_ ? clock_() : 0;
 
     AudioFinding finding;
-    if (consecutive_empty_reads_ >= (config_.stalled_after_empty_reads > 0
-                                         ? config_.stalled_after_empty_reads
-                                         : 3)) {
+    if (consecutive_empty_reads_ >= (config_.stalled_after_empty_windows > 0
+                                         ? config_.stalled_after_empty_windows
+                                         : 50)) {
         // A device that stopped delivering samples is NOT a quiet room, and the difference
         // matters: one is a finding about the world, the other about our own equipment.
         finding = build_finding(AudioFindingKind::microphone_stalled,
-                                "The microphone stopped delivering samples.", false);
+                                "The microphone has delivered no samples for several seconds.",
+                                false);
         finding.valid = false;
-        finding.reason = "no samples arrived from the capture device";
+        // State the FACT and the bound, not a diagnosis of the hardware. The device may be
+        // suspended by the sound server, released by the OS, or genuinely gone; this component
+        // can only report that nothing arrived, and for how long.
+        finding.reason = "no samples arrived for " +
+                         std::to_string(consecutive_empty_reads_) +
+                         " consecutive windows (the capture child may have exited, or the sound "
+                         "server may have suspended the source)";
         finding.uncertainty =
             "Whether anything was happening in the room is unknown: no audio reached the hub.";
         finding.real_source = false;  // nothing was measured, so no provenance is claimed

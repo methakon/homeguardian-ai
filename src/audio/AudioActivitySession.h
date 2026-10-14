@@ -95,8 +95,16 @@ public:
         size_t window_frames = 4800;
         // Below this rms the window counts as silence rather than activity.
         double silence_rms = 0.002;
-        // How many consecutive empty reads before the microphone is called stalled.
-        int stalled_after_empty_reads = 3;
+        // How many consecutive empty windows before the microphone is called stalled.
+        //
+        // THIS IS A TIME BOUND, NOT A RETRY COUNT. At the 200 ms read pace, 50 windows is
+        // ~10 s of the device delivering nothing. The earlier value (3 ~= 600 ms) turned a
+        // momentary gap in the PipeWire graph into a hardware verdict, and the caller then
+        // killed a perfectly healthy capture child - the strace showed SIGTERM arriving from
+        // our own process while the child sat in its poll loop, and the child's graceful
+        // shutdown is what produced the "clean exit status 0" that looked like the tool
+        // quitting by itself. A device that is quiet for a moment is not a broken device.
+        int stalled_after_empty_windows = 50;
         // Confirm a change only if it holds for this many windows.
         int confirmation_windows = 3;
     };
