@@ -8,15 +8,25 @@
 #   docker compose logs -f
 #   docker compose down        # state stays in the named volume
 #
-# The hub's HTTP listener is LOOPBACK ONLY inside the container and is NOT
-# published here on purpose: it was designed and security-reviewed for loopback,
-# so exposing it on a LAN would be a downgrade. To view the dashboard from this
-# host, use the opt-in override that binds the host side to 127.0.0.1:
+# TWO services, TWO boundaries (D-01 + D-03):
 #
-#   docker compose -f docker-compose.yml -f docker-compose.loopback.yml up -d
+#   hub     - the existing C++ hub. Its HTTP listener is LOOPBACK ONLY inside the
+#             container and is NOT published here on purpose: it was designed and
+#             security-reviewed for loopback. To view the dashboard from this host,
+#             use the opt-in override that binds the host side to 127.0.0.1:
+#               docker compose -f docker-compose.yml -f docker-compose.loopback.yml up -d
 #
-# (127.0.0.1 on the host is still not LAN exposure; a genuinely network-facing
-# boundary is milestone D-03's authenticated, encrypted transport.)
+#   ingress - the D-03 device ingestion boundary. This is the ONLY service the
+#             default deployment publishes (8443/tcp). It speaks mutually
+#             authenticated TLS and one protocol: compact observation frames. It
+#             serves no dashboard, no commands and no SQLite, so exposing it does
+#             not expose the loopback-only surface above.
+#
+# Provision the certificate material first (the container includes the tool):
+#   bash tools/provision_ca.sh init deploy/docker/certs
+#   bash tools/provision_ca.sh issue <device-id> deploy/docker/certs
+# then copy config/ingress.json.example -> certs/ingress.json and register the
+# device in certs/devices.json (tools/provision_ca.sh issue prints the exact entry).
 
 services:
   hub:
@@ -75,8 +85,78 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ---------------------------------------------------------------------------
+  # D-03 device ingestion boundary: the only published port in this deployment.
+  # ---------------------------------------------------------------------------
+  ingress:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: runtime
+      args:
+        HG_NPROC: "4"
+    image: homeguardian-hub:${HG_TAG:-local}
+    # This service is ALREADY built by the `hub` service (same image/tag), so a
+    # plain `docker compose up -d` does not rebuild it twice.
+    pull_policy: never
+
+    init: true
+    restart: unless-stopped
+
+    # Same least-privilege posture as the hub: the ingress needs no capability and
+    # no device access to terminate TLS and read a certificate.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.5
+    pids_limit: 128
+
+    # THE ONLY PUBLISHED PORT. 8443/tcp on the LAN speaks TLS with a private CA;
+    # there is no plaintext listener to fall back to.
+    ports:
+      - "${HG_INGRESS_BIND:-0.0.0.0}:${HG_INGRESS_PORT:-8443}:8443/tcp"
+
+    # Certificate material is mounted READ-ONLY. The registry/revocation files are
+    # operator-controlled inputs, not image content.
+    # ONE read-only mount for the whole credential directory. The individual-file
+    # mounts this replaced had a deployment footgun: when a source FILE does not
+    # exist, Docker creates a DIRECTORY with that name (as root) instead of
+    # failing, so a forgotten `provision_ca.sh issue` step silently produced
+    # directories where certificates should be. With a single directory mount, a
+    # missing file is simply a missing file, and the ingress refuses to start.
+    volumes:
+      - ${HG_CERTS_DIR:-./certs}:/etc/homeguardian/certs:ro
+      # SHARED with the hub, deliberately: an alert produced from an ingested
+      # observation is written into the same SQLite file the dashboard reads, so
+      # the outcome is observable in the running hub rather than only inside the
+      # ingress. SQLite in WAL mode with a 5 s busy timeout serializes the writers.
+      - hg_data:/data
+      - hg_ingress_data:/data/ingress
+
+    environment:
+      # The config lives INSIDE the mounted credential directory, so there is
+      # exactly one host path to provision and one read-only mount to reason about.
+      HG_INGRESS_CONFIG: "/etc/homeguardian/certs/ingress.json"
+      HG_INGRESS_DATA: "/data/ingress"
+
+    entrypoint: ["/usr/local/bin/hg-ingress-entrypoint"]
+
+    # Give the ingress time to close SQLite cleanly and let in-flight acks finish.
+    stop_grace_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   hg_data:
+    driver: local
+  hg_ingress_data:
     driver: local
 
 secrets:

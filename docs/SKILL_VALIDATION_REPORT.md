@@ -405,3 +405,14 @@ the "no critical severity" matrix.
 | Home Assistant actuation | Separate explicit owner approval (locks, alarms, sirens, cameras) |
 | Alexa delivery | Amazon partner access - unchanged external block from D-01/D-06 |
 | Phone-side exercise of any of this | A phone attached (D-02 physical acceptance remains BLOCKED) |
+
+
+## Naming note (D-03)
+
+The D-03 brief refers to this document as `SKILLS_INTEGRATION_VALIDATION`. That was this file's
+earlier name; it was renamed to `SKILL_VALIDATION_REPORT.md` during D-02x when the companion
+`SKILL_INVENTORY.md` was added. The rename is recorded here rather than by duplicating the document
+under two names, so there is exactly one skill-validation report to keep correct. The D-03 changes
+that touch this material are in `docs/DISTRIBUTED_DEVICE_TRANSPORT_D03.md` (§5, §9): the D-02x
+detectors are now linked into a shipped hub runtime, and the Home Assistant adapter is unchanged and
+still plaintext-only.

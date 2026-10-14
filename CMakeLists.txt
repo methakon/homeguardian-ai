@@ -171,6 +171,91 @@ install(TARGETS homeguardian DESTINATION bin)
 # Local-only NDJSON stdio bridge that exposes the real AlexaContract to the
 # JavaScript adapter. No network listener; stdin/stdout only. Used by the
 # local end-to-end integration tests and demo (F22-30).
+# ===========================================================================
+# D-03 device ingestion boundary (mutual TLS, separate from the loopback demo)
+#
+# The protocol, registry, ingest and detector layers above are OpenSSL-free and
+# are built and tested on any host. The socket layer is NOT: it requires the
+# OpenSSL development headers. When they are absent we say so loudly and skip
+# ONLY the two network binaries, so a developer without the toolchain still gets
+# the full test suite rather than a confusing compile failure.
+# ===========================================================================
+find_package(OpenSSL QUIET)
+if(OpenSSL_FOUND)
+    message(STATUS "D-03: OpenSSL ${OPENSSL_VERSION} found -> building hg_device_ingress + hg_device_client")
+
+    set(HG_NET_SOURCES
+        src/net/DeviceProtocol.cpp
+        src/net/DeviceRegistry.cpp
+        src/net/ObservationIngest.cpp
+        src/net/IngestDetectors.cpp
+        src/net/TlsTransport.cpp
+        src/net/DeviceIngressServer.cpp
+    )
+    # The core dependencies of the ingestion path, mirrored from hg_alexa_bridge so
+    # the ingress links the SAME validated machinery (one event engine).
+    set(HG_INGEST_CORE_SOURCES
+        src/core/Observation.cpp
+        src/core/SecurityObservation.cpp
+        src/core/BoundedFeatures.cpp
+        src/core/ActivityDetectors.cpp
+        src/core/EnvironmentalCorrelation.cpp
+        src/core/AnomalyDetector.cpp
+        src/core/AnomalyMonitor.cpp
+        src/core/Pipeline.cpp
+        src/core/DetectionFusionRule.cpp
+        src/core/FusionEngine.cpp
+        src/core/AlertPolicy.cpp
+        src/core/PersistenceAudit.cpp
+        src/core/Logger.cpp
+        src/core/EventValidator.cpp
+        src/core/UUID.cpp
+        src/persistence/SQLiteDatabase.cpp
+        src/persistence/SchemaManager.cpp
+        src/persistence/AlertRepository.cpp
+        src/persistence/EventRepository.cpp
+    )
+
+    add_executable(hg_device_ingress
+        src/main_ingress.cpp
+        ${HG_NET_SOURCES}
+        ${HG_INGEST_CORE_SOURCES}
+    )
+    target_link_libraries(hg_device_ingress PRIVATE
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        sqlite3_static
+        OpenSSL::SSL
+        OpenSSL::Crypto
+    )
+    # Include dirs are per-target in this project (there is no global
+    # include_directories). Omitting this line compiled nowhere on the host --
+    # where the OpenSSL block is skipped -- and only failed inside the container,
+    # which is exactly the case a conditional target must be built in before it is
+    # claimed to work.
+    target_include_directories(hg_device_ingress PRIVATE src third_party/sqlite)
+    target_compile_definitions(hg_device_ingress PRIVATE HOMEGUARDIAN_WITH_TLS=1)
+
+    add_executable(hg_device_client
+        src/main_device_client.cpp
+        src/net/DeviceProtocol.cpp
+        src/net/TlsTransport.cpp
+    )
+    target_link_libraries(hg_device_client PRIVATE
+        nlohmann_json::nlohmann_json
+        OpenSSL::SSL
+        OpenSSL::Crypto
+    )
+    target_include_directories(hg_device_client PRIVATE src)
+    target_compile_definitions(hg_device_client PRIVATE HOMEGUARDIAN_WITH_TLS=1)
+else()
+    message(WARNING
+        "D-03: OpenSSL development headers not found -> hg_device_ingress and "
+        "hg_device_client are NOT built. The protocol, registry, ingest and "
+        "detector layers are still built and tested. Install libssl-dev (or run "
+        "the container image, which includes it) to build the TLS boundary.")
+endif()
+
 add_executable(hg_alexa_bridge
     ${HG_WEB_ASSETS}          # generated: dependency ordering + rebuild trigger
     src/bridge/hg_alexa_bridge.cpp
@@ -274,6 +359,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_ha_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_observation_integration.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_skill_gaps.cpp
+        ${CMAKE_SOURCE_DIR}/tests/net/test_device_transport.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -296,6 +382,10 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/SecurityObservation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HomeAssistantAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/DeviceProtocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/DeviceRegistry.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/ObservationIngest.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/IngestDetectors.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
         ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ConsentGate.cpp

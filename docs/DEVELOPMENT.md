@@ -589,3 +589,45 @@ credential table and asserts the process refuses cleanly - non-zero exit, a fail
 no core dump and no serving. The credential file is a TABLE keyed by token, exactly as `demo.sh`
 writes it; copying that shape rather than inventing one is what the script's own incident entry
 records.
+
+
+## D-03 — building and testing the network-facing boundary
+
+The device-ingestion binaries (`hg_device_ingress`, `hg_device_client`) link OpenSSL, so CMake builds
+them **only where OpenSSL development headers exist**; everything else in the D-03 work (protocol,
+registry, ingest, detectors) is OpenSSL-free and is compiled and tested everywhere. If the headers are
+missing the build says so loudly rather than silently skipping the target.
+
+```
+# host, with libssl-dev present
+cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release
+cmake --build build_release --target hg_device_ingress hg_device_client -j4
+
+# D-03 end-to-end acceptance (real TLS, real certificates, real binaries)
+bash scripts/verify_device_transport.sh
+```
+
+Without the toolchain, the acceptance script prints a SKIP with the reason and exits 0. A SKIP is not
+a pass: the executed evidence is the run inside the container image, where the toolchain is
+guaranteed, and that run is recorded in `docs/DISTRIBUTED_DEPLOYMENT.md`.
+
+The full container acceptance is the `test` stage:
+
+```
+docker build --progress=plain --target test -f deploy/docker/Dockerfile -t homeguardian-hub:test .
+```
+
+which builds, runs `ctest`, and then runs the D-03 TLS acceptance against a freshly started ingress.
+
+### Rules the tests encode
+
+- **Feed before you filter.** Any suppression layer runs AFTER the detector/accumulator consumes the
+  sample (Incident 34).
+- **Compute the precondition.** A liveness or staleness test injects the clock and drives it past the
+  documented timeout instead of asserting a state the test never created.
+- **The watermark is committed last.** A refused message must not consume a sequence number; there is
+  a test for exactly that.
+- **Verification is never disabled to make a test pass.** Tests use a real private CA, generated on
+  the fly by `tools/provision_ca.sh`.
+- **A SKIP must say what to install.** A missing toolchain is reported with the reason, never as a
+  green result.

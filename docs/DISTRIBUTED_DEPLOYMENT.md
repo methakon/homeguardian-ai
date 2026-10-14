@@ -433,3 +433,264 @@ The hub now has a validated ingestion vocabulary for the D-03/D-04 transport to 
   authenticated, encrypted transport, and register the new translation units in the hub target
   at that point - they are intentionally not linked into `hg_alexa_bridge` yet (see
   `docs/SKILLS_INTEGRATION_VALIDATION.md` §6).
+
+
+## D-03 — secure device transport (installation, pairing, firewall)
+
+### The data path, end to end
+
+```
+Android node                     LAN (TLS 1.2+, mutual, private CA)        Docker host
+------------                     -----------------------------------        -----------
+operator START + OS permission
+  -> consent gate per frame    -> bounded numeric features  >  framed observation (4 KiB cap)
+  -> bounded queue (128, drop-oldest)
+  -> ObservationTransport ------>  :8443/tcp  ingress container
+                                     - TLS handshake + client certificate
+                                     - CN = device id, fingerprint == registry credential
+                                     - paired / revoked / consent / capture / capabilities
+                                     - bounds, timestamp window, sequence watermark, duplicates
+                                     - provenance DERIVED (registry truth, not the claim)
+                                     - watermark committed
+                                     - IngestDetectors (per device, advisory)
+                                     - Pipeline -> FusionRule -> AlertPolicy
+                                     - SQLite (WAL + synchronous=FULL)
+                                 hub container (loopback only, loopback override) -> dashboard
+```
+
+### Certificate provisioning (operator, once)
+
+```bash
+# 1. Create the private CA and the hub server certificate.
+CERTS=${HG_CERTS_DIR:-deploy/docker/certs}
+bash tools/provision_ca.sh init "$CERTS"        # keep $CERTS/ca/ca.key offline afterwards
+
+# 2. Issue one certificate per device. The tool prints the CREDENTIAL_ID (SHA-256
+#    fingerprint) and the exact registry entry to add.
+bash tools/provision_ca.sh issue hg-<device-id> "$CERTS"
+
+# 3. Register it: write $CERTS/devices.json with the printed entry
+#    (paired=true, credential_id=<fingerprint>, the capability list, and
+#    consent_granted/capture_enabled as the operator decides).
+#    Also write $CERTS/revocations.json (an empty array is the normal start).
+
+# 4. Configure the boundary. The config lives INSIDE the credential directory, so
+#    there is one host path to provision and one read-only mount to reason about.
+cp deploy/docker/config/ingress.json.example "$CERTS/ingress.json"
+
+# 5. Make the tree readable by the container uid (see "Secret files" below).
+chmod 755 "$CERTS" "$CERTS/ca" "$CERTS/devices"
+chmod 644 "$CERTS"/*.json "$CERTS"/*.crt "$CERTS"/server.key "$CERTS"/ca/ca.crt \
+          "$CERTS"/devices/*.crt "$CERTS"/devices/*.key
+
+# 6. Start. Only 8443/tcp is published; the hub dashboard stays unpublished.
+#    Point compose at the directory if it is not ./certs:
+HG_CERTS_DIR="$CERTS" docker compose -f deploy/docker/docker-compose.yml up -d
+```
+
+The ingress reads its registry and revocation list from the same mounted directory
+(`/etc/homeguardian/certs/{devices,revocations}.json`), which is what the config template expects.
+The `hub` and `ingress` services share ONE data volume, so an alert raised by an ingested
+observation lands in the alert history the dashboard serves.
+
+For the phone: export the issued certificate + key into a PKCS#12
+(`openssl pkcs12 -export -out <id>.p12 -inkey <id>.key -in <id>.crt -certfile ca/ca.crt`), push it
+into the app private files directory with `chmod 600`, and put the password in a separate `0600`
+file next to it. `docs/ANDROID_TRANSPORT_D03.md` lists the exact steps and the Android-Keystore
+hardening that is still outstanding.
+
+Both operational paths are covered by scripts that can be run before trusting a deployment:
+
+```bash
+bash scripts/verify_device_transport.sh      # 21 checks: TLS, identity, consent, revocation, replay
+bash scripts/verify_detection_end_to_end.sh  # 32 checks: observation -> detector -> alert -> the hub's own API
+bash scripts/measure_device_transport.sh     # footprint, latency, throughput
+bash scripts/verify_docker_hub.sh            # 26 checks: the D-01 hub container
+```
+
+### Ingress configuration: the two settings that change behaviour
+
+Everything else in `ingress.json` is a bound (connection counts, queue depth, worker count, timeouts,
+the frame cap) and the code validates each against a hard ceiling. Two settings change what the
+boundary DOES:
+
+| Setting | Effect | Default |
+|---|---|---|
+| `audit_db_path` | Where accepted observations' alerts are written. Set to the hub's own database (`/data/homeguardian_bridge_audit.db`) so the dashboard and its API serve them. Both processes use WAL + `synchronous=FULL` + a 5 s busy timeout. **The path must be on a local filesystem** — WAL over NFS is a corruption risk and is not supported. | the hub's database (via the template) |
+| `evidence_detector_ids` | OPT-IN fusion allowlist. Absent or empty keeps the conservative default (`{"activity-energy"}`), under which device observations are recorded, audited and displayed but cast no fusion vote and can never raise an alert on their own. Listing `sensor.motion` (devices are `sensor.<source_type>`) lets that evidence participate. An empty list is never passed through, because empty means "accept every detector" — absence of a decision must not become the widest permission. | conservative (empty) |
+
+The ingress prints the active allowlist at startup, so the operator's decision is never invisible:
+
+```
+hg_device_ingress: fusion evidence allowlist = sensor.motion (operator opt-in; default is conservative)
+```
+
+Nothing reachable from either setting can produce `Severity::critical`: severity derives from fused
+confidence (info below 0.8, warning at or above), and critical stays reserved for the synthetic
+impact scenario.
+
+### Credential rotation
+
+There is no online rotation API, and that is deliberate: rotation is an operator act with a paper
+trail, not a background process. To rotate a device certificate:
+
+```bash
+# 1. Issue a replacement certificate for the SAME device id.
+bash tools/provision_ca.sh issue hg-<device-id> "$CERTS"      # overwrites <id>.crt/<id>.key
+
+# 2. Update the registry entry's credential_id to the newly printed fingerprint.
+#    THIS IS THE REVOCATION OF THE OLD CERTIFICATE: the previous fingerprint no
+#    longer matches any record, so a device still holding the old key is refused
+#    with identity_mismatch even though its chain still verifies.
+
+# 3. Reload the registry (the registry is read at startup; the revocation list is
+#    re-read per connection) and re-provision the phone's PKCS#12.
+
+# 4. Rotate the CA itself (e.g. suspected compromise): create a new CA in a NEW
+#    directory, re-issue every device certificate, then replace the mounted
+#    directory and restart. The old CA stops being a trust anchor the moment the
+#    mount changes, so every device must be re-issued - there is no dual-trust
+#    window, which is the honest trade for a private CA with no public PKI.
+```
+
+Certificate lifetimes are 825 days by default (`HG_CERT_DAYS`). Because the fingerprint binding is
+what authorizes a device, a stolen certificate is useless the moment the registry entry changes,
+and no revocation-list entry is required for that case.
+
+### Pairing and authorization are separate acts
+
+Pairing is a registry entry. It does **not** mean the device may collect: consent and capture are
+separate flags, and both default to **off**. A freshly paired phone that connects is refused with a
+consent/capture reason until the operator grants them, and a device that is authenticated at the TLS
+layer is still refused if the registry says so — network authentication is not permission. Revoking
+is the reverse and is immediate: add the id to `revocations.json` (or run
+`bash tools/provision_ca.sh revoke <id>`), and the device is refused on its next message, without a
+restart, with pairing, consent, capture and liveness all cleared.
+
+### Secret files: what the file mode has to be, and why
+
+The compose deployment mounts its credential table as a **file-backed secret**, which Docker Compose
+implements as a **bind mount** rather than a copy. The container therefore sees the HOST file's
+permissions, and the hub runs as uid 10001:
+
+```
+deploy/docker/secrets/creds.json    must be readable by uid 10001 (0644 is the practical value)
+```
+
+A `0600` file owned by the operator is the intuitive choice and it FAILS here: the container exits
+with code 78 (EX_CONFIG) and reports the credentials as not readable. This is the same trap for the
+D-03 certificate directory, which is mounted read-only: the ingress needs to READ `server.key`, so
+that file must be readable by uid 10001 too, and the protection comes from the directory and the
+host, not from the key's own mode.
+
+For anything beyond the synthetic demo credential, do not rely on file modes on a shared host: use a
+real secret store (Docker/Swarm secrets, `systemd-creds`, Vault, or the cloud provider's secret
+manager) and mount the material in. The rule this deployment follows is that no credential is ever
+baked into an image layer, and no credential is ever committed - both are enforced by
+`.dockerignore` and `.gitignore` and verified by a probe build.
+
+### LAN-only installation and firewall
+
+HomeGuardian is not to be exposed to the public internet. The deployment publishes one port, and the
+host firewall should restrict it to the LAN or, better, to the specific devices:
+
+```bash
+# Restrict the ingress to the home subnet (example: 192.168.1.0/24 on enp3s0)
+sudo nft add rule inet filter input tcp dport 8443 ip saddr != 192.168.1.0/24 drop
+
+# Or with ufw: allow only from the LAN.
+sudo ufw allow from 192.168.1.0/24 to any port 8443 proto tcp
+sudo ufw deny 8443/tcp
+
+# Do NOT forward 8443 from the WAN. There is no public-endpoint mode, no ACME
+# integration and no public CA path by design: the trust model is a private CA on
+# a network the owner controls.
+```
+
+Never publish the hub's loopback port. If the dashboard is needed from the host, use the opt-in
+override, which binds the host side to `127.0.0.1` only:
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml -f deploy/docker/docker-compose.loopback.yml up -d
+```
+
+Publishing means `-p 8443:8443`. Publishing the HUB means `-p 8080:8080`. The deployment treats the
+second as an error, not an option.
+
+### Resource posture (unchanged from D-01, plus the ingress)
+
+Non-root user, all Linux capabilities dropped, `no-new-privileges`, no privileged mode, no Docker
+socket, no host mounts beyond the certificate directory (read-only), the registry/revocation files
+(read-only) and the data volumes. Persistent SQLite volume with WAL + `synchronous=FULL`. Memory,
+CPU and pid ceilings on both services. 20 s stop grace so the ingress closes SQLite cleanly on
+`SIGTERM`.
+
+### Measured D-03 results
+
+Measured on this host (40-core x86_64 workstation) and inside the container image.
+Every number below came from a run, not from an estimate; the commands are in
+`scripts/measure_device_transport.sh` and `scripts/verify_device_transport.sh`.
+
+**Test counts (actual, this milestone)**
+
+| Suite | Result |
+|---|---|
+| Host suite (Debug, `hg_build`) | **426 cases / 4,461 assertions**, all passing |
+| `[net]` subset (protocol, registry, ingest, detectors) | 9 cases / 396 assertions |
+| `ctest --test-dir hg_build` | 100% (1/1) |
+| Fresh out-of-source Release (`/tmp/hg_d03rel2`) | 0 errors; 426 cases / 4,461 assertions |
+| ASan + UBSan (same suite) | 426 cases / 4,461 assertions, **0 sanitizer reports** |
+| D-01 container acceptance (`verify_docker_hub.sh`) | 26/26 |
+| D-03 TLS acceptance (real sockets, real CA) | **21/21, 0 failed, 0 skipped** |
+| D-03 end-to-end detection (both containers, real client) | **32/32, 0 failed, 0 warned** |
+| D-01 hub container acceptance (final image, restored secret) | **26/26, 0 failed, 0 warned** |
+
+Baseline for comparison: D-02x reported 413 cases / 3,984 assertions, so D-03 adds
+13 cases / 477 assertions of its own.
+
+**End-to-end detection, measured (the decisive acceptance for D-03).** With both containers running,
+a mutually authenticated test client delivered 8 observations; the hub's own alert count, read
+through its dashboard API from inside the hub container, moved **0 -> 1**; the served history
+contained a `detection-fusion` alert; the ingested evidence (`sensor.motion`) and the alert row were
+both durable in the shared store (main file plus the `-wal` sidecar); no `critical` severity was
+produced; and the alert survived container replacement (**1 -> 1**). The same run refused an
+identity-mismatched device (`identity_mismatch`), a revoked device without a restart
+(`device_revoked`), and an unregistered device (`device_unknown`).
+
+**Binary sizes (Release, stripped where the image strips)**
+
+| Binary | Bytes | Note |
+|---|---|---|
+| `hg_device_ingress` | 3,053,760 | new in D-03 |
+| `hg_device_client` | 267,504 | new in D-03 (test tool) |
+| `hg_alexa_bridge` | 3,529,496 | unchanged since D-02x increment 2 |
+| `homeguardian` | 3,210,648 | unchanged |
+| `homeguardian_tests` | 8,138,632 | +466,968 B (+6.1%) over D-02x |
+
+**TLS dependency footprint**
+
+The ingress links two OpenSSL libraries (`libssl.so.3`, `libcrypto.so.3`). In the
+runtime image that is `libssl3t64` at 8,115 kB installed size, and nothing else: the
+runtime image deliberately carries no interpreter and no certificate CLI, because
+provisioning happens on the host. The protocol, registry, ingest and detector layers
+stay OpenSSL-free and are built and tested everywhere.
+
+**Runtime behaviour (measured, 200-observation burst over real TLS)**
+
+| Metric | Value |
+|---|---|
+| Idle RSS | 12,456 kB |
+| Idle threads | 3 (accept + 2 bounded workers) |
+| Idle CPU (5 s average) | 0.0% |
+| RSS under load | 14,952 kB (+2,496 kB) |
+| Threads under load | 3 (unchanged: the worker pool is bounded, not per-connection) |
+| 200 observations | 0.430 s wall, 200/200 accepted |
+| Per-observation round trip | 2.15 ms (ack included, no re-handshake) |
+| Sustained throughput | 465 observations/s |
+| Ingress CPU during the burst | 83.6% of one core |
+
+**Not measurable without hardware, and therefore not claimed:** the old Android
+device's own CPU/memory cost, the LAN hop latency, the radio power cost of a
+sustained session, and reconnect timing from a real phone. The measurements above
+describe the hub side and the container, which is exactly what this host can observe.
+

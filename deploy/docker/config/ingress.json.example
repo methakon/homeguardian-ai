@@ -1,0 +1,22 @@
+{
+  "_comment": "D-03 device ingestion boundary. Copy to deploy/docker/certs/ingress.json and adjust the paths. Certificate material is provisioned by tools/provision_ca.sh and mounted read-only; it is never built into an image.",
+  "certificate_path": "/etc/homeguardian/certs/server.crt",
+  "private_key_path": "/etc/homeguardian/certs/server.key",
+  "ca_path": "/etc/homeguardian/certs/ca/ca.crt",
+  "bind_address": "0.0.0.0",
+  "port": 8443,
+  "registry_path": "/etc/homeguardian/certs/devices.json",
+  "revocation_path": "/etc/homeguardian/certs/revocations.json",
+  "_audit_db_path_note": "The SAME file the hub serves. Both processes use SQLite in WAL mode with a 5 s busy timeout, so one writer at a time is serialized and readers see a consistent snapshot. This is what makes an ingested observation's alert visible in the dashboard and in persisted alert history. It requires a local filesystem (a named volume, or a bind mount on the same host) - WAL over NFS is not supported and would be a corruption risk.",
+  "audit_db_path": "/data/homeguardian_bridge_audit.db",
+  "alert_retention_days": 30,
+  "max_connections": 8,
+  "max_queued_connections": 16,
+  "max_workers": 2,
+  "max_pending_observations": 64,
+  "idle_timeout_ms": 30000,
+  "handshake_timeout_ms": 5000,
+  "_evidence_note": "OPT-IN. Absent or empty keeps the built-in conservative default ({\"activity-energy\"}), under which device observations are recorded, audited and displayed but cast NO fusion vote and can never raise an alert by themselves. Listing the ingested detector ids (they are \"sensor.<source_type>\", e.g. \"sensor.motion\" for a motion observation) lets that evidence participate in fusion. No setting here can produce Severity::critical.",
+  "evidence_detector_ids": [],
+  "verbose": false
+}

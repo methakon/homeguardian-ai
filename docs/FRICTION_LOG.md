@@ -2441,3 +2441,261 @@ the transition.
 **Suggestion:** a time-based assertion must construct the timeout it relies on and state the arithmetic in the test; never let a default decide whether a boundary case passes. This is the third instance of the same family in one milestone (Incident 32 and the reconnect case were the others), which is itself the signal: whenever a test drives a state transition, write the precondition and assert it held before asserting the transition.
 
 **Status:** fixed
+
+
+## Incident 34 — Repeat suppression that also suppressed the evidence
+
+**Symptom:** a unit test that fed a rising motion stream reported `confirmed == false` forever. The
+detector was fine: it had been fed exactly one sample.
+
+**Cause:** `IngestDetectors::observe()` consulted `SensorDeduplicator` FIRST and returned early on a
+repeat within the cooldown. In the live path that is worse than in the test: a motion sensor
+reporting the same state every second would have its entire stream collapsed to one sample, so the
+activity detector's baseline would be frozen at the first value and **every later change would be
+unconfirmable** -- a silent, permanent loss of the exact capability D-02x added. The test was the
+first thing to exercise a multi-sample stream, which is why it surfaced there.
+
+**Why it matters more than a normal bug:** the failure mode is "detection stops working" while every
+component reports success. Nothing logs an error, no counter trips, and the drop is invisible unless
+you look at delivered versus received counts.
+
+**Fix:** ordering. The detector is fed FIRST, and the de-duplication result is recorded after the
+feed decision as an accounting flag (`duplicate`), never as a gate. The invariant is written into the
+code as a comment: **de-duplication must never suppress detector input.** A repeat is not a new
+announcement; it is still evidence.
+
+**Lesson:** a suppression or filtering layer placed before the learner/accumulator is a silent
+capability killer. Check the ORDER of gates, not just their conditions.
+
+## Incident 35 — A commit hash in the brief that does not exist
+
+**Symptom:** the D-03 brief cited D-02 as `3c8ff46eabff45abc59ff6ded297fea10fc1bb`. That is 39 hex
+characters; the real commit is `3c8ff4608eabff45abc59ff6ded297fea10fc1bb`. The abbreviated form does
+not resolve in the object store.
+
+**Cause:** transcription of a shortened SHA, with a digit lost. The summary in the brief and the
+actual repository disagree by one character, in the direction that makes the hash look plausible.
+
+**Fix:** the ancestry claim was verified against the OBJECT STORE (`git merge-base --is-ancestor`
+with the resolved full SHA), not against prose, and the discrepancy (real SHA, real length) was
+reported instead of being silently corrected. Nothing was rebuilt or merged speculatively.
+
+**Lesson:** never accept a SHA from a document as fact. Resolve it, and if it does not resolve, say
+so -- a wrong "verified" claim is worse than a reported mismatch. A 39-character SHA is a
+transcription error, not a repository state.
+
+## Incident 36 (recurrence) — Nested `Config` struct with default member initializers as a default argument
+
+**Symptom:** `error: default member initializer required before the end of its enclosing class` when
+using `SomeClass::Config config = {}` as a defaulted parameter.
+
+**Cause:** GCC cannot use a nested class with NSDMIs to form a default argument while the enclosing
+class is still incomplete. This is the SAME pitfall already recorded for this project, which makes it
+a recurrence, not a new discovery. The cost is that a documented pitfall without a mechanical guard
+in the build gets re-created by whoever writes the next class.
+
+**Fix:** a static `defaults()` factory returning the nested `Config`, taken by value or value-init at
+the call site, used consistently (`IngestDetectors::defaults()`, and observers/trackers in D-02x too).
+
+**Lesson:** a friction entry is an obligation. When a pitfall recurs, the fix is not another entry in
+this log -- it is a project rule ("nested config types are constructed via a `defaults()` factory,
+never as a default argument") that the next author is held to.
+
+
+## Incident 37 — A decoder that could not read the refusal it was sent
+
+**Symptom:** the end-to-end test reported `accepted=3` for a device the hub had just refused. The
+hub's own summary in the same run said `accepted=0 rejected=11`. Both were produced by the same
+message exchange.
+
+**Cause:** the wire protocol's ENCODER always wrote `accepted` and `reason` on an acknowledgement
+and `device_id` on a welcome, but the DECODER handled only observation payloads and returned early
+for every other kind. A device therefore saw `reason=none` - "ok" - for every refusal, and the
+client's own success counter was structurally incapable of noticing. The unit tests could not see it
+because they round-trip through the same struct and asserted on the ENCODER's fields, and the one
+place that could see it was the piece of the system that reads another process's bytes.
+
+**Fix:** the decoder now reads the response fields for welcome/ack/error, with a
+`reject_reason_from_string` inverse for every reason `reject_reason_to_string` can emit, plus two
+regression tests that round-trip ALL 20 reason codes and assert the inverse mapping agrees with the
+forward one in both directions.
+
+**Why this is the worst class of bug in the project so far:** the hub's enforcement was correct
+throughout - it refused everything it should - but every test that went through the client believed
+the opposite. A denial that the caller cannot perceive is one bad test away from being reported as a
+success, and this is exactly the "green signal that does not mean what it looks like" pattern
+already recorded for the stale binary (L-11) and the silent AAudio stream (D-02).
+
+**Lesson:** every field a writer emits needs a reader-side test. A round trip that starts and ends in
+the same struct proves the encoder is self-consistent and nothing else.
+
+## Incident 38 — Two defects that made the boundary unusable, and only the end-to-end test saw them
+
+**Symptom A:** no observation could ever be accepted. The registry loader cleared `capture_enabled`
+on every load ("capture never starts enabled after a restart"), and the accept path refuses any
+device whose capture is disabled - so the gate was closed by construction, with no way to open it.
+The milestone's primary objective was unreachable and every unit test still passed.
+
+**Symptom B:** a device removed from the revocation list stayed revoked for the life of the process.
+The revocation file only ever SET the flag, never cleared it, so reinstating a device required a
+service restart - an operational trap in a security control.
+
+**Cause:** both are "authorization state with no path to the other side". One flag had no writer, the
+other no clearer. Neither is visible from inside the component that owns the flag; both are
+immediately visible from a script that tries to use the system as an operator would.
+
+**Fix A:** capture authorization is honoured from the registry file when - and only when - the
+operator wrote it AND the device is paired AND consent is recorded AND it is not revoked. Absent key
+stays false, and four new test sections pin the fail-closed cases (absent / unpaired / consentless /
+revoked).
+**Fix B:** file revocation is tracked separately from registry revocation and is authoritative for
+the ids it lists, so removing an id lifts the ban immediately. Un-revoking deliberately does NOT
+re-grant pairing or consent: the ban is lifted, the permissions are not restored silently.
+
+**Lesson:** a permission gate needs a tested writer AND a tested clearer. Unit tests around a
+component cannot see a gate that nothing can open; only an end-to-end run as an operator uses it can.
+
+## Incident 39 — A target that no environment built
+
+**Symptom:** the first time the two OpenSSL-linked binaries were compiled in ANY environment, three
+faults appeared at once: the targets had no include directory, `main_ingress.cpp` called
+`Logger::initialize` (returns `void`) inside an `if (!...)`, and the link failed on a missing
+`SchemaManager.cpp`.
+
+**Cause:** the targets are built only where OpenSSL development headers exist, which is not the
+developer host. The conditional block was therefore never compiled, and "it builds" had been inferred
+from a CMake `message(STATUS)` line. Nothing in the host workflow could contradict it.
+
+**Fix:** the missing include dirs and source are in place, the dead `if` is gone, and the container
+build - where the headers always exist - is the environment that compiles and runs them. The
+Dockerfile also gained a preflight that names an incomplete build context instead of letting CMake
+fail deep inside its generate step with "Cannot find source file".
+
+**Lesson:** a target that no environment builds is not "done", it is unbuilt. An optional dependency
+must be exercised by the routine build (here: the container test stage), or the condition must be
+treated as "never compiled" in every status claim.
+
+## Incident 40 — The boundary aborted instead of refusing
+
+**Symptom:** with a read-only working directory, the ingress died with `terminate called after
+throwing an instance of 'homeguardian::DatabaseException'` and a core dump (SIGABRT) instead of
+refusing to start.
+
+**Cause:** the SQLite audit store's constructor throws when its path is not writable, and nothing
+between `main()` and that constructor caught it. The logger had already been made best-effort
+(Incident 33's sibling), but the persistence path had not.
+
+**Fix:** the whole startup path is wrapped so any exception becomes a clean refusal with a reason and
+exit code 5 - and the acceptance script now distinguishes a refusal from a crash explicitly (a
+signal exit is reported as "died on signal N instead of refusing", never as a pass).
+
+**Lesson:** fail-closed means refusing, not crashing. A process that aborts has no opportunity to
+enforce anything, and an abort on a misconfiguration is indistinguishable from an abort on an attack
+unless the code guarantees the difference.
+
+## Incident 41 — A provisioning script that quietly wrote to somewhere else
+
+**Symptom:** `bash tools/provision_ca.sh init deploy/docker/certs` reported success and created the
+CA in `~/.homeguardian/certs`. The requested directory stayed empty, and the acceptance run that
+followed failed on certificates that "were never created".
+
+**Cause:** positional-argument mapping. The script read its outdir from `$3`, which is right for
+`issue <id> [outdir]` and wrong for `init [outdir]` - so the caller's path was silently discarded and
+the default was used.
+
+**Fix:** the mapping is per action and documented in the script; the acceptance run now provisions
+into its own temporary directory and would fail immediately if the path were ignored.
+
+**Lesson:** a tool that accepts a destination and writes elsewhere is worse than one that rejects the
+destination. Silent mis-targeting of security material is the same failure class as a silent
+mis-targeting of a build artefact.
+
+
+## Incident 42 — A verification step destroyed a live secret, and nothing in git could see it
+
+**Symptom:** the D-01 container acceptance dropped from its 26/26 baseline to 25/26. The single
+failure was `/api/status`, which answered `{"status":{"error":"unauthorized","ok":false}}`.
+
+**Cause:** while proving that the Docker build context excludes secret material, the test planted
+dummy files at every sensitive path - including `deploy/docker/secrets/creds.json`, the ACTUAL
+mounted credential file. The planted dummy overwrote the real credential table. With no entries, the
+bridge's verifier denied every credential, correctly and fail-closed.
+
+**Why it was nearly invisible:** `deploy/docker/secrets/creds.json` is gitignored by design, so
+`git status` reports a clean tree whether the file holds a valid credential table, a dummy, or
+nothing at all. A clean working tree says nothing about the integrity of a mounted secret. The only
+reason it surfaced at all is that the acceptance suite exercises an authenticated endpoint.
+
+**Second act (same root cause, one step later):** restoring the file with `chmod 600` broke the
+deployment in a different way - the container exited with code 78 (EX_CONFIG) and the acceptance
+reported "secret missing". Docker Compose's file-backed secrets are BIND MOUNTS, not copies: the
+host file's mode is what the container sees, and the hub runs as uid 10001, so a host file that only
+its owner can read is unreadable inside. The baseline had been measured with mode 0664.
+
+**Fix:** the file is restored from `deploy/docker/secrets/creds.json.example` (the template is the
+authority for the synthetic demo credential) at mode 0644, and re-verified by the D-01 run. The probe
+technique itself is still correct - plant, build, assert, remove - but a probe must never touch a
+path that a RUNNING deployment reads. Plant test material in a scratch directory and point the probe
+at that. The secret-as-bind-mount constraint is now documented in `docs/DISTRIBUTED_DEPLOYMENT.md`,
+because "keep the secret file 0600" and "the container must read it" cannot both hold for a compose
+file secret - the protection has to come from the host path and, for anything beyond the synthetic
+demo credential, from a real secret store.
+
+**Lesson:** (1) a gitignored secret is invisible to `git status`, so "working tree clean" is not
+evidence that secrets are intact - only a run that authenticates with them is; (2) when testing
+exclusions, never write into live credential paths, even temporarily; (3) the fail-closed design did
+its job here: a destroyed credential table produced a denial, not a crash and not open access.
+
+
+## Incident 43 — Five things that only break when the boundary is a DEPLOYMENT
+
+D-03's binary-level acceptance passed 21/21 while the same system, run as two containers, failed
+five different ways in a row. Every one of them is a property of the deployment, not of the code, and
+none of them was visible from a unit test or from a same-uid host run.
+
+1. **Docker creates missing bind-mount sources as DIRECTORIES, as root.** The compose service
+   mounted `./certs/devices.json` and `./certs/ingress.json` as individual files. Because those files
+   did not exist yet, Docker created *directories* with those names, owned by root, and the
+   provisioning step then failed with `Permission denied`. Fixed by mounting ONE directory
+   (`HG_CERTS_DIR`, default `./certs`) and reading the registry paths from inside it, so a missing
+   file is a missing file and the ingress refuses to start.
+2. **A named volume mounted at a path absent from the image is root-owned.** `hg_ingress_data` at
+   `/data/ingress` made the non-root ingress exit with "data directory not writable". Fixed by
+   creating `/data/ingress` with the service UID in the image, so a fresh volume inherits it.
+3. **A bind mount hands the container the file's own mode.** The provisioning tool writes the tree
+   `0700/0600` for host safety, and it re-tightens on EVERY invocation, so a later `issue` silently
+   undid an earlier `chmod`. The ingress (uid 10001) then could not traverse the directory
+   ("config not readable") or read its own key. Fixed by a `make_deployable` step applied after each
+   provisioning call, and by documenting that protection for a mounted directory comes from the host
+   path, not from the file modes.
+4. **WAL means the newest rows are not in the .db file.** The `-wal` sidecar holds committed rows
+   until a checkpoint folds them in, so a check that greps only the main file reports "not persisted"
+   for data that is durably persisted. Fixed by searching both, which is what the durable state
+   actually is.
+5. **The client refuses a DNS name on purpose** ("host must be a dotted IPv4 address"), because the
+   device path resolves nothing and therefore cannot be re-pointed. The end-to-end test has to look
+   the ingress address up itself.
+
+**Lesson:** "it passes on the host" is a statement about a HOST. A boundary that runs as a different
+uid, behind a mount, in a network namespace and against a shared SQLite file has a second set of
+failure modes, and every one of the five above was a refusal (never a silent success) — which is why
+they were all found in a handful of runs instead of in production. Test the deployment as a
+deployment, with the same uids, mounts and volumes it will ship with.
+
+## Incident 44 — An end-to-end test that measured the wrong state
+
+**Symptom:** the identity-mismatch assertion failed with `device_unpaired`, even though the
+identity-mismatch path itself was correct and worked when run by hand.
+
+**Cause:** the test ran the assertion AFTER its own revoke/un-revoke cycle. Un-revoking lifts the ban
+but deliberately does not re-grant pairing or consent (ADR-013), so by that point the device was
+unpaired - and `device_unpaired` is checked before the hello's identity claim. The test was
+measuring a state its own earlier steps had created.
+
+**Fix:** the assertion moved before the revocation cycle, with a comment stating the precondition and
+why the order matters.
+
+**Lesson:** in a sequence of acceptance steps, each step's precondition is part of the test. A test
+that runs after a state-changing step must either restore the state or assert against the state it
+actually has - otherwise it reports a false negative on correct behaviour, which is just as
+misleading as a false positive.

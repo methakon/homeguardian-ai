@@ -1398,3 +1398,66 @@ legend, and states the never-produced claims in the page copy rather than in the
 payload cannot carry one. Per-skill detail: `docs/SKILL_VALIDATION_REPORT.md`,
 `docs/ANIMAL_ACTIVITY_DETECTION.md`, `docs/HOME_SECURITY_SENSOR_INTEGRATION.md`,
 `docs/HOME_ASSISTANT_INTEGRATION.md`.
+
+
+## D-03 — Device ingress boundary
+
+The hub now has TWO listeners with deliberately different trust levels, and the reason they are
+separate processes is that they were reviewed against different threat models.
+
+```
+Android node (Apache-2.0 APK)                       Docker host (LAN only)
++-----------------------------+                    +---------------------------------------------+
+| operator START              |                    |  ingress container (non-root, caps dropped)  |
+| OS camera/mic permission    |                    |  :8443/tcp  <-- THE ONLY PUBLISHED PORT      |
+| HomeGuardian consent gate   |                    |   1. TLS handshake (private CA, client cert  |
+| per-frame consent re-check  |   framed, versioned |      required; TLS 1.2 minimum)             |
+| bounded feature extraction  |   compact observation 2. TLS peer identity -> CN = device id    |
+| bounded queue (128, drop-oldest) ------------------> 3. fingerprint == registry credential_id |
+| ObservationTransport (TLS)  |                    |   4. registry: paired / revoked / consent /  |
++-----------------------------+                    |      capture enabled / capabilities          |
+                                                   |   5. bounds, timestamp window, sequence      |
+                                                   |      watermark, duplicate window, allowlists |
+                                                   |   6. sequence watermark COMMITTED last       |
+                                                   |   7. Observation -> IngestDetectors (per     |
+                                                   |      device) -> Pipeline -> FusionRule ->    |
+                                                   |      AlertPolicy -> SQLite (WAL, FULL)       |
+                                                   +---------------------------------------------+
+                                                                       |
+        loopback only, NOT published          +--------------------------v------------------+
+        +------------------------------------>|  hub container: dashboard + demo server  |
+        |  (docker-compose.loopback.yml binds  |  127.0.0.1 inside the container only     |
+        |   the host side to 127.0.0.1)        +-----------------------------------------+
+```
+
+Why the ingress is not simply the existing server on `0.0.0.0`:
+
+- The existing server is a handwritten HTTP server reviewed for loopback. Changing its bind address
+  would put its full surface — dashboard, API, JSON, SQLite-backed reads — on the Wi-Fi, which is a
+  different security problem than "accept compact observations from authenticated devices".
+- The ingress therefore speaks ONE protocol, exposes NO dashboard or command channel, and never
+  opens SQLite for requests. A device cannot read alerts, list other devices, or invoke any command.
+- The two containers share the image and the security posture (non-root, all capabilities dropped,
+  `no-new-privileges`, no Docker socket, no privileged mode) but not the port, the data volume or
+  the trust level.
+
+Trust chain, in the order the hub checks it:
+
+1. **Is the connection legitimate?** TLS with a client certificate that chains to the private CA,
+   `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` set, verify result checked explicitly. No certificate, no
+   conversation.
+2. **Who is it?** The certificate CN is the claimed device id; the SHA-256 fingerprint of that
+   certificate must equal the `credential_id` recorded for that device. Both must hold.
+3. **May it be here?** Registry state: paired, not revoked, presence in the registry.
+4. **May it measure?** Consent granted for that device, capture enabled for that device, and the
+   source type in the device's capability allowlist.
+5. **Is the data plausible?** Bounded numeric features, timestamp inside the window, sequence
+   strictly ahead of the watermark, observation id unseen, queue not full.
+6. **Only then** is provenance derived, the watermark committed, and the observation handed to the
+   existing pipeline.
+7. **The pipeline's output lands where the hub can serve it.** The ingress and the hub share one
+   persistent volume and one SQLite database, so an alert raised from an ingested observation appears
+   in the dashboard and its API rather than only inside the ingress. Both processes use WAL with a
+   local filesystem and a 5 s busy timeout. Whether ingested evidence may VOTE in fusion is an
+   explicit operator setting (`evidence_detector_ids`); by default it is recorded and displayed but
+   casts no vote, and nothing on this path can reach `Severity::critical` (ADR-014).

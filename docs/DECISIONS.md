@@ -723,3 +723,131 @@ claim at all.
   vocabulary drifts, or if a forbidden token appears.
 - The new route also exposed a real fail-closed defect (a malformed credential table aborted the
   bridge), now fixed and asserted adversarially.
+
+
+## ADR-012 — Device authentication is a separate process, and identity comes from the certificate
+
+**Date:** 2026-10-14
+**Status:** Accepted (D-03)
+**Context:** D-03 required network communication between Android nodes and the hub, while D-01's
+server was explicitly designed, reviewed and documented for loopback only. The obvious shortcut --
+change the bind address -- would have moved the dashboard, the command channel and SQLite-backed
+reads onto the Wi-Fi and called it "networking".
+
+**Decision:**
+
+1. The network-facing surface is a **separate executable and a separate container**, speaking exactly
+   one protocol: hello/welcome, compact observation frames, heartbeat, goodbye. It serves no
+   dashboard, no command channel and no SQLite. The loopback demo server keeps its bind address and
+   stays unpublished in the default compose file.
+2. Trust is established by a **private CA with one certificate per device**, and authorization
+   requires **two independent bindings**: the chain must verify against the CA *and* the certificate
+   fingerprint must equal the `credential_id` recorded for that device id. Either alone is
+   insufficient, because a valid CA signature proves membership, not identity, and a recorded
+   fingerprint proves nothing about who is holding the key today.
+3. The device id used for authorization is taken from the **certificate CN**, never from a message
+   field. The message field exists so a client can be honest about itself and the hub can *detect*
+   disagreement.
+4. Provenance is **derived** from authenticated peer × paired × consent × capture-enabled × live
+   acquisition. A `real` claim the hub cannot substantiate is recorded synthetic and flagged.
+5. The TLS implementation is **OpenSSL**, not hand-rolled: the brief asked for an established
+   implementation, and a bespoke cipher/KDF is not a security boundary, it is a liability. The
+   transport has no insecure mode, and tests use a real CA.
+6. Revocation is a **file re-read on every connection**, so it takes effect on the next message. A
+   revocation that needs a restart is still authorizing the device in the meantime.
+7. Certificate material is **operator-provisioned, mounted read-only, and gitignored**. Nothing
+   sensitive is baked into an image layer.
+
+**Consequences:**
+
+- Two containers, one image, two trust levels. The ingress adds no open port beyond 8443/tcp.
+- A device cannot read household data: its port has no read surface beyond its own acknowledgements.
+- The D-01 dashboard path is untouched and its 26 container checks still pass.
+- OpenSSL becomes a build and runtime dependency **for the network binaries only**; the protocol,
+  registry, ingest and detector layers stay OpenSSL-free and are tested everywhere.
+- A phone that steals another phone's certificate still fails, and a phone whose certificate is
+  revoked is refused immediately.
+- Cost: certificate provisioning is an operator step with no UI yet; the Android client stores its
+  PKCS#12 in app-private storage rather than in the Android Keystore (recorded as the next hardening
+  step, not as done).
+
+
+## ADR-013 — Capture authorization is written by the operator; revocation is reversible
+
+**Date:** 2026-10-14
+**Status:** Accepted (D-03, supersedes the stricter reading in ADR-012 on one point)
+
+**Context:** D-03's first implementation cleared `capture_enabled` on every registry load, on the
+principle that a restart must not resurrect an authorization nobody re-stated. Combined with the
+accept path's rule that capture-disabled devices are refused, this made the boundary unusable: no
+device could ever be accepted, and the milestone's own objective was unreachable. The same review
+found that file-based revocation could only set the revoked flag, so reinstating a device required a
+restart.
+
+**Decision:**
+
+1. **Capture authorization is honoured from the registry file**, but only when the operator wrote it
+   AND the device is paired AND consent is recorded AND the device is not revoked. An absent key is
+   always false. There is no inference: nothing but the operator's own written entry can set it.
+2. **Runtime state is still never restored.** Online status, the sequence watermark and the
+   acquisition-timestamp high-water mark are re-learned from the wire after every restart. They are
+   observations about the world, not authorizations, and restoring them would assert something the
+   hub cannot know.
+3. **File revocation is authoritative for the ids it lists, and removing an id lifts the ban
+   immediately.** Un-revoking deliberately does not restore pairing or consent: the operator must
+   state the permissions again. The ban and the permissions are different decisions.
+4. **Consent withdrawal requires a registry reload** (or the equivalent operator action), because the
+   registry is read at startup while the revocation list is re-read per connection. The acceptance
+   suite exercises withdrawal exactly that way, and the deployment documents it.
+
+**Consequences:**
+
+- The system is usable: an operator can authorize a device in writing, and the hub accepts it.
+- Queries about "did a restart silently re-authorize a device?" answer no: only written
+  authorization is honored, and every runtime observation is re-learned.
+- Reinstating a revoked device is two explicit acts (un-revoke, then re-grant), which is the correct
+  amount of friction for a security control.
+- The registry file becomes an authorization record the operator must protect - which it already was,
+  since it carries credential fingerprints.
+
+
+## ADR-014 — The ingestion boundary writes the hub's alert history, and fusion evidence is opt-in
+
+**Date:** 2026-10-14
+**Status:** Accepted (D-03 finalization)
+
+**Context:** Two gaps were found only when the ingress was run as a deployment rather than as a
+binary:
+
+1. The ingress kept its OWN SQLite audit store. Its alerts were therefore invisible to the dashboard,
+   which reads `homeguardian_bridge_audit.db`. The D-03 objective says an authorized observation must
+   "become available in the dashboard and persisted alert history" — with two stores, it never could.
+2. Ingested observations carry `detector_id = "sensor.<source_type>"`, and the fusion rule's evidence
+   allowlist defaults to `{"activity-energy"}`. So ingested evidence never voted, and no ingested
+   observation could ever produce an alert. That default is a deliberate safety property (L-12), not
+   an oversight — but it also meant the milestone's end-to-end path terminated at "recorded".
+
+**Decision:**
+
+1. **One alert history.** The ingress and the hub share the persistent volume and the same SQLite
+   file. Both processes use WAL with a 5 s busy timeout (already configured in `SQLiteDatabase::open`),
+   so writers are serialized and readers see a consistent snapshot. The constraint is a LOCAL
+   filesystem (named volume or same-host bind mount): WAL over NFS is a corruption risk and is not
+   supported. `synchronous=FULL` is unchanged in both.
+2. **Fusion evidence is an explicit operator opt-in.** `evidence_detector_ids` in the ingress config
+   lets the operator admit specific ingested detector ids (e.g. `sensor.motion`) as fusion evidence.
+   Absent or empty keeps the conservative default. An empty list is never passed through to the rule,
+   because an empty allowlist means "accept every detector" — absence of a decision must not become
+   the widest possible permission.
+3. **Nothing here can produce `Severity::critical`.** The severity mapping derives from fused
+   confidence (info < 0.8, warning >= 0.8); critical remains reserved for the synthetic impact demo.
+   Animal-activity and sensor-derived conclusions stay advisory.
+
+**Consequences:**
+
+- An accepted observation's alert is visible through the hub's own API and dashboard, which is what
+  "end to end" has to mean.
+- Two writers on one SQLite file is a supported pattern on a local filesystem, but it is also a
+  deployment constraint worth stating in the docs: do not put `/data` on network storage.
+- Conservative behavior is preserved by default: an operator who wants ingested motion to alert must
+  say so, and the hub prints the active allowlist at startup so the decision is never invisible.

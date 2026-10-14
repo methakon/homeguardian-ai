@@ -181,3 +181,27 @@ production-ready).
 the bridge keeps serving but reports `{"error":"unavailable","ok":false}` on the
 status route, read routes fail closed, and a scenario claims no persisted alerts.
 No authentication or consent path was relaxed in v21.
+
+
+## D-03 addendum — network-facing device ingress
+
+| Requirement | Implementation | How it is checked |
+|---|---|---|
+| Genuine peer authentication | OpenSSL mutual TLS, client certificate required (`SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT`), chain verified against the private CA, verify result compared to `X509_V_OK` explicitly | Acceptance: handshake succeeds for a provisioned device; a connection without a certificate fails |
+| Per-device credentials | One certificate per device from the private CA; CN is the device id | `tools/provision_ca.sh issue`; fingerprint printed for registration |
+| Identity cannot be spoofed | Device id for authorization comes from the certificate; the message field is only a claim, checked against the certificate | Unit + acceptance: a device presenting another device certificate is refused (`identity_mismatch`) |
+| Credential revocation | Registry revocation plus a revocation file re-read on every connection | Acceptance: revoked device refused, un-revoking restores service without a restart |
+| Versioning | `protocol_version_major/minor` on every message; mismatch refused | Unit tests on the protocol |
+| Message size limits | 4-byte length header validated against a 4 KiB cap BEFORE allocation | Acceptance: oversized frame refused |
+| Sequence numbers / replay | Strictly increasing per-device watermark, committed only after every other check passes; bounded duplicate-observation window | Acceptance: replayed sequence refused; unit tests for the watermark-not-consumed-on-refusal property |
+| Timestamps | Positive, inside a +120 s / -24 h window, and not more than 60 s behind the device high-water mark | Acceptance: future and ancient timestamps refused |
+| Timeouts | Handshake, idle (socket-level `SO_RCVTIMEO`/`SO_SNDTIMEO`) | Config-validated at startup |
+| Connection quotas | `max_connections`, `max_queued_connections`, `max_workers`, `max_pending_observations`, all validated to stay inside hard ceilings | Config validation unit tests |
+| Bounded buffers | Frame cap, bounded queue, bounded registry, bounded per-device dedup window and sequence history | Unit tests for the bounds |
+| Reconnect behaviour | Explicit; a reconnect does not replay accepted history (sequence watermark + duplicate window) | Acceptance: reconnect continues without replay |
+| Secure credential storage | Server key mounted read-only `0600`; device keys `0600` in an operator-chosen tree; PKCS#12 in app-private storage with a separate password file; nothing baked into an image | Provisioning script + `.gitignore` |
+| No custom cryptography | Only OpenSSL primitives; no home-grown cipher, KDF or MAC anywhere in `src/net/` | Code review: `src/net/TlsTransport.cpp` is the only TLS surface |
+| TLS verification never disabled | There is no "insecure" mode in the transport, and the acceptance script uses a real CA | Code review + acceptance |
+| Least privilege at runtime | Ingress container: non-root, `cap_drop: ALL`, `no-new-privileges`, no Docker socket, no privileged mode, 128 MB / 0.5 CPU / 128 pids ceilings, own volume, certs mounted `:ro`, `restart: unless-stopped`, 20 s stop grace for a clean SQLite close | `docker-compose.yml`; clean SIGTERM asserted in acceptance |
+| No secret in JSON or logs | Observations have no credential field; the ingress logs ids and reason codes | Acceptance log inspection |
+| Fail closed on misconfiguration | Missing certificate/key/CA/registry or an out-of-range limit refuses startup (exit 78) | Acceptance: the ingress refuses to start with a missing certificate |

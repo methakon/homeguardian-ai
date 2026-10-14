@@ -932,3 +932,30 @@ those claims, so they cannot be rendered as results even by mistake, and the ver
 asserts that absence. Every empty surface is shown with its reason, because an unexplained zero
 would read as a working sensor reporting calm - the most misleading state a monitoring panel can
 display.
+
+
+## D-03 privacy additions (device transport)
+
+- **Compact observations only.** The protocol carries bounded numeric features and short strings. No
+  raw audio, no image, no frame, no transcript and no biometric template can be expressed in it, so
+  no such data can reach SQLite on this path. The Android sender (`ObservationTransport.java`) has
+  no code path that can serialize a buffer.
+- **Provenance is derived, never trusted.** A device claiming `real` acquisition is recorded as
+  **synthetic** unless the hub itself can substantiate it from the authenticated peer, the registry
+  consent record, the capture flag and a live acquisition mode. The unsubstantiated claim is flagged
+  and counted, so an operator can see it rather than silently believe it.
+- **Consent is per device and checked per message.** Withdrawing consent (or disabling capture)
+  stops processing on the next observation; the device is refused, not quietly downgraded. The
+  refusal reason is recorded (`consent_missing`, `consent_withdrawn`, `capture_disabled`).
+- **Revocation is immediate and total.** Revoking a device clears pairing, consent, capture and
+  liveness and is re-read on every connection: no restart, and no residual permission.
+- **No credential in any payload or log.** The certificate is presented to the socket; the
+  observation body has no key field. The ingress logs device ids and reason codes, never key
+  material, and the Android sender logs exception CLASSES for keystore operations so a failure
+  cannot print secret material.
+- **The device port is not a door to the data.** No dashboard, no alert listing, no commands and no
+  SQLite are served there, so an authorized device cannot read anything about the household beyond
+  its own acknowledgements.
+- **Certificates are operator-provisioned and read-only in the container** (mounted `:ro`), and
+  `deploy/docker/certs/`, `*.key` and `*.crt` are gitignored: key material never enters the
+  repository or an image layer.

@@ -94,3 +94,15 @@ config/*.local.json
 .DS_Store
 Thumbs.db
 deploy/docker/secrets/creds.json
+
+# D-03 certificate material and device registry: NEVER committed.
+# tools/provision_ca.sh writes these under an operator-chosen directory; the
+# container looks them up in deploy/docker/certs/.
+deploy/docker/certs/
+**/*.key
+**/*.crt
+**/*.csr
+**/ca.srl
+devices.json
+revocations.json
+hg_d03_*
