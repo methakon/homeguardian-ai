@@ -285,3 +285,18 @@ Real speech: `engine_name` = espeak-ng, `completed_within_wait=true`, `playback_
 `voice_spoke: "Unusual sound activity was detected. The source has not been identified."` from a
 real sustained_increase finding. HomeGuardian's spoken sentence is NOT marked physically verified
 until the operator confirms hearing it.
+
+## H-03 Android Wi-Fi node - status
+
+| item | state |
+|---|---|
+| APK | BUILT + SIGNED, 882,617 B (`hg_apk_build/homeguardian-harness.apk`) |
+| Transport wiring | IMPLEMENTED + COMPILED (was dead code before this milestone) |
+| Artifact verification | dex + .so inspected; 0 `invoke-custom` |
+| USB/ADB | **BLOCKED - DEVICE NOT ENUMERATED** |
+| Phone model/API/ABI | UNKNOWN (not assumed; earlier docs assumed API 27) |
+| Install / permissions / capture / Wi-Fi / USB-unplug | **BLOCKED** (no device) |
+| Live remote CCTV | NOT YET IMPLEMENTED |
+
+No hardware figure is reported because no hardware was reachable. The exact operator steps are in
+`docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md` section 3.

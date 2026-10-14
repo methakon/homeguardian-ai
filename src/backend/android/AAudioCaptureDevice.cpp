@@ -138,6 +138,15 @@ aaudio_data_callback_result_t AAudioCaptureDeviceImpl::data_callback(
             static_cast<uint32_t>(num_frames), bytes, now_ms(), authorized, now_ms());
     }
 
+    if (authorized && self->frame_observer_ != nullptr && audio_data != nullptr) {
+        // ONLY an authorized buffer reaches the feature observer. Bounded, non-blocking, and a
+        // throw here never takes the capture thread down.
+        try {
+            self->frame_observer_(static_cast<const int16_t*>(audio_data), num_frames);
+        } catch (...) {
+        }
+    }
+
     if (!authorized) {
         // Consent/permission/state refusal: ask the control thread to stop. Do
         // NOT call requestStop() from the driver thread.

@@ -62,6 +62,9 @@ public class MainActivity extends Activity {
     private TextView cameraStatus;
     private TextView micStatus;
     private TextView countersView;
+    // H-03: the hub link + node status panel, and the native observation drain it consumes.
+    private NodePanel nodePanel;
+    private boolean panelIdentified = false;
     private TextView consentView;
 
     private Spinner facingSpinner;
@@ -84,6 +87,15 @@ public class MainActivity extends Activity {
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
+            // H-03: hand the compact observations to the D-03 transport, then refresh the panel.
+            // The drain returns ONLY numeric features - no pixels, no PCM, no credentials.
+            if (nodePanel != null) {
+                if (!panelIdentified) {
+                    nodePanel.setIdentity(nativeIdentity(), DeviceIdentity.defaultDisplayName());
+                    panelIdentified = true;
+                }
+                nodePanel.sample(nativeDrainObservations(), nativeStats());
+            }
             refreshCounters();
             ticker.postDelayed(this, 500);
         }
@@ -110,6 +122,8 @@ public class MainActivity extends Activity {
     private native String nativeStopMic();
     private native boolean nativeMicStopRequested();
     private native String nativeStats();
+    private native String nativeDrainObservations();
+    private native String nativeSetObservationIntervalMs(int intervalMs);
     private native String nativeStopAll();
     private native String nativeSelfTest();
 
@@ -119,6 +133,12 @@ public class MainActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
+
+        // H-03: hub link and node status. Built by NodePanel so this activity stays readable; it
+        // shows only what it can actually learn (transport counters, Wi-Fi, battery, thermal,
+        // permissions) and never an observation value or a credential.
+        nodePanel = new NodePanel(this);
+        root.addView(nodePanel.build());
         int pad = (int) (12 * getResources().getDisplayMetrics().density);
         root.setPadding(pad, pad, pad, pad);
 

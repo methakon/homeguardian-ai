@@ -536,3 +536,21 @@ Status: IMPLEMENTED, physical acceptance BLOCKED on one package install.
   reported separately from a stalled microphone.
 * Independent controls: microphone consent, spoken-feedback enable, output mute.
 * Operator action required: `sudo apt-get install -y espeak-ng`.
+
+## H-03 - Android Wi-Fi camera and audio sensor
+
+Status: source + build complete; hardware acceptance BLOCKED on a USB-attached, ADB-authorized phone.
+
+* Audited the real APK and found the D-03 transport was DEAD CODE: nothing built an observation,
+  so nothing was ever sent. The transport, the Camera1 preview callback, the AAudio data callback
+  and a new bounded drain are now joined into one application (features computed only from
+  AUTHORIZED payloads; compact numeric scalars only; bounded queue with counted drops;
+  interval-sampled emission).
+* APK 882,617 B, signed, with the wiring verified inside classes.dex and libhg_harness.so.
+* Operator-facing hub link + status panel (connection state, Wi-Fi, permissions, transport
+  counters, measured FPS, battery, thermal).
+* Hardware items (identification, install, permissions, provisioning, Wi-Fi delivery, USB-unplug
+  acceptance) stay BLOCKED until a device enumerates; the exact operator steps are in
+  docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md.
+* Known gaps: no acknowledgment counter, no preview SurfaceView, no foreground service, no
+  camera/audio availability observations, live remote CCTV NOT implemented.

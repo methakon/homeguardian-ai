@@ -98,3 +98,14 @@ suspend the transport and flush the queue; the sequence counter adopts the hub's
 
 Verification: compile-verified (signed APK builds, 802,667 B, `ObservationTransport` present
 in the dex). Not exercised on a physical device.
+
+## H-03: the transport is now WIRED (correction to this document's earlier state)
+
+Earlier sections describe `ObservationTransport` as the node's transport. That was accurate about
+the CLASS and misleading about the APPLICATION: until H-03 nothing instantiated it, so no
+observation ever left a phone. H-03 adds `NodeSession` (native NDJSON drain -> PendingObservation ->
+`enqueue`) and `NodePanel` (operator controls and status), wires both into `MainActivity`, and adds
+the native feature path (`extract_motion_features`, `extract_audio_features`) behind the existing
+consent gate. The provisioning model described here is unchanged and is the one to use: the
+CA signing key stays offline, device keys never enter a hub container, and the server SAN must
+contain the address the phone dials.

@@ -1015,3 +1015,14 @@ display.
   enabled.
 * Speech delivery status is non-sensitive (a counter, the last sentence template, a failure
   reason). No audio and no text derived from audio is stored.
+
+## H-03 - Android node
+
+The node transmits compact numeric scalars only: motion fraction, motion mean delta, RMS, peak,
+zero-crossing rate, counters, timestamps and provenance. No imagery and no audio leave the phone,
+nothing is persisted, and the Y plane of a frame is read once for a bounded descriptor and dropped
+without being copied back into Java. Device credentials live in app-private storage; the app checks
+only their EXISTENCE and never reads, displays or logs their contents. Consent gates every payload
+at the native layer, so a withdrawn consent stops measurement as well as delivery; permission and
+consent are separate operator actions. No cloud service is involved and none is configured. There
+is no TLS verification disable switch - a missing certificate means no connection.

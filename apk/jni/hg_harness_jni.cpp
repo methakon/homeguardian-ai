@@ -26,6 +26,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cmath>
+#include <cstdio>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -33,6 +36,7 @@
 #include "backend/android/AAudioCaptureDevice.h"
 #include "backend/android/NdkCameraDevice.h"
 #include "core/CaptureAccounting.h"
+#include "core/BoundedFeatures.h"
 #include "core/ConsentGate.h"
 #include "core/ConsentGuardedDevice.h"
 #include "core/ConsentRecord.h"
@@ -126,8 +130,80 @@ struct Node {
     std::unique_ptr<AAudioCaptureDeviceImpl> mic;
     std::unique_ptr<ConsentGuardedDevice> guarded_mic;
 
+    // ---- bounded observation queue for the hub transport (D-03) -------------------------
+    // COMPACT NUMERIC FEATURES ONLY: no pixels, no PCM, no text derived from media. Emitted
+    // from the AUTHORIZED payload path (after the gate) and sampled on an interval so a 15 fps
+    // camera cannot flood the link. The queue is bounded and every drop is counted.
+    struct Observation {
+        std::string source_type;
+        std::string observation_type;
+        std::string unit;
+        std::string state;
+        double value = 0.0;
+        double confidence = 0.0;
+        int64_t acquired_at_ms = 0;
+        std::string provenance = "real_device";
+    };
+    std::deque<Observation> observations;
+    uint64_t observations_emitted = 0;
+    uint64_t observations_dropped = 0;
+    int64_t observation_interval_ms = 1000;   // configurable sampling interval
+    int64_t last_camera_emit_ms = 0;
+    int64_t last_audio_emit_ms = 0;
+    std::vector<uint8_t> prev_luma;           // bounded previous frame for the motion delta
+    size_t prev_luma_pixels = 0;
+    uint64_t frames_processed = 0;            // UI: frame-processing count
+    uint64_t audio_windows_processed = 0;     // UI: audio observation count
+
     std::mutex m;
 };
+
+// Bounded capacity: matches the Android transport's own MAX_QUEUE_DEPTH so the two cannot
+// disagree about how much work is waiting.
+constexpr size_t kMaxPendingObservations = 128;
+
+std::string num_str(double v) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.6f", v);
+    return std::string(buf);
+}
+
+// Queue ONE compact observation. A non-finite value is REFUSED here rather than queued: a NaN
+// that reaches the wire is a value the hub must reject, and a node producing them would spend
+// its link budget on refusals. Never called for an unauthorized payload.
+void push_observation(Node& n, const char* source_type, const char* observation_type, double value,
+                      const char* unit, const char* state, double confidence, int64_t acquired_ms) {
+    if (!std::isfinite(value)) {
+        std::lock_guard<std::mutex> lk(n.m);
+        ++n.observations_dropped;
+        return;
+    }
+    std::lock_guard<std::mutex> lk(n.m);
+    if (n.observations.size() >= kMaxPendingObservations) {
+        n.observations.pop_front();
+        ++n.observations_dropped;
+    }
+    Node::Observation o;
+    o.source_type = source_type;
+    o.observation_type = observation_type;
+    o.value = value;
+    o.unit = unit;
+    o.state = state;
+    o.confidence = confidence;
+    o.acquired_at_ms = acquired_ms;
+    n.observations.push_back(o);
+    ++n.observations_emitted;
+}
+
+// Interval gate: true at most once per observation_interval_ms. Keeps a 15 fps camera from
+// turning into 15 observations a second.
+bool due_for_emission(Node& n, int64_t now, bool camera) {
+    std::lock_guard<std::mutex> lk(n.m);
+    int64_t& last = camera ? n.last_camera_emit_ms : n.last_audio_emit_ms;
+    if (now - last < n.observation_interval_ms) return false;
+    last = now;
+    return true;
+}
 
 Node& node() {
     static Node n;
@@ -168,6 +244,10 @@ std::string stats_string(Node& n) {
     s += " audio_bytes=" + std::to_string(c.audio_bytes);
     s += " xruns=" + std::to_string(c.xruns);
     s += " ts_regress=" + std::to_string(c.timestamp_regressions);
+    s += " frames_processed=" + std::to_string(n.frames_processed);
+    s += " audio_windows=" + std::to_string(n.audio_windows_processed);
+    s += " obs_emitted=" + std::to_string(n.observations_emitted);
+    s += " obs_dropped=" + std::to_string(n.observations_dropped);
     if (c.last_drop != DropReason::none) {
         s += " last_drop=" + std::string(drop_reason_to_string(c.last_drop));
         if (!c.last_drop_detail.empty()) s += " (" + c.last_drop_detail + ")";
@@ -313,7 +393,43 @@ Java_org_homeguardian_harness_Camera1Bridge_nativeOnPreviewFrame(JNIEnv* env, jo
     CaptureAccountant::Decision d = n.accountant.account_frame(
         static_cast<uint32_t>(width > 0 ? width : 0), static_cast<uint32_t>(height > 0 ? height : 0),
         bytes, static_cast<int64_t>(timestamp_ms), authorized, now_ms());
-    return d.authorized ? JNI_TRUE : JNI_FALSE;
+    if (!d.authorized) return JNI_FALSE;
+
+    // ONLY an authorized frame is measured. The frame itself is never retained, transmitted or
+    // written: the Y plane is read once for a bounded motion descriptor and dropped.
+    if (data != nullptr && width > 0 && height > 0) {
+        const size_t w = static_cast<size_t>(width);
+        const size_t h = static_cast<size_t>(height);
+        const size_t pixels = w * h;
+        if (nv21_geometry_ok(w, h, bytes) && pixels >= FeatureBounds::kMinPixels &&
+            pixels <= FeatureBounds::kMaxPixels) {
+            jbyte* raw = env->GetByteArrayElements(data, nullptr);
+            if (raw != nullptr) {
+                const uint8_t* y = nv21_y_plane(reinterpret_cast<const uint8_t*>(raw));
+                bool have_pair = false;
+                MotionFrameFeatures mf{};
+                {
+                    std::lock_guard<std::mutex> lk(n.m);
+                    ++n.frames_processed;
+                    if (n.prev_luma_pixels == pixels && !n.prev_luma.empty()) {
+                        mf = extract_motion_features(n.prev_luma.data(), y, pixels);
+                        have_pair = mf.valid;
+                    }
+                    n.prev_luma.assign(y, y + pixels);
+                    n.prev_luma_pixels = pixels;
+                }
+                env->ReleaseByteArrayElements(data, raw, JNI_ABORT);  // read-only: nothing copied back
+                const int64_t ms = now_ms();
+                if (have_pair && due_for_emission(n, ms, /*camera=*/true)) {
+                    push_observation(n, "camera", "motion_fraction", mf.changed_fraction, "fraction",
+                                     "ok", 1.0, ms);
+                    push_observation(n, "camera", "motion_mean_delta", mf.mean_delta, "delta_ratio",
+                                     "ok", 1.0, ms);
+                }
+            }
+        }
+    }
+    return JNI_TRUE;
 }
 
 // ---- microphone (AAudio) --------------------------------------------------
@@ -353,6 +469,27 @@ Java_org_homeguardian_harness_MainActivity_nativeStartMic(JNIEnv* env, jobject /
         cfg.channels = static_cast<int32_t>(channels);
         n.mic->set_config(cfg);
     }
+    // One bounded audio descriptor per interval, from the PCM of an AUTHORIZED buffer only.
+    n.mic->set_frame_observer([&n](const int16_t* pcm, int32_t frames) {
+        {
+            std::lock_guard<std::mutex> lk(n.m);
+            ++n.audio_windows_processed;
+        }
+        const AudioFrameFeatures f = extract_audio_features(
+            pcm, static_cast<size_t>(frames),
+            static_cast<uint32_t>(n.mic->negotiated_channels() > 0 ? n.mic->negotiated_channels() : 1),
+            static_cast<uint32_t>(n.mic->negotiated_sample_rate() > 0
+                                      ? n.mic->negotiated_sample_rate()
+                                      : 16000));
+        if (!f.valid) return;
+        const int64_t ms = now_ms();
+        if (!due_for_emission(n, ms, /*camera=*/false)) return;
+        push_observation(n, "microphone", "audio_energy_rms", f.rms, "rms", "ok", 1.0, ms);
+        push_observation(n, "microphone", "audio_peak", f.peak, "amplitude", "ok", 1.0, ms);
+        push_observation(n, "microphone", "audio_zero_crossing_rate", f.zero_crossing_rate, "rate",
+                         "ok", 1.0, ms);
+    });
+
     GuardResult init;
     try {
         init = n.guarded_mic->initialize();
@@ -454,3 +591,43 @@ Java_org_homeguardian_harness_MainActivity_nativeSelfTest(JNIEnv* env, jobject /
 }
 
 }  // extern "C"
+
+
+// ---------------------------------------------------------------------------------------------
+// H-03: the observation drain. Java pulls compact observations and hands them to the D-03
+// transport. NDJSON, one observation per line, numeric scalars only - never PIXELS, never PCM,
+// never a path or a credential.
+// ---------------------------------------------------------------------------------------------
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeDrainObservations(JNIEnv* env, jobject /*thiz*/) {
+    auto& n = node();
+    std::deque<Node::Observation> taken;
+    {
+        std::lock_guard<std::mutex> lk(n.m);
+        taken.swap(n.observations);
+    }
+    std::string out;
+    for (const auto& o : taken) {
+        out += "{\"source_type\":\"" + o.source_type + "\",\"observation_type\":\"" +
+               o.observation_type + "\",\"value\":" + num_str(o.value) + ",\"unit\":\"" +
+               o.unit + "\",\"state\":\"" + o.state + "\",\"confidence\":" +
+               num_str(o.confidence) +
+               ",\"acquired_at_ms\":" + std::to_string(o.acquired_at_ms) +
+               ",\"provenance\":\"" + o.provenance + "\"}\n";
+    }
+    return to_jstring(env, out);
+}
+
+// The observation sampling interval (ms). Bounded so a caller cannot ask for an unbounded rate.
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeSetObservationIntervalMs(JNIEnv* env,
+                                                                         jobject /*thiz*/,
+                                                                         jint interval_ms) {
+    auto& n = node();
+    int64_t bounded = interval_ms < 100 ? 100 : (interval_ms > 60000 ? 60000 : interval_ms);
+    {
+        std::lock_guard<std::mutex> lk(n.m);
+        n.observation_interval_ms = bounded;
+    }
+    return to_jstring(env, "observation interval: " + std::to_string(bounded) + " ms");
+}

@@ -693,3 +693,22 @@ HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[voice]"     # 17 cases, no soun
 
 The voice tests NEVER open a speaker: they drive the `IVoiceOutput` seam with a fake, and the only
 assertion about the real output is its argv (a pure function).
+
+## H-03 Android node commands
+
+```bash
+export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/android-ndk-r26d
+bash apk/build_apk.sh                       # builds + signs hg_apk_build/homeguardian-harness.apk
+adb devices -l                              # BLOCKED here: no device enumerates
+adb install -r hg_apk_build/homeguardian-harness.apk     # keeps app data; never uninstalls anything
+adb shell am start -n org.homeguardian.harness/.MainActivity
+```
+
+Artifact check (the wiring must be IN the APK, not just in the source):
+
+```bash
+unzip -o hg_apk_build/homeguardian-harness.apk -d /tmp/apkx
+strings /tmp/apkx/classes.dex | grep -c NodeSession            # >0
+strings /tmp/apkx/lib/armeabi-v7a/libhg_harness.so | grep -c extract_motion_features
+strings /tmp/apkx/classes.dex | grep -c 'invoke-custom'        # must be 0 (API 27 verifier)
+```

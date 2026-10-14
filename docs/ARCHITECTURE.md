@@ -1536,3 +1536,15 @@ shell; a decision is not a commitment (a refused delivery consumes nothing); the
 is bounded and can only be shortened, so environmental monitoring always resumes. An officially
 supported Alexa adapter could be added behind the same `IVoiceOutput`/phrasebook seam without
 touching the detection engine.
+
+## Android node data path (H-03)
+
+    Camera1 / AAudio  ->  consent gate (per payload, fail-closed)
+                      ->  bounded feature extraction (BoundedFeatures, shared with the host)
+                      ->  bounded observation queue in the native node (128, drops counted)
+                      ->  nativeDrainObservations() (NDJSON, numeric scalars)
+                      ->  NodeSession  ->  ObservationTransport (mutual TLS, bounded queue, ack validation)
+                      ->  hub ingress  ->  the SAME detector/fusion pipeline as the host sensors
+
+The node never transmits or persists media. Every artifact of the path is a scalar measurement plus
+its timestamp and provenance.

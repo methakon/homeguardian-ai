@@ -244,3 +244,17 @@ cancellation (section 6).
 the same Bluetooth sink. HomeGuardian's own spoken sentence has been produced, completed and
 counted (`playback_jobs=1`, rc 0) but **is NOT marked physically verified until the operator
 reports hearing it**.
+
+## 12. Physical acceptance CLOSED (owner-supplied, H-03 milestone start)
+
+`BLUETOOTH SPOKEN FEEDBACK: PASS - OPERATOR CONFIRMED.` The owner heard the complete sentence
+clearly through `YO-457BT`, spoken by the corrected `--speak-test` path (engine `espeak-ng 1.51`).
+
+Stage 2 of section 9 is therefore CLOSED as an operator judgement, recorded as owner-supplied
+evidence. Stage 3 (controlled real sound -> finding -> speech) was already evidenced
+programmatically in section 11 (`voice_spoke: "Unusual sound activity was detected. The source has
+not been identified."` from a real sustained_increase finding); the operator's confirmation covers
+the audibility of HomeGuardian's own sentence. Still not claimed: any sentence naming a source,
+species, person or disaster, and any Amazon Alexa integration.
+
+Local HomeGuardian TTS is NOT Amazon Alexa and must not be described as such.

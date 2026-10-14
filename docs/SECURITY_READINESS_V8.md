@@ -245,3 +245,12 @@ live Home Assistant still needs TLS.
 
 Unchanged: exactly-once is NOT claimed anywhere, and the residual duplicate window is
 documented with the crash point that causes it.
+
+## H-03 addendum (Android node)
+
+The node's security posture is unchanged and re-asserted in the new wiring: the consent gate runs
+BEFORE feature extraction, so an unauthorized payload is not even measured; the wire carries scalars,
+never media; the credential files are app-private and only their existence is inspected; mutual TLS
+with server-identity verification is mandatory and has no disable switch; and the node still cannot
+reach the hub's dashboard, credentials or database - it can only present observations on the one
+authenticated port. No privileged container is introduced to reach the phone's camera or microphone.

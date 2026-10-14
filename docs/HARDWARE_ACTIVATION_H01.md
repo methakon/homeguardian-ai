@@ -334,3 +334,23 @@ output modules installed and produces silence).
 
 Implemented in H-02A - see `docs/LOCAL_VOICE_FEEDBACK_H02A.md`. Status there:
 physical speech acceptance is BLOCKED pending the operator's `espeak-ng` installation.
+
+## 15. Bluetooth spoken sentence - OPERATOR CONFIRMED (H-02B)
+
+`Bluetooth spoken sentence: PASS - operator personally confirmed clear audible speech.`
+
+* Output device: `YO-457BT` (PipeWire sink `bluez_output.7A_62_D1_27_06_FA.1`).
+* Local speech engine: `espeak-ng 1.51`.
+* Sentence: "HomeGuardian local voice feedback test is successful."
+* This is genuine audible HomeGuardian LOCAL TTS. It is **not** Amazon Alexa, and no Alexa
+  branding or runtime is involved.
+
+This is OWNER-SUPPLIED acceptance evidence: the owner listened and reported clear audible speech.
+It is not something this agent heard or measured itself. The programmatic counterpart (a completed
+playback job, non-zero exit only on real playback, engine named honestly) is recorded in
+`docs/LOCAL_VOICE_FEEDBACK_H02A.md` section 11 - a process exit code is still never treated as
+evidence of audibility.
+
+Unchanged limitation, retained: the microphone input ring dropped 1.8-3.0 % of frames during
+48 kHz capture with speech active (bounded ring, every drop counted - visible back-pressure, not
+silent loss).

@@ -80,6 +80,14 @@ public:
     // unset callback denies everything (fail closed).
     void set_authorize(std::function<bool()> authorize) { authorize_ = std::move(authorize); }
 
+    // Bounded feature observer, called with the PCM of ONE callback buffer and ONLY after the
+    // gate has allowed that buffer: a refused buffer is never inspected, so no feature is ever
+    // computed from data this node is not permitted to process. Runs on the driver thread, must
+    // not block, and a throw from it is swallowed rather than taking the capture down.
+    void set_frame_observer(std::function<void(const int16_t*, int32_t)> observer) {
+        frame_observer_ = std::move(observer);
+    }
+
     // Observed by the control thread: true once a buffer was refused for a
     // consent/permission/device reason, i.e. capture must be stopped.
     bool stop_requested() const { return stop_requested_.load(); }
@@ -95,6 +103,7 @@ private:
     static void error_callback(AAudioStream* stream, void* user_data, aaudio_result_t error);
 
     DeviceState state_ = DeviceState::Idle;
+    std::function<void(const int16_t*, int32_t)> frame_observer_;
     bool device_confirmed_ = false;
     Config config_{};
     AAudioStream* stream_ = nullptr;
