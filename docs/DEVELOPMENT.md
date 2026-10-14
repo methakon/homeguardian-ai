@@ -679,3 +679,17 @@ The ingress now REFUSES to start with an empty `replay_state_path` unless
 `allow_ephemeral_replay_protection` is set AND the bind address is loopback. If a test or
 scratch run fails with `replay_state_path is required`, that is the control working: pass a
 path, or opt out explicitly on loopback.
+
+## Local voice feedback (H-02A) commands
+
+```bash
+hg_build/hg_audio_bridge --voice-status                      # engine, sink, availability, last failure
+hg_build/hg_audio_bridge --speak-test --sink <sink>          # one fixed test sentence (refuses if no engine)
+hg_build/hg_audio_bridge --start --i-understand-this-opens-the-microphone --voice --seconds 60
+hg_build/hg_audio_bridge --start --i-understand-this-opens-the-microphone --voice --mute
+hg_build/hg_audio_bridge --start --i-understand-this-opens-the-microphone --no-voice
+HG_SOURCE_DIR=$PWD hg_build/homeguardian_tests "[voice]"     # 17 cases, no sound is played
+```
+
+The voice tests NEVER open a speaker: they drive the `IVoiceOutput` seam with a fake, and the only
+assertion about the real output is its argv (a pure function).

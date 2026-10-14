@@ -501,3 +501,18 @@ permission). D-04 remains out of scope until D-03.2 passes review.
   sentence with provenance and uncertainty; spoken delivery is blocked by the missing voice
   backend (only the generated tone plays).
 - H-01f Amazon integration feasibility — **BLOCKED** (no supported Amazon runtime).
+
+## H-02A - Local voice feedback through the Bluetooth speaker
+
+Status: IMPLEMENTED, physical acceptance BLOCKED on one package install.
+
+* Closed spoken vocabulary (`VoicePhrasebook`) - 11 fixed sentences, no species/person/disaster
+  claim reachable, camera statements require an authenticated device.
+* One output subsystem reused (`LocalSpeaker`), extended with engine selection
+  (`espeak-ng` -> `espeak` -> `spd-say`), mute, status and a no-shell probe path.
+* Delivery policy: confidence gate, minimum interval, per-message cooldown, bounded utterance,
+  bounded queue, and a decision that is NOT committed until the sentence is really handed over.
+* Feedback suppression (bounded window) with monitoring resuming automatically; suppression is
+  reported separately from a stalled microphone.
+* Independent controls: microphone consent, spoken-feedback enable, output mute.
+* Operator action required: `sudo apt-get install -y espeak-ng`.

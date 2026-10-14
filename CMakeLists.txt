@@ -271,6 +271,8 @@ add_executable(hg_audio_bridge
     src/audio/AudioActivitySession.cpp
     src/backend/linux/PwAudioCaptureDevice.cpp
     src/backend/linux/LocalSpeaker.cpp
+    ${CMAKE_SOURCE_DIR}/src/voice/VoicePhrasebook.cpp
+    ${CMAKE_SOURCE_DIR}/src/voice/VoiceResponseController.cpp
     src/backend/linux/SensorDiscovery.cpp
     src/core/BoundedFeatures.cpp
     src/core/ActivityDetectors.cpp
@@ -367,6 +369,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_camera1_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_ubuntu_backend.cpp
         ${CMAKE_SOURCE_DIR}/tests/audio/test_audio_activity_session.cpp
+        ${CMAKE_SOURCE_DIR}/tests/voice/test_voice_response.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_simulator_backend.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_e2e_simulator.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_dual_device_broker.cpp
@@ -421,6 +424,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/net/IngressConfigPolicy.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/PwAudioCaptureDevice.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/LocalSpeaker.cpp
+        ${CMAKE_SOURCE_DIR}/src/voice/VoicePhrasebook.cpp
+        ${CMAKE_SOURCE_DIR}/src/voice/VoiceResponseController.cpp
         ${CMAKE_SOURCE_DIR}/src/audio/AudioActivitySession.cpp
         ${CMAKE_SOURCE_DIR}/src/net/IngestDetectors.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp

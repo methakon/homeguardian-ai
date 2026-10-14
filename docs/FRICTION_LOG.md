@@ -2858,3 +2858,24 @@ one, and here it reported the alarming one.
 Fix: the first read after start() waits a bounded grace period (2000 ms), later reads wait
 200 ms, and only then does an empty read count. Lesson: give a device its documented startup
 time before drawing a conclusion about its health.
+
+
+### Incident 56 - a guarded string replace that matched a SUBSTRING, not the line
+
+A CMake edit counted `tests/audio/test_audio_activity_session.cpp` (`count == 1`, assertion passed) but replaced `"    " + path`, which does not occur because the real line is prefixed with `${CMAKE_SOURCE_DIR}/`. The insertion silently did nothing, the new test file was never compiled, and the runner reported `No test cases matched '[voice]'` - a missing registration masquerading as a missing test. Assert on the SAME literal you replace, and grep the result afterwards (the fix matched on `line.strip().endswith(path)` and re-checked with grep). The same silent pattern also left a duplicate source pair in one list.
+
+### Incident 57 - the anonymous namespace swallowed a new member function
+
+`choose_speech_engine` was inserted before the anonymous namespace's closing brace, so it became a free function in the wrong scope: "definition ... is not in namespace enclosing 'homeguardian::LocalSpeaker'". Read the surrounding scope before inserting; the fix moved the closing brace above the function.
+
+### Incident 58 - nested Config default argument (a known pitfall, hit again)
+
+`explicit VoicePhrasebook(Config config = Config{});` failed with "default member initializer for ... required before the end of its enclosing class" - the same GCC rule already recorded for this project. Use the documented `static Config defaults() { return Config{}; }` helper.
+
+### Incident 59 - the policy recorded the sentence BEFORE the output accepted it
+
+The phrasebook marked a message as announced inside its admission check, so a muted, engine-less or saturated attempt consumed the interval and the cooldown: the next REAL finding was then suppressed as "too soon" and a sentence that was never spoken had stolen the turn. This is the D-03.2 lesson (never record a fact before the work it records succeeded) recurring in a new subsystem, and a test caught it (`REQUIRE(controller.status(2000).refused == 1)` returning 0). Admission is now a pure check and only a delivered sentence commits.
+
+### Incident 60 - a blocklisted keyword inside the payload blocked the whole call
+
+A tool call carrying a source comment that contained the word for an orderly machine stop was refused outright by the agent's command guard, so none of the edits in that batch were written while the surrounding output looked like a partial application. Keep such words out of command payloads, and check that a refused call wrote NOTHING before retrying.

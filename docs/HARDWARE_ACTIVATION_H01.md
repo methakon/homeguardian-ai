@@ -319,3 +319,18 @@ descriptors above stderr before `execvp`, so it does not hold the parent's pipes
 * Bluetooth audibility is an operator judgement, not a measurement (section 13).
 * No claim is made that the graph pause itself is understood - only that pausing is normal and
   that our reaction to it was wrong.
+
+## 13. Bluetooth audio output - OPERATOR CONFIRMED
+
+The operator confirmed that the generated test tone was audible through the Bluetooth speaker.
+This is the only evidence that counts for audibility: a playback process exiting 0 proves the
+program ran, not that a human heard anything (see the `spd-say` case below, which exits 0 with NO
+output modules installed and produces silence).
+
+`BLUETOOTH AUDIO OUTPUT: PASS - OPERATOR CONFIRMED` (device `YO-457BT`, PipeWire sink
+`bluez_output.7A_62_D1_27_06_FA.1`, engine `homeguardian-generated-tone`).
+
+## 14. Spoken feedback
+
+Implemented in H-02A - see `docs/LOCAL_VOICE_FEEDBACK_H02A.md`. Status there:
+physical speech acceptance is BLOCKED pending the operator's `espeak-ng` installation.

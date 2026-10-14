@@ -256,3 +256,18 @@ Amazon: **BLOCKED — no verified supported runtime** (no Amazon image exists, A
 not generally available, and the in-repo Alexa skill is a simulated web demo, not a runtime).
 
 Docs: `docs/HARDWARE_ACTIVATION_H01.md`.
+
+## H-02A local voice feedback - test results (feature/h02a-local-voice-feedback)
+
+| suite | result |
+|---|---|
+| full C++ suite | **460 cases / 5,547 assertions**, all passing |
+| `[voice]` (new) | **17 cases / 133 assertions**, all passing - no sound is played by any of them |
+| `[audio]` (H-01) | 20 cases / 1,599 assertions, all passing |
+| ctest | 100% |
+
+Sustained capture (H-01b) remains PASS: 35 s, 1,605,632 samples, 489 windows, 0 dropped, clean stop.
+Bluetooth output (H-01 tone): OPERATOR CONFIRMED audible.
+Spoken feedback (H-02A): implemented and unit-tested; physical speech acceptance BLOCKED pending
+`sudo apt-get install -y espeak-ng`. Numbers that need the engine (first/subsequent utterance
+latency, synthesis memory) are recorded as NOT MEASURED rather than estimated.

@@ -1519,3 +1519,20 @@ Two rules the diagram encodes, both of which were wrong before D-03.2:
    was refused as a replay.
 2. **A duplicate answer must never re-run the work.** An unacknowledged observation is
    answered from the record; only genuinely new sequences are processed.
+
+## Local voice feedback (H-02A)
+
+The spoken-response layer sits between the existing finding and the existing output, adding no
+second audio stack:
+
+    AudioActivitySession finding
+      -> VoicePhrasebook        (pure policy: closed vocabulary, gate, interval, cooldown)
+      -> VoiceResponseController (commits only on a real hand-off; owns the suppression window)
+      -> IVoiceOutput -> LocalSpeaker (fork+execvp, bounded queue, worker thread) -> PipeWire sink
+
+Rules the layer holds: the sentence set is closed at compile time and asserted by test; the
+spoken text travels as exactly one argv element so no detector or payload string can reach a
+shell; a decision is not a commitment (a refused delivery consumes nothing); the feedback window
+is bounded and can only be shortened, so environmental monitoring always resumes. An officially
+supported Alexa adapter could be added behind the same `IVoiceOutput`/phrasebook seam without
+touching the detection engine.

@@ -998,3 +998,20 @@ display.
   is not mistaken for evidence about the household.
 - Audio hardware is reached only from the host process; no container gains device or
   sound-server access, so the network-facing ingress cannot capture even if compromised.
+
+## H-02A - spoken feedback
+
+* The spoken sentences come from a CLOSED set compiled into the binary. No observation text,
+  feature value, device name or payload content is ever spoken, so speech cannot leak measured
+  data or a guessed source.
+* Operator test text is sanitized (bounded length, printable characters only, control characters
+  refused) before it can reach the output.
+* No raw audio is written, buffered to disk, or sent anywhere: the output path plays locally and
+  the input path discards samples after feature extraction, exactly as before.
+* No cloud speech service is involved, and none is configured. The local engine names itself
+  honestly; nothing is labelled Amazon Alexa.
+* The microphone's consent state and the speaker's enable/mute state are SEPARATE controls, so
+  an operator can keep listening while silencing output, or stop listening while leaving speech
+  enabled.
+* Speech delivery status is non-sensitive (a counter, the last sentence template, a failure
+  reason). No audio and no text derived from audio is stored.

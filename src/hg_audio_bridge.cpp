@@ -32,6 +32,7 @@
 
 #include "audio/AudioActivitySession.h"
 #include "backend/linux/LocalSpeaker.h"
+#include "voice/VoiceResponseController.h"
 #include "backend/linux/PwAudioCaptureDevice.h"
 #include "backend/linux/SensorDiscovery.h"
 #include "core/Logger.h"
@@ -137,8 +138,17 @@ int main(int argc, char** argv) {
     bool start = false;
     bool confirmed = false;
     bool speak = false;
+    bool voice = false;          // announce findings while capturing (opt-in)
+    bool no_voice = false;       // explicit: capture without announcements
+    bool mute = false;
+    bool unmute = false;
+    bool speak_test = false;
+    bool voice_status = false;
+    int voice_rate = 0;          // 0 = the adapter's default
+    double voice_volume = -1.0;  // < 0 = the adapter's default
     int seconds = 0;  // 0 = run until interrupted
-    std::string device_name;
+    std::string device_name;     // the microphone SOURCE
+    std::string sink_name;       // the OUTPUT sink
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--probe") {
@@ -151,6 +161,24 @@ int main(int argc, char** argv) {
             confirmed = true;
         } else if (arg == "--speak") {
             speak = true;
+        } else if (arg == "--voice") {
+            voice = true;
+        } else if (arg == "--no-voice") {
+            no_voice = true;
+        } else if (arg == "--mute") {
+            mute = true;
+        } else if (arg == "--unmute") {
+            unmute = true;
+        } else if (arg == "--speak-test") {
+            speak_test = true;
+        } else if (arg == "--voice-status") {
+            voice_status = true;
+        } else if (arg == "--voice-rate" && i + 1 < argc) {
+            voice_rate = std::atoi(argv[++i]);
+        } else if (arg == "--voice-volume" && i + 1 < argc) {
+            voice_volume = std::atof(argv[++i]);
+        } else if (arg == "--sink" && i + 1 < argc) {
+            sink_name = argv[++i];
         } else if (arg == "--device" && i + 1 < argc) {
             device_name = argv[++i];
         } else if (arg == "--seconds" && i + 1 < argc) {
@@ -165,7 +193,10 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (!probe && !test_tone && !start) {
+    if (no_voice) voice = false;
+    if (voice) speak = true;  // announcing while listening implies speaking at all
+
+    if (!probe && !test_tone && !start && !speak_test && !voice_status) {
         print_usage(argv[0]);
         return 2;
     }
@@ -178,7 +209,88 @@ int main(int argc, char** argv) {
 
     LocalSpeaker::Config speaker_config;
     speaker_config.volume_limit = 0.4;  // modest by default; the class clamps regardless
+    if (voice_volume >= 0.0) speaker_config.volume_limit = voice_volume;
+    if (voice_rate > 0) speaker_config.rate = voice_rate;
+    if (!sink_name.empty()) speaker_config.device = sink_name;  // the OUTPUT device
     LocalSpeaker speaker(speaker_config);
+
+    VoiceResponseController::Config voice_config;
+    voice_config.enabled = voice;  // no --voice means announcements are OFF, and status says so
+    if (voice_rate > 0) voice_config.rate = voice_rate;
+    VoiceResponseController voice_control(voice_config, &speaker);
+
+    // --- operator-visible voice status ---------------------------------------------------
+    if (voice_status) {
+        const auto status = voice_control.status(0);
+        std::string why;
+        const bool available = voice_control.speech_available(&why);
+        // Report the engine that can ACTUALLY run, or "(none available)": naming the
+        // last-resort program while it is unusable would read as a working engine.
+        std::string engine_why;
+        const std::string real_engine = speaker.engine_available(LocalSpeaker::JobKind::speech,
+                                                                 &engine_why);
+        std::cout << "{\"voice_enabled\":" << (status.enabled ? "true" : "false")
+                  << ",\"engine\":\""
+                  << json_escape(real_engine.empty() ? std::string("(none available)") : real_engine)
+                  << "\""
+                  << ",\"speech_available\":" << (available ? "true" : "false")
+                  << ",\"engine_why\":\"" << json_escape(status.engine_why) << "\""
+                  << ",\"output_device\":\""
+                  << json_escape(status.device.empty() ? "(system default)" : status.device)
+                  << "\""
+                  << ",\"device_present\":" << (speaker.output_present(nullptr) ? "true" : "false")
+                  << ",\"muted\":" << (speaker.muted() ? "true" : "false")
+                  << ",\"volume_limit\":" << speaker.volume_limit()
+                  << ",\"last_spoken\":\"" << json_escape(status.last_message) << "\""
+                  << ",\"last_failure\":\"" << json_escape(status.last_failure) << "\""
+                  << ",\"spoken\":" << status.spoken
+                  << ",\"suppressed\":" << status.suppressed
+                  << ",\"refused\":" << status.refused
+                  << ",\"not_alexa\":true}\n";
+        return 0;
+    }
+
+    // --- the operator's explicit speech test ---------------------------------------------
+    if (speak_test) {
+        const std::string sentence =
+            "HomeGuardian local voice feedback test is successful.";
+        std::cout << "engine: " << speaker.engine_name(LocalSpeaker::JobKind::speech)
+                  << "\noutput: "
+                  << (sink_name.empty() ? std::string("(system default sink)") : sink_name)
+                  << "\n";
+        std::string why;
+        if (!speaker.output_present(&why)) {
+            std::cerr << "the output device could not be confirmed: " << why << "\n";
+        }
+        if (!voice_control.speech_available(&why)) {
+            // Refuse honestly: no engine, no sentence. An exit code of zero here would be a lie.
+            std::cerr << "speech is NOT available: " << why << "\n"
+                      << "nothing was played. Install a synthesizer (e.g. espeak-ng) and re-run.\n";
+            return 1;
+        }
+        speaker.start();
+        int64_t now = static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        if (!voice_control.speak_operator_text(sentence, now, &why)) {
+            std::cerr << "the sentence was refused: " << why << "\n";
+            speaker.stop();
+            return 1;
+        }
+        // Wait for the worker to finish the sentence before reporting.
+        for (int waited = 0; waited < 200 && speaker.busy(); ++waited) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        speaker.stop();
+        std::cout << "queued the sentence via " << speaker.engine_name(LocalSpeaker::JobKind::speech)
+                  << ": \"" << sentence << "\"\n"
+                  << "playback jobs=" << speaker.stats().played
+                  << " refused=" << speaker.stats().refused
+                  << " last_exit=" << speaker.stats().last_exit_code << "\n"
+                  << "OPERATOR: this exit status is NOT evidence of audibility - please confirm\n"
+                  << "whether you heard the sentence, and report it as confirmed or not.\n";
+        return speaker.stats().played > 0 ? 0 : 1;
+    }
 
     if (test_tone) {
         // An OUTPUT-only test the operator explicitly initiates. No capture is involved.
@@ -197,6 +309,9 @@ int main(int argc, char** argv) {
                   << " refused=" << speaker.stats().refused << "\n";
         return speaker.stats().played > 0 ? 0 : 1;
     }
+
+    if (mute) speaker.set_muted(true);
+    if (unmute) speaker.set_muted(false);
 
     if (!confirmed) {
         std::cerr << "refusing to open the microphone: --start requires the explicit "
@@ -228,9 +343,13 @@ int main(int argc, char** argv) {
                                               std::chrono::system_clock::now().time_since_epoch())
                                               .count()); });
 
-    // Output while the microphone is live would be a feedback loop, so it is suppressed by
-    // the speaker's own guard and only utterances that MATTER are queued after capture stops.
-    speaker.set_feedback_guard(true);
+    // FEEDBACK CONTROL. Without --voice the old conservative default stands: nothing is played
+    // while the microphone is live (the speaker refuses outright). WITH --voice the operator has
+    // asked for spoken findings while listening, so playback is allowed and the feedback is
+    // handled by a BOUNDED suppression window instead: our own announcement is not fed back
+    // into the activity model as if it were independent evidence. This is suppression, not
+    // acoustic echo cancellation - see docs/LOCAL_VOICE_FEEDBACK_H02A.md section 6.
+    if (!voice) speaker.set_feedback_guard(true);
     speaker.start();
 
     std::cout << "*** CAPTURE ACTIVE: the microphone is open and delivering samples. ***\n"
@@ -245,6 +364,7 @@ int main(int argc, char** argv) {
     AudioFinding last_interesting;
     bool have_interesting = false;
     uint64_t windows = 0;
+    uint64_t suppressed_windows = 0;  // skipped because our own announcement was playing
 
     while (!g_stop_requested.load()) {
         if (seconds > 0) {
@@ -252,6 +372,17 @@ int main(int argc, char** argv) {
                                      std::chrono::steady_clock::now() - started)
                                      .count();
             if (elapsed >= seconds) break;
+        }
+        const int64_t now_ms = static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        if (voice && voice_control.input_suppressed(now_ms)) {
+            // The speaker is (probably) still talking. Do NOT feed our own sentence into the
+            // activity model: that would let an announcement look like independent evidence.
+            // Reported separately from a stalled microphone, and it ends with the window.
+            ++suppressed_windows;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
         }
         const size_t frames = microphone.read_frames(buffer.data(), buffer.size());
         AudioFinding finding;
@@ -264,6 +395,12 @@ int main(int argc, char** argv) {
         if (finding.sentence != last_sentence) {
             std::cout << finding_json(finding, microphone.name()) << "\n" << std::flush;
             last_sentence = finding.sentence;
+        }
+        if (voice) {
+            // The REAL finding decides the sentence (closed vocabulary), and the policy decides
+            // whether now is the moment. The output only ENQUEUES, so the detection loop is
+            // never blocked by playback.
+            voice_control.announce_finding(finding, now_ms);
         }
         if (finding.kind == AudioFindingKind::sustained_increase ||
             finding.kind == AudioFindingKind::microphone_stalled) {
@@ -296,6 +433,22 @@ int main(int argc, char** argv) {
               << " disconnects=" << microphone.stats().disconnects << "\n";
     std::cout << "*** CAPTURE INACTIVE: the microphone is closed and no further samples "
                  "are being read. ***\n";
+
+    // Shutdown path: stop any playback and never leave a child running.
+    voice_control.stop();
+    if (voice) {
+        const auto status = voice_control.status(0);
+        // Name only an engine that can REALLY run, exactly as --voice-status does.
+        std::string summary_why;
+        const std::string usable_engine =
+            speaker.engine_available(LocalSpeaker::JobKind::speech, &summary_why);
+        std::cout << "voice: spoken=" << status.spoken << " suppressed=" << status.suppressed
+                  << " refused=" << status.refused
+                  << " suppressed_input_windows=" << suppressed_windows
+                  << " engine=" << (usable_engine.empty() ? std::string("(none available)")
+                                                          : usable_engine)
+                  << "\n";
+    }
 
     if (speak && have_interesting) {
         speaker.set_feedback_guard(false);
