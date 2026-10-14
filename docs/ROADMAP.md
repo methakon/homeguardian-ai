@@ -487,3 +487,17 @@ review.
 
 Next: X-13 (physical device acceptance, requires a connected phone and explicit operator
 permission). D-04 remains out of scope until D-03.2 passes review.
+
+## Phase H — H-01 real hardware activation
+
+- H-01a Hardware discovery and installation — **PARTIAL**: microphone and speaker discovered
+  and enumerated; the USB Android phone is not detected, so installation is blocked.
+- H-01b Real audio — **software complete**, awaiting the operator's explicit start action
+  (`hg_audio_bridge --start --i-understand-this-opens-the-microphone`); the generated-tone
+  output test is likewise the operator's to run.
+- H-01c Real Android camera — **BLOCKED** (no device visible to ADB).
+- H-01d Encrypted Wi-Fi ingestion — **BLOCKED** on H-01c.
+- H-01e Explainable feedback — **software complete**: the session emits the closed-vocabulary
+  sentence with provenance and uncertainty; spoken delivery is blocked by the missing voice
+  backend (only the generated tone plays).
+- H-01f Amazon integration feasibility — **BLOCKED** (no supported Amazon runtime).

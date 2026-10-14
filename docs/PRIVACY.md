@@ -980,3 +980,21 @@ display.
 - The in-flight marker is in memory only and is never written anywhere.
 - `processing_failed` details are bounded and non-sensitive (they name the failing stage,
   not the observation content).
+
+## H-01 privacy notes (audio activation)
+
+- The microphone is opened only by an explicit operator action, twice confirmed (`--start`
+  plus `--i-understand-this-opens-the-microphone`), and never by construction, discovery,
+  build or test. The whole `[audio]` suite runs silent and deaf.
+- No raw audio is written to disk anywhere in this path, and none is transmitted: the capture
+  adapter hands bounded windows to the session, which computes scalars and discards them.
+- No transcription, no keyword spotting, no speaker identity, no emotion inference, and no
+  cloud transmission. A test scans every sentence the component can emit for species, person
+  and disaster vocabulary and fails if one appears.
+- The finding states what is NOT known ("The source is not identified", "no species, speech,
+  person or event classification is performed or implied") rather than leaving the reader to
+  assume.
+- A stalled microphone is reported as an equipment fault, never as a quiet room, so a failure
+  is not mistaken for evidence about the household.
+- Audio hardware is reached only from the host process; no container gains device or
+  sound-server access, so the network-facing ingress cannot capture even if compromised.

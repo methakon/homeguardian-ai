@@ -232,3 +232,27 @@ dead-process marker.
 
 Still blocked: physical Android acceptance (no device); Alexa (Amazon); live Home Assistant
 (needs TLS).
+
+## H-01 — real hardware activation (H-01a partial, H-01b-e software complete, H-01f blocked)
+
+Discovered: a real microphone (built-in ALC897 analog input via PipeWire 1.0.5, 48 kHz) and a
+real speaker (default sink is the Bluetooth `YO-457BT`; built-in IEC958 also available). The
+Android phone the milestone reports as connected is **NOT** visible: `lsusb` shows no phone
+and `adb devices -l` is empty.
+
+Implemented and built on `feature/h01-hardware-activation`: a real PipeWire-backed microphone
+adapter (`PwAudioCaptureDevice`), a real speaker adapter with a bounded queue, volume limit,
+cancel and a locally generated tone (`LocalSpeaker`), the explainable audio activity session
+(`AudioActivitySession`), and the host-side permission-gated service (`hg_audio_bridge`) that
+keeps audio hardware OUT of every container. No ALSA headers exist on this host and `sudo`
+needs a password, so the adapters drive PipeWire's CLI rather than linking libasound.
+
+Safety, verified: `hg_audio_bridge --start` without the confirmation flag refuses (exit 3,
+nothing opened); the capture adapter throws unless capture was explicitly authorized; the
+whole `[audio]` suite is silent and deaf (dry-run/refusal paths only). Nothing has yet opened
+the physical microphone: the first capture and the first playback are the operator's actions.
+
+Amazon: **BLOCKED — no verified supported runtime** (no Amazon image exists, AVS tooling is
+not generally available, and the in-repo Alexa skill is a simulated web demo, not a runtime).
+
+Docs: `docs/HARDWARE_ACTIVATION_H01.md`.

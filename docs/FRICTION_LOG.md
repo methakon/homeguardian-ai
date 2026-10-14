@@ -2803,3 +2803,28 @@ Fix: the two-phase record (ADR-018) plus a test that fails a completion and then
 retry is not `replayed_sequence`. Lesson: when a durable write is placed on either side of
 an operation, test BOTH orderings with the failure on the far side, and assert the retry's
 outcome, not only the first attempt's.
+
+## Incident 52 — A "connected" phone that the system cannot see
+
+Symptom: the milestone states an Android phone is physically connected by USB and asks for its
+identity, ABI, API level and battery. `lsusb` lists hubs, two Bluetooth adapters, an HP W100
+camera and a keyboard — no phone. `adb devices -l` starts the daemon and prints an empty list.
+
+Handling: reported as a blocker with the exact commands and their raw output, and no
+substitute was invented. The instructions that follow from it (install the APK, read device
+properties, capture frames) were NOT attempted, because every one of them would have produced
+either nothing or a fabricated reading. Lesson: "the operator says it is connected" is an
+expectation, not a measurement; measure, then say what the machine reports.
+
+## Incident 53 — A dev package that cannot be installed changes the design, not the claim
+
+Symptom: the natural way to implement the microphone adapter is to link `libasound`. This host
+has no `/usr/include/alsa/asoundlib.h`, `pkg-config alsa` fails, `libasound2-dev` is not
+installed and `sudo` requires a password. Installing the header was not possible.
+
+Handling: the adapter drives PipeWire's own CLI (`pw-record`/`parec`) as a child process
+instead — real PCM from the real device, no root, no new dependency. The remaining `spd-say`
+path was checked the same way: the binary exists but no voice backend does, so the adapter
+REFUSES speech and reports why, instead of queueing a request that would produce silence and
+returning success. Lesson: when a dependency is unavailable, choose the viable path and state
+the constraint; never paper over it with a success that has no output behind it.

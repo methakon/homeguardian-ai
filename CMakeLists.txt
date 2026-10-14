@@ -180,6 +180,7 @@ install(TARGETS homeguardian DESTINATION bin)
 # ONLY the two network binaries, so a developer without the toolchain still gets
 # the full test suite rather than a confusing compile failure.
 # ===========================================================================
+find_package(Threads REQUIRED)
 find_package(OpenSSL QUIET)
 if(OpenSSL_FOUND)
     message(STATUS "D-03: OpenSSL ${OPENSSL_VERSION} found -> building hg_device_ingress + hg_device_client")
@@ -257,6 +258,34 @@ else()
         "detector layers are still built and tested. Install libssl-dev (or run "
         "the container image, which includes it) to build the TLS boundary.")
 endif()
+
+# ---------------------------------------------------------------------------
+# hg_audio_bridge: the HOST-SIDE, permission-gated audio service (H-01).
+#
+# It exists so that audio hardware is never reached from a container: the Docker hub keeps
+# zero audio privileges and receives only the scalars this process derives. It links the
+# real PipeWire-backed capture/playback adapters and the shared audio session, and it
+# REFUSES to open the microphone without an explicit operator confirmation flag.
+add_executable(hg_audio_bridge
+    src/hg_audio_bridge.cpp
+    src/audio/AudioActivitySession.cpp
+    src/backend/linux/PwAudioCaptureDevice.cpp
+    src/backend/linux/LocalSpeaker.cpp
+    src/backend/linux/SensorDiscovery.cpp
+    src/core/BoundedFeatures.cpp
+    src/core/ActivityDetectors.cpp
+    src/core/AnomalyDetector.cpp
+    src/core/AnomalyMonitor.cpp
+    src/core/Observation.cpp
+    src/core/EventValidator.cpp
+    src/core/Logger.cpp
+)
+target_include_directories(hg_audio_bridge PRIVATE src)
+target_link_libraries(hg_audio_bridge PRIVATE
+    Threads::Threads
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+)
 
 add_executable(hg_alexa_bridge
     ${HG_WEB_ASSETS}          # generated: dependency ordering + rebuild trigger
@@ -337,6 +366,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_fake_device_delivery.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_camera1_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_ubuntu_backend.cpp
+        ${CMAKE_SOURCE_DIR}/tests/audio/test_audio_activity_session.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_simulator_backend.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_e2e_simulator.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_dual_device_broker.cpp
@@ -389,6 +419,9 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/net/ObservationIngest.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ReplayState.cpp
         ${CMAKE_SOURCE_DIR}/src/net/IngressConfigPolicy.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/PwAudioCaptureDevice.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/LocalSpeaker.cpp
+        ${CMAKE_SOURCE_DIR}/src/audio/AudioActivitySession.cpp
         ${CMAKE_SOURCE_DIR}/src/net/IngestDetectors.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
         ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp
