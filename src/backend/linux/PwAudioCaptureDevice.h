@@ -47,11 +47,21 @@ public:
         std::string device;              // PipeWire/Pulse source name; empty = default source
         uint32_t sample_rate = 48000;
         uint32_t channels = 1;
-        std::string sample_format = "s16";   // PipeWire format for the capture child
+        // parec's format name. pw-record uses the short form and the ctor normalises it.
+        std::string sample_format = "s16le";
         size_t ring_capacity_frames = 48000;  // 1 s at 48 kHz: bounded, oldest dropped
         // The one allowed sample rate set. The adapter asks for `sample_rate` and lets
         // PipeWire convert from whatever the hardware actually runs at.
-        std::string capture_command = "pw-record";  // or "parec"
+        // `parec` is the tool PROVEN to deliver PCM on this host. `pw-record` exists too
+        // and is supported by the tool-aware argv builder, but it has no --raw option and
+        // a wrong flag makes it exit instantly, which presents as a dead microphone.
+        std::string capture_command = "parec";
+        // A capture tool needs a moment to start delivering: parec takes ~0.2-1 s to produce
+        // its first sample. Waiting only milliseconds and then declaring the device dead
+        // misreports a normal startup as a hardware fault, which is exactly the kind of
+        // misleading "equipment failed" claim this project refuses to make.
+        int first_read_grace_ms = 2000;   // the first read after start()
+        int read_wait_ms = 200;           // every later read
         bool dry_run = false;            // true = never spawn; report the plan instead
     };
 
@@ -61,6 +71,7 @@ public:
         uint64_t frames_dropped = 0;     // overwritten in the ring because the reader lagged
         uint64_t spawn_failures = 0;
         uint64_t disconnects = 0;
+        uint64_t child_stderr_bytes = 0;   // diagnostics seen from the capture child
         int last_exit_code = 0;
     };
 
@@ -92,6 +103,7 @@ public:
     // preview; never a substitute for actually running it).
     std::vector<std::string> capture_command_line() const;
     const std::string& last_error() const { return last_error_; }
+    const std::string& refused_reason() const { return capture_refused_reason_; }
     const Stats& stats() const { return stats_; }
     const Config& config() const { return config_; }
 
@@ -101,6 +113,7 @@ private:
     void spawn_capture_child(std::string* error);
     void terminate_child() noexcept;
     void pump_child_output();            // drain available PCM into the ring
+    void drain_child_stderr();           // ALWAYS drain diagnostics: a full pipe blocks the child
     void set_error(const std::string& why) noexcept;
 
     Config config_;
@@ -109,6 +122,10 @@ private:
     std::atomic<bool> capture_authorized_{false};
     int child_pid_ = -1;
     int child_stdout_ = -1;
+    int child_stderr_fd_ = -1;   // the pipe; distinct from the message below
+    std::string child_stderr_;   // what the child said, for the operator
+    std::string capture_refused_reason_;
+    bool first_read_ = true;
     std::string last_error_;
     std::deque<int16_t> ring_;           // interleaved int16 samples
     Stats stats_;

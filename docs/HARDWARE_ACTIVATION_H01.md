@@ -210,3 +210,47 @@ external blocker requiring Amazon account approval, not as work that can be fini
 **What is NOT done, and will not be done:** exposing an unauthenticated RTSP or HTTP camera
 stream on the LAN, or presenting the phone as "Works with Alexa" because the APK is
 installed.
+
+## 10. First physical capture attempt and what it proved (and did not)
+
+An explicitly authorized capture session was run against the wired microphone
+(`alsa_input.pci-0000_00_1b.0.analog-stereo`, verified NOT to be an output `.monitor`).
+
+**Verified real:**
+* the adapter opened the physical input and received **32,768 real PCM samples** from it;
+* features computed from those samples were non-zero and real: `rms 0.0682 / 0.0621`,
+  `peak 0.1367 / 0.1101`, with `provenance: real` and `windows_observed` advancing;
+* the finding vocabulary behaved: `warming_up` first, then `insufficient_evidence`;
+* capture stopped cleanly on the session's own stall detection and released the device.
+
+**Defects found and fixed by this attempt** (all in the committed source):
+1. `pw-record` has no `--raw` option; the adapter passed it, the child exited instantly with
+   "unrecognized option", and the session reported a stalled microphone. The argv builder is
+   now tool-aware (`parec --raw --format=s16le --device=…` vs
+   `pw-record --format=s16 … --target=… -`), and `parec` is the default because it is proven.
+2. The child's stderr was silenced, hiding that one-line message. It is now captured into a
+   bounded buffer and reported with the exit status.
+3. A read waited only 20 ms and the stall threshold was three reads, so a tool's normal
+   ~0.2-1 s startup latency was reported as a hardware fault. The first read after start now
+   waits `first_read_grace_ms` (2000) and later reads `read_wait_ms` (200), bounded.
+4. An output `.monitor` passed as a microphone is now REFUSED at construction: monitoring the
+   desktop's own playback is not room sound, and it would feed the speaker's announcements
+   back into detection.
+5. The child's stderr pipe is now drained continuously (bounded), so a diagnostic pipe cannot
+   fill and block the data path.
+
+**NOT yet working — stated plainly: a sustained capture session stops after one pipe buffer.**
+The session delivers exactly 65,536 bytes (32,768 samples), then `read()` returns EAGAIN
+indefinitely while the child stays alive (exit status 0, no EOF, no `disconnects`, nothing on
+stderr). The same command run manually streams **589,824 bytes in 5 s**, so the tool and the
+device are fine: the difference is in how this harness consumes the child. This is an
+unresolved limitation of the host bridge, not a property of the microphone, and it is the
+immediate next diagnostic step.
+
+## 11. Android status: still not detectable
+
+`adb devices -l` is empty after an `adb kill-server` / `start-server` cycle, and the full USB
+tree contains no phone vendor ID at all (only Intel hubs, a CSR8510 and a Dell Bluetooth
+receiver, the HP W100 camera and a USB keyboard). A phone *is* present in the room, but over
+**Bluetooth** (an "S25 Ultra" is paired at `00:00:46:88:4C:50`) - which is an audio pairing
+and cannot carry ADB. Nothing was installed, and no device property was invented.

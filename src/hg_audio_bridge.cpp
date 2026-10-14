@@ -271,7 +271,17 @@ int main(int argc, char** argv) {
             have_interesting = true;
         }
         if (finding.kind == AudioFindingKind::microphone_stalled) {
-            std::cerr << "capture device stopped delivering samples; stopping.\n";
+            // Report WHAT the capture child actually did before giving up. A stall message
+            // without the child's own words is the kind of vague equipment claim that costs a
+            // debugging cycle (see the pw-record --raw incident).
+            std::cerr << "capture device stopped delivering samples; stopping.\n"
+                      << "  last_error: "
+                      << (microphone.last_error().empty() ? "(none reported)"
+                                                          : microphone.last_error())
+                      << "\n"
+                      << "  child exit status: " << microphone.stats().last_exit_code
+                      << ", frames=" << microphone.stats().frames_captured
+                      << ", disconnects=" << microphone.stats().disconnects << "\n";
             break;
         }
     }

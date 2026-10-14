@@ -2828,3 +2828,33 @@ path was checked the same way: the binary exists but no voice backend does, so t
 REFUSES speech and reports why, instead of queueing a request that would produce silence and
 returning success. Lesson: when a dependency is unavailable, choose the viable path and state
 the constraint; never paper over it with a success that has no output behind it.
+
+## Incident 54 - A wrong flag looked exactly like a dead microphone
+
+Symptom: the first authorized capture session reported `microphone_stalled`,
+`frames=0`. The microphone was fine; the child process had died instantly.
+
+Cause: the adapter passed `--raw` to `pw-record`. `pw-record` has no such option (`parec`
+does), so it exited with "unrecognized option" before writing a byte - and the adapter had
+SILENCED the child's stderr, so the one line that explained everything was thrown away. The
+session then did exactly what it was designed to do: it refused to call a device that delivers
+nothing a quiet room.
+
+Fix: a tool-aware argv builder, `parec` as the default (it is the tool that is proven to
+deliver here), and the child's stderr captured and reported with its exit status. Lesson: when
+a subprocess is the interface, its stderr is part of the interface. Silencing it to keep the
+output tidy converts a one-line diagnosis into a hardware mystery.
+
+## Incident 55 - Startup latency reported as a hardware fault
+
+Symptom: with the tool fixed, the session STILL declared the microphone dead after ~60 ms and
+abandoned a 12-second capture.
+
+Cause: the read path waited 20 ms and the session counted three empty reads as a stall, so the
+0.2-1 s a capture tool needs to produce its first buffer was indistinguishable from a device
+that had stopped. A test that cannot tell "starting up" from "broken" will report the wrong
+one, and here it reported the alarming one.
+
+Fix: the first read after start() waits a bounded grace period (2000 ms), later reads wait
+200 ms, and only then does an empty read count. Lesson: give a device its documented startup
+time before drawing a conclusion about its health.

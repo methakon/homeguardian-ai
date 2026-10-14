@@ -16,6 +16,14 @@ namespace homeguardian {
 namespace {
 
 constexpr int kPcmBytesPerSample = 2;  // s16le
+constexpr size_t kMaxChildDiagnosticChars = 512;
+
+bool looks_like_output_monitor(const std::string& device) {
+    // An output MONITOR is a loopback of what is being played, not a microphone. Treating it
+    // as room sound would report the local speaker as the environment - and would feed the
+    // speaker's own announcements straight back into detection as a feedback loop.
+    return device.size() >= 8 && device.compare(device.size() - 8, 8, ".monitor") == 0;
+}
 
 }  // namespace
 
@@ -25,6 +33,16 @@ PwAudioCaptureDevice::PwAudioCaptureDevice(Config config) : config_(std::move(co
     }
     if (config_.channels < 1 || config_.channels > 2) config_.channels = 1;
     if (config_.ring_capacity_frames < 1024) config_.ring_capacity_frames = 1024;
+    // Refuse an output monitor as a microphone, loudly, rather than reporting the desktop's
+    // own playback as room activity.
+    if (looks_like_output_monitor(config_.device)) {
+        capture_refused_reason_ = "the configured device is an output monitor (a loopback of "
+                                  "what the machine is playing), not a microphone";
+    }
+    if (config_.capture_command.find("pw-record") != std::string::npos &&
+        config_.sample_format == "s16le") {
+        config_.sample_format = "s16";  // pw-record uses the short format name
+    }
 }
 
 PwAudioCaptureDevice::~PwAudioCaptureDevice() {
@@ -34,15 +52,23 @@ PwAudioCaptureDevice::~PwAudioCaptureDevice() {
 }
 
 std::vector<std::string> PwAudioCaptureDevice::capture_command_line() const {
-    // pw-record writes raw PCM to stdout with --raw. parec does the same by default.
+    // TOOL-AWARE. The two tools take different flags:
+    //   parec     : --raw --format=s16le --rate=... --channels=... [--device=...]
+    //   pw-record :           --format=s16   --rate=... --channels=... [--target=...] -
+    // Passing --raw to pw-record makes it exit with "unrecognized option", and the session
+    // then reports a stalled microphone - which is exactly what happened before this was
+    // written down.
     std::vector<std::string> argv;
     argv.push_back(config_.capture_command);
-    argv.push_back("--raw");
+    const bool is_pw_record = config_.capture_command.find("pw-record") != std::string::npos;
+    if (!is_pw_record) argv.push_back("--raw");
     argv.push_back("--format=" + config_.sample_format);
     argv.push_back("--rate=" + std::to_string(config_.sample_rate));
     argv.push_back("--channels=" + std::to_string(config_.channels));
-    if (!config_.device.empty()) argv.push_back("--target=" + config_.device);
-    argv.push_back("-");  // stdout
+    if (!config_.device.empty()) {
+        argv.push_back((is_pw_record ? "--target=" : "--device=") + config_.device);
+    }
+    if (is_pw_record) argv.push_back("-");  // pw-record needs the output named explicitly
     return argv;
 }
 
@@ -67,8 +93,15 @@ void PwAudioCaptureDevice::authorize_capture(bool authorized) {
 
 void PwAudioCaptureDevice::spawn_capture_child(std::string* error) {
     int pipe_fds[2] = {-1, -1};
+    int err_pipe[2] = {-1, -1};
     if (::pipe(pipe_fds) != 0) {
         *error = std::string("pipe() failed: ") + std::strerror(errno);
+        return;
+    }
+    if (::pipe(err_pipe) != 0) {
+        ::close(pipe_fds[0]);
+        ::close(pipe_fds[1]);
+        *error = std::string("stderr pipe() failed: ") + std::strerror(errno);
         return;
     }
     const pid_t pid = ::fork();
@@ -79,15 +112,16 @@ void PwAudioCaptureDevice::spawn_capture_child(std::string* error) {
         return;
     }
     if (pid == 0) {
-        // Child: stdout becomes the pipe; stderr is silenced (the parent reports failures
-        // through the exit status and its own diagnostics).
+        // Child: stdout becomes the PCM pipe; stderr becomes a SEPARATE pipe so the parent
+        // can report what the tool said. Silencing stderr made a one-line "unrecognized
+        // option" look like a dead microphone and cost a full debugging cycle.
         ::dup2(pipe_fds[1], STDOUT_FILENO);
         ::close(pipe_fds[0]);
         ::close(pipe_fds[1]);
-        const int devnull = ::open("/dev/null", O_WRONLY);
-        if (devnull >= 0) {
-            ::dup2(devnull, STDERR_FILENO);
-            ::close(devnull);
+        if (err_pipe[1] >= 0) {
+            ::dup2(err_pipe[1], STDERR_FILENO);
+            ::close(err_pipe[0]);
+            ::close(err_pipe[1]);
         }
         const std::vector<std::string> argv = capture_command_line();
         std::vector<char*> raw;
@@ -98,14 +132,21 @@ void PwAudioCaptureDevice::spawn_capture_child(std::string* error) {
         _exit(127);  // exec failed
     }
     ::close(pipe_fds[1]);
+    ::close(err_pipe[1]);
     child_pid_ = static_cast<int>(pid);
     child_stdout_ = pipe_fds[0];
-    const int flags = ::fcntl(child_stdout_, F_GETFL, 0);
-    if (flags >= 0) ::fcntl(child_stdout_, F_SETFL, flags | O_NONBLOCK);
+    child_stderr_fd_ = err_pipe[0];
+    for (int fd : {child_stdout_, child_stderr_fd_}) {
+        const int flags = ::fcntl(fd, F_GETFL, 0);
+        if (flags >= 0) ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
 }
 
 void PwAudioCaptureDevice::start() {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!capture_refused_reason_.empty()) {
+        throw std::runtime_error("microphone capture refused: " + capture_refused_reason_);
+    }
     if (!capture_authorized_.load()) {
         // FAIL CLOSED. Constructing this object is not authorization, and neither is the
         // OS granting the process access to a sound server.
@@ -132,6 +173,7 @@ void PwAudioCaptureDevice::start() {
 }
 
 void PwAudioCaptureDevice::pump_child_output() {
+    drain_child_stderr();
     if (child_stdout_ < 0) return;
     int16_t chunk[4096];
     for (;;) {
@@ -159,8 +201,17 @@ void PwAudioCaptureDevice::pump_child_output() {
             }
             ::close(child_stdout_);
             child_stdout_ = -1;
+            drain_child_stderr();
+            if (child_stderr_fd_ >= 0) {
+                ::close(child_stderr_fd_);
+                child_stderr_fd_ = -1;
+            }
             child_pid_ = -1;
             ++stats_.disconnects;
+            if (!child_stderr_.empty()) {
+                last_error_ = "capture child exited (status " +
+                              std::to_string(stats_.last_exit_code) + "): " + child_stderr_;
+            }
             return;
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) return;  // nothing more right now
@@ -171,16 +222,50 @@ void PwAudioCaptureDevice::pump_child_output() {
     }
 }
 
+void PwAudioCaptureDevice::drain_child_stderr() {
+    // ALWAYS drain the child's stderr. A diagnostic pipe nobody reads is a pipe that FILLS,
+    // and a process blocked writing its warnings is a process no longer writing PCM: the
+    // capture then looks like a microphone that died after exactly one pipe buffer while the
+    // child is alive and silent about it. Keep the first bounded chunk for the operator and
+    // discard the rest - diagnostics must never be able to stall the data path.
+    if (child_stderr_fd_ < 0) return;
+    char buffer[1024];
+    for (;;) {
+        const ssize_t n = ::read(child_stderr_fd_, buffer, sizeof(buffer));
+        if (n > 0) {
+            if (child_stderr_.size() < kMaxChildDiagnosticChars) {
+                const size_t room = kMaxChildDiagnosticChars - child_stderr_.size();
+                child_stderr_.append(buffer, static_cast<size_t>(n) < room ? static_cast<size_t>(n)
+                                                                           : room);
+            }
+            stats_.child_stderr_bytes += static_cast<uint64_t>(n);
+            continue;
+        }
+        if (n == 0) return;  // the child closed it
+        if (errno == EINTR) continue;
+        return;  // EAGAIN / EWOULDBLOCK / anything else: nothing more to take right now
+    }
+}
+
 size_t PwAudioCaptureDevice::read_frames(int16_t* out, size_t frames_requested) {
     if (out == nullptr || frames_requested == 0) return 0;
     if (frames_requested > kMaxFramesPerRead) frames_requested = kMaxFramesPerRead;
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ != DeviceState::Capturing) return 0;
 
-    // A short wait so a caller polling at a modest rate does not spin: this is the only
-    // place the capture path blocks, and it blocks briefly and boundedly.
-    if (ring_.empty() && !config_.dry_run) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // BOUNDED WAIT for samples. The first read after start() gets a generous grace period
+    // because a capture tool needs time to deliver its first buffer; later reads wait less.
+    // Only after that window is an empty read evidence of anything.
+    if (!config_.dry_run) {
+        const int wait_budget_ms = first_read_ ? config_.first_read_grace_ms : config_.read_wait_ms;
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(wait_budget_ms > 0 ? wait_budget_ms : 200);
+        while (ring_.empty() && child_pid_ > 0 && std::chrono::steady_clock::now() < deadline) {
+            pump_child_output();
+            if (!ring_.empty()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        first_read_ = false;
     }
     pump_child_output();
     if (state_ == DeviceState::Capturing && child_pid_ < 0 && !config_.dry_run && ring_.empty()) {
