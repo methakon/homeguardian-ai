@@ -2907,3 +2907,34 @@ An artifact check unzipped `apk/build/homeguardian-harness.apk`, but `build_apk.
 in fact the build was fine and the path was wrong. A verification step must assert it is looking at
 a file that exists (non-empty `ls` before parsing), or its silence is indistinguishable from a real
 negative result.
+
+### Incident 64 - a documented command that the script does not accept
+
+My own acceptance doc told the operator to run `provision_ca.sh ... --device-id <id>`. The script
+has no such flag: it is subcommand-based (`init`, `issue <device-id>`, `show`, `check-runtime`).
+It failed with `unknown option: --device-id` and produced no material. Documentation of a script's
+interface is a CLAIM about the script - read the arg parser (`case "$1" in`) and run the thing once
+before writing it into an operator-facing procedure. The doc is corrected above.
+
+### Incident 65 - three wrong assumptions about the deployment, each caught by a fail-closed refusal
+
+Starting the ingress produced three consecutive refusals, and every one of them was a correct
+behaviour of the code meeting a wrong assumption of mine:
+
+1. `ingress config not readable: /etc/homeguardian/ingress.json` - the entrypoint defaults to that
+   path, NOT to `certs/ingress.json`; the fix is `HG_INGRESS_CONFIG` pointing at the mounted one.
+2. `ingress data directory not writable: /data/ingress` - a Docker NAMED volume is created
+   root-owned, while the ingress ran as the operator's uid; the fix is a bind mount the uid owns.
+3. The device certificate was searched for in `--device-dir` and is in fact emitted to
+   `<runtime>/devices/<id>.crt` (only the private key lives in the device dir - by design), so the
+   PKCS#12 step silently produced nothing and `adb push` failed with `cannot stat`.
+
+A fail-closed service is a good diagnostic instrument: it names the exact path it wanted. Read the
+refusal, do not fight it, and never loosen a security check to make a start succeed.
+
+### Incident 66 - the host cannot build the transport targets, and that is expected
+
+`make hg_device_client` in `hg_build` failed with `No rule to make target`: the transport targets
+sit behind `if(OpenSSL_FOUND)` and this host has no OpenSSL headers (`OPENSSL_INCLUDE_DIR-NOTFOUND`).
+The correct path is the documented compile container (`hgdev:compile`), which built the client in
+one step. Do not "fix" this by installing OpenSSL on the host or by disabling the guard.

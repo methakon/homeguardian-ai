@@ -76,6 +76,22 @@ public final class NodePanel {
             }
         }));
 
+        root.addView(button("Import credentials", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // Explicit operator action: copies the four files from the app's own external
+                // files dir into private storage, then deletes the source copies.
+                final String result = NodeSession.importCredentials(ctx);
+                stateView.setText(result);
+                refresh("import requested");
+            }
+        }));
+
+        final TextView importHint = new TextView(ctx);
+        importHint.setText("provisioning: drop the four files in "
+                + "Android/data/org.homeguardian.harness/files/" + NodeSession.IMPORT_DIR);
+        root.addView(importHint);
+
         stateView = new TextView(ctx);
         stateView.setText("not connected");
         root.addView(stateView);

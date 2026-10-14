@@ -23,6 +23,11 @@ public final class NodeSession {
     public static final String CA_P12 = "ca.p12";
     public static final String CA_P12_PASS = "ca.p12.pass";
 
+    /** Where the operator drops the four files for the one-time import. */
+    public static final String IMPORT_DIR = "hg_provisioning";
+    /** A credential file is small; anything larger is refused rather than copied. */
+    private static final int MAX_CREDENTIAL_BYTES = 65536;
+
     private final ObservationTransport transport;
     private String deviceId = "";
     private long queuedTotal = 0;
@@ -154,6 +159,90 @@ public final class NodeSession {
         config.trustStorePath = new File(dir, CA_P12).getAbsolutePath();
         config.trustStorePasswordFile = new File(dir, CA_P12_PASS).getAbsolutePath();
         return config;
+    }
+
+    /**
+     * One-time provisioning import, driven by an explicit operator action.
+     *
+     * WHY IT EXISTS: this app is NOT debuggable, so `run-as` cannot place files in its private
+     * storage, and there is no root. The app's OWN external files directory
+     * (`Android/data/<pkg>/files/`) is writable by adb and needs NO storage permission, so the
+     * operator drops the four files there and the app COPIES them into private storage.
+     *
+     * The source files are DELETED after a successful import, because on API 27 (no scoped
+     * storage) another app holding READ_EXTERNAL_STORAGE could read that directory - so the
+     * exposure window is as short as this method can make it. Contents are never logged, never
+     * returned, and never displayed.
+     */
+    public static String importCredentials(Context ctx) {
+        final java.io.File src = new java.io.File(ctx.getExternalFilesDir(null), IMPORT_DIR);
+        final java.io.File dst = ctx.getFilesDir();
+        if (src == null || !src.isDirectory()) {
+            return "no import directory; expected " + (src == null ? "(unavailable)" : src.getAbsolutePath());
+        }
+        final String[] names = {DEVICE_P12, DEVICE_P12_PASS, CA_P12, CA_P12_PASS};
+        int copied = 0;
+        final StringBuilder missing = new StringBuilder();
+        for (int i = 0; i < names.length; i++) {
+            final java.io.File from = new java.io.File(src, names[i]);
+            final java.io.File to = new java.io.File(dst, names[i]);
+            if (!from.isFile()) {
+                missing.append(' ').append(names[i]);
+                continue;
+            }
+            if (!copyFile(from, to)) {
+                return "import failed while copying " + names[i] + " (nothing was changed)";
+            }
+            to.setReadable(false, false);
+            to.setReadable(true, true);
+            copied++;
+        }
+        if (copied != names.length) {
+            return "import incomplete: copied " + copied + " of " + names.length + ", missing:" + missing;
+        }
+        // Shred the source: the private copies are the ones that count.
+        int deleted = 0;
+        for (int i = 0; i < names.length; i++) {
+            final java.io.File from = new java.io.File(src, names[i]);
+            if (from.isFile() && from.delete()) {
+                deleted++;
+            }
+        }
+        return "imported " + copied + " credential files into private storage; source files deleted="
+                + deleted;
+    }
+
+    /** Bounded byte copy. Returns false on any failure; never logs or returns content. */
+    private static boolean copyFile(java.io.File from, java.io.File to) {
+        java.io.FileInputStream in = null;
+        java.io.FileOutputStream out = null;
+        try {
+            in = new java.io.FileInputStream(from);
+            out = new java.io.FileOutputStream(to);
+            final byte[] buffer = new byte[8192];
+            int total = 0;
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                total += read;
+                if (total > MAX_CREDENTIAL_BYTES) {
+                    return false;   // bounded: a credential file is small
+                }
+                out.write(buffer, 0, read);
+            }
+            out.flush();
+            return true;
+        } catch (java.io.IOException e) {
+            return false;
+        } finally {
+            try {
+                if (in != null) in.close();
+            } catch (java.io.IOException ignored) {
+            }
+            try {
+                if (out != null) out.close();
+            } catch (java.io.IOException ignored) {
+            }
+        }
     }
 
     /** True when the app appears to hold its provisioning material (existence only - never read). */

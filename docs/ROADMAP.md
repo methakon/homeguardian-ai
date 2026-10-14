@@ -554,3 +554,16 @@ Status: source + build complete; hardware acceptance BLOCKED on a USB-attached, 
   docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md.
 * Known gaps: no acknowledgment counter, no preview SurfaceView, no foreground service, no
   camera/audio availability observations, live remote CCTV NOT implemented.
+
+### H-03 progress: physical device
+
+The device is a **MediaTek MT6580 clone reporting a spoofed 'S25 Ultra'** (verified by USB vendor
+id `0e8d`, `ro.product.manufacturer=alps`, `ro.board.platform=mt6580`, kernel RAM ~962 MB, and
+faker properties including `persist.sys.fakeandroidversion=15.0`) - so API 27 + armeabi-v7a on a
+~1 GB device is the real target and must be the only basis for capability claims.
+
+Verified on hardware: APK installs and launches cleanly, the native node reports its identity, the
+ingress runs least-privilege and ACCEPTS this device's certificate over mutual TLS (`accepted=3`,
+spoofed id refused as `identity_mismatch`, durable watermark advanced). Remaining: the on-device
+Import/Connect/consent/Start taps (phone is locked; owner-only), then camera/mic counters, then
+Wi-Fi delivery, and only then the physical USB unplug.

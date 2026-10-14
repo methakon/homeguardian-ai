@@ -181,3 +181,91 @@ Authenticated live video is a separate design: it needs a video path (not compac
 per-viewer authentication, explicit recording controls with retention limits, bandwidth management,
 and an operator-visible recording indicator. It must not be published unauthenticated on the LAN.
 Until that exists: `REMOTE LIVE CCTV VIEWING: NOT YET IMPLEMENTED`.
+
+## 8. PHYSICAL DEVICE (verified 2026-10-14) - and a specification warning
+
+The phone enumerated, ADB authorized, and the app installed and ran. **The reported model name is
+spoofed and must not be used to infer anything.** Verified evidence:
+
+| item | value | how it was verified |
+|---|---|---|
+| USB vendor | `0e8d:201c` **MediaTek** (NOT Samsung `04e8`) | `lsusb` |
+| reported model | `S25_Ultra` | `getprop ro.product.model` (a lie) |
+| manufacturer / board | `alps` / **`mt6580`** | `getprop` |
+| Android | **8.1.0 / API 27** | `getprop ro.build.version.{release,sdk}` |
+| ABI | **armeabi-v7a, armeabi** | `getprop ro.product.cpu.abilist` |
+| faker properties | `lys.faker.ramrom=[1,16]`, `persist.sys.fakeandroidversion=15.0`, `lys.camera.hidehdr` | `getprop | grep -i lys` |
+| REAL RAM | **MemTotal 984,792 kB (~962 MB)** | `/proc/meminfo` (kernel cannot lie) |
+| REAL storage | **12,686,848 KiB (~12.1 GB)** on `mmcblk0p23` | `/proc/partitions` |
+| Camera 0 | **preview `yuv420sp` (NV21)**, 640x480 available, fps 15/24/30 | `dumpsys media.camera` |
+| Sensors present | accelerometer, light, proximity (MTK) | `dumpsys sensorservice` |
+
+So the truthful compatibility target is **API 27 + armeabi-v7a on an MT6580 with ~1 GB RAM**, which
+is what this build targets - and the "S25 Ultra" name, "16 GB RAM" and the Android-15 faker value
+must never appear in a capability claim. `dumpsys media.camera` reporting `yuv420sp` validates the
+NV21 assumption in the feature path.
+
+### 8.1 What passed on the physical device
+
+* `minSdk=27`/`targetSdk=27` (manifest) - **compatible** with the device's API 27.
+* Packaged ABIs: `lib/armeabi-v7a/*` only; **0** arm64/x86 entries.
+* Fresh APK **883,891 B**, signed; `aapt` badging: `org.homeguardian.harness` v0.2.0, sdk 27,
+  `native-code: 'armeabi-v7a'`, permissions CAMERA + RECORD_AUDIO.
+* **Install: `Success`** (`adb install -r`; nothing uninstalled, app data kept).
+* **Launch: clean.** `HGNode: identity set: node_id=hg-443a03b54537c21f name="Node S25_Ultra"
+  platform=android api=27 abi=armeabi-v7a` then `Ready. Nothing is capturing. Grant consent and
+  press Start.` - the native library loaded and the node is idle by design. FATAL/ANR count **0**.
+* Permissions CAMERA and RECORD_AUDIO report `granted=true`.
+
+### 8.2 Hub side verified with THIS device's certificate (before the phone dials)
+
+The ingress runs as the documented least-privilege container (`--cap-drop ALL`,
+`no-new-privileges`, 128 MB, only 8443 published) and logs
+`hg_device_ingress ready: bind=0.0.0.0 port=8443 registry_devices=1 paired=1 tls=mutual(min 1.2)`.
+
+From the compile container, a client presenting **this device's** certificate:
+
+    client: connected, hub CN=homeguardian-hub fingerprint=21c1c8b7e1e3c65b...
+    client: welcome for device hg-443a03b54537c21f
+    client: resuming at sequence 1 (hub watermark 0)
+    client: seq=1 accepted=1 reason=ok   (seq 2 and 3 likewise)
+    client: done accepted=3 rejected=0
+
+and the same certificate with a DIFFERENT claimed device id:
+
+    client: hub refused the hello: reason=identity_mismatch
+
+That is the security property demonstrated, not asserted: **the device identity comes from the
+certificate, not the payload.** The durable replay watermark advanced to
+`last_sequence: 3` for this device. No alert/event was created, which is correct: the
+`evidence_detector_ids` allowlist is deliberately EMPTY, so device observations are recorded and
+audited but cast no fusion vote.
+
+**Correction to my own documentation:** section 3.4 previously showed
+`--device-id <id>`, which is NOT a flag this script has. The real interface is subcommands:
+`tools/provision_ca.sh init --server-names "..."`, then `issue <device-id>`, then
+`show <device-id>` (prints the credential id the registry needs). The device CERTIFICATE lands in
+`<runtime-dir>/devices/<id>.crt` while only the PRIVATE KEY stays in `--device-dir` - which is the
+design, and is why the certificate must not be looked for beside the key.
+
+### 8.3 Operator steps that remain (the phone is locked and only the owner can act)
+
+1. **Unlock the phone.** The app is running but behind the keyguard; nothing can be verified
+   through the lock screen, and I will not attempt to bypass it.
+2. Open **HomeGuardian Node** and press **Import credentials** (the four files are already staged
+   in `Android/data/org.homeguardian.harness/files/hg_provisioning/`; the app copies them into
+   private storage and deletes the source copies).
+3. Enter host **192.168.1.6** and port **8443**, press **Connect to hub**.
+4. Press **Grant consent (camera + microphone)**, then **Start camera**, then **Start microphone**.
+5. Leave the phone awake on Wi-Fi (`Airtel_Dhar`, got `192.168.1.4`).
+
+I will then verify: camera callbacks and a rising frame counter, microphone samples, and
+observations ACCEPTED by the ingress over Wi-Fi - and only after that will I ask for the physical
+USB unplug.
+
+### 8.4 Still NOT verified (no claim is made)
+
+* No frame with real pixels, no audio sample, no camera/mic figure on the device yet.
+* Nothing from the phone has reached the hub over Wi-Fi yet.
+* USB-unplug behaviour, reconnect, screen-off/foreground-service behaviour: untested.
+* Remote live CCTV: **NOT YET IMPLEMENTED** (this transport carries compact scalars).

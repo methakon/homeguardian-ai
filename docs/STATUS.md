@@ -300,3 +300,18 @@ until the operator confirms hearing it.
 
 No hardware figure is reported because no hardware was reachable. The exact operator steps are in
 `docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md` section 3.
+
+## H-03 physical device pass (2026-10-14)
+
+| item | state |
+|---|---|
+| Device | MediaTek MT6580 clone (`0e8d:201c`), API 27, armeabi-v7a, ~962 MB RAM, ~12.1 GB storage |
+| App | installed (v0.2.0, 883,891 B), launched clean, idle by design, permissions granted |
+| Node identity | `hg-443a03b54537c21f` (reported by the app's own native layer) |
+| Provisioning | CA + server cert (SAN contains IP 192.168.1.6) + unique device cert; credential_id matches the registry |
+| Ingress | running as a least-privilege container, `tls=mutual(min 1.2)`, `registry_devices=1 paired=1`, publishing 192.168.1.6:8443 |
+| Hub accepts this device | **VERIFIED**: `accepted=3 rejected=0` over mutual TLS; spoofed id refused `identity_mismatch`; watermark durable at `last_sequence=3` |
+| Phone over Wi-Fi | **PENDING OPERATOR** (phone is locked; Import + Connect + consent + Start are on-device actions) |
+| Camera/mic on hardware | **PENDING OPERATOR** |
+| USB unplug acceptance | NOT STARTED (must follow Wi-Fi delivery) |
+| Remote live CCTV | NOT YET IMPLEMENTED |
