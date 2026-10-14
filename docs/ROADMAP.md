@@ -502,6 +502,26 @@ permission). D-04 remains out of scope until D-03.2 passes review.
   backend (only the generated tone plays).
 - H-01f Amazon integration feasibility — **BLOCKED** (no supported Amazon runtime).
 
+## H-02B - Speech completion, honest engine reporting, real synthesis
+
+Status: COMPLETE (branch `feature/h02a-local-voice-feedback` @ e9674ca).
+
+* `espeak-ng` 1.51 installed by the operator; the engine chain now selects it and REPORT it
+  correctly (`engine_name()` used to name the last-resort `spd-say` while espeak-ng spoke).
+* Speech completion is tracked deterministically (monotone per-job index + bounded wait) instead
+  of being guessed from `busy()`, which is false before the worker picks a job up - that defect
+  cancelled queued sentences before they played.
+* `playback jobs=0` can no longer be reported as success.
+* Real path verified through YO-457BT: 3.79 s per sentence, 7.5 MB peak RSS, 2% CPU; a real
+  authorized microphone session spoke "Unusual sound activity was detected. The source has not
+  been identified." from a genuine sustained_increase finding, with suppression windows and a
+  per-message cooldown doing their job (`spoken=1-2 suppressed=10-24 suppressed_input_windows=75-150`,
+  no false microphone-stall).
+* Measured limitation: 1.8-3.0% of frames dropped by the bounded ring during 48 kHz capture with
+  speech active (counted, not silent).
+* Audibility of HomeGuardian's own sentence stays OPERATOR-UNCONFIRMED until the owner reports
+  hearing it.
+
 ## H-02A - Local voice feedback through the Bluetooth speaker
 
 Status: IMPLEMENTED, physical acceptance BLOCKED on one package install.
