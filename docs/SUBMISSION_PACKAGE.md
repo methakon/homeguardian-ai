@@ -9,8 +9,10 @@ alternative; no MCP server is required for this route)
 
 > **Honesty statement for judges.** This is a *project-built simulation* of an
 > Alexa+ conversational experience. It is **not** a real Alexa+ device
-> integration, there is **no MCP server**, and there is **no live Amazon
-> identity**. All household observations are **synthetic** — no physical camera
+> integration and there is **no live Amazon identity**. An **MCP server is
+> implemented** (spec 2025-11-25, Streamable HTTP, two read-only tools) and runs
+> locally on loopback; it is **not** an Alexa+ runtime and is not connected to
+> Amazon. All household observations are **synthetic** — no physical camera
 > or microphone is ever activated. Every number and alert shown in the demo
 > comes from the real C++ backend running locally.
 
@@ -64,7 +66,7 @@ see the consent gate refuse to deliver anything once capture is turned off.
 
 | Implemented and tested | Simulated (this demo) | Planned (not built) |
 |---|---|---|
-| Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter, synthetic detection + fusion stage (activity-energy detector, explainable anomaly detection, confidence-aware fusion — all synthetic), and a **detection-driven alert rule** (an alert is raised only when the fused detector evidence qualifies; raw observations never alert) | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference (face/pose/lip/voice), a real Alexa+ MCP server, Amazon Login with Amazon account linking, Ring integration |
+| Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter, synthetic detection + fusion stage (activity-energy detector, explainable anomaly detection, confidence-aware fusion — all synthetic), and a **detection-driven alert rule** (an alert is raised only when the fused detector evidence qualifies; raw observations never alert) | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference (face/pose/lip/voice), an **Alexa+/Amazon** MCP integration (account linking, live Amazon identity — the local MCP server delivered in HG-MCP-01 is not one), Ring integration |
 
 **Testing.** 329 C++ test cases (2,453 assertions), 76 Node tests, ASan/UBSan
 clean, and a reproducible out-of-source build — all green at submission.
@@ -89,8 +91,10 @@ expected outputs.
 | **2:25–2:50** | Back to the UI, ask **"What can you do?"** | "It reports home status, alerts, and consent state, and runs synthetic scenarios — read-only, so it can never enable a sensor or change configuration." |
 | **2:50–3:00** | Close on the repo README | "A simulated Alexa+ experience built on a real, tested, privacy-first backend. Thank you." |
 
-**Do not say:** that this is real Alexa+, that an MCP server exists, that any
-physical sensor was used, or that detection accuracy was measured on real data.
+**Do not say:** that this is real Alexa+, that the local MCP server is an Alexa+
+runtime or a deployed Amazon service, that any physical sensor was used, or that
+detection accuracy was measured on real data. (An MCP server does exist and may be
+demonstrated — describe it exactly as it is: local, loopback, read-only.)
 
 ---
 
@@ -193,9 +197,10 @@ desired; the substance reflects real experience.
 - *What worked:* the specification is clear and well-organised; the Streamable
   HTTP transport requirements are unambiguous.
 - *What needs improvement:* nothing specific.
-- *Note:* **not implemented** — the project took the officially permitted
-  simulated-experience route, so no MCP server was built. This is stated for
-  honesty, not claimed as usage.
+- *Note:* the specification was used for real — a local **MCP server** was built
+  against it (spec 2025-11-25, Streamable HTTP, read-only tools; HG-MCP-01). What is
+  **not** implemented is the Amazon side: no Alexa+ runtime, no account linking, no
+  live Amazon identity.
 
 **Not used (stated for honesty):** no AWS services, no Amazon partner-only
 tools (Alexa+ MCP Toolkit, Category SDK, `@alexa-ai/cli`, Alexa+ Web
@@ -212,7 +217,8 @@ Builder and Open Source mini-challenges are therefore **not claimed**.
 |---|---|---|
 | Repository public and accessible | ✅ DONE — https://github.com/methakon/homeguardian-ai | — |
 | **License: Apache-2.0** `LICENSE` (sha256-verified vs apache.org) + `NOTICE` | ✅ DONE | — |
-| README accurate (no MCP/Ring/sensor overclaims; Native, no Node) | ✅ DONE | — |
+| README accurate (no Amazon/Alexa+/Ring/sensor overclaims; Native, no Node) | ✅ DONE | — |
+| Local MCP server (spec 2025-11-25, Streamable HTTP, 2 read-only tools) | ✅ DONE — HG-MCP-01 | — |
 | Runnable demo from a clean clone (`bash demo.sh`, Node-free) | ✅ DONE + verified | — |
 | Demo guide (`docs/DEMO_WEB.md`) | ✅ DONE | — |
 | Native low-footprint C++ implementation (1 process; ~6.4 MB idle RSS) | ✅ DONE | — |

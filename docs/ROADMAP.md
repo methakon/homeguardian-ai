@@ -567,3 +567,23 @@ ingress runs least-privilege and ACCEPTS this device's certificate over mutual T
 spoofed id refused as `identity_mismatch`, durable watermark advanced). Remaining: the on-device
 Import/Connect/consent/Start taps (phone is locked; owner-only), then camera/mic counters, then
 Wi-Fi delivery, and only then the physical USB unplug.
+
+## HG-MCP-01 - MCP over Streamable HTTP (implemented)
+
+Delivered on `feature/mcp-streamable-http` (worktree `~/worktrees/hg-mcp`), branched from the
+H-03 tip. An MCP server implementing the 2025-11-25 specification over Streamable HTTP, built
+on the existing read-only `AlexaContract` so authorization stays in one place. Two tools:
+`get_homeguardian_status`, `get_alert_summary`. Full protocol surface (initialize + version
+negotiation, notifications/initialized, ping, tools/list, tools/call, batching), session
+management, Origin validation, bearer-auth boundary, request-size/timeout/concurrency bounds
+and clean shutdown. `scripts/verify_mcp.sh` drives the real binary and passes 43/43; the `[mcp]`
+tag adds 19 cases / 89 assertions.
+
+Deliberately NOT claimed: this is not an Alexa+ runtime and not an Amazon integration - no
+account linking, no live Amazon identity, no AWS resource. Observations behind the tools remain
+synthetic. Not deployed, and `main` is untouched.
+
+Next (unimplemented): OAuth 2.1-style authorization for MCP clients, TLS termination (or the
+existing D-03 mutual-TLS ingress) for anything beyond loopback, a server-initiated SSE stream if
+a client needs one, `resources/*` and `prompts/*` capabilities, per-token quotas, and session
+resumability.

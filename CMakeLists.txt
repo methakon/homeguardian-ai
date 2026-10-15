@@ -369,6 +369,65 @@ target_link_libraries(hg_alexa_bridge PRIVATE
     sqlite3_static
 )
 
+    # --------------------------------------------------------------------------------
+    # hg_mcp_server (HG-MCP-01): MCP over Streamable HTTP.
+    #
+    # A separate executable on purpose - the existing engine, the web demo and the
+    # NDJSON bridge are untouched. It links the same core/persistence units the bridge
+    # links, because it builds the same Application, PersistenceAudit and
+    # AlexaCredentialStore and exposes them through two read-only tools.
+    # --------------------------------------------------------------------------------
+    add_executable(hg_mcp_server
+        src/main_mcp_server.cpp
+        src/mcp/McpProtocol.cpp
+        src/mcp/McpTools.cpp
+        src/mcp/McpHttpServer.cpp
+        src/core/AlexaContract.cpp
+        src/core/AlexaCredentialStore.cpp
+        src/core/Application.cpp
+        src/core/PersistenceAudit.cpp
+        src/core/AlertPolicy.cpp
+        src/core/RuntimeStatus.cpp
+        src/core/Pipeline.cpp
+        src/core/TimeWindowCorrelation.cpp
+        src/core/DetectionFusionRule.cpp
+        src/core/ImpactClassifier.cpp
+        src/core/SyntheticImpactRule.cpp
+        src/core/Observation.cpp
+        src/core/PrivacyAuditLog.cpp
+        src/core/AnomalyDetector.cpp
+        src/core/AnomalyMonitor.cpp
+        src/core/FusionEngine.cpp
+        src/core/SyntheticActivityDetector.cpp
+        src/core/EventValidator.cpp
+        src/core/SimulatorRuntime.cpp
+        src/core/ConsentGate.cpp
+        src/core/ConsentGatedAcquisition.cpp
+        src/core/ConsentGuardedDevice.cpp
+        src/core/SimulatedEventSource.cpp
+        src/core/SimulatedSensorSource.cpp
+        src/core/Config.cpp
+        src/core/Logger.cpp
+        src/core/UUID.cpp
+        src/backend/simulator/SimulatedSensorBackend.cpp
+        src/backend/simulator/LogicalDevice.cpp
+        src/backend/simulator/AudioBroker.cpp
+        src/persistence/SQLiteDatabase.cpp
+        src/persistence/EventRepository.cpp
+        src/persistence/AlertRepository.cpp
+        src/persistence/ProfileRepository.cpp
+        src/persistence/ConsentRepository.cpp
+        src/persistence/RoutineRepository.cpp
+        src/persistence/SchemaManager.cpp
+        src/persistence/PersistenceManager.cpp
+    )
+    target_include_directories(hg_mcp_server PRIVATE src third_party/sqlite)
+    target_link_libraries(hg_mcp_server PRIVATE
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        sqlite3_static
+    )
+
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
         ${CMAKE_SOURCE_DIR}/tests/core/test_config.cpp
@@ -487,6 +546,11 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/backend/simulator/SimulatedSensorBackend.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/simulator/LogicalDevice.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/simulator/AudioBroker.cpp
+        # MCP (HG-MCP-01): protocol, tools and transport, exercised without a socket
+        ${CMAKE_SOURCE_DIR}/tests/mcp/test_mcp_protocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp/McpProtocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp/McpTools.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp/McpHttpServer.cpp
     )
 
     target_include_directories(homeguardian_tests PRIVATE

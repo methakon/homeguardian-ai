@@ -7,8 +7,11 @@ consent-gated, and local-first.
 > Shape: Amazon Developer Hackathon*, **Alexa+ track**, taking the officially
 > permitted **simulated Alexa+ web experience** route. The conversational web
 > demo is a **project-built simulation** — it is **not** a real Alexa+ device
-> integration, there is **no MCP server**, and there is **no live Amazon
-> identity**. All household observations are **synthetic**; no physical camera
+> integration and there is **no live Amazon identity**. An **MCP server is
+> implemented** and runs locally on loopback (spec 2025-11-25, Streamable HTTP,
+> two read-only tools — see [docs/MCP_SERVER.md](docs/MCP_SERVER.md)); it is **not**
+> an Alexa+ runtime and is not connected to Amazon in any way. All household
+> observations remain **synthetic**; no physical camera
 > or microphone is ever activated. See [docs/AMAZONAPPDEV2026_FINAL_AUDIT.md](docs/AMAZONAPPDEV2026_FINAL_AUDIT.md).
 
 ## Vision
@@ -65,14 +68,17 @@ processing.
 **Simulated (this is a simulation, not real hardware or real Alexa):**
 - The **Alexa+ conversational web experience** (`src/web/` +
   `src/bridge/hg_demo_server.js`) — a project-built simulation for
-  demonstration. No Alexa device, no MCP, no live Amazon identity.
+  demonstration. No Alexa device and no live Amazon identity; the local MCP
+  server is a separate executable over the same read-only contract.
 - All household observations are **synthetic**; no physical sensor is activated.
 
 **Planned (not implemented):**
 - OpenCV / ONNX Runtime for real local ML inference.
 - Real camera/microphone capture backends (V4L2/ALSA/PipeWire) — **blocked
   pending explicit approval**.
-- A real Alexa+ **MCP server** (spec 2025-11-25+, Streamable HTTP) — not built.
+- An **MCP server** (spec 2025-11-25, Streamable HTTP, two read-only tools) —
+  **implemented and verified locally** (docs/MCP_SERVER.md). It is deliberately
+  **not** an Alexa+ runtime: no Amazon identity, no account linking, no AWS.
 - Amazon **Login with Amazon** account linking — not built.
 - Fall detection (H-01) and the emergency/escalation workflow (H-02) —
   **not implemented** (no pose inference, no emergency calling).

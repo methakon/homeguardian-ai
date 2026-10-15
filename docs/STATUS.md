@@ -405,3 +405,17 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Physical acceptance | **PENDING OPERATOR** - next Start camera reports the negotiation; rising `frames_processed` + real motion observations required, not claimed |
 | Video flag | `video=off` in the sampled ticks is consistent: capture had stopped, and the 518 frames are cumulative - not evidence of active capture |
 
+
+## MCP server (HG-MCP-01)
+
+| item | state |
+|---|---|
+| Protocol | MCP **2025-11-25** (Streamable HTTP); also accepts 2025-06-18 / 2025-03-26 clients and answers anything else with 2025-11-25 |
+| Tools | `get_homeguardian_status`, `get_alert_summary` - both read-only, both delegated to the existing `AlexaContract` |
+| Transport | `POST /mcp` (JSON or SSE), `GET /mcp` -> 405 + Allow, `DELETE /mcp` -> session termination; sessions minted on initialize, idle-expired, capped |
+| Security | bearer auth via `AlexaCredentialStore` (0600, owner-only, fail-closed, no fallback); Origin allowlist -> 403; loopback bind with an explicit opt-in required for anything else; header/body caps, timeouts, bounded workers and in-flight cap |
+| Refusals | no credential store -> exit 3; world-readable credential file -> exit 3; non-loopback bind without opt-in -> exit 4; no unauthenticated mode exists |
+| Tests | `[mcp]` **19 cases / 89 assertions**; full suite **510 cases / 5,787 assertions** (baseline before this work: 491 / 5,698) |
+| End-to-end | `scripts/verify_mcp.sh` -> **43 passed / 0 failed** against the real binary over loopback |
+| Not implemented | OAuth 2.1 client registration, TLS, server-initiated SSE stream, resources/prompts, per-token quotas, session resumability - see docs/MCP_SERVER.md section 7 |
+| Unchanged | engine, web demo, NDJSON bridge, and every existing target; `main` untouched |
