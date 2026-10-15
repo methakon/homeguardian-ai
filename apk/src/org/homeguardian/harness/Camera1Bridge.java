@@ -45,6 +45,15 @@ public class Camera1Bridge {
     private native boolean nativeOnPreviewFrame(byte[] data, int width, int height, int format,
                                                 long timestampMs);
 
+    /**
+     * Asks the NATIVE feature-bounds policy which supported preview size to negotiate. Returns "WxH",
+     * or "" when no supported size is processable - in which case this bridge refuses to start rather
+     * than hand the pipeline frames it will skip (the defect this replaces: a 720x576 preview produced
+     * 518 authorized frames and ZERO processed ones, because 720x576 exceeds the processing bound).
+     */
+    private native String nativeChoosePreviewSize(int[] widths, int[] heights, int targetWidth,
+                                                  int targetHeight);
+
     private Camera camera;
     private volatile boolean capturing = false;
     private SurfaceTexture dummyTexture;
@@ -124,8 +133,22 @@ public class Camera1Bridge {
 
         try {
             Camera.Parameters params = camera.getParameters();
-            Camera.Size best = choosePreviewSize(params.getSupportedPreviewSizes(),
-                                                 targetWidth, targetHeight);
+            List<Camera.Size> supported = params.getSupportedPreviewSizes();
+            Camera.Size best = choosePreviewSize(supported, targetWidth, targetHeight);
+            if (best == null) {
+                // No supported size is processable. Release and say exactly why - never negotiate a
+                // geometry the feature pipeline would skip silently.
+                StringBuilder offered = new StringBuilder();
+                if (supported != null) {
+                    for (Camera.Size s : supported) {
+                        if (offered.length() > 0) offered.append(',');
+                        offered.append(s.width).append('x').append(s.height);
+                    }
+                }
+                releaseQuietly();
+                return "camera1: no supported preview size inside the processing bounds "
+                        + "(needs >= 16 and <= 640x480 pixels); platform offers: " + offered;
+            }
             params.setPreviewSize(best.width, best.height);
             params.setPreviewFormat(ImageFormat.NV21);
             applyFrameRate(params, targetFps);
@@ -289,22 +312,36 @@ public class Camera1Bridge {
         return requested;
     }
 
-    private Camera.Size choosePreviewSize(List<Camera.Size> sizes, int targetWidth,
-                                          int targetHeight) {
+    /**
+     * Delegates the choice to the native feature-bounds policy (one definition of the bounds), and
+     * returns null when nothing it offered is processable. The target is a PREFERENCE, not a demand:
+     * the closest supported size inside the bounds wins.
+     */
+    private Camera.Size choosePreviewSize(List<Camera.Size> sizes, int targetWidth, int targetHeight) {
         if (sizes == null || sizes.isEmpty()) {
-            return camera.new Size(targetWidth, targetHeight);
+            return null;
         }
-        Camera.Size best = null;
-        long bestDiff = Long.MAX_VALUE;
-        for (Camera.Size s : sizes) {
-            long dw = s.width - targetWidth;
-            long dh = s.height - targetHeight;
-            long diff = dw * dw + dh * dh;
-            if (diff < bestDiff) {
-                bestDiff = diff;
-                best = s;
-            }
+        int[] widths = new int[sizes.size()];
+        int[] heights = new int[sizes.size()];
+        for (int i = 0; i < sizes.size(); i++) {
+            widths[i] = sizes.get(i).width;
+            heights[i] = sizes.get(i).height;
         }
-        return best != null ? best : sizes.get(0);
+        String chosen = nativeChoosePreviewSize(widths, heights, targetWidth, targetHeight);
+        if (chosen == null || chosen.isEmpty()) {
+            return null;
+        }
+        int sep = chosen.indexOf('x');
+        if (sep <= 0) {
+            return null;
+        }
+        try {
+            int w = Integer.parseInt(chosen.substring(0, sep));
+            int h = Integer.parseInt(chosen.substring(sep + 1));
+            return camera.new Size(w, h);
+        } catch (NumberFormatException e) {
+            Log.w(TAG, "unparseable preview size from the native policy: " + chosen);
+            return null;
+        }
     }
 }

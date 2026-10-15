@@ -386,10 +386,12 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_consent_gate.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_consent_lifecycle.cpp
         ${CMAKE_SOURCE_DIR}/tests/android/test_camera1_device.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_preview_size_policy.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_simulated_sensor.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_gated_acquisition.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_consent_guarded_device.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_fake_device_delivery.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/PreviewSizePolicy.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/android/Camera1Device.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_camera1_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_ubuntu_backend.cpp

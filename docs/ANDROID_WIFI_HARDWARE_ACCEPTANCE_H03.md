@@ -548,3 +548,73 @@ for anything it cannot see.
 
 The NDK camera2 backend is **preserved but NOT hardware-verified**: its capture-session implementation
 is incomplete and this device cannot exercise it. No claim is made that it works on hardware.
+
+## 12. FIXED: 518 authorized frames produced zero processed frames (preview geometry outside the bounds)
+
+### 12.1 The measured evidence and the exact rejection condition
+
+The operator's log, from the real device:
+
+    frames=518/518  dropped=0  frame_bytes=322237440
+    frames_processed=0  obs_emitted=0  video=off  samples=0  transport=not-connected
+    consent: camera=none | microphone=none          (both AUTHORIZED)
+
+322237440 / 518 = **622,080 bytes per frame**, and 720 x 576 x 1.5 = 622,080 exactly: the platform
+negotiated a full **720x576 NV21** preview. So the byte accounting is CORRECT - there is no dimension
+discrepancy. The rejection was in the feature gate:
+
+    nv21_geometry_ok(w, h, bytes) && pixels >= FeatureBounds::kMinPixels
+                                  && pixels <= FeatureBounds::kMaxPixels
+
+with `kMaxPixels = 640 x 480 = 307,200`. 720 x 576 = **414,720 pixels > 307,200**, so the entire block -
+including `++n.frames_processed` and the motion extraction - was skipped for EVERY authorized frame.
+Acquisition was genuine; processing never ran; nothing was logged because the skip branch did not exist.
+
+The bounds were NOT relaxed, and are not: they cap CPU and allocation on a ~1 GB device.
+
+### 12.2 Fix
+
+| piece | what changed |
+|---|---|
+| `src/core/PreviewSizePolicy.{h,cpp}` (new) | the geometry policy, host-testable: `classify_geometry()` / `geometry_within_feature_bounds()` (ONE definition, reading `FeatureBounds`) and `choose_processable_preview_size()` - the closest SUPPORTED size inside the bounds, deterministic tie-break (smaller area, then smaller width) |
+| `Camera1Bridge` | asks the native policy (`nativeChoosePreviewSize`) which supported size to negotiate. When **nothing** is processable it REFUSES to start and names the geometry it needs and the sizes the platform offered - it never negotiates a size the pipeline would silently skip |
+| JNI frame path | uses `geometry_within_feature_bounds()` instead of an inline comparison, counts every skip **by reason**, logs the geometry once (and on change), and logs skips **rate-limited** (first + at most every 10 s) |
+| counters line | now carries `proc_skip_geom=`, `proc_skip_below_min=`, `proc_skip_above_max=` and `last_geo=WxH`, so a skipped frame can never be invisible again |
+
+**Deliberately NOT done: silently downsampling an oversized frame.** Sampling a 720x576 buffer into the
+bound would change what `motion_fraction`/`motion_mean_delta` MEAN - a semantic change hidden behind a
+size fix. The camera is asked for a processable size instead, and an unprocessable delivery is refused
+loudly.
+
+### 12.3 Tests
+
+`tests/core/test_preview_size_policy.cpp`, tag `[previewsize]` - **5 cases / 43 assertions**: the bound
+is exactly 640x480; **the measured 720x576 geometry is asserted NON-processable** and 622,080 B/frame is
+asserted as 720x576x1.5 (so the arithmetic cannot drift); the policy picks the closest supported size
+inside the bounds; a platform offering only oversized sizes yields NO choice (the caller must refuse);
+ties are order-independent; and a property check that whatever the policy returns is always processable.
+
+Full suite: **491 cases / 5,698 assertions**, all passing (was 486 / 5,652).
+
+### 12.4 Build
+
+APK **997,465 B**, armeabi-v7a only, JNI export gate **22 declarations / 22 unmangled exports** with
+`nativeChoosePreviewSize` confirmed in the packaged `.so`; `adb install -r` -> Success, data preserved.
+
+### 12.5 Physical acceptance - anticipated outcomes, both named
+
+Still PENDING the operator's next Start camera. The next run reports the negotiation explicitly, and
+there are exactly two outcomes:
+
+* **a processable supported size exists** -> `camera preview size: target=... chosen=WxH from N supported`
+  and then rising `frames_processed` with real `motion_fraction` / `motion_mean_delta` observations
+  (acceptance met), or
+* **none is processable** -> `camera preview size: NO supported size lies inside the feature bounds ...
+  offered=<list>` and the bridge refuses with `camera1: no supported preview size inside the processing
+  bounds (needs >= 16 and <= 640x480 pixels); platform offers: <list>`. That list decides the next step
+  (pick a spinner size that is processable, or implement bounded processing as a separate, reviewed
+  change) - it does NOT license relaxing the bounds.
+
+Sensor acquisition is verified independently of the transport: `frames_processed` and the motion
+observations come from the camera path, while `transport=` is a separate set of counters.
+

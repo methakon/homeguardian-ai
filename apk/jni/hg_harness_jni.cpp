@@ -38,6 +38,7 @@
 #include "backend/android/NdkCameraDevice.h"
 #include "core/CaptureAccounting.h"
 #include "core/BoundedFeatures.h"
+#include "core/PreviewSizePolicy.h"
 #include "core/ConsentGate.h"
 #include "core/ConsentGuardedDevice.h"
 #include "core/ConsentRecord.h"
@@ -89,6 +90,18 @@ struct Node {
     std::unique_ptr<NdkCameraDeviceImpl> camera;        // camera2 / NDK path
     std::unique_ptr<Camera1Device> camera1;             // legacy Camera1 (java bridge) path
     std::string camera_backend = "none";                // which backend the guard is bound to
+    // Frame-processing skips, counted BY REASON. The frame callback runs per frame, so the message is
+    // rate-limited; the counters appear in every counters line. This is what makes "518 authorized,
+    // 0 processed" impossible to miss: before, a skipped frame left no trace at all.
+    struct FrameSkips {
+        uint64_t geometry_invalid = 0;   // the buffer does not match the advertised geometry
+        uint64_t below_min = 0;          // fewer than FeatureBounds::kMinPixels
+        uint64_t above_max = 0;          // more than kMaxPixels - the measured device defect
+    } skips;
+    int64_t last_skip_log_ms = 0;
+    int last_frame_w = 0;
+    int last_frame_h = 0;
+    int64_t last_frame_geo_log_ms = 0;
     // What the ACTIVITY's legacy api sees (Camera.getNumberOfCameras()). -1 = not reported yet.
     // Deliberately NOT the NDK enumeration: on the validation device the NDK enumerates zero cameras
     // while the legacy api sees one, which is the whole reason backend selection is explicit.
@@ -214,6 +227,16 @@ std::string select_camera_backend(const Node& n, const std::string& requested) {
     return n.platform_camera_count.load() > 0 ? "camera1" : "camera2";
 }
 
+const char* geometry_class_name(int width, int height) {
+    switch (classify_geometry(width, height)) {
+        case GeometryVerdict::Ok: return "ok";
+        case GeometryVerdict::NonPositive: return "non_positive";
+        case GeometryVerdict::BelowMinPixels: return "below_min_pixels";
+        case GeometryVerdict::AboveMaxPixels: return "above_max_pixels";
+    }
+    return "unknown";
+}
+
 jstring to_jstring(JNIEnv* env, const std::string& s) {
     return env->NewStringUTF(s.c_str());
 }
@@ -238,6 +261,10 @@ std::string stats_string(Node& n) {
     s += " audio_windows=" + std::to_string(n.audio_windows_processed);
     s += " obs_emitted=" + std::to_string(n.observations_emitted);
     s += " obs_dropped=" + std::to_string(n.observations_dropped);
+    s += " proc_skip_geom=" + std::to_string(n.skips.geometry_invalid) +
+         " proc_skip_below_min=" + std::to_string(n.skips.below_min) +
+         " proc_skip_above_max=" + std::to_string(n.skips.above_max) +
+         " last_geo=" + std::to_string(n.last_frame_w) + "x" + std::to_string(n.last_frame_h);
     if (c.last_drop != DropReason::none) {
         s += " last_drop=" + std::string(drop_reason_to_string(c.last_drop));
         if (!c.last_drop_detail.empty()) s += " (" + c.last_drop_detail + ")";
@@ -417,8 +444,44 @@ Java_org_homeguardian_harness_Camera1Bridge_nativeOnPreviewFrame(JNIEnv* env, jo
         const size_t w = static_cast<size_t>(width);
         const size_t h = static_cast<size_t>(height);
         const size_t pixels = w * h;
-        if (nv21_geometry_ok(w, h, bytes) && pixels >= FeatureBounds::kMinPixels &&
-            pixels <= FeatureBounds::kMaxPixels) {
+        const bool nv21_ok = nv21_geometry_ok(w, h, bytes);
+        const bool in_bounds = nv21_ok && geometry_within_feature_bounds(static_cast<int>(w),
+                                                                        static_cast<int>(h));
+
+        // ONE line per geometry (and whenever it changes): the negotiated size, the buffer length and
+        // the verdict on the record. The 720x576 frames that produced zero processed frames were
+        // previously visible only as a byte total.
+        if (w != static_cast<size_t>(n.last_frame_w) || h != static_cast<size_t>(n.last_frame_h) ||
+            n.last_frame_geo_log_ms == 0) {
+            n.last_frame_w = static_cast<int>(w);
+            n.last_frame_h = static_cast<int>(h);
+            n.last_frame_geo_log_ms = now_ms();
+            __android_log_print(ANDROID_LOG_INFO, "HGNode",
+                "camera frame geometry: %zux%zu bytes=%zu pixels=%zu nv21_ok=%s within_bounds=%s "
+                "class=%s (bounds: min=%zu max=%zu pixels)", w, h, bytes, pixels,
+                nv21_ok ? "yes" : "no", in_bounds ? "yes" : "no",
+                geometry_class_name(static_cast<int>(w), static_cast<int>(h)),
+                FeatureBounds::kMinPixels, FeatureBounds::kMaxPixels);
+        }
+        if (!in_bounds) {
+            if (!nv21_ok) ++n.skips.geometry_invalid;
+            else if (pixels < FeatureBounds::kMinPixels) ++n.skips.below_min;
+            else ++n.skips.above_max;
+            const uint64_t total = n.skips.geometry_invalid + n.skips.below_min + n.skips.above_max;
+            const int64_t ms = now_ms();
+            if (total == 1 || (ms - n.last_skip_log_ms) >= 10000) {
+                n.last_skip_log_ms = ms;
+                __android_log_print(ANDROID_LOG_WARN, "HGNode",
+                    "camera frame SKIPPED (never processed): %zux%zu pixels=%zu reason=%s nv21_ok=%s "
+                    "- totals geom=%llu below_min=%llu above_max=%llu; the camera must be given a "
+                    "supported preview size inside the bounds",
+                    w, h, pixels, geometry_class_name(static_cast<int>(w), static_cast<int>(h)),
+                    nv21_ok ? "yes" : "no", static_cast<unsigned long long>(n.skips.geometry_invalid),
+                    static_cast<unsigned long long>(n.skips.below_min),
+                    static_cast<unsigned long long>(n.skips.above_max));
+            }
+        }
+        if (in_bounds) {
             jbyte* raw = env->GetByteArrayElements(data, nullptr);
             if (raw != nullptr) {
                 const uint8_t* y = nv21_y_plane(reinterpret_cast<const uint8_t*>(raw));
@@ -751,6 +814,49 @@ JNIEXPORT jboolean JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeVideoRunning(JNIEnv* env, jobject /*thiz*/) {
     auto& n = node();
     return n.accountant.video_running() ? JNI_TRUE : JNI_FALSE;
+}
+
+// The Camera1 bridge asks the NATIVE policy which supported preview size to negotiate, so the
+// feature bounds have exactly one definition and a platform size outside them is never chosen.
+// Returns "WxH", or an EMPTY string when no supported size is processable - the bridge must then
+// refuse to start rather than negotiate a geometry the pipeline cannot process.
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_Camera1Bridge_nativeChoosePreviewSize(JNIEnv* env, jobject /*thiz*/,
+                                                                   jintArray widths, jintArray heights,
+                                                                   jint target_w, jint target_h) {
+    std::vector<PreviewSize> supported;
+    if (widths != nullptr && heights != nullptr) {
+        const jsize nw = env->GetArrayLength(widths);
+        const jsize nh = env->GetArrayLength(heights);
+        const jsize count = nw < nh ? nw : nh;
+        std::vector<jint> w(static_cast<size_t>(count > 0 ? count : 0));
+        std::vector<jint> h(static_cast<size_t>(count > 0 ? count : 0));
+        if (count > 0) {
+            env->GetIntArrayRegion(widths, 0, count, w.data());
+            env->GetIntArrayRegion(heights, 0, count, h.data());
+        }
+        for (jsize i = 0; i < count; ++i) supported.push_back(PreviewSize{w[i], h[i]});
+    }
+
+    const auto chosen = choose_processable_preview_size(supported, PreviewSize{target_w, target_h});
+    if (!chosen.has_value()) {
+        std::string offered;
+        for (const auto& s : supported) {
+            offered += (offered.empty() ? "" : ",") + std::to_string(s.width) + "x" +
+                       std::to_string(s.height);
+        }
+        __android_log_print(ANDROID_LOG_WARN, "HGNode",
+            "camera preview size: NO supported size lies inside the feature bounds (min=%zu max=%zu "
+            "pixels) - refusing to negotiate; offered=%s", FeatureBounds::kMinPixels,
+            FeatureBounds::kMaxPixels, offered.c_str());
+        return to_jstring(env, "");
+    }
+    const std::string out = std::to_string(chosen->width) + "x" + std::to_string(chosen->height);
+    __android_log_print(ANDROID_LOG_INFO, "HGNode",
+        "camera preview size: target=%dx%d chosen=%s from %zu supported (bounds min=%zu max=%zu pixels)",
+        target_w, target_h, out.c_str(), supported.size(), FeatureBounds::kMinPixels,
+        FeatureBounds::kMaxPixels);
+    return to_jstring(env, out);
 }
 
 }  // extern "C" (H-03 observation drain + interval control)

@@ -391,3 +391,17 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Build | APK 965,451 B, JNI gate 21 declarations / 21 exports, `install -r` Success, clean launch, `camera availability: legacy(Camera1)=2` |
 | Physical camera acceptance | **PENDING OPERATOR** - requires consent + Start camera, then real preview callbacks and rising frame counters; not claimed, not simulated |
 | NDK camera2 hardware status | preserved, **NOT hardware-verified** (incomplete capture-session implementation; this device cannot exercise it) |
+
+## Frame processing: 518 authorized frames, 0 processed (FIXED)
+
+| item | state |
+|---|---|
+| Measured geometry | **720x576 NV21** - 622,080 bytes/frame exactly (322,237,440 / 518); byte accounting CORRECT |
+| Exact rejection | `pixels <= FeatureBounds::kMaxPixels` - 414,720 > 307,200 (640x480); `++frames_processed` lives inside that block, so every authorized frame was skipped silently |
+| Fix | `PreviewSizePolicy` selects the closest SUPPORTED size inside the bounds; the bridge REFUSES when nothing is processable; the frame path uses one bounds predicate; skips are counted by reason, logged rate-limited, and exposed as `proc_skip_*` + `last_geo` in every counters line |
+| Not done on purpose | silently downsampling an oversized frame (it would change what the motion descriptors mean) and relaxing the bounds |
+| Tests | `[previewsize]` 5 cases / 43 assertions, incl. the measured geometry as a regression; full suite **491 / 5,698** |
+| Build | APK 997,465 B, JNI gate 22/22, install Success |
+| Physical acceptance | **PENDING OPERATOR** - next Start camera reports the negotiation; rising `frames_processed` + real motion observations required, not claimed |
+| Video flag | `video=off` in the sampled ticks is consistent: capture had stopped, and the 518 frames are cumulative - not evidence of active capture |
+

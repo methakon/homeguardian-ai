@@ -55,6 +55,7 @@ CORE_SRC=(
   "$ROOT/src/core/ConsentGuardedDevice.cpp"
   "$ROOT/src/core/CaptureAccounting.cpp"
   "$ROOT/src/core/BoundedFeatures.cpp"
+  "$ROOT/src/core/PreviewSizePolicy.cpp"
   "$ROOT/src/core/NodeIdentity.cpp"
 )
 INC=( -I"$ROOT/src" -I"$ROOT/src/core" -I"$ROOT/src/backend/android"
