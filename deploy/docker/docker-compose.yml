@@ -23,10 +23,13 @@
 #             not expose the loopback-only surface above.
 #
 # Provision the certificate material first (the container includes the tool):
-#   bash tools/provision_ca.sh init deploy/docker/certs
-#   bash tools/provision_ca.sh issue <device-id> deploy/docker/certs
-# then copy config/ingress.json.example -> certs/ingress.json and register the
-# device in certs/devices.json (tools/provision_ca.sh issue prints the exact entry).
+#   bash tools/provision_ca.sh init  --ca-dir <offline> --runtime-dir <dir> --device-dir <devkeys>
+#   bash tools/provision_ca.sh issue <device-id> --ca-dir <offline> --runtime-dir <dir> --device-dir <devkeys>
+#   cp deploy/docker/config/ingress.json.example <dir>/ingress.json   # then edit the paths
+# then export HG_CERTS_DIR=<dir> and register the device in <dir>/devices.json (the issue
+# command prints the exact entry). HG_CERTS_DIR has NO DEFAULT: an unprovisioned mount fails the
+# compose run itself, and if the directory is present but incomplete the entrypoint prints every
+# missing file plus these commands and exits 78.
 
 services:
   hub:
@@ -71,7 +74,9 @@ services:
 
     environment:
       HG_PORT: "8080"
-      HG_TOKEN: "demo-token"          # synthetic demo token (contract calls only)
+      # The demo deployment declares its synthetic token here; the IMAGE deliberately bakes none
+      # (a real deployment replaces this value).
+      HG_TOKEN: "demo-token"
       HG_DATA_DIR: "/data"
       HG_CONFIG: "/etc/homeguardian/hub.json"
       HG_CREDS: "/run/secrets/hg_creds"
@@ -128,7 +133,10 @@ services:
     # directories where certificates should be. With a single directory mount, a
     # missing file is simply a missing file, and the ingress refuses to start.
     volumes:
-      - ${HG_CERTS_DIR:-./certs}:/etc/homeguardian/certs:ro
+      # REQUIRED, with no default: mounting an empty or wrong directory only moves the failure into
+      # the container, where it reads as a certificate bug instead of an unprovisioned deployment.
+      # Compose refuses to start without it, naming what to set.
+      - ${HG_CERTS_DIR:?set HG_CERTS_DIR to the directory tools/provision_ca.sh provisioned (it must contain ingress.json, server.crt, server.key, ca/ca.crt and devices.json, and must be readable by the container uid - see docs/DISTRIBUTED_DEPLOYMENT.md)}:/etc/homeguardian/certs:ro
       # SHARED with the hub, deliberately: an alert produced from an ingested
       # observation is written into the same SQLite file the dashboard reads, so
       # the outcome is observable in the running hub rather than only inside the

@@ -99,6 +99,10 @@ deploy/docker/secrets/creds.json
 # tools/provision_ca.sh writes these under an operator-chosen directory; the
 # container looks them up in deploy/docker/certs/.
 deploy/docker/certs/
+
+# The compose project's own environment file: it carries HOST-SPECIFIC paths (at minimum
+# HG_CERTS_DIR). Commit the example, never the file.
+deploy/docker/.env
 **/*.key
 **/*.crt
 **/*.csr

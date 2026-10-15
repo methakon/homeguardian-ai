@@ -13,7 +13,13 @@ HG_PORT="${HG_PORT:-8080}"
 HG_DATA_DIR="${HG_DATA_DIR:-/data}"
 HG_CONFIG="${HG_CONFIG:-/etc/homeguardian/hub.json}"
 HG_CREDS="${HG_CREDS:-/run/secrets/hg_creds}"
-HG_TOKEN="${HG_TOKEN:-demo-token}"
+# The synthetic demo token. This fallback exists ONLY so a bare local `docker run` of the demo still
+# works; a real deployment sets HG_TOKEN (docker-compose.yml does). It is NOT baked into the image, so
+# an image consumer is not handed a credential-shaped default silently - and using it says so.
+if [ -z "${HG_TOKEN:-}" ]; then
+    HG_TOKEN="demo-token"
+    echo "homeguardian-hub: NOTE: HG_TOKEN is unset - using the synthetic demo token (demo only; set HG_TOKEN for a real deployment)" >&2
+fi
 
 die() { echo "homeguardian-hub: $*" >&2; exit 78; }   # 78 = EX_CONFIG
 

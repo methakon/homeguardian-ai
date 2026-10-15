@@ -124,11 +124,16 @@ RUN chmod 0755 /usr/local/bin/hg-entrypoint /usr/local/bin/hg-ingress-entrypoint
 
 # Configuration paths (override at run time; the config and credentials are
 # mounted read-only — never baked into a layer).
+#
+# NO TOKEN IS BAKED IN. The hub's demo token is a literal the demo config also carries, but
+# baking it into the image hands every consumer of the image a credential-shaped value and
+# makes the build emit a secrets-in-ENV warning that would hide a REAL one later. The demo
+# deployment declares it in docker-compose.yml; the entrypoint falls back to it, loudly, for
+# a bare local `docker run`. Nothing suppresses the warning instead.
 ENV HG_PORT=8080 \
     HG_DATA_DIR=/data \
     HG_CONFIG=/etc/homeguardian/hub.json \
     HG_CREDS=/run/secrets/hg_creds \
-    HG_TOKEN=demo-token \
     HG_INGRESS_CONFIG=/etc/homeguardian/ingress.json \
     HG_INGRESS_DATA=/data/ingress
 

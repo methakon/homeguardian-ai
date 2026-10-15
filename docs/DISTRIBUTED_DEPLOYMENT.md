@@ -896,3 +896,45 @@ it does carry (or `HG_INGRESS_HEALTH_IP`). There is no option to skip the check.
    from the image's `/data`, which the image chowns to 10001; running the container as any OTHER uid
    yields `ingress data directory not writable: /data/ingress`. Use the shipped uid, or a bind mount
    owned by that uid.
+
+## Provisioning is a hard prerequisite (the deployment refuses to start unprovisioned)
+
+`HG_CERTS_DIR` is **required and has no default**:
+
+    export HG_CERTS_DIR=/absolute/path/to/provisioned-certs     # or put it in deploy/docker/.env
+    bash tools/provision_ca.sh init  --ca-dir <offline> --runtime-dir "$HG_CERTS_DIR" --device-dir <devkeys>
+    bash tools/provision_ca.sh issue <device-id> --ca-dir <offline> --runtime-dir "$HG_CERTS_DIR" --device-dir <devkeys>
+    cp deploy/docker/config/ingress.json.example "$HG_CERTS_DIR/ingress.json"   # then edit the paths
+
+The directory must contain `ingress.json`, `server.crt`, `server.key`, `ca/ca.crt` and `devices.json`,
+must contain **no CA signing key** (the entrypoint refuses that on purpose), and its files must be
+**readable by the container's uid (10001)** - `sudo chown 10001:10001 "$HG_CERTS_DIR"/*`, or a staged
+copy with directories 0755 and files 0644.
+
+Three deliberate consequences:
+
+1. **Compose refuses before starting anything** if the variable is unset, naming what to set. The
+   old fallback (`:-./certs`) mounted an empty, root-owned `deploy/docker/certs/` and moved the
+   failure *into* the container, where it read as a certificate problem rather than an unprovisioned
+   deployment.
+2. **Every compose command needs it**, including `down` and `ps`, because they all render the config.
+   Put it in `deploy/docker/.env` (copy `deploy/docker/.env.example`) and compose reads it
+   automatically from the compose file's directory - from any working directory.
+3. **The entrypoint reports everything, not the first thing.** With an incomplete mount it prints the
+   full list of missing/unreadable files, the uid it runs as, and the exact provisioning and
+   permission commands, then exits 78 (EX_CONFIG). It still refuses a mounted CA signing key outright.
+
+Regression guard (host, needs docker):
+
+    bash scripts/verify_deploy_guards.sh
+    # compose refuses unprovisioned; a provisioned dir is mounted verbatim; no './certs' default;
+    # the image bakes no token and no credential material; the entrypoint's refusal is complete and
+    # actionable; a mounted CA key is still refused; the hub announces its demo-token fallback.
+
+### On the image token
+
+The hub's synthetic demo token is **not baked into the image**. It is a literal the demo config also
+carries, but baking it handed every consumer of the image a credential-shaped value and made the build
+emit a secrets-in-ENV warning that would hide a real one later. `docker-compose.yml` declares it for
+the demo deployment; the hub entrypoint falls back to it **and says so**, so a bare `docker run` is
+not silently credentialed. No warning-suppression directive was added.

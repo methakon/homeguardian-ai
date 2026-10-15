@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # D-03 device ingestion entrypoint.
 #
-# Fail-closed, and deliberately dumb: it checks that the three things the ingress
-# cannot work without are present and readable, then hands over. It does NOT parse
+# Fail-closed, and deliberately specific: it checks that every file the ingress needs is
+# present and readable, refuses with the FULL list of what is missing plus the exact
+# provisioning commands, and only then hands over. It does NOT parse
 # the JSON config -- the binary does that, with the same fail-closed result and a
 # better message. Keeping the preflight dependency-free (no interpreter in this
 # image) is the point: a smaller runtime is a smaller attack surface.
@@ -17,7 +18,32 @@ HG_INGRESS_CERTS="${HG_INGRESS_CERTS:-/etc/homeguardian/certs}"
 
 die() { echo "homeguardian-ingress: $*" >&2; exit 78; }   # 78 = EX_CONFIG
 
-[ -r "$HG_INGRESS_CONFIG" ] || die "ingress config not readable: $HG_INGRESS_CONFIG (mount it read-only)"
+# PROVISIONING PREFLIGHT. An unprovisioned mount must fail with a diagnostic the operator can act
+# on, not with the name of whichever file the script happened to check first. Every required file is
+# checked, ALL problems are reported together, and the provisioning commands are printed verbatim.
+# Nothing is created, guessed or substituted here: this is a refusal (exit 78 = EX_CONFIG).
+unreadable=""
+for required in "$HG_INGRESS_CONFIG" \
+                "$HG_INGRESS_CERTS/server.crt" \
+                "$HG_INGRESS_CERTS/server.key" \
+                "$HG_INGRESS_CERTS/ca/ca.crt" \
+                "$HG_INGRESS_CERTS/devices.json"; do
+  [ -r "$required" ] || unreadable="${unreadable}${unreadable:+, }${required}"
+done
+if [ -n "$unreadable" ]; then
+  echo "homeguardian-ingress: REFUSING to start - the mounted credential directory is NOT provisioned." >&2
+  echo "  mount          : HG_CERTS_DIR (host)  ->  ${HG_INGRESS_CERTS} (container, read-only)" >&2
+  echo "  running as uid : $(id -u)   (every file above must be READABLE by this uid)" >&2
+  echo "  missing or unreadable: ${unreadable}" >&2
+  echo "  provision it with:" >&2
+  echo "    bash tools/provision_ca.sh init  --ca-dir <offline-dir> --runtime-dir <this-dir> --device-dir <device-key-dir>" >&2
+  echo "    bash tools/provision_ca.sh issue <device-id> --ca-dir <offline-dir> --runtime-dir <this-dir> --device-dir <device-key-dir>" >&2
+  echo "    cp deploy/docker/config/ingress.json.example <this-dir>/ingress.json   # then set ca_path / certificate_path / private_key_path" >&2
+  echo "    sudo chown 10001:10001 <this-dir>/*   # or stage dirs 0755 / files 0644 so uid $(id -u) can read them" >&2
+  echo "  note: the directory must contain NO CA signing key (the ingress refuses it on purpose)." >&2
+  echo "  see docs/DISTRIBUTED_DEPLOYMENT.md and docs/ORACLE_RELAY_H04_PLAN.md" >&2
+  exit 78
+fi
 # The ingress now shares the hub's persistent volume so that an accepted
 # observation's alert lands in the SAME alert history the dashboard serves. The
 # directory is created here (rather than demanded) because a fresh named volume
