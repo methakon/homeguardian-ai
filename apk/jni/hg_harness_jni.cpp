@@ -131,6 +131,8 @@ struct Node {
     int64_t observation_interval_ms = 1000;   // configurable sampling interval
     int64_t last_camera_emit_ms = 0;
     int64_t last_audio_emit_ms = 0;
+    int64_t last_motion_diag_ms = 0;         // bounded motion diagnostic (due_for_motion_diag)
+    int motion_diag_count = 0;               // hard cap for that diagnostic
     std::vector<uint8_t> prev_luma;           // bounded previous frame for the motion delta
     size_t prev_luma_pixels = 0;
     uint64_t frames_processed = 0;            // UI: frame-processing count
@@ -176,6 +178,12 @@ void push_observation(Node& n, const char* source_type, const char* observation_
     ++n.observations_emitted;
 }
 
+// Bounded diagnostic for the motion observation VALUES. It cannot flood: it only runs where an
+// observation is already due, an extra interval spaces it out, and a hard cap bounds the total.
+// It prints derived scalars and counts only - never pixels, PCM, identity or credentials.
+static constexpr int64_t kMotionDiagIntervalMs = 5000;
+static constexpr int kMotionDiagMax = 60;
+
 // Interval gate: true at most once per observation_interval_ms. Keeps a 15 fps camera from
 // turning into 15 observations a second.
 bool due_for_emission(Node& n, int64_t now, bool camera) {
@@ -183,6 +191,19 @@ bool due_for_emission(Node& n, int64_t now, bool camera) {
     int64_t& last = camera ? n.last_camera_emit_ms : n.last_audio_emit_ms;
     if (now - last < n.observation_interval_ms) return false;
     last = now;
+    return true;
+}
+
+// Same discipline as due_for_emission: all state under the mutex, and the answer is 'no' the moment
+// either the interval or the hard cap is reached. Returns the emission total so the caller never has
+// to read node state outside the lock.
+bool due_for_motion_diag(Node& n, int64_t now, uint64_t& emitted_total) {
+    std::lock_guard<std::mutex> lk(n.m);
+    if (n.motion_diag_count >= kMotionDiagMax) return false;
+    if (n.last_motion_diag_ms != 0 && now - n.last_motion_diag_ms < kMotionDiagIntervalMs) return false;
+    n.last_motion_diag_ms = now;
+    ++n.motion_diag_count;
+    emitted_total = n.observations_emitted;
     return true;
 }
 
@@ -504,6 +525,15 @@ Java_org_homeguardian_harness_Camera1Bridge_nativeOnPreviewFrame(JNIEnv* env, jo
                                      "ok", 1.0, ms);
                     push_observation(n, "camera", "motion_mean_delta", mf.mean_delta, "delta_ratio",
                                      "ok", 1.0, ms);
+                    uint64_t emitted_total = 0;
+                    if (due_for_motion_diag(n, ms, emitted_total)) {
+                        // Derived scalars and counts only: no media, no identity, no credentials.
+                        HG_LOGI("observation: motion_fraction=%.4f motion_mean_delta=%.4f "
+                                "pixels=%llu emitted_total=%llu",
+                                mf.changed_fraction, mf.mean_delta,
+                                static_cast<unsigned long long>(pixels),
+                                static_cast<unsigned long long>(emitted_total));
+                    }
                 }
             }
         }
