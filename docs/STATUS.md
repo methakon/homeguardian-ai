@@ -365,3 +365,16 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Live deployment | `docker inspect` -> `status=running health=healthy` (uid 10001, 0 restarts); the health log carries the probe's real output; the listener the phone dials is up on 192.168.1.6:8443 |
 | Operator prerequisites confirmed | the mounted credential tree must be readable by the container uid (`sudo chown 10001:10001`, else exit 78) and the data volumes writable by it |
 | H-03 physical acquisition / standalone Wi-Fi | **STILL PENDING** - operator-gated, not claimed |
+
+## H-04 planning refinements + H-03 acceptance readiness
+
+| item | state |
+|---|---|
+| Mail gate | **functional preservation**, not byte-identical output: availability, TLS certificate identity, mailbox integrity, DNS, delivery, latency. Queue depth/counters/logs are expected to move (owner review, refinement 1) |
+| SSH | **unchanged** for this migration; any restriction deferred to a separate approval, only after alternative admin/recovery access is verified (refinement 2) |
+| x402 retirement | only after HomeGuardian connectivity is **validated** (not merely configured) AND the rollback has been **exercised** from the **off-VPS** backup (refinement 3) |
+| Read-only pre-flight bundle | `scripts/oracle_preflight_readonly.sh` - no writes, no privilege escalation (0 escalation commands), redacted output; **validated by running it on a real Linux host**: 11 sections, rc=0, no secret-shaped text, privilege-needing commands degrade to SKIPPED |
+| H-03 acceptance harness | `scripts/verify_h03_physical_acceptance.sh` - checks the seven physical items from real device + hub evidence; items it cannot observe report NOT OBSERVED and FAIL (never a vacuous pass); `--post-usb` uses hub-side watermark evidence only, because adb is gone after the unplug |
+| Phone instrumentation | the app now logs its counters every ~10 s (`counters video=... frames_processed=... samples=... obs_emitted=...` and `counters transport queued=... sent=...`), because UI scraping is unusable on this device. APK 928,615 B, JNI gate 17/17, reinstalled - and its line is **not yet observed** because the phone is locked (the tick runs only while the activity is resumed) |
+| H-03 physical acceptance | **PENDING OPERATOR** - no result claimed or simulated |
+| Oracle VPS | **not contacted, not modified** |

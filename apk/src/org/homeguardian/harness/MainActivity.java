@@ -108,6 +108,13 @@ public class MainActivity extends Activity {
             // 30-second run shows several lines. Diagnostics only - no behaviour depends on it.
             if (++tickCount % 20 == 0) {
                 Log.i(TAG, "tick #" + tickCount);
+                // ACCEPTANCE EVIDENCE (diagnostics only; nothing depends on these lines). The native
+                // accountant's frame/sample counters and the transport's queue/write counters, so
+                // "frames increase", "samples increase" and "observations are emitted" can be checked
+                // from the log instead of read off the screen - UI scraping is not usable on this
+                // device (uiautomator crashes with "UiAutomationService already registered").
+                Log.i(TAG, "counters " + nativeStats());
+                if (nodePanel != null) Log.i(TAG, "counters " + nodePanel.transportCounters());
             }
             ticker.postDelayed(this, 500);
         }

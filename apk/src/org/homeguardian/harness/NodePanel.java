@@ -266,6 +266,19 @@ public final class NodePanel {
         refresh("consent state");
     }
 
+    /**
+     * Compact transport counters for the acceptance log. Machine-checkable and sanitized: counts only
+     * - never a payload, a device id, a credential or any media.
+     */
+    public String transportCounters() {
+        if (transport == null) return "transport=not-connected";
+        return "transport queued=" + transport.queuedCount()
+                + " sent=" + transport.sentCount()
+                + " refused=" + transport.refusedCount()
+                + " dropped=" + transport.droppedCount()
+                + " permanent=" + transport.permanentRejectionCount();
+    }
+
     private String wifiState() {
         try {
             final ConnectivityManager cm =

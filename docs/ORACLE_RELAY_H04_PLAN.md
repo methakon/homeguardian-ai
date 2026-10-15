@@ -67,9 +67,23 @@ Additionally, one end-to-end mail probe the owner runs (an external account to a
 box, and a submission from a mailbox) - **before** the window and **after** each phase. Record
 timestamps and delivery latency.
 
-**Gate:** the after-set must be identical to the before-set (same sockets, same certificate
-fingerprint, empty queue, same fail2ban status, mail delivered within the normal latency). Any
-difference stops the migration and triggers the rollback of the last phase.
+**Gate: FUNCTIONAL preservation - deliberately NOT byte-identical output.** A working mail server
+changes its own output constantly: queue depth moves as mail is delivered, counters increment, log
+lines and timestamps appear. Comparing captured text would fail on a perfectly healthy server and
+teach us to ignore the check. The requirement is that these six FUNCTIONAL properties survive:
+
+1. **availability** - the five ports stay bound and the services stay `active` (`ss`, `systemctl`);
+2. **TLS certificate identity** - the SAME certificate is still presented on 465/587/993/995
+   (subject + issuer + SHA-256 fingerprint unchanged);
+3. **mailbox integrity** - the same mailboxes exist and remain usable, with no message loss;
+4. **DNS** - MX/SPF/DKIM/DMARC resolve exactly as before;
+5. **successful delivery** - the end-to-end probe still delivers, inbound and outbound;
+6. **acceptable latency** - delivery latency stays within the same order of magnitude.
+
+A non-empty (or deeper) queue is *expected while mail is flowing*; what must not happen is a queue
+that grows without draining, or a message that disappears. Judge the after-state against the six
+properties, not against the before-text. A regression in any of them stops the migration and triggers
+the rollback of the last phase; a changed queue depth, a rotated log or a moved counter does not.
 
 ---
 
@@ -235,7 +249,7 @@ the instance is never left having lost one thing and not yet gained the other.
 | # | layer | propose | rationale |
 |---|---|---|---|
 | 1 | VCN security list / NSG **and** instance firewall | **add** ingress **UDP 51820** from `0.0.0.0/0` | WireGuard must accept roaming clients from arbitrary networks; the control is the per-peer key, not the source address |
-| 2 | VCN + instance | **tighten** ingress **TCP 22** to the owner's addresses | currently likely open; a tightening, proposed not applied |
+| 2 | VCN + instance | **NO CHANGE to TCP 22 for this migration.** Any restriction (to the owner's addresses or anything else) is DEFERRED to a separate, later approval, and only AFTER alternative administration and recovery access is verified to work | locking the operator out of the box that also runs the mail server is a worse outcome than the exposure being removed; the current SSH posture is left exactly as it is |
 | 3 | instance firewall `filter` (FORWARD) | **add** allow `wg0 -> 10.66.0.2 tcp/8443`; **drop** `wg0 -> 22,25,465,587,993,995` and `wg0 -> wg0` (except to .2) | peer isolation (section D) |
 | 4 | anything else | **unchanged** | mail ports, 80/443, DNS, NTP |
 
@@ -275,6 +289,19 @@ Capture into one directory: section A's before-set, section B.1's asset table, `
 records, `pm2 list`. **This is the read-only verification of the owner-supplied inventory** - every
 number in section P is checked here, and the plan is adjusted if anything differs.
 
+The capture is bundled and ready to run: `scripts/oracle_preflight_readonly.sh`. It is READ-ONLY (no
+writes, no service changes), never calls `sudo` and never prompts - commands that need privileges are
+reported as `needs privileges - SKIPPED` and the bundle does not ask the owner to grant any - and its
+output is piped through a redactor so no token, key, password or private-key block can be printed. Run
+it on the VPS as the normal login user and return the output:
+
+    bash oracle_preflight_readonly.sh | tee /tmp/oracle-preflight-$(date +%F).txt
+
+It prints: identity/OS, resources (the section G budget numbers), listeners for both TCP and UDP,
+per-process RSS (the x402/PM2 footprint), service states, the mail availability/certificate-identity/
+queue view, nginx + tunnel identifiers only, the firewall as configured, WireGuard's absence (expected),
+DNS for the two hostnames plus MX/SPF/DMARC, and a bounded tail of the journal.
+
 ### J.1 Phases (each one: exact commands + revert command, presented for GO/NO-GO)
 
 | phase | action | acceptance gate | revert |
@@ -286,9 +313,9 @@ number in section P is checked here, and the plan is adjusted if anything differ
 | 5 | re-issue the hub server cert with `IP:10.66.0.2` (+ optional DNS) | `verify_tls_identity.sh` incl. the new VPN-address case; the LAN path still works | re-issue without the VPN SAN (CA/device certs untouched) |
 | 6 | node #1 over WireGuard on **Wi-Fi** | authenticated observations accepted, watermark advances | disconnect the tunnel |
 | 7 | node #1 on **mobile data, Wi-Fi OFF** | observations still accepted (the real goal) | as above |
-| 8 | mail verification (section A) | after-set identical to before-set | n/a - mail was never changed; a difference stops everything |
+| 8 | mail verification - FUNCTIONAL gate (section A) | the six functional properties hold: ports bound, same certificate fingerprint, mailboxes intact, DNS unchanged, delivery succeeds inbound and outbound, latency normal. Queue depth, counters and logs may legitimately differ | n/a - mail is never changed; a functional regression stops everything |
 | 9 | bounded pilot, 24-72 h, then node #2 (2-5 node assumption) | no OOM, ~0 swap, mail latency normal, reconnect (Wi-Fi<->mobile) works, replay refused after a relay restart | disconnect nodes |
-| 10 | **retire x402** (section B) | HomeGuardian path still works, mail still works, and the x402 backup restores it in a drill | B.4 |
+| 10 | **retire x402** (section B) | **three preconditions, all required:** (a) HomeGuardian connectivity has been VALIDATED end-to-end for the whole pilot - a real node, real observations accepted, watermark advancing - not merely configured; (b) the mail functional gate (phase 8) still holds; (c) the x402 ROLLBACK HAS BEEN EXERCISED as far as is safe (restore the app from the OFF-VPS backup and confirm it starts, without disturbing the live service) | B.4 |
 
 ### J.2 Rollback (per phase, precise)
 
@@ -313,6 +340,15 @@ number in section P is checked here, and the plan is adjusted if anything differ
   stated abort criterion (any mail regression, any unexplained resource move, any acceptance failure).
 * **Per-step approval:** each phase is presented with its exact commands *and* its revert command;
   the owner may stop after any phase and roll back that phase alone.
+* **Three rules added by owner review, and they apply to every phase:**
+  1. **Mail is judged FUNCTIONALLY, never by identical captured output** - availability, certificate
+     identity, mailbox integrity, DNS, delivery, latency (section A.2). Queue depth, counters, logs and
+     timestamps are expected to move.
+  2. **SSH exposure is untouched during the WireGuard deployment.** Restricting it is a separate
+     decision, taken later, and only once alternative administration and recovery access is verified
+     and separately approved - an operator locked out of a box that also runs mail is the worse failure.
+  3. **HomeGuardian is validated before x402 is retired**, with the rollback path exercised and the
+     backup stored OFF the VPS.
 * **Hard requirements before phase 10 (x402 retirement):** every gate in the owner's cutover
   acceptance list must pass - VPN reachable from the hub; a compatible Android node connecting from a
   genuinely different network; end-to-end mTLS with no trust-all workaround; real observations
