@@ -115,6 +115,15 @@ public class MainActivity extends Activity {
                 // device (uiautomator crashes with "UiAutomationService already registered").
                 Log.i(TAG, "counters " + nativeStats());
                 if (nodePanel != null) Log.i(TAG, "counters " + nodePanel.transportCounters());
+                // RECONCILE: if the native layer is not capturing (stop, consent withdrawal, camera
+                // permission revocation, pause) while the bridge still holds a preview, release it.
+                // Java asks the native side - never the reverse - so no lock is held across a call
+                // into Java from a native thread.
+                if (camera1 != null && camera1.isCapturing() && !nativeVideoRunning()) {
+                    camera1.stopCamera();
+                    Log.i(TAG, "camera1 released: the native layer is not capturing "
+                            + "(stop/withdrawal/permission/pause)");
+                }
             }
             ticker.postDelayed(this, 500);
         }
@@ -135,7 +144,11 @@ public class MainActivity extends Activity {
     private native void nativeSetPermissions(boolean camera, boolean mic);
     private native String nativeGrantConsent(boolean camera, boolean mic);
     private native String nativeWithdrawConsent();
-    private native String nativeStartCamera(int cameraId);
+    private native String nativeStartCamera(int cameraId, String backend);
+    private native String nativeCameraReport(int cameraCount);
+    private native String nativeCameraStartResult(boolean ok, String detail);
+    private native String nativeCameraBackend();
+    private native boolean nativeVideoRunning();
     private native String nativeStopCamera();
     private native String nativeStartMic(int sampleRate, int channels);
     private native String nativeStopMic();
@@ -285,6 +298,14 @@ public class MainActivity extends Activity {
         setContentView(scroll);
 
         camera1 = new Camera1Bridge();
+        // Report the LEGACY camera availability to the native layer (the NDK enumeration is
+        // what fails on this device). Enumeration is not capture - it only tells the native
+        // lifecycle whether a Camera1 camera exists to open.
+        try {
+            Log.i(TAG, "" + nativeCameraReport(Camera1Bridge.cameraCount()));
+        } catch (Throwable t) {
+            Log.w(TAG, "camera availability report failed: " + t);
+        }
         applyIdentity();
         refreshConsentView();
         setStatus("Ready. Nothing is capturing. Grant consent and press Start.");
@@ -404,9 +425,22 @@ public class MainActivity extends Activity {
         }
         int[] size = SIZES[sizeSpinner.getSelectedItemPosition()];
         int fps = FPS[fpsSpinner.getSelectedItemPosition()];
-        String r = nativeStartCamera(cameraId);
+        // EXPLICIT backend selection: this device's legacy Camera1 path works while the NDK camera2
+        // API enumerates zero cameras, so Camera1 is requested by name and the NDK is NOT required to
+        // succeed first. Order matters: the native gate authorizes FIRST (consent + permission +
+        // lifecycle), and only then does the bridge actually open the camera - so capture can never
+        // begin before consent is checked. If the bridge fails to open, the native capturing state is
+        // cleared instead of being left claiming capture.
+        String backend = "camera1";
+        String r = nativeStartCamera(cameraId, backend);
         if (r.startsWith("camera: capturing")) {
-            r = camera1.startCamera(cameraId, size[0], size[1], fps);
+            String javaResult = camera1.startCamera(cameraId, size[0], size[1], fps);
+            if (javaResult.startsWith("camera1: capturing")) {
+                r = r + " | " + javaResult;
+                Log.i(TAG, "camera backend=" + backend + " " + javaResult);
+            } else {
+                r = nativeCameraStartResult(false, javaResult);
+            }
         }
         setStatus(r);
         refreshCounters();
@@ -417,6 +451,7 @@ public class MainActivity extends Activity {
             camera1.stopCamera();
         }
         setStatus(nativeStopCamera());
+        // nativeStopCamera() clears the native video flag, so the panel's `video=` cannot stay on.
         refreshCounters();
     }
 

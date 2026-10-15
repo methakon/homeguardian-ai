@@ -179,6 +179,16 @@ void CaptureAccountant::note_capture_stopped() {
     audio_running_ = false;
 }
 
+void CaptureAccountant::note_capture_stopped(bool video) {
+    std::lock_guard<std::mutex> lk(m_);
+
+    if (video) {
+        video_running_ = false;
+    } else {
+        audio_running_ = false;
+    }
+}
+
 void CaptureAccountant::note_xrun() {
     std::lock_guard<std::mutex> lk(m_);
     counters_.sat_add(counters_.xruns, 1);

@@ -131,6 +131,9 @@ public:
 
     void note_capture_started(bool video, int64_t now_ms);
     void note_capture_stopped();
+    // Clear ONE kind only. Stopping the camera must not mark the microphone stopped
+    // (the whole-kind reset above would report `audio=off` while audio is still running).
+    void note_capture_stopped(bool video);
     void note_xrun();
 
     // A COPY, taken under the lock: driver threads update counters while the UI

@@ -79,6 +79,7 @@ if(HOMEGUARDIAN_BUILD_ANDROID_BACKEND)
         message(FATAL_ERROR "HOMEGUARDIAN_BUILD_ANDROID_BACKEND requires an Android toolchain (use the NDK's android.toolchain.cmake)")
     endif()
     add_library(homeguardian_android_backend STATIC
+        src/backend/android/Camera1Device.cpp
         src/backend/android/NdkCameraDevice.cpp
         src/backend/android/AAudioCaptureDevice.cpp
     )
@@ -97,6 +98,7 @@ if(HOMEGUARDIAN_BUILD_ANDROID_BACKEND)
     # permission and is safe to run from `adb shell`.
     add_executable(hg_ondevice_selftest
         src/backend/android/ondevice_selftest.cpp
+        src/backend/android/Camera1Device.cpp
         src/backend/android/NdkCameraDevice.cpp
         src/backend/android/AAudioCaptureDevice.cpp
         src/core/ConsentGate.cpp
@@ -383,10 +385,12 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_config_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_consent_gate.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_consent_lifecycle.cpp
+        ${CMAKE_SOURCE_DIR}/tests/android/test_camera1_device.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_simulated_sensor.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_gated_acquisition.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_consent_guarded_device.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_fake_device_delivery.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/android/Camera1Device.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_camera1_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_ubuntu_backend.cpp
         ${CMAKE_SOURCE_DIR}/tests/audio/test_audio_activity_session.cpp

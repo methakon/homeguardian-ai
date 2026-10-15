@@ -48,6 +48,7 @@ mkdir -p "$BUILD_DIR/gen/lib/$ABI"
 echo "==> Compile native library (libhg_harness.so)"
 NATIVE_SRC="$APK_DIR/jni/hg_harness_jni.cpp"
 CORE_SRC=(
+  "$ROOT/src/backend/android/Camera1Device.cpp"
   "$ROOT/src/backend/android/NdkCameraDevice.cpp"
   "$ROOT/src/backend/android/AAudioCaptureDevice.cpp"
   "$ROOT/src/core/ConsentGate.cpp"

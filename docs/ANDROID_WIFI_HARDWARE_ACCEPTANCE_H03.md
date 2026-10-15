@@ -470,3 +470,81 @@ independence; a category the grant does not cover is refused; the global capture
 any grant; concurrent presses from 4 threads keep the invariant.
 
 Suite totals: **477 cases / 5,609 assertions**, all passing (was 464/5,564 before this milestone).
+
+## 11. BLOCKING DEFECT FIXED: legacy Camera1 path was unreachable behind a failing NDK enumeration
+
+### 11.1 The defect, and the evidence from the device
+
+The operator's physical attempt failed with
+
+    camera: initialization failed (NdkCameraDevice: no camera available)
+
+because `nativeStartCamera()` built an `NdkCameraDeviceImpl` UNCONDITIONALLY and required its
+`initialize()` (an `ACameraManager_getCameraIdList()` enumeration) to succeed before the real
+`Camera1Bridge` path - `Camera.open()`, NV21 preview callbacks, per-frame native delivery gate - could
+run at all. Treating the NDK device as if it were the Camera1 acquisition device made a working camera
+unreachable.
+
+Both availability views, from the device and read-only:
+
+    adb shell dumpsys media.camera  ->  "Number of camera devices: 2"   (Camera device 0 and 1 present)
+    the app's recorded NDK path     ->  "NdkCameraDevice: no camera available"  (enumerates 0)
+
+The platform has two cameras; the NDK camera2 API cannot see them on this MT6580 / API 27 unit. A
+camera count is not capture, and neither enumeration is evidence that frames are flowing - only
+preview callbacks and rising counters are (section 11.5).
+
+### 11.2 Fix
+
+| piece | what changed |
+|---|---|
+| `src/backend/android/Camera1Device.{h,cpp}` (new) | a native lifecycle representation of the **Java Camera1 bridge**, implementing the same `IMediaDevice` contract as the NDK backend, so `ConsentGuardedDevice`, per-frame authorization and capture accounting work unchanged. It owns no Android handles (the bridge owns Camera/SurfaceTexture). Deliberately **Android-free**, so it is unit-tested on the host rather than asserted in prose |
+| backend selection | `nativeStartCamera(cameraId, backend)` - explicit, from the Activity: `"camera1"` (this device), `"camera2"` (the NDK backend, preserved), `"auto"` (a deterministic rule, not a hardware probe). **A successful NDK enumeration is never a precondition** for the Camera1 path |
+| `nativeCameraReport(count)` | the Activity reports what the LEGACY api sees (`Camera.getNumberOfCameras()`); `Camera1Device::initialize()` refuses when it is 0 |
+| `nativeCameraStartResult(ok, detail)` | the Activity reports the outcome of `Camera.open()`/`startPreview()`. **On failure it forces stop+close and clears the video flag**, so a failed Java start can never leave `video=on` |
+| `nativeVideoRunning()` | the Activity's reconciler asks the native layer whether capture is still on, and releases the Camera1 resources when it is not (stop, consent withdrawal, camera-permission revocation, activity pause) |
+| `CaptureAccountant::note_capture_stopped(bool video)` (new overload) | clears ONE kind only: stopping the camera no longer marks the microphone stopped |
+| `nativeStopCamera()` | now clears the video flag too - previously `video=on` outlived a camera stop |
+
+Ordering, deliberately: the **native gate authorizes first** (permission + consent + lifecycle) and only
+then does the bridge open the camera, so capture can never begin before consent is checked. Frames are
+still authorized per payload, and a refused frame stops preview and releases the camera (existing
+behaviour, unchanged).
+
+Direction of the reconciler matters: **Java asks the native side, never the reverse**, so no native lock
+is ever held while calling into Java (the callback path already avoids that).
+
+### 11.3 Tests
+
+`tests/android/test_camera1_device.cpp`, tag `[camera1]` - **9 cases / 46 assertions**: initialize
+refuses before a count is reported; refuses with a reported count of 0; the full
+Initialized -> Capturing -> Stopped lifecycle; repeated start/stop cycles; **a failed Java start can
+never leave the device Capturing**; stop/close idempotent; start from Idle/Error refused; the consent
+guard gating this backend (no consent refused, grant allowed, **withdrawal forces the device out of
+capture**, OS permission revocation likewise); consecutive grants still authorize.
+
+Note on tags: `[camera1]` already matched 6 pre-existing `Camera1Bridge` adapter cases, so "All tests
+passed" was not proof that the new file ran. The proof is the **delta**: `[camera1]` went 6 -> **15
+cases**, and the full suite 477 -> **486 cases** / 5,609 -> **5,652 assertions**.
+
+### 11.4 Build and install
+
+* Host suite: **486 cases / 5,652 assertions**, all passing; ctest green.
+* APK **965,451 B**, `lib/armeabi-v7a` only, JNI export gate **21 declarations / 21 unmangled
+  exports**, with `nativeCameraReport`, `nativeCameraStartResult`, `nativeCameraBackend`,
+  `nativeVideoRunning` and the new `nativeStartCamera` all confirmed in the packaged `.so`.
+* `adb install -r` -> **Success**, app data preserved; clean launch, 0 UnsatisfiedLinkError / FATAL /
+  SIGSEGV; the startup line now reports `camera availability: legacy(Camera1)=2`.
+
+### 11.5 Physical acceptance - what counts as proof (NOT yet claimed)
+
+Enumeration is not capture. Capture is accepted only when, with operator consent and the rear Camera1
+device started: real `onPreviewFrame` callbacks occur, `frames_seen` / `frames_authorized` /
+`frames_processed` all RISE, real motion observations are emitted after authorized frame processing,
+repeated start/stop works, camera and microphone co-exist, and withdrawal/activity pause stop delivery
+immediately with no native crash, deadlock or leaked camera. `scripts/verify_h03_physical_acceptance.sh`
+checks exactly those from the phone's log and the hub's watermark, and reports NOT OBSERVED (a failure)
+for anything it cannot see.
+
+The NDK camera2 backend is **preserved but NOT hardware-verified**: its capture-session implementation
+is incomplete and this device cannot exercise it. No claim is made that it works on hardware.

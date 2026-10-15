@@ -34,6 +34,7 @@
 #include <string>
 
 #include "backend/android/AAudioCaptureDevice.h"
+#include "backend/android/Camera1Device.h"
 #include "backend/android/NdkCameraDevice.h"
 #include "core/CaptureAccounting.h"
 #include "core/BoundedFeatures.h"
@@ -85,7 +86,13 @@ struct Node {
 
     // camera
     int camera_id = 0;                 // 0 = back, 1 = front (Camera1 index)
-    std::unique_ptr<NdkCameraDeviceImpl> camera;        // camera2 path
+    std::unique_ptr<NdkCameraDeviceImpl> camera;        // camera2 / NDK path
+    std::unique_ptr<Camera1Device> camera1;             // legacy Camera1 (java bridge) path
+    std::string camera_backend = "none";                // which backend the guard is bound to
+    // What the ACTIVITY's legacy api sees (Camera.getNumberOfCameras()). -1 = not reported yet.
+    // Deliberately NOT the NDK enumeration: on the validation device the NDK enumerates zero cameras
+    // while the legacy api sees one, which is the whole reason backend selection is explicit.
+    std::atomic<int> platform_camera_count{-1};
     std::unique_ptr<ConsentGuardedDevice> guarded_camera;
     // mic (AAudio)
     std::unique_ptr<AAudioCaptureDeviceImpl> mic;
@@ -185,6 +192,28 @@ std::string jstr(JNIEnv* env, jstring s) {
     return out;
 }
 
+std::string jstring_to_std(JNIEnv* env, jstring value) {
+    if (value == nullptr) return {};
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    if (chars == nullptr) return {};
+    std::string out(chars);
+    env->ReleaseStringUTFChars(value, chars);
+    return out;
+}
+
+// Backend selection is EXPLICIT and comes from the Activity, which knows what the platform exposes.
+// It is never gated behind a successful NDK enumeration: on the validation device (Android 8.1 /
+// API 27 / MT6580) the NDK camera2 API enumerates ZERO cameras while the legacy Camera1 path works,
+// and requiring NDK success first is exactly what blocked physical camera acceptance.
+//   "camera1" -> the java Camera1 bridge (Camera.open() + NV21 preview callbacks)
+//   "camera2" -> the NDK camera2 backend (kept for devices that support it)
+//   "auto"    -> a deterministic rule, not a hardware probe: use Camera1 when the platform reports
+//                legacy cameras, otherwise the NDK backend.
+std::string select_camera_backend(const Node& n, const std::string& requested) {
+    if (requested == "camera1" || requested == "camera2") return requested;
+    return n.platform_camera_count.load() > 0 ? "camera1" : "camera2";
+}
+
 jstring to_jstring(JNIEnv* env, const std::string& s) {
     return env->NewStringUTF(s.c_str());
 }
@@ -279,9 +308,11 @@ Java_org_homeguardian_harness_MainActivity_nativeWithdrawConsent(JNIEnv* env, jo
 
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeStartCamera(JNIEnv* env, jobject /*thiz*/,
-                                                             jint camera_id) {
+                                                             jint camera_id, jstring backend) {
     auto& n = node();
     std::lock_guard<std::mutex> lk(n.m);
+    const std::string requested = jstring_to_std(env, backend);
+    const std::string selected = select_camera_backend(n, requested.empty() ? "auto" : requested);
     if (!n.camera_permission.load()) {
         return to_jstring(env, "camera: OS permission not granted; capture not started");
     }
@@ -289,7 +320,19 @@ Java_org_homeguardian_harness_MainActivity_nativeStartCamera(JNIEnv* env, jobjec
         return to_jstring(env, "camera: consent not granted; capture not started");
     }
     n.camera_id = static_cast<int>(camera_id);
-    if (!n.camera) {
+    // Rebuild the guard for the SELECTED backend. Re-selecting on every start keeps repeated
+    // start/stop honest (an acceptance item) and makes a backend switch impossible to half-apply.
+    n.guarded_camera.reset();
+    n.camera.reset();
+    n.camera1.reset();
+    n.camera_backend = selected;
+    if (selected == "camera1") {
+        n.camera1 = std::make_unique<Camera1Device>();
+        n.camera1->set_platform_camera_count(n.platform_camera_count.load());
+        n.guarded_camera = std::make_unique<ConsentGuardedDevice>(
+            *n.camera1, *n.gate, AcquisitionRequest{"node", "camera_acquire", "camera"},
+            [&n] { return n.camera_permission.load(); });
+    } else {
         n.camera = std::make_unique<NdkCameraDeviceImpl>();
         n.camera->set_device_confirmed(true);
         n.guarded_camera = std::make_unique<ConsentGuardedDevice>(
@@ -323,8 +366,8 @@ Java_org_homeguardian_harness_MainActivity_nativeStartCamera(JNIEnv* env, jobjec
         return to_jstring(env, why);
     }
     n.accountant.note_capture_started(/*video=*/true, now_ms());
-    HG_LOGI("camera capture started (id=%d)", n.camera_id);
-    return to_jstring(env, "camera: capturing (delivery-gated)");
+    HG_LOGI("camera capture started (id=%d backend=%s)", n.camera_id, selected.c_str());
+    return to_jstring(env, "camera: capturing (delivery-gated, backend=" + selected + ")");
 }
 
 JNIEXPORT jstring JNICALL
@@ -335,6 +378,8 @@ Java_org_homeguardian_harness_MainActivity_nativeStopCamera(JNIEnv* env, jobject
         n.guarded_camera->stop();
         n.guarded_camera->close();
     }
+    // Clear the VIDEO flag only: a camera stop must not report the microphone as stopped.
+    n.accountant.note_capture_stopped(/*video=*/true);
     const CaptureCounters c = n.accountant.counters();
     return to_jstring(env, "camera stopped: frames=" + std::to_string(c.frames_authorized) +
                                " dropped=" + std::to_string(c.frames_dropped));
@@ -641,6 +686,71 @@ Java_org_homeguardian_harness_MainActivity_nativeSetObservationIntervalMs(JNIEnv
         n.observation_interval_ms = bounded;
     }
     return to_jstring(env, "observation interval: " + std::to_string(bounded) + " ms");
+}
+
+// ---- camera backend reporting (H-03 blocking fix) ---------------------------------------------
+// These are declared in MainActivity. They live INSIDE this extern "C" region on purpose: a
+// definition outside it is C++-mangled and JNI cannot resolve it (that defect cost a milestone).
+
+// The Activity reports what the LEGACY api sees. This is one of the two availability views the
+// acceptance requires - the other is the NDK enumeration, which returns zero cameras on this device
+// and is what "no camera available" recorded. A count is NOT capture: initialize() only means there
+// is a camera to open.
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeCameraReport(JNIEnv* env, jobject /*thiz*/,
+                                                              jint camera_count) {
+    auto& n = node();
+    {
+        std::lock_guard<std::mutex> lk(n.m);
+        n.platform_camera_count.store(static_cast<int>(camera_count));
+        if (n.camera1) n.camera1->set_platform_camera_count(static_cast<int>(camera_count));
+    }
+    const std::string summary = "camera availability: legacy(Camera1)=" +
+                                std::to_string(static_cast<int>(camera_count)) +
+                                " (the NDK camera2 enumeration is reported separately)";
+    __android_log_print(ANDROID_LOG_INFO, "HGNode", "%s", summary.c_str());
+    return to_jstring(env, summary);
+}
+
+// The Activity reports the outcome of Camera.open()/startPreview(). A failure must NEVER leave the
+// native state claiming capture: force stop+close (which stops delivery immediately) and clear the
+// video flag, so `video=on` cannot survive a failed Java start.
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeCameraStartResult(JNIEnv* env, jobject /*thiz*/,
+                                                                   jboolean ok, jstring detail) {
+    auto& n = node();
+    std::lock_guard<std::mutex> lk(n.m);
+    const std::string why = jstring_to_std(env, detail);
+    if (ok == JNI_TRUE) {
+        return to_jstring(env, "camera1: start confirmed by the java bridge");
+    }
+    if (n.camera1) n.camera1->set_java_start_failed(why);
+    if (n.guarded_camera) {
+        n.guarded_camera->stop();
+        n.guarded_camera->close();
+    }
+    n.accountant.note_capture_stopped(/*video=*/true);
+    const std::string msg =
+        "camera: start FAILED at the java bridge - capture state cleared (video=off): " + why;
+    __android_log_print(ANDROID_LOG_WARN, "HGNode", "%s", msg.c_str());
+    return to_jstring(env, msg);
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeCameraBackend(JNIEnv* env, jobject /*thiz*/) {
+    auto& n = node();
+    std::lock_guard<std::mutex> lk(n.m);
+    return to_jstring(env, "camera backend: " +
+                               (n.camera_backend.empty() ? std::string("none") : n.camera_backend));
+}
+
+// The Activity's reconciler uses this to notice that the NATIVE layer has left capture (stop,
+// consent withdrawal, permission revocation, pause) and release the Camera1 resources itself. The
+// direction matters: Java asks native, never the reverse, so no lock is held while calling into Java.
+JNIEXPORT jboolean JNICALL
+Java_org_homeguardian_harness_MainActivity_nativeVideoRunning(JNIEnv* env, jobject /*thiz*/) {
+    auto& n = node();
+    return n.accountant.video_running() ? JNI_TRUE : JNI_FALSE;
 }
 
 }  // extern "C" (H-03 observation drain + interval control)

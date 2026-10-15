@@ -378,3 +378,16 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Phone instrumentation | the app now logs its counters every ~10 s (`counters video=... frames_processed=... samples=... obs_emitted=...` and `counters transport queued=... sent=...`), because UI scraping is unusable on this device. APK 928,615 B, JNI gate 17/17, reinstalled - and its line is **not yet observed** because the phone is locked (the tick runs only while the activity is resumed) |
 | H-03 physical acceptance | **PENDING OPERATOR** - no result claimed or simulated |
 | Oracle VPS | **not contacted, not modified** |
+
+## Camera1 / NDK backend-selection defect (FIXED)
+
+| item | state |
+|---|---|
+| Reported failure | `camera: initialization failed (NdkCameraDevice: no camera available)` - the Camera1 path was unreachable behind a failing NDK enumeration |
+| Device evidence | `dumpsys media.camera` reports **2 camera devices**; the NDK camera2 API enumerates **0** on this MT6580/API 27 unit |
+| Fix | explicit backend selection (`camera1` / `camera2` / `auto`), a native lifecycle representation for the Java Camera1 bridge (`Camera1Device`, Android-free and host-tested), a Java-start failure that clears the native capturing state and the video flag, a per-kind accountant stop, and a Java-side reconciler that releases Camera1 whenever the native layer leaves capture |
+| Preserved | consent gate + per-frame authorization, CAMERA permission checks, withdrawal, activity-pause stop, bounds checks, capture accounting, and the NDK/camera2 backend for devices that support it |
+| Tests | `[camera1]` 9 new cases / 46 assertions (delta-proven: `[camera1]` tag 6 -> 15 cases); full suite **486 / 5,652** (was 477 / 5,609) |
+| Build | APK 965,451 B, JNI gate 21 declarations / 21 exports, `install -r` Success, clean launch, `camera availability: legacy(Camera1)=2` |
+| Physical camera acceptance | **PENDING OPERATOR** - requires consent + Start camera, then real preview callbacks and rising frame counters; not claimed, not simulated |
+| NDK camera2 hardware status | preserved, **NOT hardware-verified** (incomplete capture-session implementation; this device cannot exercise it) |
