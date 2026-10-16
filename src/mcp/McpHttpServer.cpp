@@ -18,6 +18,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <spdlog/spdlog.h>
 
@@ -71,6 +72,7 @@ struct Parsed {
     bool body_overflow = false;
     bool timed_out = false;
     bool chunked = false;
+    bool duplicate_sensitive_header = false;
 };
 
 // Fd RAII so no path leaks a descriptor.
@@ -149,6 +151,10 @@ Parsed read_request(int fd, size_t max_header_bytes, size_t max_body_bytes) {
         if (!(rl >> p.method >> p.path >> p.http_version)) return p;
         if (p.http_version.rfind("HTTP/1.", 0) != 0) return p;
     }
+    static const std::unordered_set<std::string> sensitive_headers = {
+        "authorization", "content-length", "transfer-encoding", "origin", "host", "mcp-session-id"
+    };
+
     size_t pos = (line_end == std::string::npos) ? head.size() : line_end + 2;
     while (pos < head.size()) {
         size_t eol = head.find("\r\n", pos);
@@ -159,7 +165,13 @@ Parsed read_request(int fd, size_t max_header_bytes, size_t max_body_bytes) {
         const std::string name = to_lower(trim(line.substr(0, colon)));
         const std::string value = trim(line.substr(colon + 1));
         if (name.empty()) continue;
-        p.headers[name] = value;  // last wins; duplicates are not a security decision here
+        if (sensitive_headers.find(name) != sensitive_headers.end()) {
+            if (p.headers.find(name) != p.headers.end()) {
+                p.duplicate_sensitive_header = true;
+                return p;
+            }
+        }
+        p.headers[name] = value;
     }
     if (p.method.empty() || p.path.empty()) return p;
 
@@ -335,6 +347,11 @@ void McpHttpServer::Impl::handle_connection(int fd) {
         respond_simple(sock.fd, 501,
                        make_error_json("null", RpcCode::invalid_request,
                                        "Invalid Request: chunked bodies not supported"));
+        return;
+    }
+    if (req.duplicate_sensitive_header) {
+        bump(&Stats::errors);
+        respond_simple(sock.fd, 400);
         return;
     }
     if (!req.ok) {

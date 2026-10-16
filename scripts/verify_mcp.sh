@@ -68,6 +68,13 @@ rc=$?
 set -e
 check "refuses a non-loopback bind" "4" "$rc"
 
+echo "== 3c. startup refusal: non-loopback bind with HG_MCP_ALLOW_REMOTE=0 must still be refused"
+set +e
+HG_MCP_ALLOW_REMOTE=0 HG_MCP_BIND=0.0.0.0 "$BIN" "$CONFIG" "$TMP/creds.json" >"$TMP/out2c" 2>&1
+rc=$?
+set -e
+check "refuses non-loopback bind when HG_MCP_ALLOW_REMOTE=0" "4" "$rc"
+
 echo "== 4. start the server on 127.0.0.1:$PORT"
 HG_MCP_PORT="$PORT" HG_MCP_AUDIT_DB="$TMP/audit.db" \
   "$BIN" "$CONFIG" "$TMP/creds.json" >"$TMP/server.log" 2>&1 &
@@ -173,6 +180,12 @@ check "wrong content type -> 415" "415" "$code"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
   -H 'MCP-Protocol-Version: 1999-01-01' -d '{"jsonrpc":"2.0","id":15,"method":"ping"}')
 check "unsupported protocol version header -> 400" "400" "$code"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$AUTH" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":151,"method":"ping"}')
+check "duplicate Authorization header -> 400" "400" "$code"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H "$ACCEPT" -H "$SESS" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":152,"method":"ping"}')
+check "duplicate Mcp-Session-Id header -> 400" "400" "$code"
 
 echo "== 14. SSE-only client still receives its response"
 code=$(curl -s -o "$TMP/b16" -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H 'Accept: text/event-stream' -H "$SESS" \

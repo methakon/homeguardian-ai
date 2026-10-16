@@ -118,17 +118,21 @@ log_ok "Native C++ MCP Server listening on 127.0.0.1:$MCP_PORT"
 echo -e "\n[Step 4] Running Automated Integration Verification Suites..."
 cd "$REPO_ROOT"
 
-# 4a. Devices & WebRTC Dashboard Suite (53 assertions)
+# 4a. Devices & WebRTC Dashboard Suite
+DEV_PASS=0
 node web_mcp/test_devices_dashboard.js > "$WORK/suite_devices.out" 2>&1 && {
-  log_ok "HG-UI-03 Suite: 53 assertions passed (Registry, WebRTC, Auth, Consent)"
+  DEV_PASS=$(grep -oE '[0-9]+ PASSED' "$WORK/suite_devices.out" | head -1 | awk '{print $1}')
+  log_ok "HG-UI-03 Suite: ${DEV_PASS:-0} assertions passed (Registry, WebRTC, Auth, Consent)"
 } || {
   log_fail "HG-UI-03 Suite failed"
   cat "$WORK/suite_devices.out"
 }
 
-# 4b. Native MCP Conversational Client Suite (26 assertions)
+# 4b. Native MCP Conversational Client Suite
+MCP_PASS=0
 node web_mcp/test_client.js > "$WORK/suite_mcp.out" 2>&1 && {
-  log_ok "MCP Client Suite: 26 assertions passed (MCP Streamable HTTP, Tools, Chat)"
+  MCP_PASS=$(grep -oE '[0-9]+ PASSED' "$WORK/suite_mcp.out" | head -1 | awk '{print $1}')
+  log_ok "MCP Client Suite: ${MCP_PASS:-0} assertions passed (MCP Streamable HTTP, Tools, Chat)"
 } || {
   log_fail "MCP Client Suite failed"
   cat "$WORK/suite_mcp.out"
@@ -177,6 +181,7 @@ if [[ "$FAIL" -gt 0 ]]; then
   exit 1
 fi
 
-echo -e "\n\033[32m✔ Release Integration Synthetic Demonstration is CERTIFIED (79/79 Tests Passing).\033[0m"
+TOTAL_SUITE_TESTS=$(( ${DEV_PASS:-0} + ${MCP_PASS:-0} ))
+echo -e "\n\033[32m✔ Release Integration Synthetic Demonstration is CERTIFIED (${TOTAL_SUITE_TESTS} Tests Passing: ${DEV_PASS} Dashboard/WebRTC + ${MCP_PASS} MCP Client).\033[0m"
 echo "Demonstration Dashboard URL: http://127.0.0.1:$WEB_PORT"
 echo "Single-run operator credentials: user='admin', password='$DEMO_OPERATOR_PASS'"

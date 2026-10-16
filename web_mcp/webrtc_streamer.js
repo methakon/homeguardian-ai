@@ -7,6 +7,7 @@
 //   - Immediate teardown on access revocation or viewer stop
 //   - Zero continuous video frames over MCP or plain JSON
 
+const crypto = require('node:crypto');
 const { RTCPeerConnection, MediaStreamTrack, RTCRtpCodecParameters } = require('werift');
 
 class WebRtcStreamer {
@@ -20,18 +21,16 @@ class WebRtcStreamer {
     ];
   }
 
-  // Validate request Origin
-  isOriginAllowed(originHeader, hostHeader) {
-    if (!originHeader) return true; // non-browser or curl
+  // Validate request Origin (Strict: loopback only or exact allowedOrigins match)
+  isOriginAllowed(originHeader) {
+    if (!originHeader) return false; // Strict: browser Origin required
     try {
       const u = new URL(originHeader);
-      const originBase = `${u.protocol}//${u.hostname}`;
-      const hostBase = hostHeader ? hostHeader.split(':')[0] : '127.0.0.1';
-
-      if (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === hostBase) {
+      if ((u.protocol === 'http:' || u.protocol === 'https:') &&
+          (u.hostname === '127.0.0.1' || u.hostname === 'localhost')) {
         return true;
       }
-      return this.allowedOrigins.some((o) => originHeader.startsWith(o));
+      return this.allowedOrigins.includes(`${u.protocol}//${u.host}`);
     } catch (_) {
       return false;
     }
@@ -49,8 +48,8 @@ class WebRtcStreamer {
    * @param {string} hostHeader
    */
   async handleOffer({ deviceId, viewToken, sdp }, session, originHeader, hostHeader) {
-    // 1. Origin verification
-    if (!this.isOriginAllowed(originHeader, hostHeader)) {
+    // 1. Strict Origin verification
+    if (!this.isOriginAllowed(originHeader)) {
       throw new Error('forbidden_origin: Origin not permitted for WebRTC signaling');
     }
 
@@ -69,40 +68,44 @@ class WebRtcStreamer {
       throw new Error(`consent_withheld: Camera view refused. Consent not granted for '${deviceId}'`);
     }
 
-    // 4. Verify scoped view token
-    const tokenValid = this.sessionManager.validateViewToken(viewToken, deviceId);
-    if (!tokenValid) {
-      throw new Error('invalid_view_token: Scoped viewing authorization invalid or expired');
+    // 4. Liveness check: Physical cameras must be confirmed online
+    if (!device.is_synthetic && !device.online) {
+      throw new Error(`device_offline: Physical camera '${deviceId}' is offline. Streaming unavailable.`);
     }
 
-    // 5. Close any existing connection for this device/session to prevent connection leaks
+    // 5. Verify scoped view token strictly bound to this session
+    const tokenValid = this.sessionManager.validateViewToken(viewToken, deviceId, session.sessionToken);
+    if (!tokenValid) {
+      throw new Error('invalid_view_token: Scoped viewing authorization invalid, expired, or bound to another session');
+    }
+
+    // 6. Close any existing connection for this device to prevent resource leaks
     this.stopDeviceStream(deviceId);
 
-    // 6. Create WebRTC PeerConnection
-    const connectionId = `conn_${deviceId}_${Date.now()}`;
+    // 7. Create WebRTC PeerConnection with CSPRNG random connection ID
+    const connectionId = `conn_${crypto.randomBytes(16).toString('hex')}`;
     const pc = new RTCPeerConnection({
       iceServers: [], // LAN / loopback host-only, no cloud STUN/TURN relays
     });
 
-    // 7. Add synthetic video track
-    // Generates RFC-compliant video RTP packets for browser media attachment
-    const videoTrack = new MediaStreamTrack({ kind: 'video' });
-    pc.addTrack(videoTrack);
+    let answer;
+    try {
+      const videoTrack = new MediaStreamTrack({ kind: 'video' });
+      pc.addTrack(videoTrack);
+      await pc.setRemoteDescription(sdp);
+      answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+    } catch (err) {
+      try { pc.close(); } catch (_) {}
+      throw new Error(`sdp_exchange_failed: ${err.message}`);
+    }
 
-    // 8. Set Remote Description (client's offer)
-    await pc.setRemoteDescription(sdp);
-
-    // 9. Generate Answer
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    // Track active connection
+    // Track active connection with session ownership
     const entry = {
       connectionId,
       deviceId,
       sessionToken: session.sessionToken,
       pc,
-      videoTrack,
       startedAt: Date.now(),
       synthetic: !!device.is_synthetic,
     };
@@ -110,6 +113,7 @@ class WebRtcStreamer {
 
     pc.connectionStateChange.subscribe((state) => {
       if (state === 'closed' || state === 'failed' || state === 'disconnected') {
+        try { pc.close(); } catch (_) {}
         this.activeConnections.delete(connectionId);
       }
     });
@@ -147,11 +151,14 @@ class WebRtcStreamer {
   }
 
   /**
-   * Stop active stream by connectionId
+   * Stop active stream by connectionId with session ownership check
    */
-  stopConnection(connectionId) {
+  stopConnection(connectionId, session = null) {
     const entry = this.activeConnections.get(connectionId);
     if (entry) {
+      if (session && entry.sessionToken !== session.sessionToken) {
+        throw new Error('forbidden: Cannot stop another session\'s active stream');
+      }
       try {
         entry.pc.close();
       } catch (_) {}
@@ -159,6 +166,23 @@ class WebRtcStreamer {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Terminate all active streams belonging to a specific session
+   */
+  stopSessionStreams(sessionToken) {
+    let closed = 0;
+    for (const [id, entry] of this.activeConnections.entries()) {
+      if (entry.sessionToken === sessionToken) {
+        try {
+          entry.pc.close();
+        } catch (_) {}
+        this.activeConnections.delete(id);
+        closed++;
+      }
+    }
+    return closed;
   }
 
   /**

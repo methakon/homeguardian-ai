@@ -42,18 +42,17 @@ class SessionManager {
     return list;
   }
 
-  // Authenticate operator credentials
+  // Authenticate operator credentials (constant-time, safe for any input length)
   verifyCredentials(username, password) {
+    if (typeof username !== 'string' || typeof password !== 'string') return false;
     if (!username || !password) return false;
-    const uMatch = crypto.timingSafeEqual(
-      Buffer.from(String(username).padEnd(32, ' ')),
-      Buffer.from(this.operatorUsername.padEnd(32, ' '))
-    );
-    const pMatch = crypto.timingSafeEqual(
-      Buffer.from(String(password).padEnd(32, ' ')),
-      Buffer.from(this.operatorPassword.padEnd(32, ' '))
-    );
-    return uMatch && pMatch && username === this.operatorUsername && password === this.operatorPassword;
+    const uHash = crypto.createHash('sha256').update(username).digest();
+    const expUHash = crypto.createHash('sha256').update(this.operatorUsername).digest();
+    const pHash = crypto.createHash('sha256').update(password).digest();
+    const expPHash = crypto.createHash('sha256').update(this.operatorPassword).digest();
+    const uMatch = crypto.timingSafeEqual(uHash, expUHash);
+    const pMatch = crypto.timingSafeEqual(pHash, expPHash);
+    return uMatch && pMatch;
   }
 
   // Create an authenticated session
@@ -154,8 +153,8 @@ class SessionManager {
     };
   }
 
-  // Validate a scoped view token
-  validateViewToken(viewToken, deviceId) {
+  // Validate a scoped view token (strictly bound to device and parent session)
+  validateViewToken(viewToken, deviceId, expectedSessionToken = null) {
     if (!viewToken || !deviceId) return false;
     const entry = this.viewTokens.get(viewToken);
     if (!entry) return false;
@@ -166,6 +165,10 @@ class SessionManager {
     }
 
     if (entry.deviceId !== deviceId) {
+      return false;
+    }
+
+    if (expectedSessionToken && entry.sessionToken !== expectedSessionToken) {
       return false;
     }
 

@@ -19,10 +19,12 @@ const { SessionManager } = require('./auth');
 const { DeviceRegistryAdapter } = require('./device_adapter');
 const { WebRtcStreamer } = require('./webrtc_streamer');
 
+const crypto = require('node:crypto');
+
 const WEB_PORT = parseInt(process.env.HG_WEB_PORT || '8800', 10);
 const MCP_PORT = parseInt(process.env.HG_MCP_PORT || '18990', 10);
 const MCP_URL = `http://127.0.0.1:${MCP_PORT}/mcp`;
-const TOKEN = process.env.HG_MCP_TOKEN || 'demo-judge-token-2026';
+const TOKEN = process.env.HG_MCP_TOKEN || crypto.randomBytes(32).toString('hex');
 
 let mcpClient = null;
 let mcpServerProc = null;
@@ -32,18 +34,22 @@ const sessionManager = new SessionManager();
 const deviceAdapter = new DeviceRegistryAdapter();
 const webrtcStreamer = new WebRtcStreamer({ sessionManager, deviceAdapter });
 
-// Helper: Ensure 0600 credential file exists for hg_mcp_server
+// Helper: Ensure 0600 credential file exists for hg_mcp_server with real expiry
 function ensureCredentialsFile(credsPath) {
+  const expiry = Date.now() + 24 * 3600 * 1000; // 24-hour expiration
   const creds = {
     [TOKEN]: {
       principal: 'judge-session',
       allow_status: true,
       allow_alert_summary: true,
-      expires_at_ms: 0,
+      expires_at_ms: expiry,
       revoked: false,
     },
   };
   fs.writeFileSync(credsPath, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  try {
+    fs.chmodSync(credsPath, 0o600);
+  } catch (_) {}
 }
 
 // Start native C++ hg_mcp_server if not already running
@@ -168,8 +174,14 @@ async function handleConversationalQuery(query) {
   };
 }
 
+// Strict allowlist for synthetic scenarios — prevents SQL injection & unauthorized commands
+const ALLOWED_SCENARIOS = new Set(['critical_fall', 'clear_all']);
+
 // Synthetic Scenario Simulator runner: pushes an explainable synthetic event into audit DB
 async function runSyntheticScenario(scenarioName) {
+  if (!ALLOWED_SCENARIOS.has(scenarioName)) {
+    throw new Error('invalid_scenario: Scenario not allowlisted');
+  }
   const repoRoot = path.resolve(__dirname, '..');
   const auditDbPath = path.join(repoRoot, 'build', 'homeguardian_mcp_audit.db');
   const nowMs = Date.now();
@@ -328,10 +340,11 @@ function createHttpServer() {
       return;
     }
 
-    // POST /api/auth/logout
+    // POST /api/auth/logout (Teardown session and any active media streams)
     if (pathname === '/api/auth/logout' && req.method === 'POST') {
       const session = sessionManager.getSessionFromRequest(req);
       if (session) {
+        webrtcStreamer.stopSessionStreams(session.sessionToken);
         sessionManager.destroySession(session.sessionToken);
       }
       res.setHeader('Set-Cookie', 'hg_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
@@ -485,6 +498,11 @@ function createHttpServer() {
         res.end(JSON.stringify({ error: 'authentication_required' }));
         return;
       }
+      if (!sessionManager.verifyCsrf(req, session)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'csrf_token_mismatch', message: 'Valid CSRF token required' }));
+        return;
+      }
 
       try {
         const body = await readJsonBody(req);
@@ -514,13 +532,18 @@ function createHttpServer() {
         res.end(JSON.stringify({ error: 'authentication_required' }));
         return;
       }
+      if (!sessionManager.verifyCsrf(req, session)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'csrf_token_mismatch', message: 'Valid CSRF token required' }));
+        return;
+      }
 
       try {
         const body = await readJsonBody(req);
         const { deviceId, connectionId } = body;
         let stopped = false;
         if (connectionId) {
-          stopped = webrtcStreamer.stopConnection(connectionId);
+          stopped = webrtcStreamer.stopConnection(connectionId, session);
         } else if (deviceId) {
           stopped = webrtcStreamer.stopDeviceStream(deviceId);
         }
@@ -535,6 +558,12 @@ function createHttpServer() {
 
     // GET /api/webrtc/streams
     if (pathname === '/api/webrtc/streams' && req.method === 'GET') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Viewing active streams requires authentication' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(webrtcStreamer.getActiveStreams()));
       return;
@@ -586,8 +615,14 @@ function createHttpServer() {
       return;
     }
 
-    // GET /api/mcp/traffic
+    // GET /api/mcp/traffic (Authenticated Operator Only)
     if (pathname === '/api/mcp/traffic' && req.method === 'GET') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Inspecting traffic requires authenticated operator session' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(mcpClient ? mcpClient.getTraffic() : []));
       return;
@@ -630,11 +665,17 @@ function createHttpServer() {
 
       try {
         const payload = await readJsonBody(req);
-        const result = await runSyntheticScenario(payload.scenario || 'critical_fall');
+        const scenario = payload.scenario || 'critical_fall';
+        if (!ALLOWED_SCENARIOS.has(scenario)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_scenario', message: 'Scenario name not allowlisted' }));
+          return;
+        }
+        const result = await runSyntheticScenario(scenario);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
       return;

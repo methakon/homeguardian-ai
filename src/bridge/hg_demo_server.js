@@ -34,10 +34,11 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const crypto = require('node:crypto');
 
 // --- CLI args ---
 function parseArgs(argv) {
-  const args = { port: 0, bridge: null, config: null, creds: null, token: 'demo-token' };
+  const args = { port: 0, bridge: null, config: null, creds: null, token: 'demo-token', secret: process.env.HG_DEMO_SECRET || '' };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--port') args.port = parseInt(argv[++i], 10);
@@ -45,12 +46,13 @@ function parseArgs(argv) {
     else if (a === '--config') args.config = argv[++i];
     else if (a === '--creds') args.creds = argv[++i];
     else if (a === '--token') args.token = argv[++i];
+    else if (a === '--secret') args.secret = argv[++i];
   }
   return args;
 }
 const args = parseArgs(process.argv);
 if (!args.bridge || !args.config || !args.creds) {
-  process.stderr.write('usage: hg_demo_server.js --bridge <path> --config <path> --creds <path> [--port N] [--token T]\n');
+  process.stderr.write('usage: hg_demo_server.js --bridge <path> --config <path> --creds <path> [--port N] [--token T] [--secret S]\n');
   process.exit(2);
 }
 if (!fs.existsSync(args.bridge)) {
@@ -131,9 +133,38 @@ function sendJson(res, code, obj) {
   res.end(body);
 }
 
+const csrfTokens = new Map(); // token -> expiresAt
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   const route = url.pathname;
+
+  // Refuse URL-based credentials
+  if (url.searchParams.has('k') || url.searchParams.has('token') || url.searchParams.has('secret')) {
+    sendJson(res, 400, { ok: false, error: 'credentials_in_url_forbidden' });
+    return;
+  }
+
+  // Session route (POST only)
+  if (route === '/api/session') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+      return;
+    }
+    if (!args.secret) {
+      sendJson(res, 503, { ok: false, error: 'state_route_disabled' });
+      return;
+    }
+    const sec = req.headers['x-hg-secret'];
+    if (!sec || sec !== args.secret) {
+      sendJson(res, 401, { ok: false, error: 'unauthorized' });
+      return;
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    csrfTokens.set(token, Date.now() + 300000); // 5 min TTL
+    sendJson(res, 200, { ok: true, csrf: token });
+    return;
+  }
 
   // CORS-free local API
   if (route === '/api/status') {
@@ -141,6 +172,27 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (route === '/api/run-scenario') {
+    // State advancing route: strictly POST, requires session-bound CSRF token
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+      return;
+    }
+    if (!args.secret) {
+      sendJson(res, 503, { ok: false, error: 'state_route_disabled' });
+      return;
+    }
+    const csrf = req.headers['x-hg-csrf'];
+    if (!csrf || !csrfTokens.has(csrf)) {
+      sendJson(res, 403, { ok: false, error: 'forbidden' });
+      return;
+    }
+    const exp = csrfTokens.get(csrf);
+    csrfTokens.delete(csrf); // Single-use consumption invariant!
+    if (Date.now() > exp) {
+      sendJson(res, 403, { ok: false, error: 'token_expired' });
+      return;
+    }
+
     const cyclesParam = parseInt(url.searchParams.get('cycles') || '5', 10);
     const cycles = Number.isFinite(cyclesParam) ? Math.max(0, Math.min(100, cyclesParam)) : 5;
     runScenario(cycles).then((r) => sendJson(res, 200, r)).catch(() => sendJson(res, 502, { ok: false, error: 'backend_unavailable' }));

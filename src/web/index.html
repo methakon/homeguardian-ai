@@ -133,6 +133,14 @@
         <button id="refreshBtn">↻ Refresh</button>
         <button id="resetBtn">⟲ Reset demo data</button>
       </div>
+      <div id="authPanel" style="display:none; margin-top:12px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--panel2);">
+        <div style="font-weight:600; font-size:12px; color:var(--text); margin-bottom:6px;">Operator Authorization</div>
+        <div style="display:flex; gap:8px;">
+          <input type="password" id="authSecret" placeholder="Enter operator secret" style="flex:1; padding:6px 10px; font-size:12px; background:var(--chip); color:var(--text); border:1px solid var(--border); border-radius:6px;" autocomplete="current-password">
+          <button class="primary" id="authBtn" style="padding:6px 12px; font-size:12px;">Authorize</button>
+        </div>
+        <div id="authMsg" style="font-size:11px; color:var(--muted); margin-top:6px;"></div>
+      </div>
       <div id="scenDesc" class="empty" style="margin-top:8px;"></div>
     </div>
 
@@ -619,7 +627,15 @@ async function runScenario() {
       }
     }
   } catch (e) {
-    addMsg('bot', 'Sorry, the backend was unavailable. Please try again.');
+    if (e && e.message === 'credential_required') {
+      addMsg('bot', 'Operator secret required to authorize scenario execution. Enter secret above.');
+    } else if (e && e.message === 'unauthorized') {
+      addMsg('bot', 'Authorization failed. Please enter the valid operator secret.');
+    } else if (e && e.message === 'state_route_disabled') {
+      addMsg('bot', 'Scenario runs are disabled: server started without an operator secret.');
+    } else {
+      addMsg('bot', 'Sorry, the backend was unavailable. Please try again.');
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = orig;

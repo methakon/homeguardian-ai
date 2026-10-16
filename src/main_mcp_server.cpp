@@ -58,6 +58,14 @@ long env_long(const char* name, long fallback) {
     }
 }
 
+bool env_bool(const char* name, bool fallback = false) {
+    const char* v = std::getenv(name);
+    if (v == nullptr || *v == '\0') return fallback;
+    std::string s(v);
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return (s == "1" || s == "true" || s == "yes" || s == "on");
+}
+
 std::vector<std::string> split_csv(const std::string& s) {
     std::vector<std::string> out;
     std::string cur;
@@ -134,7 +142,7 @@ int main(int argc, char* argv[]) {
     const long port = env_long("HG_MCP_PORT", 8790);
     cfg.port = static_cast<uint16_t>(port < 1 || port > 65535 ? 8790 : port);
     cfg.bind_address = env_or("HG_MCP_BIND", "127.0.0.1");
-    cfg.allow_remote = std::getenv("HG_MCP_ALLOW_REMOTE") != nullptr;
+    cfg.allow_remote = env_bool("HG_MCP_ALLOW_REMOTE", false);
     const std::vector<std::string> extra_origins = split_csv(env_or("HG_MCP_ORIGINS", ""));
     cfg.allowed_origins = extra_origins;
     cfg.require_auth = true;

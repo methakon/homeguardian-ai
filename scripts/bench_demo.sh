@@ -62,9 +62,19 @@ measure_impl() {
   lat=$( { for _ in $(seq 1 20); do curl -s -o /dev/null -w "%{time_total}\n" "http://127.0.0.1:$port/api/status"; done; } \
          | awk '{s=$1; n++; if($1>m)m=$1} END{printf "avg=%.4fs max=%.4fs n=%d", s/n, m, n}')
   echo "  /api/status  : $lat"
-  curl -s -o /dev/null "http://127.0.0.1:$port/api/run-scenario?cycles=5"
-  lat=$(curl -s -o /dev/null -w "%{time_total}" "http://127.0.0.1:$port/api/run-scenario?cycles=5")
-  echo "  /api/run-scenario: ${lat}s (one run)"
+  local csrf
+  csrf=$(curl -s -X POST "http://127.0.0.1:$port/api/session" \
+    -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" \
+    -H "Content-Type: application/json" -H "X-HG-Secret: $BENCH_SECRET" -d "{}" \
+    | grep -o '"csrf":"[^"]*"' | cut -d'"' -f4)
+  if [ -n "$csrf" ]; then
+    lat=$(curl -s -o /dev/null -w "%{time_total}" -X POST "http://127.0.0.1:$port/api/run-scenario?cycles=5" \
+      -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" \
+      -H "Content-Type: application/json" -H "X-HG-CSRF: $csrf" -d "{}")
+    echo "  /api/run-scenario: ${lat}s (one run, authenticated)"
+  else
+    echo "  /api/run-scenario: session minting failed"
+  fi
 
   # Peak RSS after the scenario (VmHWM = high-water mark)
   if [ -n "$pid" ]; then
@@ -78,12 +88,14 @@ measure_impl() {
   sleep 0.3
 }
 
+BENCH_SECRET="bench-secret-2026"
+
 measure_impl hg_native \
-  "\"$BRIDGE\" --http \"$CONFIG\" \"$WORK/creds.json\" --port 8320 --token demo-token"
+  "\"$BRIDGE\" --http \"$CONFIG\" \"$WORK/creds.json\" --port 8320 --token demo-token --secret $BENCH_SECRET"
 
 if command -v node >/dev/null 2>&1; then
   measure_impl node_legacy \
-    "node \"$DEMO_SERVER\" --bridge \"$BRIDGE\" --config \"$CONFIG\" --creds \"$WORK/creds.json\" --port 8321 --token demo-token"
+    "node \"$DEMO_SERVER\" --bridge \"$BRIDGE\" --config \"$CONFIG\" --creds \"$WORK/creds.json\" --port 8321 --token demo-token --secret $BENCH_SECRET"
 else
   echo "==================== node_legacy ===================="
   echo "  NOT RUN (node not installed in this environment)"

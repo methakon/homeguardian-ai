@@ -263,10 +263,28 @@ async function runSuite() {
     // 6a. Signaling with invalid view token
     const badSignal = await request('POST', '/api/webrtc/signal', {
       Cookie: sessionCookie,
-    }, { deviceId: 'camera-001', viewToken: 'invalid-vt', sdp: {} });
+      'X-CSRF-Token': csrfToken,
+      Origin: 'http://127.0.0.1:18880',
+    }, { deviceId: 'camera-syn-001', viewToken: 'invalid-vt', sdp: {} });
     assert(badSignal.status === 400, `WebRTC signaling with invalid viewToken rejected HTTP 400`);
 
-    // 6b. Real WebRTC SDP offer/answer exchange
+    // 6a2. Offline physical camera streaming refused fail-closed (H-8)
+    const offlineSignal = await request('POST', '/api/webrtc/signal', {
+      Cookie: sessionCookie,
+      'X-CSRF-Token': csrfToken,
+      Origin: 'http://127.0.0.1:18880',
+    }, { deviceId: 'camera-001', viewToken, sdp: {} });
+    assert(offlineSignal.status === 400 && String(offlineSignal.body?.error).includes('device_offline'),
+      `Physical offline camera streaming rejected HTTP 400 (device_offline)`);
+
+    // 6b. Issue view token for synthetic camera and do SDP offer/answer exchange
+    const synTokenRes = await request('POST', '/api/devices/camera-syn-001/view-token', {
+      Cookie: sessionCookie,
+      'X-CSRF-Token': csrfToken,
+    });
+    assert(synTokenRes.status === 200, `Issued scoped view token for synthetic camera`);
+    const synViewToken = synTokenRes.body.viewToken;
+
     const clientPc = new RTCPeerConnection({ iceServers: [] });
     clientPc.addTransceiver('video', { direction: 'recvonly' });
     const offer = await clientPc.createOffer();
@@ -274,10 +292,11 @@ async function runSuite() {
 
     const signalRes = await request('POST', '/api/webrtc/signal', {
       Cookie: sessionCookie,
+      'X-CSRF-Token': csrfToken,
       Origin: 'http://127.0.0.1:18880',
     }, {
-      deviceId: 'camera-001',
-      viewToken,
+      deviceId: 'camera-syn-001',
+      viewToken: synViewToken,
       sdp: clientPc.localDescription,
     });
 
@@ -289,15 +308,20 @@ async function runSuite() {
     await clientPc.setRemoteDescription(signalRes.body.sdp);
     assert(clientPc.remoteDescription !== null, `Client RTCPeerConnection remote description set`);
 
-    // 6c. Verify active stream registry
-    const streamsRes = await request('GET', '/api/webrtc/streams');
+    // 6c. Verify active stream registry (authenticated, H-14)
+    const unauthStreams = await request('GET', '/api/webrtc/streams');
+    assert(unauthStreams.status === 401, `Unauthenticated GET /api/webrtc/streams rejected HTTP 401`);
+
+    const streamsRes = await request('GET', '/api/webrtc/streams', {
+      Cookie: sessionCookie,
+    });
     assert(streamsRes.status === 200 && streamsRes.body.length >= 1, `GET /api/webrtc/streams lists active session`);
 
     // 6d. Stop stream
     const stopRes = await request('POST', '/api/webrtc/stop', {
       Cookie: sessionCookie,
       'X-CSRF-Token': csrfToken,
-    }, { deviceId: 'camera-001' });
+    }, { deviceId: 'camera-syn-001' });
     assert(stopRes.status === 200 && stopRes.body.stopped === true, `Stream stopped cleanly via /api/webrtc/stop`);
     clientPc.close();
 
