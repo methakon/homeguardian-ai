@@ -60,10 +60,11 @@ RUN for required in third_party/sqlite/sqlite3.c third_party/catch2/src/catch_wi
 ARG HG_NPROC=4
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
  && cmake --build build --target hg_alexa_bridge homeguardian hg_device_ingress hg_device_client \
-           hg_ingress_probe \
+           hg_ingress_probe hg_mcp_server hg_device_registry_cli \
       -- -j"${HG_NPROC}" \
  && strip build/hg_alexa_bridge build/homeguardian \
-           build/hg_device_ingress build/hg_device_client build/hg_ingress_probe
+           build/hg_device_ingress build/hg_device_client build/hg_ingress_probe \
+           build/hg_mcp_server build/hg_device_registry_cli
 
 # ---------------------------------------------------------------------------
 FROM build AS test
@@ -109,6 +110,8 @@ COPY --from=build /src/build/homeguardian     /usr/local/bin/homeguardian
 COPY --from=build /src/build/hg_device_ingress /usr/local/bin/hg_device_ingress
 COPY --from=build /src/build/hg_device_client  /usr/local/bin/hg_device_client
 COPY --from=build /src/build/hg_ingress_probe  /usr/local/bin/hg_ingress_probe
+COPY --from=build /src/build/hg_mcp_server     /usr/local/bin/hg_mcp_server
+COPY --from=build /src/build/hg_device_registry_cli /usr/local/bin/hg_device_registry_cli
 COPY deploy/docker/entrypoint.sh         /usr/local/bin/hg-entrypoint
 COPY deploy/docker/ingress-entrypoint.sh /usr/local/bin/hg-ingress-entrypoint
 COPY deploy/docker/healthcheck.sh        /usr/local/bin/hg-healthcheck
@@ -120,7 +123,8 @@ RUN chmod 0755 /usr/local/bin/hg-entrypoint /usr/local/bin/hg-ingress-entrypoint
  && chmod 0644 /etc/homeguardian/hub.json /etc/homeguardian/ingress.json.example \
  && chmod 0755 /usr/local/bin/hg_alexa_bridge /usr/local/bin/homeguardian \
                /usr/local/bin/hg_device_ingress /usr/local/bin/hg_device_client \
-               /usr/local/bin/hg_ingress_probe
+               /usr/local/bin/hg_ingress_probe \
+               /usr/local/bin/hg_mcp_server /usr/local/bin/hg_device_registry_cli
 
 # Configuration paths (override at run time; the config and credentials are
 # mounted read-only — never baked into a layer).
