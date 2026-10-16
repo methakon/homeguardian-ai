@@ -587,3 +587,43 @@ Next (unimplemented): OAuth 2.1-style authorization for MCP clients, TLS termina
 existing D-03 mutual-TLS ingress) for anything beyond loopback, a server-initiated SSE stream if
 a client needs one, `resources/*` and `prompts/*` capabilities, per-token quotas, and session
 resumability.
+
+## HG-EDGE-01 / HG-EDGE-02 — Mi A3 edge device (EXPERIMENTAL, unmerged)
+
+**Status:** experimental work on `experiment/mi-a3-edge` (HG-EDGE-01),
+`experiment/mi-a3-edge-sec02` (the same work re-validated on the corrected SHA) and
+`experiment/mi-a3-edge-service` (HG-EDGE-02). **None of these is merged into `main`,
+and nothing here is security-certified.** Added on operator instruction; the
+documentation owner should decide whether this becomes a numbered phase.
+
+These branches are the first record of, and the first working deployment on, the
+real **arm64** edge device — the Mi A3 (`laurel_sprout`, `trinket`/SM6125, Android 11
+/ API 30, `arm64-v8a`, 5.47 GiB RAM). Until now the only Android device in the
+documentation was the spoofed MT6580 `S25_Ultra` clone (API 27, `armeabi-v7a`,
+~962 MB), and the two are physically interchangeable on the same USB port, so every
+capability claim must name which device it was measured on.
+
+**HG-EDGE-01 (done, on-device evidence):** the genuine `hg_mcp_server` and the
+genuine engine cross-compile for `arm64-v8a` with the NDK and run under Bionic with
+no Termux and no PRoot. 18/18 MCP functional checks, real SQLite WAL persistence, a
+real `critical` alert from `synthetic-critical-impact` read back through the MCP
+tool, 5.4 MB RSS, 1.55 ms server CPU per tool call, cold start 275–287 ms.
+Validated identically on `01a4d3b` and on the HG-SEC-02 corrected candidate
+`187727a`. Report: `docs/EDGE_DEVICE_MI_A3.md`.
+
+**HG-EDGE-02 (in progress):** the same engine and MCP server packaged as a managed
+Android app (`org.homeguardian.edgeservice`, `apk_service/`) — a foreground service
+with a visible notification, a `BOOT_COMPLETED` receiver, Start/Stop/Restart, a
+bounded crash-recovery budget and a real MCP `initialize` health probe, all bound to
+loopback. It requests only INTERNET, FOREGROUND_SERVICE and RECEIVE_BOOT_COMPLETED —
+no camera and no microphone, because it captures nothing.
+
+**Deliberately NOT claimed:** no LAN or public exposure, no camera/mic ingestion, no
+root, no bootloader unlock, no ROM change, no 24/7 readiness. Continuous unattended
+charging is **not approved**. The mTLS D-03 ingestion boundary is unavailable on
+Android until OpenSSL is cross-compiled (NDK r26d ships none).
+
+**Open items:** the six HG-SEC-02 blockers need independent clearance on the exact
+corrected SHA by the security-audit workstream; the supervised 48–72 h soak is not
+started and will not be proposed until charging safety, service restart and crash
+recovery are demonstrated.

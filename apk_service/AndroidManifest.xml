@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HomeGuardian Edge Service — the managed Android service form of the local MCP server.
+
+  Deliberately a SEPARATE package from org.homeguardian.harness:
+    * the harness is the camera/microphone acquisition node and needs CAMERA +
+      RECORD_AUDIO. This service captures nothing, so it requests neither. Keeping
+      them apart means the service cannot acquire media even by accident, and the
+      permission prompt the operator approves is the minimum set.
+    * their lifecycles are opposites: the harness must stop when the activity stops;
+      this service must outlive the activity and the screen.
+
+  Permissions requested (all normal/install-time, no runtime prompt, no user data):
+    INTERNET              - required to open ANY socket, including one bound to the
+                            loopback address. The server never binds anything else.
+    FOREGROUND_SERVICE    - required to run a foreground service on API 28+.
+    RECEIVE_BOOT_COMPLETED- required to receive ACTION_BOOT_COMPLETED.
+
+  Deliberately NOT requested: CAMERA, RECORD_AUDIO, ACCESS_FINE_LOCATION,
+  READ/WRITE_EXTERNAL_STORAGE, POST_NOTIFICATIONS (API 33+ only; the device is
+  API 30 and a foreground-service notification needs no permission there).
+
+  android:debuggable is NOT set: it would expose the app's private storage (and the
+  bearer token in it) to anything holding ADB. Evidence is collected from the app's
+  own probe log instead.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.homeguardian.edgeservice"
+    android:versionCode="1"
+    android:versionName="1.0.0">
+
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="30" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:label="HomeGuardian Edge"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="HomeGuardian Edge">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Not exported: only this app may start or stop the server. -->
+        <service
+            android:name=".EdgeService"
+            android:exported="false" />
+
+        <!-- Exported so the system can deliver boot broadcasts. BOOT_COMPLETED is a
+             protected broadcast: only the platform may send it, so this cannot be
+             used by another app to start our service. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>

@@ -122,3 +122,8 @@ node_modules/
 build_mi_a3_edge_arm64/
 deploy/mi_a3_edge/
 logs/device-artifacts/
+
+# HG-EDGE-02 edge-service APK build tree: reproducible from
+# apk_service/build_service_apk.sh. The signed APK stays a local deliverable
+# (path + SHA-256 recorded in docs/EDGE_DEVICE_MI_A3.md section 10.5).
+hg_service_apk_build/

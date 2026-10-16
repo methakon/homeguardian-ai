@@ -570,6 +570,138 @@ The conditions are not optional:
 
 ---
 
+## 10. HG-EDGE-02 — the managed Android service
+
+**Status: APK is built, signed and statically verified. NOT INSTALLED — awaiting
+operator approval (see section 10.6).**
+
+### 10.1 What was built
+
+The same genuine C++ engine and MCP server, packaged as a managed Android
+application: `org.homeguardian.edgeservice`, source in `apk_service/`, built by
+`apk_service/build_service_apk.sh`.
+
+A **new package, deliberately separate from `org.homeguardian.harness`**:
+
+| | harness (existing) | edge service (this) |
+|---|---|---|
+| Purpose | camera/mic acquisition node | run the local MCP server |
+| Permissions | CAMERA, RECORD_AUDIO, ACCESS_NETWORK_STATE | INTERNET, FOREGROUND_SERVICE, RECEIVE_BOOT_COMPLETED |
+| Lifecycle | stops when the activity stops | outlives the activity and the screen |
+| Capture | yes, gated | **none, by construction** |
+
+Keeping them apart means the service cannot acquire media even by accident, and the
+permission prompt the operator approves is the minimum set.
+
+### 10.2 Architecture
+
+* **Native code is a JNI shared library**, `libhg_edge_service.so`, not an
+  executable in a writable directory. Android 10+ blocks executing files from
+  app-writable paths, so `System.loadLibrary` is the supported way to run native code
+  in an app — and it needs no ADB privileges and nothing in `/data/local/tmp`.
+* **The source list is derived from `CMakeLists.txt`** (the `add_executable(hg_mcp_server)`
+  block minus `src/main_mcp_server.cpp`, which owns `main()`): 41 translation units.
+  It cannot silently drift from the binary HG-EDGE-01 validated, and the build
+  refuses to run if the count looks partial or if test sources leak in.
+* `hg_edge_service_jni.cpp` constructs the real `Application`, `PersistenceAudit`,
+  `AlexaCredentialStore`, `McpTools` and `McpHttpServer`, and runs `serve()` on a
+  `std::thread` because Android owns the process entry point.
+* **spdlog is routed to logcat** through a liblog sink. An app's stdout/stderr go to
+  `/dev/null` on Android, so the binary's usual stderr logging would be silent.
+* **`EdgeService`** is a foreground service with a visible, ongoing notification
+  carrying Stop and Restart actions. It returns `START_STICKY` so Android recreates it
+  after a process kill.
+* **`BootReceiver`** handles `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`. It is *not*
+  direct-boot aware: the credential file and the SQLite store live in
+  credential-encrypted storage, so Android delivers `BOOT_COMPLETED` only after the
+  first unlock — that is the honest behaviour, not a limitation to work around.
+* **Bounded crash recovery**: a watchdog probes MCP every 20 s; if the engine is gone
+  or 3 consecutive probes fail, the engine restarts — at most 5 times inside a 10-minute
+  window, with exponential backoff. The budget refills only after 3 minutes of verified
+  health, so a fast crash-loop cannot reset itself. When exhausted the service enters
+  DEGRADED, says so in the notification, and stops instead of spinning.
+* **The health probe is a real MCP client** (`McpProbe`): `initialize` (capturing
+  `Mcp-Session-Id`), `notifications/initialized`, `tools/list`, `tools/call`. It runs
+  in-process, which is what makes "MCP available with no ADB attached" provable, and
+  every attempt is timestamped into `probe.log` (private copy at `0600`, plus a
+  secret-free copy in the app's external files dir so the host can pull evidence
+  without the app being debuggable and without root).
+
+### 10.3 Permissions requested
+
+Install-time (normal) permissions only — **no runtime prompt, no user data**:
+
+| Permission | Why |
+|---|---|
+| `INTERNET` | Required to open *any* socket, including one bound to the loopback address |
+| `FOREGROUND_SERVICE` | Required to run a foreground service on API 28+ |
+| `RECEIVE_BOOT_COMPLETED` | Required to receive `ACTION_BOOT_COMPLETED` |
+
+Deliberately **not** requested: CAMERA, RECORD_AUDIO, ACCESS_FINE_LOCATION,
+READ/WRITE_EXTERNAL_STORAGE, POST_NOTIFICATIONS (API 33+ only; the device is API 30
+and a foreground-service notification needs no permission there).
+`android:debuggable` is **not** set — it would expose the app's private storage and
+the bearer token inside it to anything holding ADB.
+
+### 10.4 SDK field reconciliation (requested)
+
+Five values that this project's docs had been conflating. They are kept as five
+separate fields in `apk_service/build_service_apk.sh`:
+
+| Field | Value here | What it actually governs |
+|---|---|---|
+| **compileSdk / android.jar** | **34** | which platform API the code compiles against — a *build input*. Newest available locally (`android-34`). It does **not** have to match the device. |
+| **minSdkVersion** | **30** | the oldest device the APK will install on. **This is what makes the app refuse to install on the MT6580 clone (API 27).** |
+| **targetSdkVersion** | **30** | the behaviour contract Android applies to the app. Chosen to match the only device we target, so no API-31+ foreground-service background-start restriction or API-34 `foregroundServiceType` requirement is in play. Raising it later is a real task, not a formality. |
+| **NDK API level** | **30** | the platform level native code links against (`aarch64-linux-android30-clang++`), i.e. the minimum API for the sysroot and libc symbols. |
+| **device API level** | **30** | what the phone actually runs (`adb shell getprop ro.build.version.sdk`). Read from the device; **never** a build input. |
+| **packaged ABI** | **arm64-v8a** | the device's `abilist64`. The clone is `armeabi-v7a`-only and cannot run this APK. |
+
+For comparison, the pre-existing harness is minSdk **27** / targetSdk **27** /
+compileSdk **27** / NDK API **27** / `armeabi-v7a` (the clone), while
+`docs/ARCHITECTURE.md:305` and `docs/STATUS.md:153` describe the camera/audio
+backends as `arm64-v8a / API 34` and the device reached here is **API 30**. That is
+**five distinct values across the project**; the earlier "three inconsistent Android
+targets" finding is a subset of it.
+
+### 10.5 Built artefact and static verification
+
+| Check | Result |
+|---|---|
+| Package / version | `org.homeguardian.edgeservice`, versionCode 1, versionName 1.0.0 |
+| Signed | **yes** — debug keystore outside the repo, `apksigner verify` exit 0, v3 scheme |
+| Certificate SHA-256 | `869b0a270fd855a2cd9eb66ce3f8043d0edff9f4bf2eb6552ac3f40447d0281b` |
+| APK SHA-256 | `d58c7e294711ee01617639f5140dd0f349b928a43a09eb0ceb3fb841f697543c` |
+| Size / contents | 1.56 MB; `classes.dex`, `lib/arm64-v8a/{libhg_edge_service.so, libc++_shared.so}` |
+| zipalign | 4-byte aligned, OK |
+| Native library | ELF aarch64; `NEEDED` = `liblog, libc++_shared, libm, libdl, libc` (Bionic only) |
+| JNI exports | **7 declared / 7 exact unmangled** `Java_org_homeguardian_edgeservice_NativeEngine_*`; **0** mangled `_Z*Java_*` |
+| Components in dex | `EdgeService`, `BootReceiver`, `MainActivity` all present |
+| Manifest in APK | service `exported=false`, receiver `exported=true` (BOOT_COMPLETED is a protected broadcast), activity launcher |
+| Loopback-only | structural: `cfg.allow_remote = false` hardcoded, bind literal `127.0.0.1` hardcoded in the app, and **the JNI layer contains no `getenv` at all** — the `HG_MCP_ALLOW_REMOTE` escape hatch the command-line binary reads does not exist on this code path |
+
+The JNI-export checker (`scripts/verify_jni_exports.sh`) was generalised in this
+branch: it hardcoded `org_homeguardian_harness`, so for the new package it would have
+checked the wrong symbol names and passed while checking nothing. It now derives the
+package from the Java sources.
+
+### 10.6 Test matrix — all UNVERIFIED (installation not yet approved)
+
+| # | Test | Status | Why |
+|---|---|---|---|
+| 1 | Installation and user-approved permissions | **UNVERIFIED** | install is not approved yet; APK is staged and signed |
+| 2 | Native C++ MCP startup inside the app sandbox | **UNVERIFIED** | needs the app running on the device |
+| 3 | Manual Start/Stop and automatic crash recovery | **UNVERIFIED** | needs the app running on the device |
+| 4 | Power-off/reboot then service recovery | **UNVERIFIED** | needs a device reboot |
+| 5 | Screen-off MCP availability with no ADB | **UNVERIFIED** | needs an unattended window with USB removed |
+| 6 | CPU, RAM, battery and thermal measurements | **UNVERIFIED** | needs the app running on the device |
+
+Nothing above is a PASS. Static verification (10.5) proves the artefact is
+well-formed; it does **not** prove the app runs, and it is not reported as if it did.
+
+**To proceed, the operator must approve installing a debug-signed APK plus the three
+install-time permissions in 10.3.** No runtime permission prompt will appear.
+
 ## Appendix — evidence files
 
 | File | Contents |
