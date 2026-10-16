@@ -1,38 +1,36 @@
 ==============================================================================
 Mi A3 edge MCP — resource & latency measurement
-serial=edd53dbd04de  n=200 requests  2026-10-17 02:51:29
+serial=edd53dbd04de  n=150 requests  2026-10-17 03:04:49
 ==============================================================================
 
 -- device state before load --
-  battery      : level=96% health=2 temp=33.0C status=2 volt=4296mV
-  MemAvailable : MemAvailable:    2795836 kB
-  mcp RSS      : 5512 kB   VSZ from ps: 12416936 hg_mcp_server
-  skin/quiet   : skin=36.4C quiet=37.4C cpuss0=44.6C
-  hottest zone : 44.6C
+  battery      : level=96% health=2 temp=33.2C status=2 volt=4294mV
+  MemAvailable : MemAvailable:    2837560 kB
+  mcp RSS      : 5424 kB   VSZ from ps: 12416944 hg_mcp_server
+  skin/quiet   : skin=36.7C quiet=37.8C cpuss0=45.9C
+  hottest zone : 45.9C
 
--- latency: 200 sequential tools/call get_homeguardian_status --
-  status codes : 200/200 -> 200, 0 errors
-  latency ms   : min=5.39 p50=7.98 p95=9.25 p99=11.29 max=14.70 mean=8.07
-  throughput   : 121.8 req/s over adb forward (single connection reuse off)
-  SERVER CPU   : 310.0 ms total for 200 calls = 1.550 ms/call (18.88% of one core)
+-- latency: 150 sequential tools/call get_homeguardian_status --
+  status codes : 150/150 -> 200, 0 errors
+  latency ms   : min=6.18 p50=8.32 p95=11.36 p99=12.43 max=14.35 mean=8.41
+  throughput   : 117.2 req/s over adb forward (single connection reuse off)
+  SERVER CPU   : 280.0 ms total for 150 calls = 1.867 ms/call (21.88% of one core)
 
--- sustained mixed workload: 200 x (tools/list + 2 tool calls) --
-  600 requests in 4.93s = 121.6 req/s
-  latency ms   : p50=7.87 p95=11.07 max=15.93
-  SERVER CPU   : 820.0 ms total = 1.367 ms/req (16.62% of one core)
+-- sustained mixed workload: 150 x (tools/list + 2 tool calls) --
+  450 requests in 3.76s = 119.8 req/s
+  latency ms   : p50=7.97 p95=10.93 max=16.95
+  SERVER CPU   : 680.0 ms total = 1.511 ms/req (18.10% of one core)
 
 -- device state after load --
-  battery temp : 33.0C -> 33.0C   level 96% -> 96%
-  mcp RSS      : 5512 kB -> 5512 kB (delta +0 kB over 600 requests)
-  skin-therm   : 36.4C -> 36.6C
-  hottest zone : 44.6C -> 45.6C
+  battery temp : 33.2C -> 33.2C   level 96% -> 96%
+  mcp RSS      : 5424 kB -> 5424 kB (delta +0 kB over 450 requests)
+  skin-therm   : 36.7C -> 36.9C
+  hottest zone : 45.9C -> 46.6C
 
 -- stability --
-  pid 20073 alive: 20073
+  pid 22337 alive: 22337
   server log tail:
-    [2026-10-17 02:50:08.771] [hg_mcp] [warning] mcp: rejected an unauthenticated request
-    [2026-10-17 02:50:08.794] [hg_mcp] [warning] mcp: rejected request with a disallowed Origin
-    [2026-10-17 02:50:24.976] [hg_mcp] [warning] mcp: rejected an unauthenticated request
-    [2026-10-17 02:50:24.999] [hg_mcp] [warning] mcp: rejected request with a disallowed Origin
+    WARNING: linker: Warning: "/data/local/tmp/hg_edge/libc++_shared.so" unused DT entry: unknown processor-specific (type 0x70000001 arg 0x0) (ignoring)
+    [2026-10-17 03:04:48.482] [hg_mcp] [info] hg_mcp_server listening on 127.0.0.1:8790 (loopback=true, auth=required, tools=2)
 
   -> logs/mi_a3_edge_measurements.json
