@@ -95,10 +95,7 @@ trap cleanup EXIT INT TERM
 
 # 3. Start Native C++ MCP Server
 echo -e "\n[Step 3] Launching Native C++ MCP Server..."
-cd "$WORK"
-"$MCP_SERVER" "$CONFIG_FILE" "$CREDS" \
-  --port "$MCP_PORT" \
-  --token demo-token > "$WORK/mcp.out" 2> "$WORK/mcp.err" &
+HG_MCP_PORT="$MCP_PORT" "$MCP_SERVER" "$CONFIG_FILE" "$CREDS" > "$WORK/mcp.out" 2> "$WORK/mcp.err" &
 MCP_PID=$!
 
 for _ in $(seq 1 40); do

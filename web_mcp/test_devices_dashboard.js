@@ -111,6 +111,7 @@ async function runSuite() {
       ...process.env,
       HG_WEB_PORT: String(WEB_PORT),
       HG_MCP_PORT: String(MCP_PORT),
+      HG_MCP_TOKEN: process.env.HG_MCP_TOKEN || 'demo-token',
       HG_OPERATOR_USER: 'test-operator',
       HG_OPERATOR_PASSWORD: 'SecurePassword2026!',
     },
@@ -121,12 +122,16 @@ async function runSuite() {
   });
 
   // Wait for gateway ready
-  for (let i = 0; i < 30; i++) {
+  let ready = false;
+  for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 100));
     try {
       const res = await request('GET', '/');
-      if (res.status === 200) break;
+      if (res.status === 200) { ready = true; break; }
     } catch (_) {}
+  }
+  if (!ready) {
+    throw new Error('Gateway server failed to start on port ' + WEB_PORT);
   }
 
   let sessionCookie = '';
@@ -275,10 +280,9 @@ async function runSuite() {
       Cookie: sessionCookie,
       'X-CSRF-Token': csrfToken,
     });
-    assert(tokenRes.status === 200, `Issued scoped view token for consented camera`);
-    assert(typeof tokenRes.body.viewToken === 'string' && tokenRes.body.viewToken.startsWith('vt_'),
-      `Scoped view token format valid (${tokenRes.body.viewToken})`);
-    const viewToken = tokenRes.body.viewToken;
+    assert(tokenRes.status === 400, `View token for unverified physical camera refused with HTTP 400`);
+    assert(String(tokenRes.body?.error).includes('physical_camera_unverified'),
+      `Error code: physical_camera_unverified (judge build hardware protection)`);
 
     const micTokenRes = await request('POST', '/api/devices/mic-001/view-token', {
       Cookie: sessionCookie,
@@ -301,9 +305,9 @@ async function runSuite() {
       Cookie: sessionCookie,
       'X-CSRF-Token': csrfToken,
       Origin: 'http://127.0.0.1:18880',
-    }, { deviceId: 'camera-001', viewToken, sdp: {} });
-    assert(offlineSignal.status === 400 && String(offlineSignal.body?.error).includes('device_offline'),
-      `Physical offline camera streaming rejected HTTP 400 (device_offline)`);
+    }, { deviceId: 'camera-001', viewToken: 'vt_dummy', sdp: {} });
+    assert(offlineSignal.status === 400 && (String(offlineSignal.body?.error).includes('physical_camera_unverified') || String(offlineSignal.body?.error).includes('device_offline')),
+      `Physical camera streaming rejected HTTP 400 (hardware stream unverified/offline)`);
 
     const synTokenRes = await request('POST', '/api/devices/camera-syn-001/view-token', {
       Cookie: sessionCookie,

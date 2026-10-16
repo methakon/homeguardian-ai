@@ -38,7 +38,12 @@ const crypto = require('node:crypto');
 
 // --- CLI args ---
 function parseArgs(argv) {
-  const args = { port: 0, bridge: null, config: null, creds: null, token: 'demo-token', secret: process.env.HG_DEMO_SECRET || '' };
+  let secret = process.env.HG_DEMO_SECRET || process.env.HG_HTTP_SECRET || '';
+  if (process.env.HG_SECRET_FILE && fs.existsSync(process.env.HG_SECRET_FILE)) {
+    try { secret = fs.readFileSync(process.env.HG_SECRET_FILE, 'utf-8').trim(); } catch (_) {}
+  }
+  let token = process.env.HG_DEMO_TOKEN || process.env.HG_HTTP_TOKEN || 'demo-token';
+  const args = { port: 0, bridge: null, config: null, creds: null, token, secret };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--port') args.port = parseInt(argv[++i], 10);
@@ -46,7 +51,13 @@ function parseArgs(argv) {
     else if (a === '--config') args.config = argv[++i];
     else if (a === '--creds') args.creds = argv[++i];
     else if (a === '--token') args.token = argv[++i];
+    else if (a === '--token-file') {
+      try { args.token = fs.readFileSync(argv[++i], 'utf-8').trim(); } catch (_) {}
+    }
     else if (a === '--secret') args.secret = argv[++i];
+    else if (a === '--secret-file') {
+      try { args.secret = fs.readFileSync(argv[++i], 'utf-8').trim(); } catch (_) {}
+    }
   }
   return args;
 }

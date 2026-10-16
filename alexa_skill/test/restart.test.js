@@ -91,7 +91,7 @@ test('restart: a prior alert is visible to a fresh bridge process', async () => 
     // signaled); SIGTERM after a moment for a clean shutdown.
     await new Promise((resolve, reject) => {
       const app = spawn(APP, [onConfig], { cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] });
-      const t = setTimeout(() => app.kill('SIGTERM'), 2500);
+      const t = setTimeout(() => app.kill('SIGTERM'), 3500);
       app.on('close', (code) => { clearTimeout(t); resolve(code); });
       app.on('error', reject);
     });

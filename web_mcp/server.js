@@ -52,8 +52,29 @@ function ensureCredentialsFile(credsPath) {
   } catch (_) {}
 }
 
+function pingEndpoint(port) {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/mcp',
+        method: 'POST',
+        timeout: 300,
+      },
+      () => resolve(true)
+    );
+    req.on('error', () => resolve(false));
+    req.end();
+  });
+}
+
 // Start native C++ hg_mcp_server if not already running
-function startNativeMcpServer(repoRoot, binPath) {
+async function startNativeMcpServer(repoRoot, binPath) {
+  if (await pingEndpoint(MCP_PORT)) {
+    console.log(`[WebMCP] Native MCP server already running on port ${MCP_PORT}.`);
+    return;
+  }
   return new Promise((resolve, reject) => {
     const credsPath = path.join(repoRoot, 'build', 'mcp_creds.json');
     const configPath = path.join(repoRoot, 'config', 'homeguardian.demo.json');
@@ -89,8 +110,26 @@ function startNativeMcpServer(repoRoot, binPath) {
       reject(err);
     });
 
-    // Wait 500ms for loopback bind
-    setTimeout(resolve, 600);
+    // Actively wait for server to bind and be ready
+    let settled = false;
+    const checkTimer = setInterval(() => {
+      if (mcpServerLog.some((l) => l.includes('listening on'))) {
+        if (!settled) {
+          settled = true;
+          clearInterval(checkTimer);
+          clearTimeout(timeoutTimer);
+          resolve();
+        }
+      }
+    }, 50);
+
+    const timeoutTimer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        clearInterval(checkTimer);
+        resolve();
+      }
+    }, 3000);
   });
 }
 
@@ -501,6 +540,17 @@ function createHttpServer() {
         return;
       }
 
+      if (!device.is_synthetic) {
+        if (!device.paired || device.revoked || !device.credential_id || !device.online) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'physical_camera_unverified',
+            message: `Physical camera '${devId}' has not completed verified cryptographic pairing or authenticated liveness. Hardware streaming disabled in judge build.`,
+          }));
+          return;
+        }
+      }
+
       const viewAuth = sessionManager.issueScopedViewToken(session, devId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -762,12 +812,19 @@ async function main() {
   });
 
   console.log(`[WebMCP] Initializing MCP session with ${MCP_URL}...`);
-  try {
-    const handshake = await mcpClient.initialize();
-    console.log(`[WebMCP] MCP handshake SUCCESS: Session ID: ${handshake.sessionId}, Protocol: ${handshake.protocolVersion}`);
-    console.log(`[WebMCP] Discovered ${handshake.tools.length} tool(s): ${handshake.tools.map((t) => t.name).join(', ')}`);
-  } catch (err) {
-    console.error('[WebMCP] MCP initialization error:', err);
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try {
+      const handshake = await mcpClient.initialize();
+      console.log(`[WebMCP] MCP handshake SUCCESS: Session ID: ${handshake.sessionId}, Protocol: ${handshake.protocolVersion}`);
+      console.log(`[WebMCP] Discovered ${handshake.tools.length} tool(s): ${handshake.tools.map((t) => t.name).join(', ')}`);
+      break;
+    } catch (err) {
+      if (attempt === 10) {
+        console.error('[WebMCP] MCP initialization error after 10 attempts:', err);
+      } else {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
   }
 
   // 3. Start Judge Web Server

@@ -755,14 +755,42 @@ int main(int argc, char* argv[]) {
     uint16_t http_port = 0;             // 0 = ephemeral
     std::string http_token = "demo-token";
     std::string http_secret = "";
+
+    // Prefer safe environment variables or secret files to avoid command-line token exposure in ps
+    const char* env_token = std::getenv("HG_HTTP_TOKEN");
+    if (env_token && std::strlen(env_token) > 0) {
+        http_token = env_token;
+    }
+    const char* env_secret = std::getenv("HG_HTTP_SECRET");
+    if (env_secret && std::strlen(env_secret) > 0) {
+        http_secret = env_secret;
+    }
+    const char* env_secret_file = std::getenv("HG_SECRET_FILE");
+    if (env_secret_file && std::strlen(env_secret_file) > 0) {
+        std::ifstream sf(env_secret_file);
+        if (sf.is_open()) {
+            std::getline(sf, http_secret);
+        }
+    }
+
     for (int i = base + 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--port" && i + 1 < argc) {
             http_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (a == "--token" && i + 1 < argc) {
             http_token = argv[++i];
+        } else if (a == "--token-file" && i + 1 < argc) {
+            std::ifstream tf(argv[++i]);
+            if (tf.is_open()) {
+                std::getline(tf, http_token);
+            }
         } else if (a == "--secret" && i + 1 < argc) {
             http_secret = argv[++i];
+        } else if (a == "--secret-file" && i + 1 < argc) {
+            std::ifstream sf(argv[++i]);
+            if (sf.is_open()) {
+                std::getline(sf, http_secret);
+            }
         }
     }
 
