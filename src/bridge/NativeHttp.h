@@ -21,6 +21,13 @@
 #include <string>
 #include <string_view>
 #include <iostream>
+#include <chrono>
+#include <random>
+#include <unordered_map>
+#include <vector>
+#if defined(__linux__)
+#include <sys/random.h>
+#endif
 
 namespace hg_native_http {
 
@@ -29,6 +36,143 @@ namespace hg_native_http {
 inline constexpr size_t kMaxHeaderBytes = 8192;
 inline constexpr size_t kMaxPathBytes = 128;
 inline constexpr size_t kRecvChunk = 2048;
+
+// Request body cap for POST routes. The state route takes no parameters in its body
+// (it uses the same strictly allowlisted query as before) - the body exists so the
+// request carries a validated Content-Type/Length and cannot be a simple form post.
+inline constexpr size_t kMaxBodyBytes = 512;
+
+// CSRF session lifetime, issuance bounds and lockout thresholds.
+inline constexpr int64_t kSessionTtlMs = 120000;      // a CSRF token lives 2 minutes
+inline constexpr size_t kMaxSessions = 64;            // bounded session table
+inline constexpr int64_t kIssueWindowMs = 10000;      // issuance rate-limit window
+inline constexpr size_t kMaxIssuesPerWindow = 5;      // sessions minted per window
+inline constexpr int kMaxAuthFailures = 5;            // bad secrets before lockout
+inline constexpr int64_t kLockoutMs = 30000;          // lockout duration
+
+// Constant-time equality: no early exit, so a wrong secret cannot be probed by timing.
+inline bool constant_time_equal(std::string_view a, std::string_view b) {
+    const size_t n = a.size() > b.size() ? a.size() : b.size();
+    unsigned char diff = static_cast<unsigned char>(a.size() ^ b.size());
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned char ca = i < a.size() ? static_cast<unsigned char>(a[i]) : 0;
+        const unsigned char cb = i < b.size() ? static_cast<unsigned char>(b[i]) : 0;
+        diff = static_cast<unsigned char>(diff | (ca ^ cb));
+    }
+    return diff == 0;
+}
+
+// Authenticated session table. A CSRF token exists only after a caller proves knowledge of the
+// launch-time operator secret, and it is bound to that authorized session.
+//
+// The operator secret is never embedded in served assets: the dashboard receives it once, in
+// the URL the operator opens (printed by readiness), reads it locally, strips it from the
+// address bar, and uses it exactly once to establish the session.
+struct SessionStore {
+    struct Entry {
+        int64_t expires_ms = 0;
+    };
+    std::unordered_map<std::string, Entry> by_csrf;
+    std::string operator_secret;      // "" => the state route is disabled entirely
+    int64_t window_start_ms = 0;
+    size_t issued_in_window = 0;
+    int auth_failures = 0;
+    int64_t lockout_until_ms = 0;
+
+    bool state_route_enabled() const { return !operator_secret.empty(); }
+
+    // Verified OS CSPRNG. No fallback: if the kernel cannot provide entropy, the caller must
+    // refuse to issue anything (fail closed) rather than degrade to a predictable source.
+    static bool secure_random_hex(std::string& out, size_t bytes) {
+        std::vector<unsigned char> buf(bytes, 0);
+#if defined(__linux__)
+        size_t got = 0;
+        while (got < buf.size()) {
+            const ssize_t n = ::getrandom(buf.data() + got, buf.size() - got, 0);
+            if (n <= 0) {
+                if (errno == EINTR) continue;
+                return false;  // no fallback: refuse
+            }
+            got += static_cast<size_t>(n);
+        }
+#else
+        return false;
+#endif
+        static const char* hex = "0123456789abcdef";
+        out.clear();
+        out.reserve(bytes * 2);
+        for (unsigned char b : buf) {
+            out.push_back(hex[b >> 4]);
+            out.push_back(hex[b & 0x0f]);
+        }
+        return true;
+    }
+
+    void evict(int64_t now_ms) {
+        for (auto it = by_csrf.begin(); it != by_csrf.end();) {
+            if (it->second.expires_ms <= now_ms) it = by_csrf.erase(it);
+            else ++it;
+        }
+        while (by_csrf.size() >= kMaxSessions) by_csrf.erase(by_csrf.begin());
+    }
+
+    // Authorization: proof of the launch-time secret, with failure accounting and lockout.
+    bool authorize(const std::string& presented, int64_t now_ms) {
+        if (!state_route_enabled()) return false;
+        if (now_ms < lockout_until_ms) return false;  // locked out after repeated failures
+        if (constant_time_equal(presented, operator_secret)) {
+            auth_failures = 0;
+            return true;
+        }
+        ++auth_failures;
+        if (auth_failures >= kMaxAuthFailures) {
+            lockout_until_ms = now_ms + kLockoutMs;   // bounded, temporary
+            auth_failures = 0;
+        }
+        return false;
+    }
+
+    // Mint a session-bound CSRF token. Returns "" when rate-limited or when secure randomness
+    // is unavailable - the caller must then refuse the request.
+    std::string issue_csrf(int64_t now_ms) {
+        evict(now_ms);
+        if (now_ms - window_start_ms >= kIssueWindowMs) {
+            window_start_ms = now_ms;
+            issued_in_window = 0;
+        }
+        if (++issued_in_window > kMaxIssuesPerWindow) return "";
+        std::string tok;
+        if (!secure_random_hex(tok, 32)) return "";
+        by_csrf.emplace(tok, Entry{now_ms + kSessionTtlMs});
+        return tok;
+    }
+
+    // Valid, unexpired and unused => consume it (single use; replay is refused).
+    bool consume_csrf(const std::string& tok, int64_t now_ms) {
+        evict(now_ms);
+        const auto it = by_csrf.find(tok);
+        if (it == by_csrf.end()) return false;
+        by_csrf.erase(it);
+        return true;
+    }
+};
+
+// Exact same-origin: scheme http, loopback host, and THIS listener's port. Checking the port
+// matters - otherwise a page served by any other local port would count as same-origin.
+inline bool is_same_local_origin(std::string_view origin, uint16_t server_port) {
+    constexpr std::string_view prefix = "http://";
+    if (origin.size() <= prefix.size() || origin.substr(0, prefix.size()) != prefix)
+        return false;
+    const std::string_view authority = origin.substr(prefix.size());
+    const auto colon = authority.rfind(':');
+    if (colon == std::string_view::npos) return false;   // port mandatory: default port is not this listener
+    const std::string_view host = authority.substr(0, colon);
+    const std::string_view port = authority.substr(colon + 1);
+    if (host != "127.0.0.1" && host != "localhost") return false;
+    if (port.empty() || port.size() > 5) return false;
+    for (char c : port) if (c < '0' || c > '9') return false;
+    return port == std::to_string(server_port);
+}
 
 // A parsed, validated routing result handed to the handler.
 struct HandlerRequest {
@@ -72,18 +216,22 @@ inline bool is_loopback_authority(std::string_view host) {
     return h == "127.0.0.1" || h == "localhost";
 }
 
-inline bool is_loopback_origin(std::string_view origin) {
-    constexpr std::string_view prefix = "http://";
-    if (origin.size() <= prefix.size() || origin.substr(0, prefix.size()) != prefix)
-        return false;  // reject "null", https from elsewhere, other schemes
-    return is_loopback_authority(origin.substr(prefix.size()));
-}
-
 inline std::string response(unsigned status, std::string_view mime, const std::string& body) {
-    const char* reason = status == 200 ? "OK" : status == 400 ? "Bad Request"
-        : status == 403 ? "Forbidden" : status == 404 ? "Not Found"
-        : status == 405 ? "Method Not Allowed" : status == 413 ? "Payload Too Large"
-        : "Service Unavailable";
+    const char* reason = "Error";
+    switch (status) {
+        case 200: reason = "OK"; break;
+        case 400: reason = "Bad Request"; break;
+        case 401: reason = "Unauthorized"; break;
+        case 403: reason = "Forbidden"; break;
+        case 404: reason = "Not Found"; break;
+        case 405: reason = "Method Not Allowed"; break;
+        case 411: reason = "Length Required"; break;
+        case 413: reason = "Payload Too Large"; break;
+        case 415: reason = "Unsupported Media Type"; break;
+        case 429: reason = "Too Many Requests"; break;
+        case 503: reason = "Service Unavailable"; break;
+        default: reason = "Error"; break;
+    }
     std::string head = "HTTP/1.1 " + std::to_string(status) + " " + reason
         + "\r\nContent-Type: " + std::string(mime)
         + "\r\nContent-Length: " + std::to_string(body.size())
@@ -108,9 +256,12 @@ inline std::string json_error(unsigned status, std::string_view error) {
 }
 
 inline std::string dispatch(std::string_view request, std::string_view html,
-                            const Handler& handler) {
+                            const Handler& handler, SessionStore& sessions,
+                            int64_t now_ms, uint16_t server_port) {
     const auto header_end = request.find("\r\n\r\n");
-    if (header_end == std::string_view::npos || request.size() != header_end + 4)
+    // A request MAY carry a body: the POST routes do, and the GET branch rejects one explicitly.
+    // The header block itself must still be complete (not truncated mid-request).
+    if (header_end == std::string_view::npos || request.size() < header_end + 4)
         return json_error(400, "malformed");
     const auto first_end = request.find("\r\n");
     if (first_end == std::string_view::npos || first_end > header_end)
@@ -121,7 +272,8 @@ inline std::string dispatch(std::string_view request, std::string_view html,
     if (p1 == std::string_view::npos || p2 == std::string_view::npos ||
         line.substr(p2 + 1) != "HTTP/1.1")
         return json_error(400, "malformed");
-    if (line.substr(0, p1) != "GET")
+    const std::string_view method = line.substr(0, p1);
+    if (method != "GET" && method != "POST")
         return json_error(405, "method_not_allowed");
     const auto path = line.substr(p1 + 1, p2 - p1 - 1);
     if (path.empty() || path.size() > kMaxPathBytes || path.front() != '/' ||
@@ -136,6 +288,14 @@ inline std::string dispatch(std::string_view request, std::string_view html,
     // non-loopback Origin (cross-site request defence for the scenario route).
     bool host_seen = false;
     bool origin_ok = true;
+    bool origin_seen = false;
+    bool cl_seen = false;
+    size_t content_length = 0;
+    std::string content_type;
+    std::string csrf_token;
+    std::string presented_secret;
+    bool csrf_seen = false;
+    bool secret_seen = false;
     size_t at = first_end + 2;
     while (at < header_end) {
         const auto next = request.find("\r\n", at);
@@ -159,20 +319,50 @@ inline std::string dispatch(std::string_view request, std::string_view html,
             host_seen = true;
             if (!is_loopback_authority(value)) return json_error(403, "forbidden_host");
         } else if (key == "origin") {
-            if (!is_loopback_origin(value)) origin_ok = false;
+            if (origin_seen) return json_error(400, "malformed");  // duplicate
+            origin_seen = true;
+            // Exact same-origin (scheme + loopback host + this listener's port).
+            if (!is_same_local_origin(value, server_port)) origin_ok = false;
+        } else if (key == "content-length") {
+            if (cl_seen || value.empty() || value.size() > 6)
+                return json_error(400, "malformed");
+            cl_seen = true;
+            for (char ch : value) {
+                if (ch < '0' || ch > '9') return json_error(400, "malformed");
+                content_length = content_length * 10 + static_cast<size_t>(ch - '0');
+            }
+        } else if (key == "content-type") {
+            if (!content_type.empty()) return json_error(400, "malformed");
+            content_type = std::string(value);
+        } else if (key == "x-hg-csrf") {
+            if (csrf_seen) return json_error(400, "malformed");  // duplicates DENY
+            csrf_seen = true;
+            csrf_token = std::string(value);
+        } else if (key == "x-hg-secret") {
+            if (secret_seen) return json_error(400, "malformed");  // duplicates DENY
+            secret_seen = true;
+            if (value.size() > 256) return json_error(400, "malformed");
+            presented_secret = std::string(value);
         }
-        if (key == "content-length" || key == "transfer-encoding" ||
-            key == "authorization" || key == "expect")
+        // Framing ambiguity, smuggled lines and credentials we do not use are refused.
+        if (key == "transfer-encoding" || key == "authorization" || key == "expect")
             return json_error(400, "malformed");
         at = next + 2;
     }
     if (!host_seen) return json_error(400, "malformed");
     if (!origin_ok) return json_error(403, "forbidden_origin");
-    if (path == "/" || path == "/index.html")
-        return response(200, "text/html; charset=utf-8", std::string(html));
-    if (path == "/api/health")
-        return response(200, "application/json",
-                        R"({"ok":true,"status":"up","simulated":true})");
+
+    // Body framing, for both methods, in the order that keeps each documented outcome honest:
+    //   a declared length that disagrees with what arrived is ambiguous -> refuse;
+    //   a GET carries no body and may not declare a length               -> refuse;
+    //   a POST that sends a body must declare its length (411 is the POST branch's answer).
+    const size_t actual_body = request.size() - (header_end + 4);
+    // A declared length over the cap is refused as too-large BEFORE it is compared with what
+    // arrived: the cap is a property of the declaration, not of the bytes we happened to receive.
+    if (cl_seen && content_length > kMaxBodyBytes) return json_error(413, "too_large");
+    if (cl_seen && actual_body != content_length) return json_error(400, "malformed");
+    if (method == "GET" && (actual_body > 0 || cl_seen)) return json_error(400, "malformed");
+
     // The handler decides the business outcome, including a non-200 status when
     // it rejects a well-formed request (e.g. an unknown scenario id). The
     // transport owns framing, header and query validation only.
@@ -181,18 +371,77 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         std::string body = handler(r, status);
         return response(static_cast<unsigned>(status), "application/json", body);
     };
-    if (path == "/api/status")
-        return invoke({"status", "", 5, false});
-    if (path == "/api/alerts")
-        return invoke({"alerts", "", 5, false});
-    if (path == "/api/scenarios")
-        return invoke({"scenarios", "", 5, false});
-    // Sensor/integration status: read-only, no state change. Reports what is
-    // ACTUALLY connected (currently: nothing) rather than implying hardware.
-    if (path == "/api/integrations")
-        return invoke({"integrations", "", 5, false});
-    if (path == "/api/run-scenario" ||
-        path.substr(0, 18) == "/api/run-scenario?") {
+
+    const bool is_state_route = (path == "/api/run-scenario" ||
+                                 path.substr(0, 18) == "/api/run-scenario?");
+    const bool is_session_route = (path == "/api/session");
+
+    // ---- GET: read-only routes only (control 1) ------------------------------------
+    if (method == "GET") {
+        // A state-advancing route is never reachable by GET, and the handler is not called.
+        if (is_state_route || is_session_route)
+            return json_error(405, "method_not_allowed");
+        if (cl_seen) return json_error(400, "malformed");  // no bodies on reads
+        if (path == "/" || path == "/index.html")
+        return response(200, "text/html; charset=utf-8", std::string(html));
+    if (path == "/api/health")
+        return response(200, "application/json",
+                        R"({"ok":true,"status":"up","simulated":true})");
+        if (path == "/api/status")
+            return invoke({"status", "", 5, false});
+        if (path == "/api/alerts")
+            return invoke({"alerts", "", 5, false});
+        if (path == "/api/scenarios")
+            return invoke({"scenarios", "", 5, false});
+        // Sensor/integration status: read-only, no state change. Reports what is
+        // ACTUALLY connected (currently: nothing) rather than implying hardware.
+        if (path == "/api/integrations")
+            return invoke({"integrations", "", 5, false});
+        return json_error(404, "not_found");
+    }
+
+    // ---- POST: the two state-adjacent routes (controls 2/4/5) ----------------------
+    if (!is_state_route && !is_session_route) return json_error(405, "method_not_allowed");
+    if (!cl_seen) return json_error(411, "length_required");
+    if (content_length > kMaxBodyBytes) return json_error(413, "too_large");
+    // A body must actually have arrived, and must be a JSON object (never a form post).
+    if (request.size() != header_end + 4 + content_length)
+        return json_error(400, "malformed");
+    if (content_type != "application/json")
+        return json_error(415, "unsupported_media_type");
+    const auto body = request.substr(header_end + 4);
+    if (!body.empty() && body != "{}") return json_error(400, "malformed");
+    // Strict same-origin: required, and it must be THIS scheme/host/port. A cross-site page,
+    // or a page served from another local port, cannot satisfy it.
+    if (!origin_seen) return json_error(403, "forbidden_origin");
+
+    if (is_session_route) {
+        // Authorization happens HERE and nowhere else. Without a configured launch secret the
+        // state route is disabled outright; with one, the caller must prove knowledge of it.
+        if (!sessions.state_route_enabled())
+            return json_error(503, "state_route_disabled");
+        if (presented_secret.empty() || !sessions.authorize(presented_secret, now_ms))
+            return json_error(401, "unauthorized");
+        const std::string tok = sessions.issue_csrf(now_ms);
+        if (tok.empty()) {
+            // Rate-limited, or the OS CSPRNG refused: issue nothing, and say so.
+            return json_error(429, "issuance_limited");
+        }
+        return response(200, "application/json",
+                        "{\"ok\":true,\"csrf\":\"" + tok + "\",\"expires_ms\":" +
+                            std::to_string(kSessionTtlMs) + "}");
+    }
+
+    // State route: the token must be a live, authorized session token - unexpired and unused.
+    // It is consumed here, so a replay of the same request is refused. No token, or a token
+    // that was never issued to an authorized caller, means no handler invocation at all.
+    if (!sessions.state_route_enabled())
+        return json_error(503, "state_route_disabled");
+    if (csrf_token.empty() || !sessions.consume_csrf(csrf_token, now_ms))
+        return json_error(403, "forbidden_csrf");
+
+    {
+        // (unchanged, strictly allowlisted query parsing for scenario/cycles)
         // State-advancing route: bounded, allowlisted query only. Accepts at
         // most one `cycles=<digits>` and one `scenario=<token>`; any other key,
         // duplicate, empty value, or malformed token is rejected 400.
@@ -245,7 +494,6 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         }
         return invoke(req);
     }
-    return json_error(404, "not_found");
 }
 
 inline void send_all(int fd, const std::string& bytes) {
@@ -262,7 +510,8 @@ inline void send_all(int fd, const std::string& bytes) {
 // thread. Intended solely for a controlled local simulator demo.
 // Port=0 chooses an ephemeral port and announces "DEMO_READY <port>".
 // Returns only after a bind/listen/accept failure or request_shutdown().
-inline int serve(uint16_t port, std::string_view html, const Handler& handler) {
+inline int serve(uint16_t port, std::string_view html, const Handler& handler,
+                 std::string operator_secret = std::string()) {
     const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listener < 0) return 2;
     const int reuse = 1;
@@ -277,12 +526,33 @@ inline int serve(uint16_t port, std::string_view html, const Handler& handler) {
         return 3;
     }
     g_stop.store(false);
+    // One CSRF table for the server's lifetime: a token minted for one connection must
+    // still be valid on the next, or the two-step (session, then scenario) flow could
+    // never complete. It is bounded and expiry-evicted inside the store.
+    SessionStore sessions;
+    sessions.operator_secret = operator_secret;
+    // If the operator did not supply a secret, mint one for this launch and announce it once.
+    // It is launch-time, unpredictable and never embedded in the served page.
+    if (sessions.operator_secret.empty()) {
+        // With no operator-supplied secret the state route stays DISABLED (503). We do not
+        // generate-and-reveal a credential: a secret the operator never chose is not an
+        // authorization decision, and printing it would put it in logs.
+    }
+    const auto now_ms = [] {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
     // A 1s listener timeout makes accept() poll-wake so a requested shutdown
     // is honored promptly regardless of SA_RESTART semantics.
     const timeval ltimeout{1, 0};
     (void)::setsockopt(listener, SOL_SOCKET, SO_RCVTIMEO, &ltimeout, sizeof(ltimeout));
     socklen_t addr_size = sizeof(addr);
     (void)::getsockname(listener, reinterpret_cast<sockaddr*>(&addr), &addr_size);
+    // The generated secret is NEVER printed: not to stdout, not to a log, not into an archive.
+    // The operator supplies it via HG_DEMO_SECRET, or types it into the dashboard's credential
+    // field, which posts it to /api/session. A secret that only exists in the process env and
+    // the operator's head is not recoverable from CI or archived readiness output.
     std::cout << "DEMO_READY " << ntohs(addr.sin_port) << std::endl;
     for (;;) {
         if (g_stop.load()) break;
@@ -307,8 +577,10 @@ inline int serve(uint16_t port, std::string_view html, const Handler& handler) {
             }
             input.append(buffer, static_cast<size_t>(n));
         }
-        const auto output = too_large ? json_error(413, "too_large")
-                                      : dispatch(input, html, handler);
+        const auto output = too_large
+            ? json_error(413, "too_large")
+            : dispatch(input, html, handler, sessions, now_ms(),
+                       ntohs(addr.sin_port));
         send_all(client, output);
         ::close(client);
     }
