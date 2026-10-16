@@ -40,8 +40,10 @@ cat > "$TMP/creds.json" <<'CREDS'
 CREDS
 chmod 600 "$TMP/creds.json"
 
-"$BRIDGE" --http "$REPO/config/homeguardian.demo.json" "$TMP/creds.json" \
-          --port "$PORT" --token "dashboard-verify-token" > "$TMP/bridge.log" 2>&1 &
+printf '%s' "dashboard-verify-token" > "$TMP/tok.txt"
+chmod 600 "$TMP/tok.txt"
+HG_HTTP_TOKEN="dashboard-verify-token" "$BRIDGE" --http "$REPO/config/homeguardian.demo.json" "$TMP/creds.json" \
+          --port "$PORT" --token-file "$TMP/tok.txt" > "$TMP/bridge.log" 2>&1 &
 PID=$!
 
 for _ in $(seq 1 40); do
@@ -55,8 +57,8 @@ curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || { echo "bridge d
 printf '%s' '{"token":"oops"}' > "$TMP/bad_creds.json"
 chmod 600 "$TMP/bad_creds.json"
 BADPORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
-timeout 20 "$BRIDGE" --http "$REPO/config/homeguardian.demo.json" "$TMP/bad_creds.json" \
-        --port "$BADPORT" --token "dashboard-verify-token" > "$TMP/bad.log" 2>&1
+HG_HTTP_TOKEN="dashboard-verify-token" timeout 20 "$BRIDGE" --http "$REPO/config/homeguardian.demo.json" "$TMP/bad_creds.json" \
+        --port "$BADPORT" --token-file "$TMP/tok.txt" > "$TMP/bad.log" 2>&1
 BADRC=$?
 if [ "$BADRC" -ne 0 ] && [ "$BADRC" -ne 124 ]; then
   ok "malformed credential table exits non-zero ($BADRC) instead of aborting"

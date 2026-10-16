@@ -14,16 +14,30 @@ class WebRtcStreamer {
   constructor(options = {}) {
     this.sessionManager = options.sessionManager;
     this.deviceAdapter = options.deviceAdapter;
-    this.activeConnections = new Map(); // connectionId -> { pc, deviceId, sessionToken, startedAt }
+    this.activeConnections = new Map(); // connectionId -> { pc, deviceId, sessionToken, startedAt, lastActivityAt }
     this.allowedOrigins = options.allowedOrigins || [
       'http://127.0.0.1',
       'http://localhost',
     ];
-    this.maxStreamLifetimeMs = options.maxStreamLifetimeMs || 1800 * 1000; // 30 minutes
+    this.maxStreamLifetimeMs = options.maxStreamLifetimeMs ||
+      (process.env.HG_WEBRTC_MAX_LIFETIME_MS ? parseInt(process.env.HG_WEBRTC_MAX_LIFETIME_MS, 10) : 1800 * 1000); // 30 minutes default
+    this.idleTimeoutMs = options.idleTimeoutMs ||
+      (process.env.HG_WEBRTC_IDLE_TIMEOUT_MS ? parseInt(process.env.HG_WEBRTC_IDLE_TIMEOUT_MS, 10) : 60 * 1000); // 60 seconds idle timeout default
+    this.cleanupIntervalMs = options.cleanupIntervalMs ||
+      (process.env.HG_WEBRTC_CLEANUP_INTERVAL_MS ? parseInt(process.env.HG_WEBRTC_CLEANUP_INTERVAL_MS, 10) : 1000); // 1 second proactive check
+
     if (this.sessionManager && typeof this.sessionManager.onSessionDestroyed === 'function') {
       this.sessionManager.onSessionDestroyed((token) => {
         this.stopSessionStreams(token);
       });
+    }
+
+    // Proactive background sweep for expired or idle streams
+    this._cleanupTimer = setInterval(() => {
+      this.pruneExpiredStreams();
+    }, this.cleanupIntervalMs);
+    if (this._cleanupTimer.unref) {
+      this._cleanupTimer.unref();
     }
   }
 
@@ -42,22 +56,42 @@ class WebRtcStreamer {
     }
   }
 
-  // Clean up streams exceeding lifetime or whose sessions expired
+  // Clean up streams exceeding lifetime, idle timeout, or whose sessions expired
   pruneExpiredStreams() {
     const now = Date.now();
     for (const [id, entry] of this.activeConnections.entries()) {
+      // 1. Absolute lifetime expiration
       if (now - entry.startedAt > this.maxStreamLifetimeMs) {
         try { entry.pc.close(); } catch (_) {}
         this.activeConnections.delete(id);
         continue;
       }
+      // 2. Idle timeout expiration
+      if (entry.lastActivityAt && (now - entry.lastActivityAt > this.idleTimeoutMs)) {
+        try { entry.pc.close(); } catch (_) {}
+        this.activeConnections.delete(id);
+        continue;
+      }
+      // 3. Authenticated session teardown
       if (this.sessionManager && typeof this.sessionManager.getSessionByToken === 'function') {
         const session = this.sessionManager.getSessionByToken(entry.sessionToken);
         if (!session) {
           try { entry.pc.close(); } catch (_) {}
           this.activeConnections.delete(id);
+          continue;
         }
       }
+    }
+  }
+
+  stop() {
+    if (this._cleanupTimer) {
+      clearInterval(this._cleanupTimer);
+      this._cleanupTimer = null;
+    }
+    for (const [id, entry] of this.activeConnections.entries()) {
+      try { entry.pc.close(); } catch (_) {}
+      this.activeConnections.delete(id);
     }
   }
 
@@ -108,58 +142,66 @@ class WebRtcStreamer {
       throw new Error('invalid_view_token: Scoped viewing authorization invalid, expired, or bound to another session');
     }
 
-    // 6. Create WebRTC PeerConnection with CSPRNG random connection ID
+    // 6. Verify stream ownership: refuse before allocating resources if another session holds active stream
+    for (const [, existingEntry] of this.activeConnections.entries()) {
+      if (existingEntry.deviceId === deviceId && session && existingEntry.sessionToken !== session.sessionToken) {
+        throw new Error("forbidden: Cannot stop another session's active stream");
+      }
+    }
+
+    // 7. Create WebRTC PeerConnection with CSPRNG random connection ID
     const connectionId = `conn_${crypto.randomBytes(16).toString('hex')}`;
     const pc = new RTCPeerConnection({
       iceServers: [], // LAN / loopback host-only, no cloud STUN/TURN relays
     });
 
-    let answer;
     try {
       const videoTrack = new MediaStreamTrack({ kind: 'video' });
       pc.addTrack(videoTrack);
       await pc.setRemoteDescription(sdp);
-      answer = await pc.createAnswer();
+      const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+
+      // Replacement negotiation succeeded: now close prior streams for this device owned by this session
+      this.stopDeviceStream(deviceId, session);
+
+      const now = Date.now();
+      // Track active connection with session ownership and activity timestamp
+      const entry = {
+        connectionId,
+        deviceId,
+        sessionToken: session.sessionToken,
+        pc,
+        startedAt: now,
+        lastActivityAt: now,
+        synthetic: !!device.is_synthetic,
+      };
+      this.activeConnections.set(connectionId, entry);
+
+      pc.connectionStateChange.subscribe((state) => {
+        if (state === 'closed' || state === 'failed' || state === 'disconnected') {
+          try { pc.close(); } catch (_) {}
+          this.activeConnections.delete(connectionId);
+        }
+      });
+
+      // Single-use token consumed
+      this.sessionManager.revokeViewToken(viewToken);
+
+      return {
+        connectionId,
+        deviceId,
+        sdp: answer,
+        syntheticProvider: entry.synthetic,
+        streamState: 'active',
+        notice: entry.synthetic
+          ? 'SIMULATED TEST PATTERN ONLY. No physical camera activated.'
+          : 'Authoritative remote camera session established.',
+      };
     } catch (err) {
       try { pc.close(); } catch (_) {}
-      throw new Error(`sdp_exchange_failed: ${err.message}`);
+      throw err;
     }
-
-    // 7. Replacement negotiation succeeded: now close prior streams for this device owned by this session
-    this.stopDeviceStream(deviceId, session);
-
-    // Track active connection with session ownership
-    const entry = {
-      connectionId,
-      deviceId,
-      sessionToken: session.sessionToken,
-      pc,
-      startedAt: Date.now(),
-      synthetic: !!device.is_synthetic,
-    };
-    this.activeConnections.set(connectionId, entry);
-
-    pc.connectionStateChange.subscribe((state) => {
-      if (state === 'closed' || state === 'failed' || state === 'disconnected') {
-        try { pc.close(); } catch (_) {}
-        this.activeConnections.delete(connectionId);
-      }
-    });
-
-    // Single-use token consumed
-    this.sessionManager.revokeViewToken(viewToken);
-
-    return {
-      connectionId,
-      deviceId,
-      sdp: answer,
-      syntheticProvider: entry.synthetic,
-      streamState: 'active',
-      notice: entry.synthetic
-        ? 'SIMULATED TEST PATTERN ONLY. No physical camera activated.'
-        : 'Authoritative remote camera session established.',
-    };
   }
 
   /**

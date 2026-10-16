@@ -167,7 +167,8 @@ class DeviceRegistryAdapter {
         last_seen_ms: d.last_heartbeat_ms || 0,
         paired: !!d.paired,
         revoked: !!d.revoked,
-        is_synthetic: !!(d.device_type === 'simulator' || d.credential_id === 'syn-camera-cert'),
+        credential_id: d.credential_id || '',
+        is_synthetic: !!(d.is_synthetic || d.device_type === 'simulator'),
       };
     });
   }

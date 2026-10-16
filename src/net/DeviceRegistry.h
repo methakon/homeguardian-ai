@@ -70,6 +70,7 @@ public:
         // absent key is always false and the runtime value is never inferred - a
         // device that was never authorized in writing stays unauthorized.
         bool capture_enabled = false;
+        bool is_synthetic = false;
     };
 
     // Result of binding an authenticated credential to a device record.

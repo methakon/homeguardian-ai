@@ -89,13 +89,17 @@ measure_impl() {
 }
 
 BENCH_SECRET="bench-secret-2026"
+printf '%s' "$BENCH_SECRET" > "$WORK/bench_secret.txt"
+chmod 600 "$WORK/bench_secret.txt"
+printf '%s' "demo-token" > "$WORK/bench_token.txt"
+chmod 600 "$WORK/bench_token.txt"
 
 measure_impl hg_native \
-  "\"$BRIDGE\" --http \"$CONFIG\" \"$WORK/creds.json\" --port 8320 --token demo-token --secret $BENCH_SECRET"
+  "HG_HTTP_SECRET=$BENCH_SECRET HG_HTTP_TOKEN=demo-token \"$BRIDGE\" --http \"$CONFIG\" \"$WORK/creds.json\" --port 8320 --token-file \"$WORK/bench_token.txt\" --secret-file \"$WORK/bench_secret.txt\""
 
 if command -v node >/dev/null 2>&1; then
   measure_impl node_legacy \
-    "node \"$DEMO_SERVER\" --bridge \"$BRIDGE\" --config \"$CONFIG\" --creds \"$WORK/creds.json\" --port 8321 --token demo-token --secret $BENCH_SECRET"
+    "HG_DEMO_SECRET=$BENCH_SECRET HG_HTTP_SECRET=$BENCH_SECRET HG_HTTP_TOKEN=demo-token node \"$DEMO_SERVER\" --bridge \"$BRIDGE\" --config \"$CONFIG\" --creds \"$WORK/creds.json\" --port 8321 --token-file \"$WORK/bench_token.txt\" --secret-file \"$WORK/bench_secret.txt\""
 else
   echo "==================== node_legacy ===================="
   echo "  NOT RUN (node not installed in this environment)"

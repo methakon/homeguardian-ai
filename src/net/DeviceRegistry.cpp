@@ -75,6 +75,7 @@ nlohmann::json to_json(const DeviceRegistry::Device& d) {
     j["consent_purpose"] = d.consent_purpose;
     j["consent_updated_ms"] = d.consent_updated_ms;
     j["capture_enabled"] = d.capture_enabled;
+    j["is_synthetic"] = d.is_synthetic;
     return j;
 }
 
@@ -135,14 +136,14 @@ bool DeviceRegistry::load(const std::string& path, std::string* reason) {
         d.consent_granted = entry.value("consent_granted", false);
         d.consent_subject = entry.value("consent_subject", std::string());
         d.consent_purpose = entry.value("consent_purpose", std::string());
-        // Runtime state is deliberately NOT restored from a file the operator can
-        // edit: a restart must not resurrect a live-looking online flag or a
-        // sequence watermark. Both are reset and re-learned from the wire.
-        d.last_heartbeat_ms = 0;
-        d.last_sequence = 0;
-        d.last_observation_at_ms = 0;
-        d.online = false;
-        d.consent_updated_ms = 0;
+        // Restore persisted runtime metrics and replay sequence watermark
+        d.last_heartbeat_ms = entry.value("last_heartbeat_ms", 0LL);
+        d.last_sequence = entry.value("last_sequence", 0ULL);
+        d.last_observation_at_ms = entry.value("last_observation_at_ms", 0LL);
+        d.consent_updated_ms = entry.value("consent_updated_ms", 0LL);
+        d.is_synthetic = entry.value("is_synthetic", false) || (d.device_type == "simulator");
+        // A device is online ONLY if persisted online=true, paired, unrevoked, and authenticated
+        d.online = entry.value("online", false) && d.paired && !d.revoked && !d.credential_id.empty();
         // Capture is OFF unless the registry explicitly authorizes it AND the
         // device is paired AND consent is recorded. An absent key, an unpaired
         // device or a consentless device is always false: the fail-closed default
@@ -520,6 +521,10 @@ void DeviceRegistry::note_heartbeat(const std::string& device_id, int64_t now_ms
                                     const std::vector<std::string>& capabilities) {
     Device* d = find_mutable(device_id);
     if (d == nullptr) return;
+    if (!d->paired || d->revoked || d->credential_id.empty()) {
+        d->online = false;
+        return;
+    }
     d->last_heartbeat_ms = now_ms;
     d->online = true;
     if (!capabilities.empty() && capabilities.size() <= cfg_.max_capabilities) {

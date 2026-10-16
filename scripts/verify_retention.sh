@@ -49,8 +49,12 @@ JSON
 
 RET_SECRET="retention-secret-2026"
 start_bridge() {
-  ( cd "$WORK" && exec "$BRIDGE" --http "$WORK/config.json" "$WORK/creds.json" \
-      --port "$PORT" --token demo-token --secret "$RET_SECRET" ) > "$WORK/out.log" 2> "$WORK/err.log" &
+  printf '%s' "$RET_SECRET" > "$WORK/ret_secret.txt"
+  chmod 600 "$WORK/ret_secret.txt"
+  printf '%s' "demo-token" > "$WORK/ret_token.txt"
+  chmod 600 "$WORK/ret_token.txt"
+  ( cd "$WORK" && HG_HTTP_SECRET="$RET_SECRET" HG_HTTP_TOKEN="demo-token" exec "$BRIDGE" --http "$WORK/config.json" "$WORK/creds.json" \
+      --port "$PORT" --token-file "$WORK/ret_token.txt" --secret-file "$WORK/ret_secret.txt" ) > "$WORK/out.log" 2> "$WORK/err.log" &
   PID=$!
   for _ in $(seq 1 40); do
     curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health" && return 0

@@ -747,7 +747,8 @@ int main(int argc, char* argv[]) {
     }
     if (argc < base + 2) {
         std::cerr << "usage: hg_alexa_bridge [--http] <config.json> <credentials.json>"
-                     " [--port N] [--token T] [--secret S]\n";
+                     " [--port N] [--token-file PATH] [--secret-file PATH]\n"
+                     "  (environment variables HG_HTTP_TOKEN, HG_HTTP_SECRET, HG_SECRET_FILE also supported)\n";
         return 2;
     }
     const std::string config_path = argv[base];
@@ -778,6 +779,7 @@ int main(int argc, char* argv[]) {
         if (a == "--port" && i + 1 < argc) {
             http_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (a == "--token" && i + 1 < argc) {
+            std::cerr << "SECURITY WARNING: passing --token on command line exposes credential in /proc and ps. Use --token-file or HG_HTTP_TOKEN instead.\n";
             http_token = argv[++i];
         } else if (a == "--token-file" && i + 1 < argc) {
             std::ifstream tf(argv[++i]);
@@ -785,6 +787,7 @@ int main(int argc, char* argv[]) {
                 std::getline(tf, http_token);
             }
         } else if (a == "--secret" && i + 1 < argc) {
+            std::cerr << "SECURITY WARNING: passing --secret on command line exposes credential in /proc and ps. Use --secret-file or HG_HTTP_SECRET instead.\n";
             http_secret = argv[++i];
         } else if (a == "--secret-file" && i + 1 < argc) {
             std::ifstream sf(argv[++i]);

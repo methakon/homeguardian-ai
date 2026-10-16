@@ -98,8 +98,7 @@ Verified in a **real browser** (CDP) and over the API:
 | `/api/health` | GET | 200 `{"ok":true,"status":"up","simulated":true}` |
 | `/api/status` | GET | 200, or `{"error":"unavailable","ok":false}` when the audit DB is unusable (degraded) |
 | `/api/alerts` | GET | 200, per-alert non-sensitive detail from the durable store |
-| `/api/scenarios` | GET | 200, the 10 catalogue entries |
-| `/api/run-scenario?scenario=<id>[&cycles=N]` | GET | 200 on success; **400** for a well-formed but unsupported scenario id |
+| `/api/run-scenario?scenario=<id>[&cycles=N]` | POST | 200 on success (requires valid session & CSRF token); **400** for invalid scenario; **405** on GET |
 
 Adversarial matrix: **51/51 pass** — bad/missing/duplicate/non-loopback `Host`
 (403/400), cross-site `Origin` (403), non-GET methods (405), `Authorization` /

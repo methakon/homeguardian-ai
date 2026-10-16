@@ -114,14 +114,16 @@ json format_device(const DeviceRegistry::Device& d, int64_t now_ms) {
     j["consent_subject"] = d.consent_subject;
     j["consent_purpose"] = d.consent_purpose;
 
-    // Explicit synthetic provider flag: true for verified simulator device type or synthetic certificate
-    const bool is_synthetic = (d.device_type == "simulator") || (d.credential_id == "syn-camera-cert");
+    j["credential_id"] = d.credential_id;
+
+    // Explicit synthetic provider flag: true for verified simulator device type or synthetic flag
+    const bool is_synthetic = d.is_synthetic || (d.device_type == "simulator");
     j["is_synthetic"] = is_synthetic;
 
     return j;
 }
 
-void init_default_registry(DeviceRegistry& reg, const std::string& path) {
+void init_default_registry(DeviceRegistry& reg, const std::string& path, bool save_to_disk = false) {
     std::string reason;
 
     // 1. Android Wi-Fi Camera 1 (Physical candidate: offline, not granted, never faked online)
@@ -138,13 +140,15 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path) {
     cam1.consent_granted = false;
     cam1.capture_enabled = false;
     cam1.online = false;
+    cam1.last_heartbeat_ms = 0;
+    cam1.is_synthetic = false;
     reg.pair(cam1, &reason);
 
     // 2. Synthetic Test Provider (Specifically for UI & transport testing without phone)
     DeviceRegistry::Device camSyn;
     camSyn.device_id = "camera-syn-001";
     camSyn.display_name = "Synthetic Test Camera (Simulation)";
-    camSyn.device_type = "camera";
+    camSyn.device_type = "simulator";
     camSyn.credential_id = "syn-camera-cert";
     camSyn.paired = true;
     camSyn.revoked = false;
@@ -155,8 +159,9 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path) {
     camSyn.consent_subject = "operator";
     camSyn.consent_purpose = "demo_testing";
     camSyn.capture_enabled = true;
-    camSyn.online = true;
-    camSyn.last_heartbeat_ms = get_now_ms();
+    camSyn.online = false;
+    camSyn.last_heartbeat_ms = 0;
+    camSyn.is_synthetic = true;
     reg.pair(camSyn, &reason);
 
     // 3. Hallway Audio Sensor (Offline, unconsented)
@@ -185,7 +190,7 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path) {
     spk1.revoked = false;
     spk1.capabilities = {"talkback"};
     spk1.has_camera = false;
-    mic1.has_microphone = false;
+    spk1.has_microphone = false;
     spk1.consent_granted = true;
     spk1.consent_subject = "operator";
     spk1.consent_purpose = "intercom";
@@ -211,7 +216,9 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path) {
     env1.online = false;
     reg.pair(env1, &reason);
 
-    reg.save(path, &reason);
+    if (save_to_disk) {
+        reg.save(path, &reason);
+    }
 }
 
 }  // namespace
@@ -251,7 +258,7 @@ int main(int argc, char* argv[]) {
     // Check if registry exists, otherwise initialize default
     std::ifstream test_f(registry_path);
     if (!test_f.good()) {
-        init_default_registry(registry, registry_path);
+        init_default_registry(registry, registry_path, false);
     } else {
         if (!registry.load(registry_path, &reason)) {
             std::cerr << "{\"error\": \"failed to load registry: " << reason << "\"}\n";
@@ -324,15 +331,112 @@ int main(int argc, char* argv[]) {
             std::cerr << "{\"error\": \"device not found\"}\n";
             return 2;
         }
-        registry.note_heartbeat(dev_id, now_ms, d->capabilities);
+        if (!d->paired || d->revoked || d->credential_id.empty()) {
+            std::cerr << "{\"error\": \"heartbeat rejected: device is unpaired, revoked, or unauthenticated\"}\n";
+            std::cout << format_device(*d, now_ms).dump(2) << "\n";
+            return 3;
+        }
+        int64_t hb_ms = now_ms;
+        if (args.size() > 1) {
+            try {
+                uint64_t seq = std::stoull(args[1]);
+                registry.seed_sequence_watermark(dev_id, seq);
+            } catch (const std::exception&) {}
+        }
+        if (args.size() > 2) {
+            try {
+                hb_ms = std::stoll(args[2]);
+            } catch (const std::exception&) {}
+        }
+        registry.note_heartbeat(dev_id, hb_ms, d->capabilities);
         registry.save(registry_path, &reason);
         std::cout << format_device(*d, now_ms).dump(2) << "\n";
         return 0;
     }
 
+    if (command == "pair") {
+        if (args.empty()) {
+            std::cerr << "{\"error\": \"usage: pair <json_device>\"}\n";
+            return 1;
+        }
+        json dev_j;
+        try {
+            dev_j = json::parse(args[0]);
+        } catch (const std::exception& e) {
+            std::cerr << "{\"error\": \"invalid json: " << e.what() << "\"}\n";
+            return 1;
+        }
+        DeviceRegistry::Device d;
+        d.device_id = dev_j.value("device_id", "");
+        d.display_name = dev_j.value("display_name", d.device_id);
+        d.device_type = dev_j.value("device_type", "sensor");
+        d.credential_id = dev_j.value("credential_id", "");
+        d.paired = true;
+        d.revoked = false;
+        d.has_camera = dev_j.value("has_camera", false);
+        d.has_microphone = dev_j.value("has_microphone", false);
+        d.consent_granted = dev_j.value("consent_granted", false);
+        d.capture_enabled = dev_j.value("capture_enabled", false) && d.consent_granted;
+        d.is_synthetic = dev_j.value("is_synthetic", false) || (d.device_type == "simulator");
+        if (dev_j.contains("capabilities") && dev_j["capabilities"].is_array()) {
+            for (const auto& cap : dev_j["capabilities"]) {
+                if (cap.is_string()) d.capabilities.push_back(cap.get<std::string>());
+            }
+        }
+        if (!registry.pair(d, &reason)) {
+            std::cerr << "{\"error\": \"pair failed: " << reason << "\"}\n";
+            return 2;
+        }
+        if (!registry.save(registry_path, &reason)) {
+            std::cerr << "{\"error\": \"failed to save registry: " << reason << "\"}\n";
+            return 4;
+        }
+        const DeviceRegistry::Device* paired_d = registry.find(d.device_id);
+        std::cout << format_device(*paired_d, now_ms).dump(2) << "\n";
+        return 0;
+    }
+
+    if (command == "revoke") {
+        if (args.empty()) {
+            std::cerr << "{\"error\": \"usage: revoke <device_id> [note]\"}\n";
+            return 1;
+        }
+        const std::string& dev_id = args[0];
+        const std::string note = args.size() > 1 ? args[1] : "revoked by operator";
+        if (!registry.revoke(dev_id, note)) {
+            std::cerr << "{\"error\": \"revoke failed: device not found or already revoked: " << dev_id << "\"}\n";
+            return 2;
+        }
+        if (!registry.save(registry_path, &reason)) {
+            std::cerr << "{\"error\": \"failed to save registry: " << reason << "\"}\n";
+            return 4;
+        }
+        const DeviceRegistry::Device* d = registry.find(dev_id);
+        std::cout << format_device(*d, now_ms).dump(2) << "\n";
+        return 0;
+    }
+
+    if (command == "unpair") {
+        if (args.empty()) {
+            std::cerr << "{\"error\": \"usage: unpair <device_id>\"}\n";
+            return 1;
+        }
+        const std::string& dev_id = args[0];
+        if (!registry.unpair(dev_id)) {
+            std::cerr << "{\"error\": \"unpair failed: device not found: " << dev_id << "\"}\n";
+            return 2;
+        }
+        if (!registry.save(registry_path, &reason)) {
+            std::cerr << "{\"error\": \"failed to save registry: " << reason << "\"}\n";
+            return 4;
+        }
+        std::cout << "{\"status\": \"unpaired\", \"device_id\": \"" << dev_id << "\"}\n";
+        return 0;
+    }
+
     if (command == "init_defaults") {
         DeviceRegistry fresh_reg;
-        init_default_registry(fresh_reg, registry_path);
+        init_default_registry(fresh_reg, registry_path, true);
         std::cout << "{\"status\": \"initialized\", \"path\": \"" << registry_path << "\"}\n";
         return 0;
     }

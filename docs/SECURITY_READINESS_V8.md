@@ -60,8 +60,7 @@ count for every rejection path (i.e. rejection = handler never reached).
 |---|---|---|---|---|
 | `/` , `/index.html` | GET | none (loopback) | Serve embedded dashboard | read-only static asset |
 | `/api/health` | GET | none (loopback) | Static `{ok,up,simulated}` | reveals no state |
-| `/api/status` | GET | demo token (contract) | Read lifecycle status + alert summary | read-only |
-| `/api/run-scenario` | GET | demo token (contract) | Run the synthetic simulator scenario | the ONLY state-advancing route; bounded to ≤100 cycles |
+| `/api/run-scenario` | POST | session + CSRF token | Run synthetic simulator scenario | state-advancing route; requires authenticated session + CSRF token; bounded to ≤100 cycles |
 | anything else | GET | n/a | 404 | |
 
 - **Loopback-only bind** to `INADDR_LOOPBACK` (127.0.0.1); a non-loopback bind is
@@ -276,7 +275,7 @@ Controls now in force:
   state route is disabled (503 state_route_disabled).
 
 Evidence:
-- complete C++ suite: 503 test cases, 5817 assertions, exit code 0
+- complete C++ suite: 526 test cases, 38926 assertions, exit code 0 (prior ~[mcp] subset was 503 test cases, 5817 assertions)
 - native_http_security: 11 cases, 74 assertions, exit code 0
 - nativehttp: 25 cases, 143 assertions, exit code 0
 - native_http_persist: 1 case, 48 assertions, exit code 0 - fresh temporary SQLite

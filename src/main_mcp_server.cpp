@@ -149,6 +149,8 @@ int main(int argc, char* argv[]) {
     cfg.session_idle_seconds = static_cast<int>(env_long("HG_MCP_SESSION_IDLE_SECONDS", 1800));
     cfg.read_timeout_ms = static_cast<int>(env_long("HG_MCP_READ_TIMEOUT_MS", 3000));
     cfg.write_timeout_ms = static_cast<int>(env_long("HG_MCP_WRITE_TIMEOUT_MS", 3000));
+    cfg.max_inflight = static_cast<size_t>(env_long("HG_MCP_MAX_INFLIGHT", 16));
+    cfg.workers = static_cast<size_t>(env_long("HG_MCP_WORKERS", 4));
 
     // ---- real application state (read-only view) ------------------------------------
     bool capture_enabled = false;  // fail-safe default

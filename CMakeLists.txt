@@ -439,6 +439,7 @@ target_link_libraries(hg_alexa_bridge PRIVATE
 
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
+        ${CMAKE_SOURCE_DIR}/tests/core/test_application.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_config.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_logger.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_event.cpp

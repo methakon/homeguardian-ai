@@ -68,14 +68,22 @@ trap cleanup EXIT INT TERM
 
 # Start bridge in isolated sandbox
 cd "$WORK"
-HG_DEMO_SECRET="$OPERATOR_SECRET" "$BRIDGE" --http "$CONFIG" "$CREDS" \
+printf '%s' "$OPERATOR_SECRET" > "$WORK/secret.txt"
+chmod 600 "$WORK/secret.txt"
+printf '%s' "demo-token" > "$WORK/token.txt"
+chmod 600 "$WORK/token.txt"
+
+HG_DEMO_SECRET="$OPERATOR_SECRET" HG_HTTP_SECRET="$OPERATOR_SECRET" HG_HTTP_TOKEN="demo-token" \
+  "$BRIDGE" --http "$CONFIG" "$CREDS" \
   --port "$TEST_PORT" \
-  --token demo-token \
-  --secret "$OPERATOR_SECRET" > "$WORK/bridge.out" 2> "$WORK/bridge.err" &
+  --token-file "$WORK/token.txt" \
+  --secret-file "$WORK/secret.txt" > "$WORK/bridge.out" 2> "$WORK/bridge.err" &
 BRIDGE_PID=$!
 
+LAUNCHED=0
 for _ in $(seq 1 40); do
   if grep -q "DEMO_READY" "$WORK/bridge.out" 2>/dev/null; then
+    LAUNCHED=1
     break
   fi
   if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
@@ -85,6 +93,10 @@ for _ in $(seq 1 40); do
   fi
   sleep 0.1
 done
+if [[ "$LAUNCHED" -ne 1 ]]; then
+  echo "ERROR: timed out waiting for DEMO_READY from bridge" >&2
+  exit 1
+fi
 log_ok "hg_alexa_bridge launched and listening on 127.0.0.1:$TEST_PORT"
 
 get_alert_count() {

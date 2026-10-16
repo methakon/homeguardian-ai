@@ -9,7 +9,7 @@
 using namespace homeguardian;
 
 TEST_CASE("Logger initialization and level", "[logger]") {
-    // Initializing logger multiple times should be safe (singleton-like pattern with shared_ptr)
+    Logger::reset();
     Logger::initialize("debug");
     
     auto logger = Logger::get();

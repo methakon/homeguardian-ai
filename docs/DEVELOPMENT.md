@@ -259,8 +259,7 @@ cat > /tmp/creds.json <<'JSON'
 JSON
 # 3. serve (loopback only; port 0 = ephemeral, prints "DEMO_READY <port>")
 hg_build/hg_alexa_bridge --http config/homeguardian.demo.json /tmp/creds.json --port 0 --token demo-token
-```
-Routes: `/`, `/index.html`, `/api/health`, `/api/status`, `/api/run-scenario?cycles=N` (GET only).
+Routes: `/`, `/index.html`, `/api/health`, `/api/status`, `/api/run-scenario` (POST with session authentication).
 
 The dashboard is embedded at configure time from `src/web/index.html`
 (`cmake/hg_web_assets.h.in` -> `generated/hg_web_assets.h`). **Re-run `cmake` after

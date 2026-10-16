@@ -80,7 +80,14 @@ struct Parsed {
 struct ScopedFd {
     int fd = -1;
     explicit ScopedFd(int f = -1) : fd(f) {}
-    ~ScopedFd() { if (fd >= 0) ::close(fd); }
+    ~ScopedFd() {
+        if (fd >= 0) {
+            ::shutdown(fd, SHUT_WR);
+            char drain[512];
+            while (::recv(fd, drain, sizeof(drain), MSG_DONTWAIT) > 0) {}
+            ::close(fd);
+        }
+    }
     ScopedFd(const ScopedFd&) = delete;
     ScopedFd& operator=(const ScopedFd&) = delete;
     int release() { int f = fd; fd = -1; return f; }
@@ -338,6 +345,7 @@ struct McpHttpServer::Impl {
         SessionState state;
         Clock::time_point last_seen;
         std::string principal;
+        std::string credential_id;
         AlexaAuthContext auth;
     };
     std::mutex mu;
@@ -521,17 +529,24 @@ void McpHttpServer::Impl::handle_connection(int fd) {
             return;
         }
         std::lock_guard<std::mutex> lk(mu);
+        const Clock::time_point now = Clock::now();
+        evict_locked(now);
         auto it = sessions.find(sid);
         if (it == sessions.end()) {
             respond_simple(sock.fd, 404);
             return;
         }
-        if (cfg.require_auth && it->second.principal != auth.principal) {
-            spdlog::warn("mcp: principal '{}' attempted to delete session '{}' owned by '{}'",
-                         auth.principal, sid, it->second.principal);
-            bump(&Stats::rejected_auth);
-            respond_simple(sock.fd, 403);
-            return;
+        if (cfg.require_auth) {
+            if (it->second.credential_id.empty() || auth.credential_id.empty() ||
+                it->second.credential_id != auth.credential_id ||
+                it->second.principal.empty() || auth.principal.empty() ||
+                it->second.principal != auth.principal) {
+                spdlog::warn("mcp: principal '{}' (cred '{}') attempted to delete session '{}' owned by '{}' (cred '{}')",
+                             auth.principal, auth.credential_id, sid, it->second.principal, it->second.credential_id);
+                bump(&Stats::rejected_auth);
+                respond_simple(sock.fd, 403);
+                return;
+            }
         }
         sessions.erase(it);
         respond_simple(sock.fd, 200);
@@ -599,12 +614,17 @@ void McpHttpServer::Impl::handle_connection(int fd) {
                 respond_simple(sock.fd, 404);
                 return;
             }
-            if (cfg.require_auth && it->second.principal != auth.principal) {
-                spdlog::warn("mcp: principal '{}' attempted to access session '{}' owned by '{}'",
-                             auth.principal, sid, it->second.principal);
-                bump(&Stats::rejected_auth);
-                respond_simple(sock.fd, 403);
-                return;
+            if (cfg.require_auth) {
+                if (it->second.credential_id.empty() || auth.credential_id.empty() ||
+                    it->second.credential_id != auth.credential_id ||
+                    it->second.principal.empty() || auth.principal.empty() ||
+                    it->second.principal != auth.principal) {
+                    spdlog::warn("mcp: principal '{}' (cred '{}') attempted to access session '{}' owned by '{}' (cred '{}')",
+                                 auth.principal, auth.credential_id, sid, it->second.principal, it->second.credential_id);
+                    bump(&Stats::rejected_auth);
+                    respond_simple(sock.fd, 403);
+                    return;
+                }
             }
             it->second.last_seen = now;
             state = it->second.state;
@@ -622,7 +642,7 @@ void McpHttpServer::Impl::handle_connection(int fd) {
         evict_locked(now);
         if (session_present) {
             new_session_id = sid;
-            sessions[sid] = SessionEntry{state, now, auth.principal, auth};
+            sessions[sid] = SessionEntry{state, now, auth.principal, auth.credential_id, auth};
         } else {
             try {
                 for (int attempt = 0; attempt < 5; ++attempt) {
@@ -642,11 +662,11 @@ void McpHttpServer::Impl::handle_connection(int fd) {
                 respond_simple(sock.fd, 500);
                 return;
             }
-            sessions[new_session_id] = SessionEntry{state, now, auth.principal, auth};
+            sessions[new_session_id] = SessionEntry{state, now, auth.principal, auth.credential_id, auth};
         }
     } else if (session_present) {
         std::lock_guard<std::mutex> lk(mu);
-        sessions[sid] = SessionEntry{state, Clock::now(), auth.principal, auth};
+        sessions[sid] = SessionEntry{state, Clock::now(), auth.principal, auth.credential_id, auth};
     }
 
     // A stateful server is required to reject requests that arrive without a session once
@@ -797,6 +817,9 @@ void McpHttpServer::serve(std::atomic<bool>& stop) {
             r.add("Retry-After", "1");
             r.body = "{}";
             send_response(client, r);
+            ::shutdown(client, SHUT_WR);
+            char drain_buf[512];
+            while (::recv(client, drain_buf, sizeof(drain_buf), MSG_DONTWAIT) > 0) {}
             ::close(client);
         }
     }
