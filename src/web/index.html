@@ -584,7 +584,15 @@ async function runScenario() {
   btn.textContent = 'Running…';
   addMsg('sys', 'Running synthetic scenario: ' + id + '…');
   try {
-    const r = await fetch('/api/run-scenario?scenario=' + encodeURIComponent(id));
+    // Authorized POST with a session-bound, single-use CSRF token: never a GET,
+    // never a credential in the URL. __hgCsrf() asks for the operator secret
+    // when this tab does not hold one yet.
+    const csrf = await window.__hgCsrf();
+    const r = await fetch('/api/run-scenario?scenario=' + encodeURIComponent(id), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-HG-CSRF': csrf},
+      body: '{}'
+    });
     const j = await r.json();
     if (j.scenario && j.scenario.ok === false) {
       window.__lastScenario = null;
@@ -683,6 +691,68 @@ renderChips();
 addMsg('sys', 'Simulated Alexa+ experience ready. Pick a scenario and run it, or ask a question.');
 $('footNote').textContent = 'synthetic data only · local loopback only';
 loadScenarios().then(refresh);
+</script>
+<script>
+/* HG-SEC-01 operator credential workflow.
+   The secret lives in ONE module-scoped variable for the lifetime of this tab. It is never put
+   in the URL, document storage, a cookie, a static asset or a log; the input field is cleared as
+   soon as the value has been read. Each scenario run exchanges the secret for a fresh,
+   session-bound, single-use CSRF token, which is what the state route accepts. */
+(function () {
+  let heldSecret = null;
+  function panel() { return document.getElementById('authPanel'); }
+  function field() { return document.getElementById('authSecret'); }
+  function msg(t) { const m = document.getElementById('authMsg'); if (m) m.textContent = t || ''; }
+  function reveal(why) { const p = panel(); if (p) p.style.display = 'block'; if (why) msg(why); }
+
+  async function mintCsrf() {
+    const r = await fetch('/api/session', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-HG-Secret': heldSecret},
+      body: '{}'
+    });
+    if (r.status === 503) throw new Error('state_route_disabled');
+    if (!r.ok) throw new Error('unauthorized');
+    const j = await r.json();
+    if (!j || !j.csrf) throw new Error('unauthorized');
+    return j.csrf;
+  }
+
+  window.__hgCsrf = async function () {
+    if (!heldSecret) {
+      reveal('Enter the operator secret to authorize scenario runs.');
+      throw new Error('credential_required');
+    }
+    return mintCsrf();
+  };
+
+  document.addEventListener('DOMContentLoaded', function () {
+    const btn = document.getElementById('authBtn');
+    const input = field();
+    if (!btn || !input) return;
+    btn.addEventListener('click', async function () {
+      const typed = input.value;
+      input.value = '';                 // cleared immediately; never re-rendered
+      if (!typed) { reveal('Secret is empty.'); return; }
+      heldSecret = typed;               // memory only, this tab
+      try {
+        await mintCsrf();
+        msg('Authorized. Scenario runs are enabled for this tab.');
+      } catch (e) {
+        heldSecret = null;              // a wrong secret is not retained
+        msg(e && e.message === 'state_route_disabled'
+              ? 'This server was started without an operator secret, so scenario runs are disabled.'
+              : 'Authorization failed. Check the secret and try again.');
+      }
+    });
+    fetch('/api/session', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+      .then(function (r) {
+        if (r.status === 401) reveal('This server requires the operator secret to run scenarios.');
+        else if (r.status === 503) reveal('Scenario runs are disabled on this server.');
+      })
+      .catch(function () {});
+  });
+})();
 </script>
 </body>
 </html>

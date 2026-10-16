@@ -16,9 +16,14 @@ class SessionManager {
     this.sessions = new Map(); // token -> Session
     this.viewTokens = new Map(); // viewToken -> { deviceId, sessionId, expiresAt }
     
-    // Operator credentials (fail-closed, can be overridden by env)
+    // Operator credentials (fail-closed, overridden by HG_OPERATOR_PASSWORD)
     this.operatorUsername = process.env.HG_OPERATOR_USER || 'operator';
-    this.operatorPassword = process.env.HG_OPERATOR_PASSWORD || 'HomeGuardian2026!';
+    if (process.env.HG_OPERATOR_PASSWORD) {
+      this.operatorPassword = process.env.HG_OPERATOR_PASSWORD;
+    } else {
+      this.operatorPassword = crypto.randomBytes(16).toString('hex');
+      console.log(`[Auth] No HG_OPERATOR_PASSWORD set. Generated one-time launch credential for '${this.operatorUsername}': ${this.operatorPassword}`);
+    }
   }
 
   // Parse HTTP cookies from request

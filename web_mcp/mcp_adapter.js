@@ -98,15 +98,30 @@ class HomeGuardianMcpClient {
               this.sessionId = sid;
             }
 
-            // Record wire traffic for judge inspection
+            // Record wire traffic for judge inspection (strictly redact credentials/tokens)
+            const safeReqHeaders = { ...headers };
+            for (const k of Object.keys(safeReqHeaders)) {
+              const lk = k.toLowerCase();
+              if (lk === 'authorization' || lk === 'cookie' || lk === 'x-csrf-token' || lk === 'x-hg-secret' || lk === 'x-hg-csrf') {
+                safeReqHeaders[k] = '[REDACTED]';
+              }
+            }
+            const safeResHeaders = { ...res.headers };
+            for (const k of Object.keys(safeResHeaders)) {
+              const lk = k.toLowerCase();
+              if (lk === 'set-cookie') {
+                safeResHeaders[k] = '[REDACTED]';
+              }
+            }
+
             const entry = {
               timestamp: new Date().toISOString(),
               method: 'POST',
               url: this.baseUrl,
-              requestHeaders: { ...headers },
+              requestHeaders: safeReqHeaders,
               requestBody: msg,
               statusCode: res.statusCode,
-              responseHeaders: { ...res.headers },
+              responseHeaders: safeResHeaders,
               responseBody: parsedBody,
               latencyMs,
             };

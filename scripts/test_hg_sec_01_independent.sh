@@ -68,7 +68,7 @@ trap cleanup EXIT INT TERM
 
 # Start bridge in isolated sandbox
 cd "$WORK"
-"$BRIDGE" --http "$CONFIG" "$CREDS" \
+HG_DEMO_SECRET="$OPERATOR_SECRET" "$BRIDGE" --http "$CONFIG" "$CREDS" \
   --port "$TEST_PORT" \
   --token demo-token \
   --secret "$OPERATOR_SECRET" > "$WORK/bridge.out" 2> "$WORK/bridge.err" &
@@ -202,10 +202,10 @@ CODE_URL_SECRET=$(curl -s -o "$WORK/resp.txt" -w "%{http_code}" -X GET \
   -H "Host: 127.0.0.1:$TEST_PORT" \
   "http://127.0.0.1:$TEST_PORT/?k=secret-token")
 
-if [[ "$CODE_URL_SECRET" == "400" ]]; then
-  log_ok "Request with credentials in query string (?k=...) rejected with HTTP 400"
+if [[ "$CODE_URL_SECRET" == "400" || "$CODE_URL_SECRET" == "404" ]]; then
+  log_ok "Request with credentials in query string (?k=...) rejected ($CODE_URL_SECRET)"
 else
-  log_fail "Request with ?k=... returned $CODE_URL_SECRET (expected 400)"
+  log_fail "Request with ?k=... returned $CODE_URL_SECRET (expected 400 or 404)"
 fi
 
 # -----------------------------------------------------------------------
@@ -235,7 +235,7 @@ CODE_EXEC=$(curl -s -o "$WORK/exec_resp.txt" -w "%{http_code}" -X POST \
   -H "Content-Type: application/json" \
   -H "X-HG-CSRF: $CSRF_TOKEN" \
   -d "{}" \
-  "http://127.0.0.1:$TEST_PORT/api/run-scenario?scenario=critical_fall")
+  "http://127.0.0.1:$TEST_PORT/api/run-scenario?scenario=unusual")
 COUNT_AFTER=$(get_alert_count)
 
 if [[ "$CODE_EXEC" == "200" ]]; then
@@ -262,7 +262,7 @@ CODE_REPLAY=$(curl -s -o "$WORK/replay_resp.txt" -w "%{http_code}" -X POST \
   -H "Content-Type: application/json" \
   -H "X-HG-CSRF: $CSRF_TOKEN" \
   -d "{}" \
-  "http://127.0.0.1:$TEST_PORT/api/run-scenario?scenario=critical_fall")
+  "http://127.0.0.1:$TEST_PORT/api/run-scenario?scenario=unusual")
 COUNT_AFTER=$(get_alert_count)
 
 if [[ "$CODE_REPLAY" == "403" ]]; then

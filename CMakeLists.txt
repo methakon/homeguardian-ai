@@ -478,6 +478,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_consent.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_native_http.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_native_http_security.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_native_http_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_demo_scenarios.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection_alert.cpp

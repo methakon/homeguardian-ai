@@ -137,10 +137,11 @@ node web_mcp/test_client.js > "$WORK/suite_mcp.out" 2>&1 && {
 # 5. Launch Live Integrated Demonstration
 echo -e "\n[Step 5] Launching Unified Demonstration Gateway..."
 cd "$REPO_ROOT"
+DEMO_OPERATOR_PASS="$(openssl rand -hex 16)"
 HG_WEB_PORT="$WEB_PORT" \
 HG_MCP_PORT="$MCP_PORT" \
 HG_OPERATOR_USER="admin" \
-HG_OPERATOR_PASSWORD="DemoOperator2026!" \
+HG_OPERATOR_PASSWORD="$DEMO_OPERATOR_PASS" \
 node web_mcp/server.js > "$WORK/web.out" 2> "$WORK/web.err" &
 GATEWAY_PID=$!
 
@@ -178,4 +179,4 @@ fi
 
 echo -e "\n\033[32m✔ Release Integration Synthetic Demonstration is CERTIFIED (79/79 Tests Passing).\033[0m"
 echo "Demonstration Dashboard URL: http://127.0.0.1:$WEB_PORT"
-echo "Operator credentials: user='admin', password='DemoOperator2026!'"
+echo "Single-run operator credentials: user='admin', password='$DEMO_OPERATOR_PASS'"
