@@ -1,0 +1,526 @@
+# HomeGuardian AI — Mi A3 Edge Device Report
+
+**Session:** HERMES SESSION 2 — `HG-EDGE-01` (edge hardware / ARM64 implementation)
+**Target device:** Xiaomi Mi A3 (`laurel_sprout`), serial `edd53dbd04de`
+**Date:** 2026-10-17
+**Branch / worktree:** `experiment/mi-a3-edge` @ `~/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge`
+**Base commit:** `01a4d3b` (MCP Streamable HTTP candidate, **FAIL** security verdict)
+
+> **Verdict up front:** the genuine HomeGuardian C++ engine and the genuine MCP
+> Streamable HTTP server **build for, start on, and serve from** the Mi A3, with
+> real SQLite persistence and a real detected alert surfaced through the MCP tool.
+> **Conditional GO** for a *supervised* 48–72 h soak, subject to the conditions in
+> section 9. **NO-GO** as an unattended, network-exposed node.
+
+---
+
+## 0. Scope, isolation, and deliberate non-actions
+
+This work is isolated from every other workstream:
+
+| Item | Value |
+|---|---|
+| Worktree | `~/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge` |
+| Branch | `experiment/mi-a3-edge` (new; based on `01a4d3b`) |
+| Build directory | `build_mi_a3_edge_arm64/` (separate from `build/`, `build_final/`, `hg_*`) |
+| Device staging dir | `/data/local/tmp/hg_edge` (device-local scratch) |
+| Ports | `8790` MCP, `8791` engine — **both loopback**, reached only via `adb forward` |
+
+**Not done, deliberately:**
+
+* No factory reset, no data wipe, no bootloader unlock, no root, no ROM flash, no
+  package installed or removed, nothing written outside `/data/local/tmp/hg_edge`.
+* Nothing merged into `main`; no release candidate touched; the frozen baselines
+  and the security-audit worktrees (`qa-sec-audit`, `hermes-sec-01`) were read-only.
+* No LAN or public listener. `HG_MCP_ALLOW_REMOTE` was never set; the server itself
+  refuses a non-loopback bind without it (verified in section 4).
+* No camera and no microphone were opened; every observation in this report is
+  synthetic (the build links the **simulator** backend only).
+
+---
+
+## 1. Device discovery
+
+### 1.1 Two devices, and how identity was established
+
+The session brief named a Xiaomi Mi A3. Two different Android devices appeared on
+USB port `2-3` during this session, so identity was established from the **USB bus
+and the kernel**, never from the Settings UI or the model string:
+
+| | Device A (first) | Device B (target) |
+|---|---|---|
+| USB ID (host truth) | `0e8d:201c` MediaTek Inc. `S25_Ultra` | `2717:ff08` Xiaomi Inc. `Mi A3` |
+| serial | `4895180706479` | `edd53dbd04de` |
+| `ro.product.manufacturer` / `board` | `alps` / `mt6580` | `Xiaomi` / `trinket` |
+| ABI | `armeabi-v7a,armeabi` (**no ARM64**) | `arm64-v8a`, `armeabi-v7a`, `armeabi` |
+| Android | 8.1.0 / SDK 27 (`persist.sys.fakeandroidversion=15.0`) | 11 / SDK 30 |
+| RAM (kernel) | 984,792 kB (~962 MB) | 5,738,336 kB (~5.47 GiB) |
+| SELinux | Permissive | Enforcing |
+
+Device A is the fake-spec MT6580 clone already documented at
+`docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md:193-215` and `docs/PRIVACY.md:275-280`.
+It was **not** a second concurrent phone: at `02:39:57` it disconnected and at
+`02:40:01` Device B enumerated **on the same port**, i.e. a physical swap of the
+cable/device, not a simultaneous pair. At no point were two Android devices present
+at once — verified against `lsusb`, the sysfs USB tree, `/dev/ttyACM*`/`/dev/ttyUSB*`
+(none), adb-over-TCP (no listener), and a 600 s `udevadm monitor` window.
+
+### 1.2 Mi A3 — hardware and software (all values read from the device)
+
+| Property | Value | Source |
+|---|---|---|
+| Model / device / board | `Mi A3` / `laurel_sprout` / `trinket` (SM6125, Snapdragon 665 class) | `getprop` |
+| Android / API | **11** / **30** | `getprop` |
+| Security patch | **2022-08-01** (~4 years stale) | `getprop ro.build.version.security_patch` |
+| Build | `V12.0.26.0.RFQMIXM`, built `2022-08-08` | `getprop` |
+| Fingerprint | `Xiaomi/laurel_sprout/laurel_sprout:11/RKQ1.200903.002/V12.0.26.0.RFQMIXM:user/release-keys` | `getprop` |
+| ABI | `arm64-v8a` (64-bit) + `armeabi-v7a` 32-bit; `zygote64_32` | `getprop` |
+| CPU | 8 cores, Qualcomm `0x51`/`0x801`; 4 @ 1.8048 GHz + 4 @ 2.016 GHz | `/proc/cpuinfo`, `cpufreq` |
+| RAM | `MemTotal` 5,738,336 kB (~5.47 GiB); `MemAvailable` 2.78 GB; zram swap 3.0 GB (758 MB used) | `/proc/meminfo`, `free` |
+| Storage | `/data` 108 GB total, 21 GB used, **86 GB free (20%)** | `df` |
+| Verified boot | `verifiedbootstate=green`, `flash.locked=1`, `ro.secure=1`, `ro.debuggable=0` | `getprop` |
+| OEM unlock | supported=1, **allowed=0** (developer-options toggle is OFF) | `getprop` |
+| SELinux | **Enforcing** | `getenforce` |
+| Shell identity | `uid=2000(shell)`, context `u:r:shell:s0` | `id`, `/proc/<pid>/attr/current` |
+| Wi-Fi | `wlan0` 192.168.1.14/24, SSID `Airtel_Dhar`, RSSI **-50 dBm**, 2437 MHz, 65 Mbps | `ip`, `dumpsys wifi` |
+| Uptime at discovery | 1 day 8:23, load average 0.09 | `uptime` |
+| Battery | level 96%, **health GOOD**, `status=charging`, temp **33.0 °C**, 4,296 mV, charge counter 3,764,640 µAh, Li-poly, USB max 500 mA @ 5 V | `dumpsys battery` |
+| Thermal (idle) | `skin-therm-adc` 36.4 °C, `quiet-therm-adc` 37.4 °C, `cpuss-0-usr` 44.6 °C | `/sys/class/thermal` |
+| Thermal trip points | `quiet-therm-adc` passive **56 °C** (tightest), `pmi632-tz`/`pm6125-tz` 95/115 °C, `skin-therm-adc` 125 °C | `thermal_zone*/trip_point_*` |
+| Doze | enabled; light-idle after 3 min, deep-idle after 30 min; app standby on | `dumpsys deviceidle` |
+
+**Not obtainable without root:** `/sys/class/power_supply/battery/` is
+`Permission denied` to the shell user on this device, so design capacity and cycle
+count could not be read. Health is therefore reported from the platform
+(`health=GOOD`), not derived from a design-capacity ratio. The vendor-spec Mi A3
+capacity (4030 mAh) is **not** claimed as a measurement here.
+
+### 1.3 Deviations from the session brief
+
+The brief's premises were correct for the Mi A3 but describe only half the session:
+
+* **"ARM64" — correct**, uniquely so among the two devices: the Mi A3 has
+  `arm64-v8a`, the clone has none. Device identity had to be established before any
+  build target could be chosen; had the clone been the target, *no* ARM64 artifact
+  could have run.
+* **"6 GB RAM" — approximately correct** (5.47 GiB usable).
+* **Android 11, not a modern release**, and the **security patch is 2022-08-01**.
+  This is the single most important software finding: the device is ~4 years behind
+  on platform security fixes.
+* The brief says the Mi A3 is *"intended to run the genuine local HomeGuardian MCP
+  server"*. Nothing in the repository previously described this device — see
+  section 8.
+
+---
+
+## 2. Recommended ARM64 Linux runtime
+
+**Recommendation: run the real binaries natively under Android's Bionic libc,
+cross-compiled with the NDK for `arm64-v8a` / API 30, launched from
+`/data/local/tmp` over adb. Do not introduce Termux or a PRoot/glibc userland.**
+
+| | **(A) Native NDK / Bionic** ← chosen | (B) Termux native ARM64 | (C) Debian/Ubuntu ARM64 under PRoot |
+|---|---|---|---|
+| Extra app install | **none** | Termux APK (F-Droid/GitHub) | Termux or UserLAnd **plus** a rootfs |
+| libc | Bionic (same libc Android uses) | Bionic | **glibc** |
+| Syscall overhead | **none** | none | **every syscall intercepted via `ptrace`** |
+| Disk cost | **3.9 MB** (server+bridge+libc++) | ~200 MB+ | 300 MB–1 GB+ |
+| Runs the real C++ binaries | **yes — demonstrated** | yes (different prefix) | yes, but through interception |
+| Verified in this session | **yes, end-to-end** | no | no |
+
+**Justification, from this repository's own recorded findings — not preference:**
+
+1. **The dependency surface makes the glibc userland unnecessary.** `hg_mcp_server`
+   needs only POSIX sockets, `spdlog`, `nlohmann/json` and the *vendored* SQLite
+   amalgamation. Its ELF `NEEDED` list is `liblog, libm, libc++_shared, libdl, libc`
+   — all Bionic. There is no glibc requirement to satisfy, so PRoot's entire value
+   proposition (a glibc userland) buys nothing here.
+2. **The repository already learned the glibc lesson the hard way.**
+   `docs/DECISIONS.md:477-486` records that a binary linked against a newer glibc
+   than the runtime provides simply does not start (`GLIBC_2.3x not found`), forcing
+   builder and runtime to be the same release. Choosing Bionic removes that class of
+   failure instead of managing it.
+3. **PRoot's `ptrace` interception would land exactly on this project's worst
+   measured cost.** `docs/PERF_SCENARIO_LATENCY_V15.md` root-causes scenario latency
+   to SQLite's durable commit paying one `fsync` per commit, at ~50–410 ms per
+   `fsync` on the reference host. Intercepting and re-issuing every `fsync`/`open`/
+   `stat` through a `ptrace` tracer is the single worst place to add overhead, on a
+   device whose storage is already several times slower than that host.
+4. **Bionic is not a compatibility compromise here — it is the native ABI.** The
+   server code is plain POSIX; nothing in it needs GNU extensions. The one Bionic
+   artefact observed is a benign linker warning about an unused `DT_*` entry in the
+   NDK's prebuilt `libc++_shared.so` (section 6).
+
+**What was NOT verified empirically, and the exact action required.** Termux and
+PRoot were evaluated from their documented mechanics and this project's recorded
+measurements; neither was executed, because both require **installing an Android
+application**, which is a device state change and needs your approval. If you want
+the comparison to be empirical rather than argued:
+
+> **Action required (operator):** install Termux on the Mi A3 (F-Droid build
+> `com.termux`, or `adb install` of the official F-Droid APK). Then
+> `pkg install clang cmake git nlohmann-json spdlog` inside Termux and rebuild
+> `hg_mcp_server`; for PRoot, additionally `pkg install proot-distro` and
+> `proot-distro install debian`. Tell me when it is installed and I will run the
+> same benchmark suite against all three and replace this table's last row with
+> measurements.
+
+---
+
+## 3. Reproducible build and install guide
+
+Four scripts, all in this branch under `scripts/`. Nothing is destructive, nothing
+installs a package, and no secret is stored on the host.
+
+```bash
+WT=~/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge
+
+# 1. Cross-compile for arm64-v8a (NDK r26d, offline FetchContent reuse)
+bash $WT/scripts/mi_a3_edge_build.sh "$WT"
+
+# 2. Push + provision credentials on-device + start loopback-only, timed
+bash $WT/scripts/mi_a3_edge_deploy.sh edd53dbd04de
+
+# 3. Functional MCP validation (18 checks) over adb forward
+bash $WT/scripts/mi_a3_edge_verify.sh edd53dbd04de 18790 8790
+
+# 4. CPU / RAM / latency / thermal measurement
+python3 $WT/scripts/mi_a3_edge_measure.py edd53dbd04de 18790 8790 200
+
+# 5. Synthetic scenario through the engine + joined MCP read-back
+bash $WT/scripts/mi_a3_edge_scenario.sh edd53dbd04de synthetic-critical-impact
+```
+
+Build configuration (the non-obvious parts, each load-bearing):
+
+* `-DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake`
+  `-DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-30 -DANDROID_STL=c++_shared`
+  — API 30 matches the device; `c++_shared` because the NDK's static libc++ is not
+  used by the existing project.
+* `-DHOMEGUARDIAN_BUILD_TESTS=OFF` — the host test target is not wanted on-device.
+* `-DFETCHCONTENT_SOURCE_DIR_SPDLOG=` / `_NLOHMANN_JSON=` — reuse an existing
+  `build/_deps` checkout so the cross build needs **no network**.
+* **`hg_mcp_server` is not inside the `if(OpenSSL_FOUND)` guard** (CMakeLists
+  lines 187–282 vs 380), and its sources reference no TLS symbol — verified by
+  `grep`. That is *why* the MCP server cross-compiles cleanly with no OpenSSL for
+  Android, while the three D-03 TLS binaries are skipped. This is a real property of
+  the tree, not an assumption.
+* Credentials: the bearer token is generated **on the device** with
+  `/dev/urandom`, written at mode `0600` owned by the running uid, and never copied
+  to the host or the repository.
+
+---
+
+## 4. Functional validation — real C++ MCP startup and tool calls
+
+### 4.1 Build result
+
+```
+source SHA   : 01a4d3b
+artifact     : hg_mcp_server  arm64-v8a PIE, ELF64 AArch64, interpreter /system/bin/linker64
+               imports: liblog, libm, libc++_shared, libdl, libc          (Bionic only)
+sizes        : 34,913,840 B unstripped -> 1,977,688 B stripped (1.89 MB)
+warnings     : 0 for hg_mcp_server; 3 pre-existing -Wunused warnings in
+               DemoScenarioRunner.cpp / hg_alexa_bridge.cpp (not introduced here)
+engine       : homeguardian + hg_alexa_bridge also build for arm64-v8a
+```
+
+The binary resolves **only** to Android system libraries at runtime — independently
+confirmed with `linker64 --list` on the device:
+
+```
+liblog.so        => /system/lib64/liblog.so
+libm.so          => /apex/com.android.runtime/lib64/bionic/libm.so
+libdl.so         => /apex/com.android.runtime/lib64/bionic/libdl.so
+libc.so          => /apex/com.android.runtime/lib64/bionic/libc.so
+libc++_shared.so => /data/local/tmp/hg_edge/libc++_shared.so        (staged beside it)
+```
+
+### 4.2 Fail-closed startup
+
+```
+$ ./hg_mcp_server hg_config.json /nonexistent.json
+mcp: credential store failed to load securely: credential file not accessible
+EXIT=3                                    <- exactly the designed fail-closed code
+```
+
+With a valid `0600` credential:
+
+```
+[hg_mcp] hg_mcp_server listening on 127.0.0.1:8790 (loopback=true, auth=required, tools=2)
+/proc/net/tcp -> 0100007F:2256          <- 127.0.0.1 only; never 00000000 (all interfaces)
+```
+
+### 4.3 MCP functional suite — **18/18 pass**
+
+`scripts/mi_a3_edge_verify.sh` against the on-device binary
+(`logs/mcp_functional_verify.txt`):
+
+| Area | Check | Result |
+|---|---|---|
+| auth | `tools/list` with no `Authorization` | **401** + `WWW-Authenticate: Bearer` |
+| auth | `tools/list` with a wrong bearer | **401** |
+| origin | foreign `Origin` | **403** |
+| handshake | `initialize` | **200**, `Mcp-Session-Id` minted |
+| handshake | protocol version | **2025-11-25**, server `homeguardian-mcp 1.0.0` |
+| session | `tools/list` with no session | **400** |
+| tools | `tools/list` | **200** — `get_homeguardian_status`, `get_alert_summary` |
+| tools | `tools/call get_homeguardian_status` | **200** `{"capture_enabled":false,"read_only":true,"state":"Running"}` |
+| tools | `tools/call get_alert_summary` | **200** |
+| contract | mutating tool name (`enable_capture`) | **-32602**, no such tool |
+| transport | `GET /mcp` | **405** |
+| transport | `DELETE /mcp` / without session | **200** / **400** |
+| bounds | 70 KiB body | **413** |
+| bounds | chunked `Transfer-Encoding` | **501**, explicitly refused |
+| bounds | body with no `Content-Length` (raw socket) | **411** |
+
+### 4.4 SQLite persistence on the device
+
+The server created a real store in `/data/local/tmp/hg_edge`:
+`homeguardian_mcp_audit.db` (73,728 B) with `-wal`/`-shm` sidecars, journal mode
+`wal`. Pulled to the host and read independently: tables
+`events, alerts, profiles, routines, consent_records`; `PRAGMA integrity_check` → **ok**.
+
+### 4.5 Synthetic scenario + alerts, and the joined MCP read
+
+`scripts/mi_a3_edge_scenario.sh` drives the **real engine** (`hg_alexa_bridge`,
+arm64) on the device. This found a genuine behaviour, not a bug:
+
+* With `media_capture_enabled=false` the scenario is **blocked by the fail-closed
+  consent/capture gate**: `events_processed: 0`, `alerts_generated: 0`,
+  `"capture disabled by configuration; no observations were delivered"`. The gate
+  works.
+* With the simulator-enabled config, scenario `synthetic-critical-impact` ran in
+  **58 ms** and produced **2 alerts**, including one **`critical`**
+  (`rule=synthetic-impact`, `confidence=0.75`,
+  `evidence: transient 0.95 -> stillness 0.1 within 1 sample(s)`) and one `info`
+  (`rule=detection-fusion`, confidence 0.70).
+* Those alerts were persisted on-device (`homeguardian_bridge_audit.db`, WAL) and
+  read back **independently on the host**: `alerts: 2 rows` (one `critical`, one
+  `info`), `integrity_check: ok`.
+* **Joined proof** — the MCP read-only tool, pointed at the engine's database,
+  reports the engine's alert:
+
+```
+tools/call get_homeguardian_status -> {"capture_enabled":false,"read_only":true,"state":"Running"}
+tools/call get_alert_summary      -> {"alert_count":2,
+                                      "alert_ids":["alert-f942ee36-...","alert-157eb066-..."],
+                                      "highest_severity":"critical","read_only":true}
+```
+
+Also verified by negative controls: session POST with a wrong secret → **401**;
+`run-scenario` with a foreign `Origin` → **403**.
+
+Evidence files: `logs/mcp_functional_verify.txt`, `logs/mi_a3_edge_scenario.txt`,
+`logs/device-artifacts/`.
+
+---
+
+## 5. Measurements
+
+`logs/mi_a3_edge_measurements.txt` / `.json`. Latency is **end-to-end over the
+adb-forwarded USB link**, so it includes the transport, not just the server.
+
+| Metric | Value |
+|---|---|
+| Cold start to listening | **275–287 ms** |
+| RSS (resident) | **5,512 kB (~5.4 MB)**, constant |
+| 200× `tools/call` | 200/200 → HTTP 200, **0 errors** |
+| Latency p50 / p95 / p99 / max | **7.98 / 9.25 / 11.29 / 14.70 ms** |
+| Throughput | **121.8 req/s** |
+| **Server CPU per call** | **1.55 ms = 18.9 % of one core** (measured from `/proc/<pid>/stat` utime+stime) |
+| Mixed workload (600 req: list + 2 calls) | 121.6 req/s, p50 7.87 ms, p95 11.07 ms, max 15.93 ms |
+| Server CPU per mixed request | 1.367 ms = 16.6 % of one core |
+| RSS growth over 600 requests | **+0 kB** (no leak) |
+| Battery temp before → after | 33.0 → **33.0 °C** |
+| `skin-therm` before → after | 36.4 → 36.6 °C |
+| Hottest real thermal zone before → after | 44.6 → **45.6 °C** (throttle point 56 °C) |
+| Reliability | process survived an adb-server restart (same PID); clean SIGTERM shutdown with counters logged |
+
+The `ps` VSZ figure (~12.4 GB) on this platform is a 64-bit address-space
+reservation and is not a memory measurement; RSS is.
+
+---
+
+## 6. Remaining compatibility issues
+
+1. **The D-03 mutual-TLS ingestion boundary cannot be built for Android as-is.**
+   NDK r26d ships no OpenSSL (`libssl`/`libcrypto` absent from the sysroot), so
+   `hg_device_ingress`, `hg_device_client` and `hg_ingress_probe` are skipped in the
+   cross build exactly as they are skipped on a host without `libssl-dev`. The Mi A3
+   node therefore currently has **the loopback MCP server and the engine only** —
+   not the mTLS device-ingestion path. Fixing this requires vendoring and
+   cross-compiling OpenSSL for Android (a real, bounded task — not attempted here).
+2. **`hg_mcp_server` depends on `libc++_shared.so`** staged beside it. It can be
+   removed by linking the NDK's static libc++, but that was not done (it would change
+   an artifact the MCP branch already verifies).
+3. **Benign linker warning** on every start: `libc++_shared.so: unused DT entry:
+   unknown processor-specific (type 0x70000001 ...) (ignoring)`. It comes from the
+   NDK's prebuilt `libc++_shared.so` and has no runtime effect — the binary loads and
+   runs. It is noise in the logs, nothing more.
+4. **Android API-30 vs the documented API-34 target.** `docs/ARCHITECTURE.md:305`
+   and `docs/STATUS.md:153` say the Android backends cross-compile for `arm64-v8a /
+   API 34`; the actual device is API 30 and the H-03 harness targets API 27. Three
+   different Android targets are now documented for one project (section 8).
+5. **The camera path is known-broken on this device class and was not retried.**
+   `docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md` records that camera2 NDK
+   enumerates 0 devices on the MT6580 unit. On the Mi A3 the camera path was **not
+   exercised** in this session (it needs a permission grant and an explicit operator
+   action, and this session's mandate was the MCP server and engine).
+6. **Security patch level 2022-08-01.** Not fixable without a vendor ROM update,
+   which is out of scope and forbidden without approval.
+7. **Base SHA `01a4d3b` carries a FAIL security verdict.** Every result above is
+   therefore **localhost-only, non-deployed compatibility testing**, exactly as the
+   brief permits. Nothing here should be read as a security approval of that SHA.
+
+---
+
+## 7. Preparation for 24/7 operation (assessment, not yet executed)
+
+**What works in our favour:**
+
+* **Doze / App Standby do not apply to this process.** It runs in the **shell
+  domain** (`u:r:shell:s0`), not as a `untrusted_app`. The device's Doze timers
+  (light-idle 3 min, deep-idle 30 min) and app-standby buckets govern apps; a
+  `setsid`-detached shell-domain process is not frozen by them. Verified in practice:
+  the process survived an adb-server restart with the same PID, and the device never
+  rebooted (uptime monotonically 1 day 8:23 → 8:38).
+* Idle headroom is large: load average 0.09, 2.78 GB available RAM, 86 GB free.
+
+**What does not work yet, and must be solved before any unattended run:**
+
+1. **No automatic restart.** Nothing starts on boot: `bootreason=powerkey`, there is
+   no `init.d`, `/data/local/tmp` is not a service location, and the HomeGuardian
+   harness APK is **not installed on the Mi A3** (it exists only on the MT6580
+   clone). After a reboot, or after a crash, **the server stays down until an
+   operator re-runs the deploy script.** Options, in order of preference:
+   * (a) extend the existing harness APK with a `BOOT_COMPLETED` receiver that starts
+     the server and supervises it — no root, uses machinery the project already has;
+   * (b) an operator-driven re-arm after a reboot (acceptable only for a supervised
+     test);
+   * (c) Magisk/boot script — **rejected**: requires root, which is forbidden.
+2. **No supervisor.** Nothing restarts the process after an abnormal exit, and
+   nothing bounds restarts. A crash-looping supervisor is worse than none.
+3. **Health checks.** The server has no `/health` endpoint of its own; liveness must
+   be probed with a real MCP `initialize` over the forward (this session's scripts do
+   exactly that, and `hg_ingress_probe` exists in-tree as the pattern for a
+   service-specific probe).
+4. **Wi-Fi reconnection.** Wi-Fi is `COMPLETED` on `Airtel_Dhar` (RSSI -50 dBm, 2.4
+   GHz, 65 Mbps) with the watchdog at its default. Auto-reconnect was **not** tested
+   by toggling the radio or rebooting the device — that is a deliberate
+   non-action, and the useful local path (MCP over `adb forward`) does not depend on
+   Wi-Fi at all.
+5. **USB/ADB transport instability — observed once, real.** During this session the
+   device went `adb ... offline` while remaining electrically present on the bus
+   (still `2717:ff08` on port `2-3`). `adb reconnect offline` restored it, and the
+   device had not rebooted (uptime unchanged). So the link can drop without the phone
+   being at fault; any long run needs `adb reconnect` in its recovery loop, and the
+   server's uptime must be judged from the device, not from adb.
+
+**Battery and thermal safety — before any long-duration test:**
+
+* Health is **GOOD**, temperature 33.0 °C under load, and the tightest thermal trip
+  (`quiet-therm-adc`, 56 °C) stayed **~10 °C** above the hottest measured zone
+  (45.6 °C). Thermally there is headroom.
+* **The open risk is charging, not heat.** The device currently sits at 100 %/96 %
+  on a 500 mA USB charger, i.e. continuously held at full charge. This session did
+  **not** run a long unattended charge, and the brief explicitly forbids leaving an
+  ageing or abnormal battery charging unattended — the device's own capacity/cycle
+  nodes are unreadable without root, so its true age is unknown.
+* **Required before a soak:** either place the phone on a switchable/charge-limiting
+  supply, or accept continuous full charge as a deliberate, recorded decision —
+  *your* call, not mine.
+
+**Proposed soak (not started):** a **supervised 48–72 h** run with (1) the
+BOOT_COMPLETED restart path or an operator re-arm, (2) a supervisor with a bounded
+restart policy, (3) a periodic `initialize`-based liveness probe, (4) `adb reconnect`
+in the recovery loop, (5) 5-minute sampling of RSS, `/proc/<pid>/stat` CPU, battery
+temperature and the thermal zones, and (6) a hard stop on any thermal trip or
+charge anomaly. **Awaiting your approval.**
+
+---
+
+## 8. Documentation audit
+
+**Added by this session** (all inside `experiment/mi-a3-edge`):
+`docs/EDGE_DEVICE_MI_A3.md` (this file), `config/mi_a3_edge.json`,
+`config/mi_a3_edge_engine.json`, four scripts, `scripts/mi_a3_edge_measure.py`,
+and `logs/`.
+
+**Findings:**
+
+1. **No document described the Mi A3 at all.** The only Android device in the
+   documentation is the MT6580 clone (`docs/PRIVACY.md:275-280`,
+   `docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md`). This report is the first
+   record of the real `arm64-v8a` device and of the engine + MCP server running on it.
+2. **Three inconsistent Android targets in the docs.** `docs/ARCHITECTURE.md:305`
+   and `docs/STATUS.md:153` state `arm64-v8a / API 34`; `docs/ANDROID_WIFI_*` and
+   `docs/STATUS.md` describe the harness as `armeabi-v7a / API 27`; and the actual
+   device reached in this session is **API 30**. The API-34 claim in particular
+   describes a target no device here runs. Recommend reconciling these into one
+   statement of "device reached" vs "target compiled for".
+3. `docs/PRIVACY.md:280` ("32-bit only (no arm64 on this device)") is **correct for
+   the clone** but reads as a project-wide claim; now that an arm64 device is in use
+   it should be scoped explicitly to that device.
+4. **Roadmap coverage missing.** The HomeGuardian roadmap (`docs/ROADMAP.md`) has no
+   row for an edge/ARM64 device server, and the `my-job-agent` control plane has no
+   matching row either (checked read-only with `npm run gate:status --find ...` for
+   "HomeGuardian", "edge device", "Mi A3", "ARM64" — no match). Per the standing rule
+   I did **not** invent a row. **This workstream needs a roadmap row, and that is an
+   operator decision.** Flagged, not silently absorbed.
+5. Nothing frozen was modified: the security-audit worktrees and the release
+   candidate were read-only throughout.
+
+**Committed experimental SHA:** the head of `experiment/mi-a3-edge` — the single
+commit that contains this report, the four scripts plus the measurement driver, the
+two configs, and the raw evidence logs under `logs/`. It is derived from `01a4d3b`
+and is **not** merged anywhere. Resolve it with:
+
+```bash
+git log --oneline -1 experiment/mi-a3-edge
+```
+
+---
+
+## 9. GO / NO-GO recommendation
+
+**GO — conditional — for a supervised 48–72 h pilot on the Mi A3.**
+
+The genuine engine and the genuine MCP Streamable HTTP server demonstrably build
+for, start on, and serve from the device: 18/18 functional checks, a real detected
+`critical` alert read back through the MCP tool, real SQLite WAL persistence,
+5.4 MB RSS, 1.55 ms of CPU per tool call, and no thermal movement under load.
+
+The conditions are not optional:
+
+1. **Loopback only.** Keep the server bound to `127.0.0.1` behind `adb forward`.
+   No LAN listener, no public exposure, no remote camera ingestion — and
+   `01a4d3b` carries a FAIL security verdict regardless.
+2. **Fix the restart path first** (BOOT_COMPLETED receiver in the harness APK, or a
+   recorded decision to accept operator re-arm). No unattended run on a process that
+   cannot come back by itself.
+3. **Add a supervisor with a bounded restart policy** and a real `initialize`-based
+   liveness probe.
+4. **Resolve the charging question** — switchable/charge-limited supply, or an
+   explicit recorded decision to accept continuous full charge.
+5. **Put `adb reconnect` in the recovery loop**; judge uptime from the device.
+6. **Do not treat the mTLS ingestion path as available** on this node until OpenSSL
+   is cross-compiled for Android (section 6.1).
+7. **Switch the base to the independently approved corrected SHA** the moment the
+   security audit publishes it, and re-run sections 4 and 5 against it. This report
+   validates the *device and runtime*, not `01a4d3b`'s security posture.
+
+**NO-GO** for anything unattended, LAN-reachable, or camera-ingesting at this stage.
+
+---
+
+## Appendix — evidence files
+
+| File | Contents |
+|---|---|
+| `logs/cmake_configure_arm64.log` | NDK cross-configure; the OpenSSL-gated skips |
+| `logs/build_arm64.log` | arm64-v8a build of server + engine + bridge |
+| `logs/mcp_functional_verify.txt` | the 18 MCP checks, raw |
+| `logs/mi_a3_edge_measurements.txt` / `.json` | latency / CPU / RSS / thermal |
+| `logs/mi_a3_edge_scenario.txt` | scenario run + alerts + joined MCP read |
+| `logs/device-artifacts/` | SQLite databases pulled from the device |
