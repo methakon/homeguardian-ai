@@ -110,3 +110,6 @@ deploy/docker/.env
 devices.json
 revocations.json
 hg_d03_*
+
+# Node dependencies
+node_modules/

@@ -428,6 +428,15 @@ target_link_libraries(hg_alexa_bridge PRIVATE
         sqlite3_static
     )
 
+    add_executable(hg_device_registry_cli
+        src/main_device_registry_cli.cpp
+        src/net/DeviceRegistry.cpp
+    )
+    target_include_directories(hg_device_registry_cli PRIVATE src)
+    target_link_libraries(hg_device_registry_cli PRIVATE
+        nlohmann_json::nlohmann_json
+    )
+
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
         ${CMAKE_SOURCE_DIR}/tests/core/test_config.cpp
