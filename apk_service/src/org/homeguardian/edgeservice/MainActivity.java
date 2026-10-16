@@ -38,6 +38,14 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private Button stopBtn;
     private Button restartBtn;
     private final Handler ui = new Handler();
+    // Last rendered content. A 1 Hz ticker that calls setText() unconditionally emits an
+    // accessibility content-changed event every second, which (a) wakes the compositor for
+    // nothing on a battery-sensitive edge device and (b) makes the window never report
+    // idle, so `uiautomator dump` fails with "could not get idle state" and the UI cannot
+    // be driven or inspected. Rendering only on change fixes both.
+    private String lastStatusText = null;
+    private String lastLogText = null;
+    private Boolean lastRunning = null;
 
     private final Runnable ticker = new Runnable() {
         public void run() {
@@ -212,13 +220,24 @@ public class MainActivity extends Activity implements EdgeState.Listener {
             sb.append("last error     : ").append(EdgeState.lastError).append('\n');
         }
         sb.append("native stats   : ").append(NativeEngine.statsJson()).append('\n');
-        statusView.setText(sb.toString());
+        String status = sb.toString();
+        if (!status.equals(lastStatusText)) {
+            statusView.setText(status);
+            lastStatusText = status;
+        }
 
-        startBtn.setEnabled(!running);
-        stopBtn.setEnabled(running);
-        restartBtn.setEnabled(true);
+        if (lastRunning == null || lastRunning.booleanValue() != running) {
+            startBtn.setEnabled(!running);
+            stopBtn.setEnabled(running);
+            restartBtn.setEnabled(true);
+            lastRunning = Boolean.valueOf(running);
+        }
 
-        logView.setText("probe log (tail):\n" + tailProbeLog());
+        String logs = "probe log (tail):\n" + tailProbeLog();
+        if (!logs.equals(lastLogText)) {
+            logView.setText(logs);
+            lastLogText = logs;
+        }
     }
 
     private String tailProbeLog() {

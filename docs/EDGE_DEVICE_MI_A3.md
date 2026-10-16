@@ -685,22 +685,118 @@ branch: it hardcoded `org_homeguardian_harness`, so for the new package it would
 checked the wrong symbol names and passed while checking nothing. It now derives the
 package from the Java sources.
 
-### 10.6 Test matrix — all UNVERIFIED (installation not yet approved)
+### 10.6 Test results — PASS / FAIL / UNVERIFIED
 
-| # | Test | Status | Why |
+Approved scope: tests 1, 2, 3 and 6, then extended by the operator to include 4 and
+5. The 48–72 h soak remains **not started**.
+
+| # | Test | Status | Evidence |
 |---|---|---|---|
-| 1 | Installation and user-approved permissions | **UNVERIFIED** | install is not approved yet; APK is staged and signed |
-| 2 | Native C++ MCP startup inside the app sandbox | **UNVERIFIED** | needs the app running on the device |
-| 3 | Manual Start/Stop and automatic crash recovery | **UNVERIFIED** | needs the app running on the device |
-| 4 | Power-off/reboot then service recovery | **UNVERIFIED** | needs a device reboot |
-| 5 | Screen-off MCP availability with no ADB | **UNVERIFIED** | needs an unattended window with USB removed |
-| 6 | CPU, RAM, battery and thermal measurements | **UNVERIFIED** | needs the app running on the device |
+| 1 | Installation and user-approved permissions | **PASS** | `adb -s edd53dbd04de install -r` → Success; `primaryCpuAbi=arm64-v8a`; versionCode 1 / 1.0.0; `INTERNET`, `FOREGROUND_SERVICE`, `RECEIVE_BOOT_COMPLETED` all `granted=true`; **CAMERA and RECORD_AUDIO are not requested at all**; the device's `base.apk` sha256 equals the local build byte-for-byte |
+| 2 | Native C++ MCP startup inside the app sandbox | **PASS** | `onStartCommand action=…START` → `nativeStart` → `hg_mcp_server listening on 127.0.0.1:8790 (loopback=true, auth=required, tools=2)` → `ENGINE_UP … creds_mode=0600`; socket `0100007F:2256` (loopback, never `00000000`); app's own MCP client returns `proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary`; host-side via `adb forward`: no token → **401**, wrong bearer → **401** with `WWW-Authenticate: Bearer` |
+| 3a | Manual **Stop** | **PASS** | `input tap` on the real button → `serve() returned; server stopped`, `ENGINE_STOP code=0 reason=operator stop`, `ServiceRecord` count 0, listener closed (host curl → empty reply), UI flipped START enabled / STOP disabled |
+| 3b | Manual **Restart** | **PASS** | `onStartCommand action=…RESTART` → `restartEngine: operator restart` → `listening on 127.0.0.1:8790`; `LISTEN 0100007F:2256` |
+| 3c | Automatic crash recovery | **PASS** (after fixing D2 below) | `am crash` → AMS `Process … has died` → `Scheduling restart of crashed service … in 1000ms` → new process → `onStartCommand … startId=2` → `listening on 127.0.0.1:8790` → `ENGINE_UP`; `restartCount=1 crashCount=1` |
+| 4 | Power-off/reboot then service recovery | **PASS** | `adb reboot`; uptime reset to 32 s; at t+45 s: `BootReceiver action=android.intent.action.BOOT_COMPLETED` → `BOOT_RECEIVED` → `onStartCommand …START` → `listening on 127.0.0.1:8790` → `ENGINE_UP`; **0** "credentials provisioned" lines in that boot, i.e. the existing 0600 credential file survived and was reused |
+| 5 | Screen-off MCP availability with no ADB | **PASS** | Screen off (`mWakefulness=Dozing`, `mScreenOn=false`), `adb kill-server`, unattended: **66 `PROBE_OK` / 0 `PROBE_FAIL`**, inter-probe cadence **median 20.1 s**, and then repeated under **forced deep Doze** (`dumpsys deviceidle force-idle` → `mState=IDLE mLightState=OVERRIDE`) with ADB again disconnected: probes continued, gaps unchanged |
+| 6 | CPU, RAM, battery and thermal | **MEASURED** (see 10.8/10.9) | — |
 
-Nothing above is a PASS. Static verification (10.5) proves the artefact is
-well-formed; it does **not** prove the app runs, and it is not reported as if it did.
+**Not a PASS:** the 48–72 h supervised soak, and any unattended-charging behaviour —
+neither was started.
 
-**To proceed, the operator must approve installing a debug-signed APK plus the three
-install-time permissions in 10.3.** No runtime permission prompt will appear.
+Cadence caveat, stated plainly: the probe log contains two gaps larger than 25 s
+(365 s, 128 s). Both are **mine, not the server's** — they span a `force-stop` +
+rebuild + reinstall, and the reboot. Inside the actual unattended windows the cadence
+never broke.
+
+### 10.7 Defects found and fixed during this test round
+
+Both were found by running the real code, and both are in **my** integration layer,
+not in the MCP server.
+
+**D1 — use-after-free of the `ToolRegistry` (SIGSEGV).** `McpHttpServer::Impl` stores
+`const ToolRegistry& tools` (`src/mcp/McpHttpServer.cpp:338`), not a copy. The
+command-line binary satisfies that by accident: its registry is a local of `main()`
+and lives as long as the process. My `start()` had it as a local too, so it died when
+`start()` returned while the accept loop kept running on a thread. First `tools/list`
+then took a hard fault:
+
+```
+Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x6f9c0ab000000038
+  #00 nlohmann::json::parse<std::string const&>
+  #01 homeguardian::mcp::(anonymous namespace)::tools_list_json(ToolRegistry const&)+248
+  #02 homeguardian::mcp::Dispatcher::handle_one(...)
+  #04 homeguardian::mcp::McpHttpServer::Impl::handle_connection(int)
+  #05 homeguardian::mcp::McpHttpServer::Impl::worker_loop()
+```
+
+Fixed by owning the registry as a member (`tools_`) and releasing it after the server
+in `teardown_locked()`. Post-fix: 66 probes, zero crashes.
+
+**D2 — `START_STICKY` alone recovered nothing.** After the process was killed, AMS
+restarted the service but destroyed it before `onStartCommand` ran, because it was
+started-but-not-yet-foreground:
+
+```
+AMS: Start proc 27682:… for service {…EdgeService}
+AMS: Stopping service due to app idle: u0a226 -8s275ms …EdgeService     <-- 42 ms later
+AMS: Service done with onDestroy, but executeNesting=2
+```
+
+No engine came back. Fixed by calling `startForeground()` in `onCreate()` — a
+foreground service is skipped by the idle sweep, so the notification must exist from
+the first moment of the lifecycle. This is also the correct requirement regardless of
+the sweep, since a foreground service must be foreground promptly.
+
+**D3 — the UI could not be inspected or driven.** `uiautomator dump` returned
+`ERROR: could not get idle state` because the status view was rewritten every second.
+Rendering only when the content actually changes fixed it (and removes a pointless
+1 Hz redraw on a battery-sensitive device). This is why the tests above could use the
+real buttons via `input tap` rather than an internal shortcut.
+
+### 10.8 Measurements (test 6)
+
+The app process, which is what now owns the engine. Latency is the app's own MCP
+probe over loopback, measured on-device end to end.
+
+| Metric | Value |
+|---|---|
+| App CPU (95 s window, pre-reboot) | 150 ms = **0.16 % of one core** |
+| App CPU per MCP probe | **28–37 ms** (includes waking the JVM for each probe) |
+| Probe latency | min 19 ms, **p50 29 ms**, max 46 ms (n=66) |
+| App RSS | **91,160 kB steady, flat for 2 min** (no leak) |
+| App peak RSS (VmHWM) | 89,960–96,084 kB |
+| Bare native server (HG-EDGE-01) | 5,412 kB — so the managed form costs ~86 MB of JVM + framework |
+| Cold start to listening | **~140 ms** from `nativeStart` to `listening` |
+| Probe reliability | **66 PROBE_OK / 0 PROBE_FAIL** |
+| Crashes since the D1 fix | **0** |
+
+### 10.9 Battery and thermal (the operator asked for these before proceeding)
+
+| Metric | Value |
+|---|---|
+| Level | 96 % (95 → 96 % across the tests) |
+| Health | **GOOD** (`health=2`) |
+| Temperature | **33.0 – 34.3 °C**, unchanged under load |
+| Voltage | 4,296 – 4,331 mV |
+| Status | charging, USB, **500 mA @ 5 V** (`Max charging current 500000 µA`) |
+| Charge counter | 3,845,600 µAh (≈3.85 Ah) |
+| Real thermal zones under load | **41 – 47 °C**; hottest is `cpuss-0-usr` at 46.9 °C |
+| Tightest throttle trip | `quiet-therm-adc` passive at **56 °C** → ~9 °C of headroom |
+
+**Honest limitation on the thermal figure.** Immediately after the reboot, two samples
+reported an aggregate maximum of 54.6 °C and 56.5 °C across the zones my filter
+accepts. Steady-state per-zone sampling (60 s, every 5 s) shows all real zones at
+41–47 °C and never reproduced those values. So they were boot-time transients, but I
+**cannot say which zone produced them**, because the filter discards `lmh-*`/`-step`/
+`-lvl*` names (which are limiter thresholds, e.g. `lmh-dcvs-00` reads a flat 75 °C)
+and the raw sample was not retained. Attributed per-zone sampling is a soak item.
+
+**The charging question is still open**, and the 500 mA figure is exactly the kind of
+number one must not read optimistically: it is the *negotiated* USB current, not a
+charge-percentage limit. The phone sits at 95–96 % while plugged in, so "500 mA" does
+not imply "safe charge level". Continuous unattended charging remains **not approved**
+and no unattended soak was started.
 
 ## Appendix — evidence files
 

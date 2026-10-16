@@ -1,0 +1,25 @@
+--------- beginning of crash
+--------- beginning of system
+--------- beginning of main
+10-17 04:30:26.246  9266  9298 I HGEdge  : PROBE PROBE_OK 46ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:30:46.300  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:31:06.349  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:31:26.396  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:31:46.439  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:32:06.496  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:32:26.555  9266  9298 I HGEdge  : PROBE PROBE_OK 29ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:32:46.614  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:33:06.675  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:33:26.751  9266  9298 I HGEdge  : PROBE PROBE_OK 29ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:33:46.813  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:34:06.869  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:34:26.920  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:34:46.965  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:35:07.022  9266  9298 I HGEdge  : PROBE PROBE_OK 29ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:35:27.073  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:35:47.129  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:36:07.177  9266  9298 I HGEdge  : PROBE PROBE_OK 28ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:36:27.225  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:36:47.283  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:37:07.322  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:37:27.379  9266  9298 I HGEdge  : PROBE PROBE_OK 29ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}

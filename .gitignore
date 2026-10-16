@@ -121,7 +121,13 @@ node_modules/
 # ---------------------------------------------------------------------------
 build_mi_a3_edge_arm64/
 deploy/mi_a3_edge/
-logs/device-artifacts/
+# Pulled device databases are binary blobs; the TEXT evidence (probe logs, logcat)
+# under logs/device-artifacts/ IS kept, because it is the primary test evidence and
+# contains no secret.
+logs/device-artifacts/**/*.db
+logs/device-artifacts/**/*.db-wal
+logs/device-artifacts/**/*.db-shm
+logs/device-artifacts/engine/
 
 # HG-EDGE-02 edge-service APK build tree: reproducible from
 # apk_service/build_service_apk.sh. The signed APK stays a local deliverable

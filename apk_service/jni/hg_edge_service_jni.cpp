@@ -177,7 +177,15 @@ public:
             }
 
             provider_ = std::make_unique<EdgeStatusProvider>(capture_enabled, audit_.get());
-            const auto tools = make_homeguardian_tools(*store_, *provider_);
+            // The registry MUST outlive the server: McpHttpServer::Impl stores
+            // `const ToolRegistry& tools`, not a copy, so the caller owns its lifetime
+            // (main_mcp_server.cpp satisfies this by accident - its registry is a local
+            // of main(), which lives as long as the process). Holding it as a local here
+            // instead made it die when start() returned while the accept loop kept running
+            // on a thread, and the first tools/list took SIGSEGV inside
+            // tools_list_json -> nlohmann::json::parse. Hence a member.
+            tools_ = std::make_unique<homeguardian::mcp::ToolRegistry>(
+                make_homeguardian_tools(*store_, *provider_));
 
             McpHttpConfig cfg;
             cfg.bind_address = bind_addr;
@@ -185,13 +193,14 @@ public:
             cfg.allow_remote = false;   // loopback only; never configurable from the app
             cfg.require_auth = true;
 
-            server_ = std::make_unique<McpHttpServer>(cfg, tools, *store_);
+            server_ = std::make_unique<McpHttpServer>(cfg, *tools_, *store_);
             std::string error;
             if (!server_->start(error)) {
                 last_error_ = error;
                 __android_log_print(ANDROID_LOG_ERROR, HG_LOG_TAG,
                                     "mcp startup refused: %s", error.c_str());
                 server_.reset();
+                tools_.reset();
                 provider_.reset();
                 store_.reset();
                 audit_.reset();
@@ -218,7 +227,7 @@ public:
 
             __android_log_print(ANDROID_LOG_INFO, HG_LOG_TAG,
                                 "hg_mcp_server listening on %s:%u (loopback=true, auth=required, tools=%zu)",
-                                cfg.bind_address.c_str(), static_cast<unsigned>(port_), tools.size());
+                                cfg.bind_address.c_str(), static_cast<unsigned>(port_), tools_->size());
             return OK;
         } catch (const std::exception& e) {
             last_error_ = e.what();
@@ -272,9 +281,11 @@ public:
 
 private:
     void teardown_locked() {
-        // serve() owns and closes the listener; order matters: stop the loop, then
-        // release the objects the worker threads referenced.
+        // serve() owns and closes the listener. Order matters: stop the loop and drop
+        // the server BEFORE the objects its worker threads reference disappear - the
+        // registry in particular is held by reference.
         server_.reset();
+        tools_.reset();
         provider_.reset();
         store_.reset();
         audit_.reset();
@@ -288,6 +299,8 @@ private:
     std::unique_ptr<PersistenceAudit> audit_;
     std::unique_ptr<AlexaCredentialStore> store_;
     std::unique_ptr<EdgeStatusProvider> provider_;
+    // Owned as a member, not a local: McpHttpServer::Impl holds a reference to it.
+    std::unique_ptr<homeguardian::mcp::ToolRegistry> tools_;
     std::unique_ptr<McpHttpServer> server_;
     std::thread serve_thread_;
     std::atomic<bool> stop_{true};

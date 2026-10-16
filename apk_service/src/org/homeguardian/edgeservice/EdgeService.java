@@ -70,6 +70,17 @@ public class EdgeService extends Service {
             EdgeState.lastError = "native library not loaded: " + NativeEngine.loadError();
             Log.e(TAG, EdgeState.lastError);
         }
+
+        // Become foreground IMMEDIATELY, before onStartCommand runs.
+        //
+        // Why here and not only in onStartCommand: after the process is killed, Android
+        // restarts the service, but its "app idle" sweep can destroy a service that is
+        // started-but-not-yet-foreground. Observed on the Mi A3 - AMS logged
+        // "Stopping service due to app idle" 42 ms after starting the replacement
+        // process, so onStartCommand never ran, the engine never came back and
+        // START_STICKY alone recovered nothing. A foreground service is skipped by that
+        // sweep, so the notification must exist from the first moment of the lifecycle.
+        startForeground(NOTIFICATION_ID, buildNotification("starting…"));
     }
 
     @Override
@@ -90,7 +101,8 @@ public class EdgeService extends Service {
             return START_STICKY;
         }
 
-        // START (or a system restart with a null intent).
+        // START (or a system restart with a null intent). Already foreground from
+        // onCreate; re-asserting is idempotent and keeps the text current.
         startForeground(NOTIFICATION_ID, buildNotification("starting…"));
         startEngineAsync();
         scheduleWatchdog();
