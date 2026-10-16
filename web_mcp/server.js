@@ -307,6 +307,18 @@ function createHttpServer() {
     }
 
     // -------------------------------------------------------------
+    // DESIGNATED NONSENSITIVE PUBLIC HEALTH ENDPOINTS
+    // -------------------------------------------------------------
+    if ((pathname === '/health' || pathname === '/api/health') && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        service: 'homeguardian-web-gateway',
+      }));
+      return;
+    }
+
+    // -------------------------------------------------------------
     // AUTHENTICATION ROUTES (Requirement 3)
     // -------------------------------------------------------------
     // POST /api/auth/login
@@ -375,6 +387,12 @@ function createHttpServer() {
     // -------------------------------------------------------------
     // GET /api/devices
     if (pathname === '/api/devices' && req.method === 'GET') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Viewing device registry requires authenticated operator session' }));
+        return;
+      }
       try {
         const devices = deviceAdapter.listDevices();
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -389,6 +407,12 @@ function createHttpServer() {
     // GET /api/devices/:id
     const deviceMatch = pathname.match(/^\/api\/devices\/([^/]+)$/);
     if (deviceMatch && req.method === 'GET') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Viewing device details requires authenticated operator session' }));
+        return;
+      }
       const devId = deviceMatch[1];
       const device = deviceAdapter.getDevice(devId);
       if (!device) {
@@ -545,12 +569,13 @@ function createHttpServer() {
         if (connectionId) {
           stopped = webrtcStreamer.stopConnection(connectionId, session);
         } else if (deviceId) {
-          stopped = webrtcStreamer.stopDeviceStream(deviceId);
+          stopped = webrtcStreamer.stopDeviceStream(deviceId, session);
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ stopped }));
       } catch (err) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        const isForbidden = err.message && err.message.includes('forbidden');
+        res.writeHead(isForbidden ? 403 : 400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
       }
       return;
@@ -574,6 +599,12 @@ function createHttpServer() {
     // -------------------------------------------------------------
     // GET /api/mcp/session
     if (pathname === '/api/mcp/session' && req.method === 'GET') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Inspecting MCP session requires authenticated operator session' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -591,6 +622,12 @@ function createHttpServer() {
 
     // GET /api/mcp/status
     if (pathname === '/api/mcp/status' && req.method === 'GET') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Querying MCP status requires authenticated operator session' }));
+        return;
+      }
       try {
         const out = await mcpClient.getStatus();
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -604,6 +641,12 @@ function createHttpServer() {
 
     // GET /api/mcp/alerts
     if (pathname === '/api/mcp/alerts' && req.method === 'GET') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Querying MCP alerts requires authenticated operator session' }));
+        return;
+      }
       try {
         const out = await mcpClient.getAlertSummary();
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -630,6 +673,12 @@ function createHttpServer() {
 
     // POST /api/mcp/chat
     if (pathname === '/api/mcp/chat' && req.method === 'POST') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Conversational MCP chat requires authenticated operator session' }));
+        return;
+      }
       try {
         const payload = await readJsonBody(req);
         const reply = await handleConversationalQuery(payload.query);

@@ -22,8 +22,18 @@ class SessionManager {
       this.operatorPassword = process.env.HG_OPERATOR_PASSWORD;
     } else {
       this.operatorPassword = crypto.randomBytes(16).toString('hex');
-      console.log(`[Auth] No HG_OPERATOR_PASSWORD set. Generated one-time launch credential for '${this.operatorUsername}': ${this.operatorPassword}`);
+      try {
+        const os = require('node:os');
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const secretFile = process.env.HG_OPERATOR_SECRET_FILE || path.join(os.tmpdir(), 'hg_operator_password.secret');
+        fs.writeFileSync(secretFile, this.operatorPassword, { mode: 0o600 });
+        console.log(`[Auth] No HG_OPERATOR_PASSWORD set. Generated one-time launch credential for '${this.operatorUsername}' stored securely in 0600 file.`);
+      } catch (_) {
+        console.log(`[Auth] Generated one-time launch credential initialized in memory.`);
+      }
     }
+    this.sessionDestroyListeners = [];
   }
 
   // Parse HTTP cookies from request
@@ -101,10 +111,38 @@ class SessionManager {
 
     if (Date.now() > session.expiresAt) {
       this.sessions.delete(token);
+      this.notifySessionDestroyed(token);
       return null;
     }
 
     return session;
+  }
+
+  // Retrieve session by raw token (for stream / background validation)
+  getSessionByToken(token) {
+    if (!token) return null;
+    const session = this.sessions.get(token);
+    if (!session) return null;
+    if (Date.now() > session.expiresAt) {
+      this.sessions.delete(token);
+      this.notifySessionDestroyed(token);
+      return null;
+    }
+    return session;
+  }
+
+  onSessionDestroyed(cb) {
+    if (typeof cb === 'function') {
+      this.sessionDestroyListeners.push(cb);
+    }
+  }
+
+  notifySessionDestroyed(sessionToken) {
+    for (const cb of this.sessionDestroyListeners) {
+      try {
+        cb(sessionToken);
+      } catch (_) {}
+    }
   }
 
   // Verify CSRF for state-mutating requests
@@ -130,6 +168,7 @@ class SessionManager {
   destroySession(sessionToken) {
     if (sessionToken) {
       this.sessions.delete(sessionToken);
+      this.notifySessionDestroyed(sessionToken);
     }
   }
 

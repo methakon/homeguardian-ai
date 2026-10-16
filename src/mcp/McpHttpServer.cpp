@@ -1,6 +1,7 @@
 #include "mcp/McpHttpServer.h"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -118,19 +119,45 @@ void send_response(int fd, const Response& r) {
     (void)write_all(fd, text.data(), text.size());
 }
 
-// Parse one request from an already-connected socket, within strict bounds.
-Parsed read_request(int fd, size_t max_header_bytes, size_t max_body_bytes) {
+// Parse one request from an already-connected socket, within strict bounds and deadline.
+Parsed read_request(int fd, size_t max_header_bytes, size_t max_body_bytes, int timeout_ms = 3000) {
     Parsed p;
     std::string buf;
     buf.reserve(4096);
     std::array<char, 4096> chunk{};
 
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms > 0 ? timeout_ms : 3000);
     size_t header_end = std::string::npos;
     while (true) {
         header_end = buf.find("\r\n\r\n");
         if (header_end != std::string::npos) break;
         if (buf.size() > max_header_bytes) {
             p.header_overflow = true;
+            return p;
+        }
+        auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            p.timed_out = true;
+            return p;
+        }
+        int remaining_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        if (remaining_ms <= 0) {
+            p.timed_out = true;
+            return p;
+        }
+        pollfd pfd{};
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        int pr = ::poll(&pfd, 1, remaining_ms);
+        if (pr == 0) {
+            p.timed_out = true;
+            return p;
+        }
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            return p;
+        }
+        if (!(pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
             return p;
         }
         ssize_t n = ::recv(fd, chunk.data(), chunk.size(), 0);
@@ -200,6 +227,31 @@ Parsed read_request(int fd, size_t max_header_bytes, size_t max_body_bytes) {
 
     std::string body = buf.substr(header_end + 4);
     while (body.size() < content_length) {
+        auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+            p.timed_out = true;
+            return p;
+        }
+        int remaining_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+        if (remaining_ms <= 0) {
+            p.timed_out = true;
+            return p;
+        }
+        pollfd pfd{};
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        int pr = ::poll(&pfd, 1, remaining_ms);
+        if (pr == 0) {
+            p.timed_out = true;
+            return p;
+        }
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            return p;
+        }
+        if (!(pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+            return p;
+        }
         ssize_t n = ::recv(fd, chunk.data(), std::min(chunk.size(), content_length - body.size()), 0);
         if (n == 0) break;
         if (n < 0) {
@@ -237,6 +289,43 @@ bool is_loopback_literal(const std::string& addr) {
     return false;
 }
 
+bool read_os_entropy(void* buf, size_t len) {
+    int fd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return false;
+    }
+    size_t total = 0;
+    auto* p = static_cast<uint8_t*>(buf);
+    while (total < len) {
+        ssize_t n = ::read(fd, p + total, len - total);
+        if (n > 0) {
+            total += static_cast<size_t>(n);
+            continue;
+        }
+        if (n < 0 && errno == EINTR) continue;
+        ::close(fd);
+        return false;
+    }
+    ::close(fd);
+    return true;
+}
+
+std::string mint_csprng_session_id() {
+    std::array<uint8_t, 32> bytes{};
+    if (!read_os_entropy(bytes.data(), bytes.size())) {
+        spdlog::critical("mcp: OS-backed CSPRNG entropy source failed or unavailable");
+        throw std::runtime_error("csprng_entropy_unavailable");
+    }
+    static const char hex_digits[] = "0123456789abcdef";
+    std::string id;
+    id.reserve(bytes.size() * 2);
+    for (uint8_t b : bytes) {
+        id.push_back(hex_digits[(b >> 4) & 0x0f]);
+        id.push_back(hex_digits[b & 0x0f]);
+    }
+    return id;
+}
+
 struct McpHttpServer::Impl {
     McpHttpConfig cfg;
     const ToolRegistry& tools;
@@ -248,6 +337,8 @@ struct McpHttpServer::Impl {
     struct SessionEntry {
         SessionState state;
         Clock::time_point last_seen;
+        std::string principal;
+        AlexaAuthContext auth;
     };
     std::mutex mu;
     std::unordered_map<std::string, SessionEntry> sessions;
@@ -264,12 +355,7 @@ struct McpHttpServer::Impl {
         : cfg(std::move(c)), tools(t), verifier(v), dispatcher(t) {}
 
     std::string mint_session_id() {
-        static thread_local std::mt19937_64 rng{std::random_device{}()};
-        std::uniform_int_distribution<int> hex(0, 15);
-        std::string id;
-        id.reserve(32);
-        for (int i = 0; i < 32; ++i) id.push_back("0123456789abcdef"[hex(rng)]);
-        return id;
+        return mint_csprng_session_id();
     }
 
     // Caller must hold mu.
@@ -326,7 +412,7 @@ void McpHttpServer::Impl::handle_connection(int fd) {
     wv.tv_usec = (cfg.write_timeout_ms % 1000) * 1000;
     ::setsockopt(sock.fd, SOL_SOCKET, SO_SNDTIMEO, &wv, sizeof(wv));
 
-    Parsed req = read_request(sock.fd, cfg.max_header_bytes, cfg.max_body_bytes);
+    Parsed req = read_request(sock.fd, cfg.max_header_bytes, cfg.max_body_bytes, cfg.read_timeout_ms);
     if (req.header_overflow) {
         bump(&Stats::rejected_oversize);
         respond_simple(sock.fd, 431);
@@ -381,6 +467,7 @@ void McpHttpServer::Impl::handle_connection(int fd) {
 
     // ---- authentication -----------------------------------------------------------
     std::string credential;
+    AlexaAuthContext auth;
     if (cfg.require_auth) {
         auto it = req.headers.find("authorization");
         if (it == req.headers.end()) {
@@ -401,7 +488,7 @@ void McpHttpServer::Impl::handle_connection(int fd) {
             respond_simple(sock.fd, 401, "{}", "WWW-Authenticate", "Bearer");
             return;
         }
-        const AlexaAuthContext auth = verifier.verify(credential, std::chrono::system_clock::now());
+        auth = verifier.verify(credential, std::chrono::system_clock::now());
         if (!auth.authenticated) {
             bump(&Stats::rejected_auth);
             // No detail: the client learns only that the credential did not authenticate.
@@ -434,8 +521,20 @@ void McpHttpServer::Impl::handle_connection(int fd) {
             return;
         }
         std::lock_guard<std::mutex> lk(mu);
-        const auto erased = sessions.erase(sid);
-        respond_simple(sock.fd, erased == 0 ? 404 : 200);
+        auto it = sessions.find(sid);
+        if (it == sessions.end()) {
+            respond_simple(sock.fd, 404);
+            return;
+        }
+        if (cfg.require_auth && it->second.principal != auth.principal) {
+            spdlog::warn("mcp: principal '{}' attempted to delete session '{}' owned by '{}'",
+                         auth.principal, sid, it->second.principal);
+            bump(&Stats::rejected_auth);
+            respond_simple(sock.fd, 403);
+            return;
+        }
+        sessions.erase(it);
+        respond_simple(sock.fd, 200);
         return;
     }
 
@@ -500,6 +599,13 @@ void McpHttpServer::Impl::handle_connection(int fd) {
                 respond_simple(sock.fd, 404);
                 return;
             }
+            if (cfg.require_auth && it->second.principal != auth.principal) {
+                spdlog::warn("mcp: principal '{}' attempted to access session '{}' owned by '{}'",
+                             auth.principal, sid, it->second.principal);
+                bump(&Stats::rejected_auth);
+                respond_simple(sock.fd, 403);
+                return;
+            }
             it->second.last_seen = now;
             state = it->second.state;
             session_present = true;
@@ -516,14 +622,31 @@ void McpHttpServer::Impl::handle_connection(int fd) {
         evict_locked(now);
         if (session_present) {
             new_session_id = sid;
-            sessions[sid] = SessionEntry{state, now};
+            sessions[sid] = SessionEntry{state, now, auth.principal, auth};
         } else {
-            new_session_id = mint_session_id();
-            sessions[new_session_id] = SessionEntry{state, now};
+            try {
+                for (int attempt = 0; attempt < 5; ++attempt) {
+                    std::string cand = mint_session_id();
+                    if (sessions.find(cand) == sessions.end()) {
+                        new_session_id = std::move(cand);
+                        break;
+                    }
+                }
+            } catch (const std::exception& e) {
+                spdlog::critical("mcp: failed to mint session ID: {}", e.what());
+                respond_simple(sock.fd, 500);
+                return;
+            }
+            if (new_session_id.empty()) {
+                spdlog::critical("mcp: session ID collision loop exhausted");
+                respond_simple(sock.fd, 500);
+                return;
+            }
+            sessions[new_session_id] = SessionEntry{state, now, auth.principal, auth};
         }
     } else if (session_present) {
         std::lock_guard<std::mutex> lk(mu);
-        sessions[sid] = SessionEntry{state, Clock::now()};
+        sessions[sid] = SessionEntry{state, Clock::now(), auth.principal, auth};
     }
 
     // A stateful server is required to reject requests that arrive without a session once

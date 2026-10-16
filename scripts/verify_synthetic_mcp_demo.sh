@@ -163,12 +163,21 @@ done
 log_ok "Unified Gateway listening on http://127.0.0.1:$WEB_PORT"
 
 # 6. Verify Live Demonstration Health & Endpoints
-DEMO_HEALTH=$(curl -s "http://127.0.0.1:$WEB_PORT/api/auth/session")
-if [[ "$DEMO_HEALTH" == *"authenticated"* ]]; then
-  log_ok "Live gateway session API verified"
+DEMO_HEALTH=$(curl -s "http://127.0.0.1:$WEB_PORT/api/health")
+if [[ "$DEMO_HEALTH" == *"homeguardian-web-gateway"* ]]; then
+  log_ok "Public gateway health API verified"
 fi
 
-DEV_COUNT=$(curl -s "http://127.0.0.1:$WEB_PORT/api/devices" | grep -o '"id":' | wc -l)
+# Log in as operator to verify authenticated registry
+LOGIN_RESP=$(curl -s -c "$WORK/cookies.txt" -X POST "http://127.0.0.1:$WEB_PORT/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"admin\",\"password\":\"$DEMO_OPERATOR_PASS\"}")
+if [[ "$LOGIN_RESP" == *"\"ok\":true"* ]]; then
+  log_ok "Demonstration operator session authenticated"
+fi
+
+DEV_JSON=$(curl -s -b "$WORK/cookies.txt" "http://127.0.0.1:$WEB_PORT/api/devices")
+DEV_COUNT=$(echo "$DEV_JSON" | { grep -o '"id":' || true; } | wc -l)
 if [[ "$DEV_COUNT" -ge 4 ]]; then
   log_ok "Live authoritative device inventory verified ($DEV_COUNT devices)"
 fi

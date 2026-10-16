@@ -46,8 +46,8 @@ struct McpHttpConfig {
     bool require_auth = true;
     size_t max_body_bytes = kMaxJsonBytes;
     size_t max_header_bytes = 16 * 1024;
-    int read_timeout_ms = 10000;
-    int write_timeout_ms = 10000;
+    int read_timeout_ms = 3000;
+    int write_timeout_ms = 3000;
     size_t workers = 4;
     size_t max_inflight = 16;
     size_t max_sessions = 64;
@@ -96,5 +96,13 @@ private:
 
 // True when `addr` is a loopback literal (127.0.0.0/8 or ::1). Exposed for testing.
 bool is_loopback_literal(const std::string& addr);
+
+// Reads cryptographically secure random bytes from the OS (/dev/urandom).
+// Returns true on success, false if the OS entropy source fails. Exposed for testing.
+bool read_os_entropy(void* buf, size_t len);
+
+// Generates an unpredictable 256-bit (64-char hex) session ID using OS CSPRNG.
+// Throws std::runtime_error("csprng_entropy_unavailable") if secure entropy is unavailable.
+std::string mint_csprng_session_id();
 
 }  // namespace homeguardian::mcp

@@ -146,6 +146,9 @@ int main(int argc, char* argv[]) {
     const std::vector<std::string> extra_origins = split_csv(env_or("HG_MCP_ORIGINS", ""));
     cfg.allowed_origins = extra_origins;
     cfg.require_auth = true;
+    cfg.session_idle_seconds = static_cast<int>(env_long("HG_MCP_SESSION_IDLE_SECONDS", 1800));
+    cfg.read_timeout_ms = static_cast<int>(env_long("HG_MCP_READ_TIMEOUT_MS", 3000));
+    cfg.write_timeout_ms = static_cast<int>(env_long("HG_MCP_WRITE_TIMEOUT_MS", 3000));
 
     // ---- real application state (read-only view) ------------------------------------
     bool capture_enabled = false;  // fail-safe default

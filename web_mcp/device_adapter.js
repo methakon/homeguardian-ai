@@ -144,8 +144,9 @@ class DeviceRegistryAdapter {
     const now = Date.now();
 
     return list.map((d) => {
-      const authorized = !!(d.capture_enabled && d.paired && d.consent_granted && !d.revoked);
-      const online = !!(d.online && d.last_heartbeat_ms > 0 && (now - d.last_heartbeat_ms) < 90000);
+      const hasVerifiedIdentity = !!(d.paired && !d.revoked && d.credential_id && d.credential_id.length > 0);
+      const authorized = !!(d.capture_enabled && d.consent_granted && hasVerifiedIdentity);
+      const online = !!(hasVerifiedIdentity && d.online && d.last_heartbeat_ms > 0 && (now - d.last_heartbeat_ms) < 90000);
       const caps = Array.isArray(d.capabilities) ? d.capabilities : [];
       const hasTalkback = caps.includes('talkback') || d.device_type === 'speaker';
 
@@ -166,7 +167,7 @@ class DeviceRegistryAdapter {
         last_seen_ms: d.last_heartbeat_ms || 0,
         paired: !!d.paired,
         revoked: !!d.revoked,
-        is_synthetic: !!(d.device_id?.includes('syn') || d.device_type === 'simulator'),
+        is_synthetic: !!(d.device_type === 'simulator' || d.credential_id === 'syn-camera-cert'),
       };
     });
   }

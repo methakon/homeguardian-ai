@@ -12,6 +12,18 @@
 
 const http = require('node:http');
 
+function redactHeaders(headers) {
+  if (!headers) return {};
+  const safe = { ...headers };
+  for (const k of Object.keys(safe)) {
+    const lk = k.toLowerCase();
+    if (lk === 'authorization' || lk === 'cookie' || lk === 'set-cookie' || lk === 'x-csrf-token' || lk === 'x-hg-secret' || lk === 'x-hg-csrf') {
+      safe[k] = '[REDACTED]';
+    }
+  }
+  return safe;
+}
+
 class HomeGuardianMcpClient {
   /**
    * @param {Object} options
@@ -99,13 +111,7 @@ class HomeGuardianMcpClient {
             }
 
             // Record wire traffic for judge inspection (strictly redact credentials/tokens)
-            const safeReqHeaders = { ...headers };
-            for (const k of Object.keys(safeReqHeaders)) {
-              const lk = k.toLowerCase();
-              if (lk === 'authorization' || lk === 'cookie' || lk === 'x-csrf-token' || lk === 'x-hg-secret' || lk === 'x-hg-csrf') {
-                safeReqHeaders[k] = '[REDACTED]';
-              }
-            }
+            const safeReqHeaders = redactHeaders(headers);
             const safeResHeaders = { ...res.headers };
             for (const k of Object.keys(safeResHeaders)) {
               const lk = k.toLowerCase();
@@ -146,7 +152,7 @@ class HomeGuardianMcpClient {
           timestamp: new Date().toISOString(),
           method: 'POST',
           url: this.baseUrl,
-          requestHeaders: { ...headers },
+          requestHeaders: redactHeaders(headers),
           requestBody: msg,
           error: err.message,
           latencyMs,

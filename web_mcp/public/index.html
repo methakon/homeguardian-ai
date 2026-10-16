@@ -729,8 +729,16 @@
 
     // Peripheral Devices
     async function loadDevices() {
+      if (!currentSession) {
+        document.getElementById('deviceList').innerHTML = '<div style="color:var(--text-muted); padding:1.5rem; text-align:center;">Operator sign-in required to inspect peripheral devices.</div>';
+        return;
+      }
       try {
         const res = await fetch('/api/devices');
+        if (res.status === 401) {
+          document.getElementById('deviceList').innerHTML = '<div style="color:var(--text-muted); padding:1.5rem; text-align:center;">Operator sign-in required.</div>';
+          return;
+        }
         registeredDevices = await res.json();
         renderDevices();
       } catch (err) {

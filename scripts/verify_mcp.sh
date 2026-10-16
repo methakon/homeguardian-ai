@@ -10,11 +10,22 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="${HG_MCP_BIN:-$ROOT/hg_mcp_build/hg_mcp_server}"
+if [ -z "${HG_MCP_BIN:-}" ]; then
+  if [ -x "$ROOT/build/hg_mcp_server" ]; then
+    BIN="$ROOT/build/hg_mcp_server"
+  elif [ -x "$ROOT/hg_mcp_build/hg_mcp_server" ]; then
+    BIN="$ROOT/hg_mcp_build/hg_mcp_server"
+  else
+    BIN="$ROOT/build/hg_mcp_server"
+  fi
+else
+  BIN="$HG_MCP_BIN"
+fi
 CONFIG="${HG_MCP_CONFIG:-$ROOT/config/homeguardian.demo.json}"
 PORT="${HG_MCP_TEST_PORT:-$(( 18800 + RANDOM % 400 ))}"
 TMP="$(mktemp -d)"
 TOKEN="test-token-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+TOKEN_BOB="bob-token-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 PASS=0; FAIL=0; SERVER_PID=""
 
 cleanup() {
@@ -51,7 +62,10 @@ check "missing credential file exits 3" "3" "$rc"
 echo "== 3. provision a 0600 credential file and a lax one (permission check)"
 umask 077
 cat > "$TMP/creds.json" <<JSON
-{"$TOKEN":{"principal":"verify-script","allow_status":true,"allow_alert_summary":true}}
+{
+  "$TOKEN": {"principal": "verify-script-alice", "allow_status": true, "allow_alert_summary": true},
+  "$TOKEN_BOB": {"principal": "verify-script-bob", "allow_status": true, "allow_alert_summary": true}
+}
 JSON
 chmod 600 "$TMP/creds.json"
 cp "$TMP/creds.json" "$TMP/creds-lax.json"; chmod 644 "$TMP/creds-lax.json"
@@ -86,6 +100,7 @@ for _ in $(seq 1 50); do
 done
 URL="http://127.0.0.1:$PORT/mcp"
 AUTH="Authorization: Bearer $TOKEN"
+AUTH_BOB="Authorization: Bearer $TOKEN_BOB"
 JSON="Content-Type: application/json"
 ACCEPT="Accept: application/json, text/event-stream"
 
@@ -99,6 +114,12 @@ check_contains "serverInfo name" 'homeguardian-mcp' "$(cat "$TMP/b1")"
 SID=$(grep -i '^mcp-session-id:' "$TMP/h1" | tr -d '\r' | awk '{print $2}')
 if [ -n "$SID" ]; then printf '  PASS  %-58s %s\n' "Mcp-Session-Id minted" "${SID:0:8}..."; PASS=$((PASS+1));
 else printf '  FAIL  no Mcp-Session-Id header\n'; FAIL=$((FAIL+1)); fi
+check "Mcp-Session-Id has length 64 (256-bit CSPRNG entropy)" "64" "${#SID}"
+if printf '%s' "$SID" | grep -qE '^[0-9a-f]{64}$'; then
+  printf '  PASS  %-58s hex lowercase\n' "Mcp-Session-Id is valid 64-char lowercase hex"; PASS=$((PASS+1));
+else
+  printf '  FAIL  %-58s got %s\n' "Mcp-Session-Id is valid 64-char lowercase hex" "$SID"; FAIL=$((FAIL+1));
+fi
 SESS="Mcp-Session-Id: $SID"
 
 echo "== 6. notifications/initialized returns 202 with no body"
@@ -138,6 +159,81 @@ code=$(curl -s -o "$TMP/b9" -w '%{http_code}' -X POST "$URL" -H "Authorization: 
 check "unauthenticated tools/call -> 401" "401" "$code"
 check_not_contains "401 body leaks no diagnostic" 'expired' "$(cat "$TMP/b9")"
 check_not_contains "401 body names no principal" 'principal' "$(cat "$TMP/b9")"
+
+echo "== 9b. cross-principal session binding and ownership verification"
+# Principal Bob attempts to hijack, read, notify, ping, re-initialize or delete Alice's session
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":61,"method":"tools/list"}')
+check "cross-principal tools/list (Bob -> Alice session) -> 403" "403" "$code"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":62,"method":"tools/call","params":{"name":"get_homeguardian_status","arguments":{}}}')
+check "cross-principal tools/call status (Bob -> Alice session) -> 403" "403" "$code"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":63,"method":"tools/call","params":{"name":"get_alert_summary"}}')
+check "cross-principal tools/call alert summary (Bob -> Alice session) -> 403" "403" "$code"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}')
+check "cross-principal notification (Bob -> Alice session) -> 403" "403" "$code"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":64,"method":"ping"}')
+check "cross-principal ping (Bob -> Alice session) -> 403" "403" "$code"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":65,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"verify","version":"1"}}}')
+check "cross-principal re-initialize (Bob -> Alice session) -> 403" "403" "$code"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$URL" -H "$AUTH_BOB" -H "$SESS")
+check "cross-principal DELETE (Bob -> Alice session) -> 403" "403" "$code"
+
+# Positive control: Alice retains uninterrupted access to her session after Bob's forbidden attempts
+code=$(curl -s -o "$TMP/b_pos" -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":66,"method":"tools/call","params":{"name":"get_homeguardian_status","arguments":{}}}')
+check "positive control: Alice session undisturbed -> 200" "200" "$code"
+check_contains "positive control status payload" 'capture_enabled' "$(cat "$TMP/b_pos")"
+
+# Forged / unknown session ID
+FORGED_SID="deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H "$ACCEPT" -H "Mcp-Session-Id: $FORGED_SID" \
+  -d '{"jsonrpc":"2.0","id":67,"method":"tools/list"}')
+check "forged 256-bit session ID -> 404" "404" "$code"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$URL" -H "$AUTH" -H "Mcp-Session-Id: $FORGED_SID")
+check "DELETE forged 256-bit session ID -> 404" "404" "$code"
+
+# Independent Bob session creation
+code=$(curl -s -D "$TMP/h_bob" -o "$TMP/b_bob" -w '%{http_code}' -X POST "$URL" \
+  -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" \
+  -d '{"jsonrpc":"2.0","id":68,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"bob","version":"1"}}}')
+check "Bob initialize returns 200" "200" "$code"
+SID_BOB=$(grep -i '^mcp-session-id:' "$TMP/h_bob" | tr -d '\r' | awk '{print $2}')
+check "Bob session ID length 64" "64" "${#SID_BOB}"
+if [ "$SID_BOB" != "$SID" ]; then
+  printf '  PASS  %-58s distinct\n' "Bob and Alice have distinct session IDs"; PASS=$((PASS+1));
+else
+  printf '  FAIL  %-58s identical (%s)\n' "Bob and Alice have distinct session IDs" "$SID_BOB"; FAIL=$((FAIL+1));
+fi
+
+# Bob can use his own session
+code=$(curl -s -o "$TMP/b_bob_call" -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "Mcp-Session-Id: $SID_BOB" \
+  -d '{"jsonrpc":"2.0","id":69,"method":"tools/call","params":{"name":"get_homeguardian_status","arguments":{}}}')
+check "Bob uses Bob session -> 200" "200" "$code"
+
+# Symmetric isolation: Alice cannot use Bob's session
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H "$ACCEPT" -H "Mcp-Session-Id: $SID_BOB" \
+  -d '{"jsonrpc":"2.0","id":70,"method":"tools/call","params":{"name":"get_homeguardian_status","arguments":{}}}')
+check "Alice cannot access Bob session -> 403" "403" "$code"
+
+# Bob can delete his own session
+code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$URL" -H "$AUTH_BOB" -H "Mcp-Session-Id: $SID_BOB")
+check "Bob DELETE Bob session -> 200" "200" "$code"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "Mcp-Session-Id: $SID_BOB" \
+  -d '{"jsonrpc":"2.0","id":71,"method":"tools/list"}')
+check "Bob session terminated -> 404" "404" "$code"
 
 echo "== 10. Origin validation"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
@@ -187,6 +283,31 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSO
   -d '{"jsonrpc":"2.0","id":152,"method":"ping"}')
 check "duplicate Mcp-Session-Id header -> 400" "400" "$code"
 
+t_start=$(date +%s)
+code=$(python3 -c "import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect(('127.0.0.1', $PORT))
+s.sendall(b'POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n')
+s.settimeout(6.0)
+try:
+    resp = s.recv(1024).decode('utf-8', errors='ignore')
+    if '408' in resp:
+        print('408')
+    else:
+        print('other')
+except Exception:
+    print('timeout')
+finally:
+    s.close()
+")
+t_elapsed=$(( $(date +%s) - t_start ))
+check "incomplete header times out with 408" "408" "$code"
+if [ "$t_elapsed" -le 5 ]; then
+  printf '  PASS  %-58s %ds <= 5s\n' "slowloris socket freed within deadline" "$t_elapsed"; PASS=$((PASS+1));
+else
+  printf '  FAIL  %-58s took %ds > 5s\n' "slowloris socket freed within deadline" "$t_elapsed"; FAIL=$((FAIL+1));
+fi
+
 echo "== 14. SSE-only client still receives its response"
 code=$(curl -s -o "$TMP/b16" -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H 'Accept: text/event-stream' -H "$SESS" \
   -H 'MCP-Protocol-Version: 2025-11-25' -d '{"jsonrpc":"2.0","id":16,"method":"ping"}')
@@ -199,6 +320,13 @@ check "DELETE session -> 200" "200" "$code"
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
   -d '{"jsonrpc":"2.0","id":17,"method":"tools/list"}')
 check "terminated session -> 404" "404" "$code"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H "$AUTH_BOB" -H "$JSON" -H "$ACCEPT" -H "$SESS" \
+  -d '{"jsonrpc":"2.0","id":18,"method":"tools/list"}')
+check "terminated session unknown to other principals -> 404" "404" "$code"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$URL" -H "$AUTH")
+check "DELETE without session header -> 400" "400" "$code"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$URL" -H "$AUTH" -H "$SESS")
+check "DELETE already-terminated session -> 404" "404" "$code"
 
 echo "== 16. clean shutdown on SIGTERM"
 kill -TERM "$SERVER_PID" 2>/dev/null

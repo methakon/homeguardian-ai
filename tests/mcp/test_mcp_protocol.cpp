@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -329,3 +330,32 @@ TEST_CASE("mcp: build refusal rules for the transport bind are unit-testable", "
     REQUIRE_FALSE(is_loopback_literal("192.168.1.6"));
     REQUIRE_FALSE(is_loopback_literal(""));
 }
+
+TEST_CASE("mcp: OS-backed CSPRNG generates high-entropy random bytes", "[mcp]") {
+    std::array<uint8_t, 32> b1{};
+    std::array<uint8_t, 32> b2{};
+    REQUIRE(read_os_entropy(b1.data(), b1.size()));
+    REQUIRE(read_os_entropy(b2.data(), b2.size()));
+    REQUIRE(b1 != b2);
+
+    bool all_zero = true;
+    for (uint8_t b : b1) {
+        if (b != 0) { all_zero = false; break; }
+    }
+    REQUIRE_FALSE(all_zero);
+}
+
+TEST_CASE("mcp: mint_csprng_session_id generates 256-bit unique session identifiers", "[mcp]") {
+    std::unordered_set<std::string> seen;
+    for (int i = 0; i < 500; ++i) {
+        std::string sid = mint_csprng_session_id();
+        REQUIRE(sid.size() == 64);
+        for (char c : sid) {
+            REQUIRE(((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')));
+        }
+        REQUIRE(seen.find(sid) == seen.end());
+        seen.insert(sid);
+    }
+    REQUIRE(seen.size() == 500);
+}
+

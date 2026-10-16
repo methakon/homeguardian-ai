@@ -19,6 +19,12 @@ class WebRtcStreamer {
       'http://127.0.0.1',
       'http://localhost',
     ];
+    this.maxStreamLifetimeMs = options.maxStreamLifetimeMs || 1800 * 1000; // 30 minutes
+    if (this.sessionManager && typeof this.sessionManager.onSessionDestroyed === 'function') {
+      this.sessionManager.onSessionDestroyed((token) => {
+        this.stopSessionStreams(token);
+      });
+    }
   }
 
   // Validate request Origin (Strict: loopback only or exact allowedOrigins match)
@@ -36,6 +42,25 @@ class WebRtcStreamer {
     }
   }
 
+  // Clean up streams exceeding lifetime or whose sessions expired
+  pruneExpiredStreams() {
+    const now = Date.now();
+    for (const [id, entry] of this.activeConnections.entries()) {
+      if (now - entry.startedAt > this.maxStreamLifetimeMs) {
+        try { entry.pc.close(); } catch (_) {}
+        this.activeConnections.delete(id);
+        continue;
+      }
+      if (this.sessionManager && typeof this.sessionManager.getSessionByToken === 'function') {
+        const session = this.sessionManager.getSessionByToken(entry.sessionToken);
+        if (!session) {
+          try { entry.pc.close(); } catch (_) {}
+          this.activeConnections.delete(id);
+        }
+      }
+    }
+  }
+
   /**
    * Handle WebRTC SDP Offer from client
    *
@@ -48,6 +73,8 @@ class WebRtcStreamer {
    * @param {string} hostHeader
    */
   async handleOffer({ deviceId, viewToken, sdp }, session, originHeader, hostHeader) {
+    this.pruneExpiredStreams();
+
     // 1. Strict Origin verification
     if (!this.isOriginAllowed(originHeader)) {
       throw new Error('forbidden_origin: Origin not permitted for WebRTC signaling');
@@ -68,9 +95,11 @@ class WebRtcStreamer {
       throw new Error(`consent_withheld: Camera view refused. Consent not granted for '${deviceId}'`);
     }
 
-    // 4. Liveness check: Physical cameras must be confirmed online
-    if (!device.is_synthetic && !device.online) {
-      throw new Error(`device_offline: Physical camera '${deviceId}' is offline. Streaming unavailable.`);
+    // 4. Verified pairing identity & authenticated liveness check
+    if (!device.is_synthetic) {
+      if (!device.paired || device.revoked || !device.credential_id || !device.online) {
+        throw new Error(`device_offline: Physical camera '${deviceId}' is offline. Streaming unavailable.`);
+      }
     }
 
     // 5. Verify scoped view token strictly bound to this session
@@ -79,10 +108,7 @@ class WebRtcStreamer {
       throw new Error('invalid_view_token: Scoped viewing authorization invalid, expired, or bound to another session');
     }
 
-    // 6. Close any existing connection for this device to prevent resource leaks
-    this.stopDeviceStream(deviceId);
-
-    // 7. Create WebRTC PeerConnection with CSPRNG random connection ID
+    // 6. Create WebRTC PeerConnection with CSPRNG random connection ID
     const connectionId = `conn_${crypto.randomBytes(16).toString('hex')}`;
     const pc = new RTCPeerConnection({
       iceServers: [], // LAN / loopback host-only, no cloud STUN/TURN relays
@@ -99,6 +125,9 @@ class WebRtcStreamer {
       try { pc.close(); } catch (_) {}
       throw new Error(`sdp_exchange_failed: ${err.message}`);
     }
+
+    // 7. Replacement negotiation succeeded: now close prior streams for this device owned by this session
+    this.stopDeviceStream(deviceId, session);
 
     // Track active connection with session ownership
     const entry = {
@@ -136,10 +165,14 @@ class WebRtcStreamer {
   /**
    * Stop active WebRTC stream for a device
    */
-  stopDeviceStream(deviceId) {
+  stopDeviceStream(deviceId, session = null) {
+    this.pruneExpiredStreams();
     let closed = 0;
     for (const [id, entry] of this.activeConnections.entries()) {
       if (entry.deviceId === deviceId) {
+        if (session && entry.sessionToken !== session.sessionToken) {
+          throw new Error('forbidden: Cannot stop another session\'s active stream');
+        }
         try {
           entry.pc.close();
         } catch (_) {}
@@ -154,6 +187,7 @@ class WebRtcStreamer {
    * Stop active stream by connectionId with session ownership check
    */
   stopConnection(connectionId, session = null) {
+    this.pruneExpiredStreams();
     const entry = this.activeConnections.get(connectionId);
     if (entry) {
       if (session && entry.sessionToken !== session.sessionToken) {
@@ -189,6 +223,7 @@ class WebRtcStreamer {
    * Return status of all active streaming sessions
    */
   getActiveStreams() {
+    this.pruneExpiredStreams();
     const list = [];
     for (const [id, entry] of this.activeConnections.entries()) {
       list.push({

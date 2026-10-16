@@ -59,12 +59,13 @@ json format_device(const DeviceRegistry::Device& d, int64_t now_ms) {
     j["name"] = d.display_name.empty() ? d.device_id : d.display_name;
     j["type"] = d.device_type.empty() ? "sensor" : d.device_type;
 
-    // A device is authorized ONLY if capture is enabled, paired, consent is recorded, and not revoked
-    const bool authorized = d.capture_enabled && d.paired && d.consent_granted && !d.revoked;
+    // A device is authorized ONLY if it has verified pairing identity, capture enabled, and consent recorded
+    const bool has_verified_identity = d.paired && !d.revoked && !d.credential_id.empty();
+    const bool authorized = d.capture_enabled && d.consent_granted && has_verified_identity;
     j["authorized"] = authorized;
 
-    // Check liveness: if last heartbeat exceeds timeout, it is offline
-    const bool online = d.online && (d.last_heartbeat_ms > 0) &&
+    // Check authenticated liveness: verified identity, active online flag, and unexpired heartbeat
+    const bool online = has_verified_identity && d.online && (d.last_heartbeat_ms > 0) &&
                         ((now_ms - d.last_heartbeat_ms) < 90000);
     j["online"] = online;
 
@@ -113,9 +114,8 @@ json format_device(const DeviceRegistry::Device& d, int64_t now_ms) {
     j["consent_subject"] = d.consent_subject;
     j["consent_purpose"] = d.consent_purpose;
 
-    // Explicit synthetic provider flag: true if marked as simulation-only node
-    const bool is_synthetic = (d.device_id.find("syn") != std::string::npos) ||
-                              (d.device_type == "simulator");
+    // Explicit synthetic provider flag: true for verified simulator device type or synthetic certificate
+    const bool is_synthetic = (d.device_type == "simulator") || (d.credential_id == "syn-camera-cert");
     j["is_synthetic"] = is_synthetic;
 
     return j;
