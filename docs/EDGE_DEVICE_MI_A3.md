@@ -8,7 +8,9 @@
 
 > **Verdict up front:** the genuine HomeGuardian C++ engine and the genuine MCP
 > Streamable HTTP server **build for, start on, and serve from** the Mi A3, with
-> real SQLite persistence and a real detected alert surfaced through the MCP tool.
+> real SQLite persistence and a real detected alert surfaced through the MCP tool —
+> and they do so identically on both the FAIL-verdict base `01a4d3b` **and** the
+> security-corrected candidate `187727a` (section 4.6).
 > **Conditional GO** for a *supervised* 48–72 h soak, subject to the conditions in
 > section 9. **NO-GO** as an unattended, network-exposed node.
 
@@ -314,6 +316,56 @@ Also verified by negative controls: session POST with a wrong secret → **401**
 Evidence files: `logs/mcp_functional_verify.txt`, `logs/mi_a3_edge_scenario.txt`,
 `logs/device-artifacts/`.
 
+### 4.6 Re-run against the security-corrected candidate (`187727a`)
+
+While this work was in progress, `fix/mcp-session-principal-binding` advanced from
+the base `01a4d3b` to **`187727a`** — *"fix(security): resolve HG-SEC-02 blockers
+B-1 through B-6 and documentation hygiene"*. It is a **direct descendant** of
+`01a4d3b` and it changes exactly the files this deployment uses:
+`src/main_mcp_server.cpp`, `src/mcp/McpHttpServer.cpp`,
+`src/core/AlexaCredentialStore.cpp` and `CMakeLists.txt`. That is the
+"corrected SHA" the session brief anticipated, so the whole suite was re-run
+against it rather than left as a footnote.
+
+Method: a **second isolated worktree/branch** (`experiment/mi-a3-edge-sec02`,
+`~/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-sec02`) based on `187727a`,
+with this session's tooling cherry-picked on top — so the first worktree's committed
+SHA stayed intact and the two candidates stay comparable. Evidence:
+`logs/mcp_functional_verify_sec02.txt`, `logs/mi_a3_edge_scenario.txt`,
+`logs/mi_a3_edge_measurements.txt` in that worktree.
+
+| Check | `01a4d3b` (base) | `187727a` (corrected) |
+|---|---|---|
+| arm64-v8a build, warnings | 0 | 0 |
+| stripped size | 1,977,688 B | **1,984,800 B** |
+| fail-closed exit 3 on bad credential store | yes | yes |
+| binds `127.0.0.1:8790` only | yes | yes |
+| MCP functional suite | **18/18** | **18/18** |
+| cold start to listening | 275–287 ms | **275 ms** |
+| RSS steady state | 5,512 kB | **5,424 kB** |
+| 150× tool call | p50 7.98 ms, 0 errors | **p50 8.32 ms, 0 errors** |
+| server CPU per call | 1.55 ms | **1.87 ms** |
+| RSS growth over 450 requests | +0 kB | **+0 kB** |
+| synthetic scenario → `critical` alert | yes (58 ms) | **yes** |
+| joined MCP read of that alert | `highest_severity=critical` | **`highest_severity=critical`** |
+| battery temp under load | 33.0 → 33.0 °C | **33.2 → 33.2 °C** |
+
+Verified present in the built sources: the B-1 credential-identity binding
+(`AlexaCredentialStore.cpp`) and the B-6 `::shutdown(SHUT_WR)` + drain before
+`::close()` (`McpHttpServer.cpp:85-87, 820`).
+
+**Interpretation.** The device and the runtime are insensitive to the security
+fixes: `187727a` behaves identically on the Mi A3, at the same resource cost. So
+the runtime recommendation here **transfers unchanged** to the corrected SHA, and
+**`187727a` is the candidate to pilot on**, not `01a4d3b`.
+
+**Two honest caveats.** (1) This is a *compatibility* result, not a security
+approval — this session did not audit HG-SEC-01/02, and whether `187727a` is the
+*independently approved* SHA is not something this session can certify; confirm with
+the security-audit workstream (`qa-sec-audit`, `hermes-sec-01`) before relying on
+it. (2) The device is currently running the `187727a` build, since it was deployed
+last.
+
 ---
 
 ## 5. Measurements
@@ -369,9 +421,11 @@ reservation and is not a memory measurement; RSS is.
    action, and this session's mandate was the MCP server and engine).
 6. **Security patch level 2022-08-01.** Not fixable without a vendor ROM update,
    which is out of scope and forbidden without approval.
-7. **Base SHA `01a4d3b` carries a FAIL security verdict.** Every result above is
-   therefore **localhost-only, non-deployed compatibility testing**, exactly as the
-   brief permits. Nothing here should be read as a security approval of that SHA.
+7. **The base SHA `01a4d3b` carries a FAIL security verdict** — superseded during
+   this session by `187727a`, which was built and validated on the device (section
+   4.6). Everything above is **localhost-only, non-deployed compatibility testing**
+   against `01a4d3b`; nothing here should be read as a security approval of either
+   SHA.
 
 ---
 
@@ -506,9 +560,11 @@ The conditions are not optional:
 5. **Put `adb reconnect` in the recovery loop**; judge uptime from the device.
 6. **Do not treat the mTLS ingestion path as available** on this node until OpenSSL
    is cross-compiled for Android (section 6.1).
-7. **Switch the base to the independently approved corrected SHA** the moment the
-   security audit publishes it, and re-run sections 4 and 5 against it. This report
-   validates the *device and runtime*, not `01a4d3b`'s security posture.
+7. **Pilot on `187727a`, not `01a4d3b`.** The corrected candidate was built and
+   validated on the device (section 4.6) with identical results, so no re-porting is
+   needed. Get its HG-SEC-01/02 sign-off confirmed by the security-audit
+   workstream first — this session validated the *device and runtime*, not any SHA's
+   security posture.
 
 **NO-GO** for anything unattended, LAN-reachable, or camera-ingesting at this stage.
 
