@@ -133,3 +133,6 @@ logs/device-artifacts/engine/
 # apk_service/build_service_apk.sh. The signed APK stays a local deliverable
 # (path + SHA-256 recorded in docs/EDGE_DEVICE_MI_A3.md section 10.5).
 hg_service_apk_build/
+# Never publish the device's WHOLE logcat: it carries third-party app activity and
+# personal context from a real phone. Filter to our own tag before committing.
+logs/device-artifacts/full_logcat.txt
