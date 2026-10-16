@@ -254,3 +254,38 @@ never media; the credential files are app-private and only their existence is in
 with server-identity verification is mandatory and has no disable switch; and the node still cannot
 reach the hub's dashboard, credentials or database - it can only present observations on the one
 authenticated port. No privileged container is introduced to reach the phone's camera or microphone.
+
+
+## HG-SEC-01 - unauthenticated state-advancing route (fixed; independent review pending)
+
+Finding: the demonstration scenario route advanced application state without caller
+authorization, selected by a launch secret carried in the URL.
+
+Controls now in force:
+- POST /api/session issues a session-bound, single-use CSRF token once the operator
+  supplies the launch password in the dashboard. The secret never enters a URL, cookie,
+  browser storage, static asset or log, and the entry field is cleared after use.
+- The state route is POST-only; a GET is refused by the method rule and never reaches
+  the handler.
+- Every callback validates scheme, host and port against the listener (loopback only),
+  requires a JSON Content-Type, and frames the body explicitly: a body with no declared
+  length, a declared length that disagrees with the bytes received, a declared length
+  over the cap, a GET carrying a body, and duplicate credential headers are all refused.
+- Tokens expire and are single-use; issuance is bounded per window; repeated bad
+  credentials trigger a time-bounded lockout; with no operator secret configured the
+  state route is disabled (503 state_route_disabled).
+
+Evidence:
+- complete C++ suite: 503 test cases, 5817 assertions, exit code 0
+- native_http_security: 11 cases, 74 assertions, exit code 0
+- nativehttp: 25 cases, 143 assertions, exit code 0
+- native_http_persist: 1 case, 48 assertions, exit code 0 - fresh temporary SQLite
+  database: rejected requests invoke no handler, advance no state and write no alert
+  row (confirmed by reopening the file); two authorized controls do write
+- Node suite: 76 tests, 76 passed, exit code 0
+
+Limitations: loopback Origin and Host checks are defence-in-depth and do NOT establish
+the identity of an arbitrary local process; the operator launch secret is the
+authorization credential. The demonstration remains loopback-only.
+
+Status: HG-SEC-01 IMPLEMENTED - INDEPENDENT QA PENDING
