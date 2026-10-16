@@ -240,7 +240,8 @@ int main(int argc, char* argv[]) {
                       << "  set_consent <id> <true|false> Update device consent and capture status\n"
                       << "  pair <json_device>            Pair a new device\n"
                       << "  revoke <id> [reason]          Revoke device authorization\n"
-                      << "  heartbeat <id>                Update liveness timestamp\n"
+                      << "  unpair <id>                   Unpair a device and remove state\n"
+                      << "  heartbeat <id> [seq] [ts_ms]  Update liveness timestamp\n"
                       << "  init_defaults                 Create default inventory if not present\n";
             return 0;
         } else {
@@ -348,7 +349,18 @@ int main(int argc, char* argv[]) {
                 hb_ms = std::stoll(args[2]);
             } catch (const std::exception&) {}
         }
+        if (hb_ms > now_ms + 5000) {
+            std::cerr << "{\"error\": \"heartbeat rejected: timestamp is in the future\"}\n";
+            std::cout << format_device(*d, now_ms).dump(2) << "\n";
+            return 3;
+        }
+        if (hb_ms < d->last_heartbeat_ms) {
+            std::cerr << "{\"error\": \"heartbeat rejected: timestamp is stale\"}\n";
+            std::cout << format_device(*d, now_ms).dump(2) << "\n";
+            return 3;
+        }
         registry.note_heartbeat(dev_id, hb_ms, d->capabilities);
+        registry.sweep_offline(now_ms);
         registry.save(registry_path, &reason);
         std::cout << format_device(*d, now_ms).dump(2) << "\n";
         return 0;

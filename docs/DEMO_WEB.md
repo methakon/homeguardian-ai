@@ -77,9 +77,9 @@ To show that a disabled capture switch blocks all observations, restart the
 demo against the default (capture-off) config:
 
 ```bash
-hg_build/hg_alexa_bridge --http \
+HG_HTTP_TOKEN=demo-token hg_build/hg_alexa_bridge --http \
   config/homeguardian.json \
-  <creds.json> --port 8199 --token demo-token
+  <creds.json> --port 8199
 ```
 
 Running the scenario then reports `events_processed: 0` and explains that the
@@ -169,8 +169,8 @@ local SQLite audit store) using `textContent` — the previous hardcoded
 | `inconclusive` | ambiguous evidence | 1 observation, **no alert**; detector 3 inconclusive, fusion `unavailable` |
 | `consent-denied` | denied acquisition | 1 authorized + 1 denied, **no alert**, `enforcement_ok` true |
 
-Endpoints: `GET /api/scenarios`, `GET /api/alerts`,
-`GET /api/run-scenario[?scenario=<id>][&cycles=N]`. All loopback-only.
+Endpoints: `GET /api/scenarios`, `GET /api/alerts`, `POST /api/session`,
+`POST /api/run-scenario[?scenario=<id>][&cycles=N]` (requires valid session & CSRF token). All loopback-only.
 
 The assistant is a **fixed keyword matcher** grounded in the real status and the
 last scenario result. It is not a language model and is not real Alexa+

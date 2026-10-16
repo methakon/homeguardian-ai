@@ -258,7 +258,7 @@ cat > /tmp/creds.json <<'JSON'
 {"demo-token":{"principal":"demo","allow_status":true,"allow_alert_summary":true,"expires_at_ms":0,"revoked":false}}
 JSON
 # 3. serve (loopback only; port 0 = ephemeral, prints "DEMO_READY <port>")
-hg_build/hg_alexa_bridge --http config/homeguardian.demo.json /tmp/creds.json --port 0 --token demo-token
+HG_HTTP_TOKEN=demo-token hg_build/hg_alexa_bridge --http config/homeguardian.demo.json /tmp/creds.json --port 0
 Routes: `/`, `/index.html`, `/api/health`, `/api/status`, `/api/run-scenario` (POST with session authentication).
 
 The dashboard is embedded at configure time from `src/web/index.html`
@@ -308,9 +308,9 @@ no timing fields and all counts are unchanged). It records only numeric
 durations — no credentials, paths, or media.
 
 ```
-HG_PROFILE=1 hg_build/hg_alexa_bridge --http config/homeguardian.demo.json <creds> \
-  --port 0 --token demo-token
-curl -s 'http://127.0.0.1:<port>/api/run-scenario?cycles=5' | python3 -m json.tool
+HG_PROFILE=1 HG_HTTP_TOKEN=demo-token hg_build/hg_alexa_bridge --http config/homeguardian.demo.json <creds> \
+  --port 0
+curl -s 'http://127.0.0.1:<port>/api/status' | python3 -m json.tool
 ```
 
 Findings and the reproduction methodology: `docs/PERF_SCENARIO_LATENCY_V15.md`.
@@ -441,7 +441,7 @@ ctest --test-dir .          # 100%
 HG_BRIDGE_PATH=/tmp/hg_rc/hg_alexa_bridge bash scripts/verify_retention.sh
 
 # 3. live matrices (start the bridge first, in a writable scratch dir)
-/tmp/hg_rc/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 8497 --token demo-token
+HG_HTTP_TOKEN=demo-token /tmp/hg_rc/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 8497
 ```
 
 Pitfalls confirmed in v21:

@@ -659,6 +659,7 @@
     let selectedCamera = null;
     let peerConnection = null;
     let activeStream = null;
+    let webrtcKeepaliveTimer = null;
 
     // Tab switching
     function switchTab(tabId) {
@@ -916,6 +917,26 @@
         const answerData = await signalRes.json();
         await peerConnection.setRemoteDescription(answerData.sdp);
 
+        // Keepalive periodic touch while viewer is active
+        if (webrtcKeepaliveTimer) {
+          clearInterval(webrtcKeepaliveTimer);
+        }
+        webrtcKeepaliveTimer = setInterval(() => {
+          if (!peerConnection || !currentSession || !selectedCamera) {
+            clearInterval(webrtcKeepaliveTimer);
+            webrtcKeepaliveTimer = null;
+            return;
+          }
+          fetch('/api/webrtc/touch', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-Token': currentSession.csrfToken
+            },
+            body: JSON.stringify({ deviceId: selectedCamera.id })
+          }).catch(() => {});
+        }, 10000);
+
         // Fallback generator for visual test pattern if track doesn't stream binary frames immediately
         simulateCanvasTestPattern(authData.syntheticProvider);
 
@@ -983,6 +1004,10 @@
     }
 
     async function stopLiveView() {
+      if (webrtcKeepaliveTimer) {
+        clearInterval(webrtcKeepaliveTimer);
+        webrtcKeepaliveTimer = null;
+      }
       if (peerConnection) {
         try { peerConnection.close(); } catch (_) {}
         peerConnection = null;

@@ -282,6 +282,16 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         path.find('#') != std::string_view::npos ||
         path.find('\0') != std::string_view::npos)
         return json_error(400, "malformed");
+
+    // Reject credential parameters in URL query strings (HG-SEC-01 invariant)
+    if (path.find("?k=") != std::string_view::npos ||
+        path.find("&k=") != std::string_view::npos ||
+        path.find("?token=") != std::string_view::npos ||
+        path.find("&token=") != std::string_view::npos ||
+        path.find("?secret=") != std::string_view::npos ||
+        path.find("&secret=") != std::string_view::npos) {
+        return json_error(400, "credentials_in_url_forbidden");
+    }
     // Header scan. Reject: bodies, framing ambiguity, injected lines, all
     // Authorization headers (this interface is unauthenticated by design), a
     // missing/duplicate/non-loopback Host (DNS-rebinding defence), and any

@@ -56,19 +56,38 @@ class WebRtcStreamer {
     }
   }
 
+  // Safely stop media tracks and close peer connection
+  _closeEntry(entry) {
+    if (!entry) return;
+    if (Array.isArray(entry.tracks)) {
+      for (const track of entry.tracks) {
+        try {
+          if (track && typeof track.stop === 'function') {
+            track.stop();
+          }
+        } catch (_) {}
+      }
+    }
+    try {
+      if (entry.pc && typeof entry.pc.close === 'function') {
+        entry.pc.close();
+      }
+    } catch (_) {}
+  }
+
   // Clean up streams exceeding lifetime, idle timeout, or whose sessions expired
   pruneExpiredStreams() {
     const now = Date.now();
     for (const [id, entry] of this.activeConnections.entries()) {
       // 1. Absolute lifetime expiration
       if (now - entry.startedAt > this.maxStreamLifetimeMs) {
-        try { entry.pc.close(); } catch (_) {}
+        this._closeEntry(entry);
         this.activeConnections.delete(id);
         continue;
       }
       // 2. Idle timeout expiration
       if (entry.lastActivityAt && (now - entry.lastActivityAt > this.idleTimeoutMs)) {
-        try { entry.pc.close(); } catch (_) {}
+        this._closeEntry(entry);
         this.activeConnections.delete(id);
         continue;
       }
@@ -76,7 +95,7 @@ class WebRtcStreamer {
       if (this.sessionManager && typeof this.sessionManager.getSessionByToken === 'function') {
         const session = this.sessionManager.getSessionByToken(entry.sessionToken);
         if (!session) {
-          try { entry.pc.close(); } catch (_) {}
+          this._closeEntry(entry);
           this.activeConnections.delete(id);
           continue;
         }
@@ -90,7 +109,7 @@ class WebRtcStreamer {
       this._cleanupTimer = null;
     }
     for (const [id, entry] of this.activeConnections.entries()) {
-      try { entry.pc.close(); } catch (_) {}
+      this._closeEntry(entry);
       this.activeConnections.delete(id);
     }
   }
@@ -155,8 +174,9 @@ class WebRtcStreamer {
       iceServers: [], // LAN / loopback host-only, no cloud STUN/TURN relays
     });
 
+    let videoTrack = null;
     try {
-      const videoTrack = new MediaStreamTrack({ kind: 'video' });
+      videoTrack = new MediaStreamTrack({ kind: 'video' });
       pc.addTrack(videoTrack);
       await pc.setRemoteDescription(sdp);
       const answer = await pc.createAnswer();
@@ -166,21 +186,30 @@ class WebRtcStreamer {
       this.stopDeviceStream(deviceId, session);
 
       const now = Date.now();
-      // Track active connection with session ownership and activity timestamp
+      // Track active connection with session ownership, media tracks, and activity timestamp
       const entry = {
         connectionId,
         deviceId,
         sessionToken: session.sessionToken,
         pc,
+        tracks: [videoTrack],
         startedAt: now,
         lastActivityAt: now,
         synthetic: !!device.is_synthetic,
       };
       this.activeConnections.set(connectionId, entry);
 
+      if (videoTrack.onReceiveRtcp && typeof videoTrack.onReceiveRtcp.subscribe === 'function') {
+        videoTrack.onReceiveRtcp.subscribe(() => {
+          entry.lastActivityAt = Date.now();
+        });
+      }
+
       pc.connectionStateChange.subscribe((state) => {
-        if (state === 'closed' || state === 'failed' || state === 'disconnected') {
-          try { pc.close(); } catch (_) {}
+        if (state === 'connected') {
+          entry.lastActivityAt = Date.now();
+        } else if (state === 'closed' || state === 'failed' || state === 'disconnected') {
+          this._closeEntry(entry);
           this.activeConnections.delete(connectionId);
         }
       });
@@ -199,9 +228,55 @@ class WebRtcStreamer {
           : 'Authoritative remote camera session established.',
       };
     } catch (err) {
-      try { pc.close(); } catch (_) {}
+      this._closeEntry({ pc, tracks: videoTrack ? [videoTrack] : [] });
       throw err;
     }
+  }
+
+  /**
+   * Refresh activity for a specific stream connection
+   */
+  touchStream(connectionId, sessionToken = null) {
+    const entry = this.activeConnections.get(connectionId);
+    if (entry) {
+      if (sessionToken && entry.sessionToken !== sessionToken) {
+        return false;
+      }
+      entry.lastActivityAt = Date.now();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Refresh activity for streams associated with a device
+   */
+  touchDeviceStream(deviceId, sessionToken = null) {
+    let touched = false;
+    for (const [, entry] of this.activeConnections.entries()) {
+      if (entry.deviceId === deviceId) {
+        if (!sessionToken || entry.sessionToken === sessionToken) {
+          entry.lastActivityAt = Date.now();
+          touched = true;
+        }
+      }
+    }
+    return touched;
+  }
+
+  /**
+   * Refresh activity for all streams owned by a session
+   */
+  touchSessionStreams(sessionToken) {
+    if (!sessionToken) return 0;
+    let count = 0;
+    for (const [, entry] of this.activeConnections.entries()) {
+      if (entry.sessionToken === sessionToken) {
+        entry.lastActivityAt = Date.now();
+        count++;
+      }
+    }
+    return count;
   }
 
   /**
@@ -215,9 +290,7 @@ class WebRtcStreamer {
         if (session && entry.sessionToken !== session.sessionToken) {
           throw new Error('forbidden: Cannot stop another session\'s active stream');
         }
-        try {
-          entry.pc.close();
-        } catch (_) {}
+        this._closeEntry(entry);
         this.activeConnections.delete(id);
         closed++;
       }
@@ -235,9 +308,7 @@ class WebRtcStreamer {
       if (session && entry.sessionToken !== session.sessionToken) {
         throw new Error('forbidden: Cannot stop another session\'s active stream');
       }
-      try {
-        entry.pc.close();
-      } catch (_) {}
+      this._closeEntry(entry);
       this.activeConnections.delete(connectionId);
       return true;
     }
@@ -251,9 +322,7 @@ class WebRtcStreamer {
     let closed = 0;
     for (const [id, entry] of this.activeConnections.entries()) {
       if (entry.sessionToken === sessionToken) {
-        try {
-          entry.pc.close();
-        } catch (_) {}
+        this._closeEntry(entry);
         this.activeConnections.delete(id);
         closed++;
       }
@@ -264,7 +333,10 @@ class WebRtcStreamer {
   /**
    * Return status of all active streaming sessions
    */
-  getActiveStreams() {
+  getActiveStreams(sessionToken = null) {
+    if (sessionToken) {
+      this.touchSessionStreams(sessionToken);
+    }
     this.pruneExpiredStreams();
     const list = [];
     for (const [id, entry] of this.activeConnections.entries()) {

@@ -50,8 +50,16 @@ function teardown() {
 function startDemo(configPath) {
   return new Promise((resolve, reject) => {
     const child = spawn('node', [DEMO_SERVER, '--bridge', BRIDGE, '--config', configPath,
-      '--creds', credsPath, '--port', '0', '--token', TOKEN, '--secret', OPERATOR_SECRET], {
-      cwd: tmpDir, stdio: ['ignore', 'pipe', 'pipe'],
+      '--creds', credsPath, '--port', '0'], {
+      cwd: tmpDir,
+      env: {
+        ...process.env,
+        HG_HTTP_TOKEN: TOKEN,
+        HG_HTTP_SECRET: OPERATOR_SECRET,
+        HG_DEMO_TOKEN: TOKEN,
+        HG_DEMO_SECRET: OPERATOR_SECRET,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     let buf = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('demo start timeout')); }, 20000);

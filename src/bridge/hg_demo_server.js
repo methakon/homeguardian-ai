@@ -27,7 +27,7 @@
  *
  * Usage:
  *   node src/bridge/hg_demo_server.js --bridge <path> --config <path> \
- *        --creds <path> [--port N] [--token <token>]
+ *        --creds <path> [--port N] [--token-file <path>] [--secret-file <path>]
  */
 
 const http = require('node:http');
@@ -50,11 +50,17 @@ function parseArgs(argv) {
     else if (a === '--bridge') args.bridge = argv[++i];
     else if (a === '--config') args.config = argv[++i];
     else if (a === '--creds') args.creds = argv[++i];
-    else if (a === '--token') args.token = argv[++i];
+    else if (a === '--token') {
+      process.stderr.write('warning: --token on argv is deprecated; use HG_HTTP_TOKEN or --token-file\n');
+      args.token = argv[++i];
+    }
     else if (a === '--token-file') {
       try { args.token = fs.readFileSync(argv[++i], 'utf-8').trim(); } catch (_) {}
     }
-    else if (a === '--secret') args.secret = argv[++i];
+    else if (a === '--secret') {
+      process.stderr.write('warning: --secret on argv is deprecated; use HG_HTTP_SECRET or --secret-file\n');
+      args.secret = argv[++i];
+    }
     else if (a === '--secret-file') {
       try { args.secret = fs.readFileSync(argv[++i], 'utf-8').trim(); } catch (_) {}
     }
@@ -63,7 +69,7 @@ function parseArgs(argv) {
 }
 const args = parseArgs(process.argv);
 if (!args.bridge || !args.config || !args.creds) {
-  process.stderr.write('usage: hg_demo_server.js --bridge <path> --config <path> --creds <path> [--port N] [--token T] [--secret S]\n');
+  process.stderr.write('usage: hg_demo_server.js --bridge <path> --config <path> --creds <path> [--port N] [--token-file <path>] [--secret-file <path>]\n');
   process.exit(2);
 }
 if (!fs.existsSync(args.bridge)) {

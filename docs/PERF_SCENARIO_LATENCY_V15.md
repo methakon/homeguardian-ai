@@ -125,8 +125,8 @@ such fields and all counts are unchanged). It leaks no credentials, paths, or
 media. Reproduce with:
 
 ```
-HG_PROFILE=1 hg_build/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 0 --token demo-token
-curl -s 'http://127.0.0.1:<port>/api/run-scenario?cycles=5' | python3 -m json.tool | grep -A12 timing_ms
+HG_PROFILE=1 HG_HTTP_TOKEN=demo-token hg_build/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 0
+curl -s 'http://127.0.0.1:<port>/api/status' | python3 -m json.tool
 ```
 
 ## 7. Limitations

@@ -186,8 +186,10 @@ async function handleConversationalQuery(query) {
     const devices = deviceAdapter.listDevices();
     const cameras = devices.filter((d) => d.capabilities?.video);
     const audioNodes = devices.filter((d) => d.capabilities?.audio_in);
+    const synCamera = devices.find((d) => d.id === 'camera-syn-001');
+    const isSynActive = !!(synCamera && synCamera.online && synCamera.stream_state === 'active');
 
-    const speech = `Peripheral inventory: ${devices.length} registered device(s). Physical cameras (${cameras.map(c => c.name).join(', ')}) have consent status "${cameras[0]?.consent || 'not_granted'}" and are OFFLINE. The synthetic test provider is active for verification. Zero unconsented microphones or cameras are streaming.`;
+    const speech = `Peripheral inventory: ${devices.length} registered device(s). Physical cameras (${cameras.map(c => c.name).join(', ')}) have consent status "${cameras[0]?.consent || 'not_granted'}" and are OFFLINE. ${isSynActive ? 'The synthetic test provider is active for verification.' : 'The synthetic test provider is currently idle.'} Zero unconsented microphones or cameras are streaming.`;
 
     return {
       query,
@@ -631,6 +633,42 @@ function createHttpServer() {
       return;
     }
 
+    // POST /api/webrtc/touch (Viewer activity keepalive)
+    if (pathname === '/api/webrtc/touch' && req.method === 'POST') {
+      const session = sessionManager.getSessionFromRequest(req);
+      if (!session) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authentication_required', message: 'Stream touch requires authentication' }));
+        return;
+      }
+      const csrf = req.headers['x-csrf-token'];
+      if (!sessionManager.validateCsrfToken(session, csrf)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_csrf', message: 'Valid CSRF token required' }));
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const { connectionId, deviceId } = body || {};
+        let touched = false;
+        if (connectionId) {
+          touched = webrtcStreamer.touchStream(connectionId, session.sessionToken);
+        } else if (deviceId) {
+          touched = webrtcStreamer.touchDeviceStream(deviceId, session.sessionToken);
+        } else {
+          webrtcStreamer.touchSessionStreams(session.sessionToken);
+          touched = true;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, touched }));
+      } catch (err) {
+        const isForbidden = err.message && err.message.includes('forbidden');
+        res.writeHead(isForbidden ? 403 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
     // GET /api/webrtc/streams
     if (pathname === '/api/webrtc/streams' && req.method === 'GET') {
       const session = sessionManager.getSessionFromRequest(req);
@@ -640,7 +678,7 @@ function createHttpServer() {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(webrtcStreamer.getActiveStreams()));
+      res.end(JSON.stringify(webrtcStreamer.getActiveStreams(session.sessionToken)));
       return;
     }
 
@@ -815,7 +853,8 @@ async function main() {
   for (let attempt = 1; attempt <= 10; attempt++) {
     try {
       const handshake = await mcpClient.initialize();
-      console.log(`[WebMCP] MCP handshake SUCCESS: Session ID: ${handshake.sessionId}, Protocol: ${handshake.protocolVersion}`);
+      const maskedSid = handshake.sessionId ? `${handshake.sessionId.slice(0, 8)}...` : 'none';
+      console.log(`[WebMCP] MCP handshake SUCCESS: Session ID: ${maskedSid}, Protocol: ${handshake.protocolVersion}`);
       console.log(`[WebMCP] Discovered ${handshake.tools.length} tool(s): ${handshake.tools.map((t) => t.name).join(', ')}`);
       break;
     } catch (err) {

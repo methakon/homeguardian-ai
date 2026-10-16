@@ -74,9 +74,8 @@ services:
 
     environment:
       HG_PORT: "8080"
-      # The demo deployment declares its synthetic token here; the IMAGE deliberately bakes none
-      # (a real deployment replaces this value).
-      HG_TOKEN: "demo-token"
+      # The demo deployment reads HG_TOKEN from the host environment (a real deployment supplies a unique secret).
+      HG_TOKEN: "${HG_TOKEN:-}"
       HG_DATA_DIR: "/data"
       HG_CONFIG: "/etc/homeguardian/hub.json"
       HG_CREDS: "/run/secrets/hg_creds"

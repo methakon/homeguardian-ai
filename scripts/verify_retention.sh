@@ -51,9 +51,11 @@ RET_SECRET="retention-secret-2026"
 start_bridge() {
   printf '%s' "$RET_SECRET" > "$WORK/ret_secret.txt"
   chmod 600 "$WORK/ret_secret.txt"
+  printf 'X-HG-Secret: %s\n' "$RET_SECRET" > "$WORK/ret_header_secret.txt"
+  chmod 600 "$WORK/ret_header_secret.txt"
   printf '%s' "demo-token" > "$WORK/ret_token.txt"
   chmod 600 "$WORK/ret_token.txt"
-  ( cd "$WORK" && HG_HTTP_SECRET="$RET_SECRET" HG_HTTP_TOKEN="demo-token" exec "$BRIDGE" --http "$WORK/config.json" "$WORK/creds.json" \
+  ( cd "$WORK" && export HG_HTTP_SECRET="$RET_SECRET" HG_HTTP_TOKEN="demo-token" && exec "$BRIDGE" --http "$WORK/config.json" "$WORK/creds.json" \
       --port "$PORT" --token-file "$WORK/ret_token.txt" --secret-file "$WORK/ret_secret.txt" ) > "$WORK/out.log" 2> "$WORK/err.log" &
   PID=$!
   for _ in $(seq 1 40); do
@@ -73,7 +75,7 @@ run_scenario() {
   local csrf
   csrf=$(curl -s -f -X POST "http://127.0.0.1:$PORT/api/session" \
     -H "Host: 127.0.0.1:$PORT" -H "Origin: http://127.0.0.1:$PORT" \
-    -H "Content-Type: application/json" -H "X-HG-Secret: $RET_SECRET" -d "{}" \
+    -H "Content-Type: application/json" -H @"$WORK/ret_header_secret.txt" -d "{}" \
     | grep -o '"csrf":"[^"]*"' | cut -d'"' -f4)
   curl -s -f -o /dev/null -X POST "http://127.0.0.1:$PORT/api/run-scenario?scenario=$sc" \
     -H "Host: 127.0.0.1:$PORT" -H "Origin: http://127.0.0.1:$PORT" \

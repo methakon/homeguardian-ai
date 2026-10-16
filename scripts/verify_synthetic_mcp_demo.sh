@@ -163,20 +163,31 @@ log_ok "Unified Gateway listening on http://127.0.0.1:$WEB_PORT"
 DEMO_HEALTH=$(curl -s "http://127.0.0.1:$WEB_PORT/api/health")
 if [[ "$DEMO_HEALTH" == *"homeguardian-web-gateway"* ]]; then
   log_ok "Public gateway health API verified"
+else
+  log_fail "Public gateway health API failed: $DEMO_HEALTH"
 fi
 
 # Log in as operator to verify authenticated registry
+cat <<EOF > "$WORK/login_payload.json"
+{"username":"admin","password":"$DEMO_OPERATOR_PASS"}
+EOF
+chmod 0600 "$WORK/login_payload.json"
+
 LOGIN_RESP=$(curl -s -c "$WORK/cookies.txt" -X POST "http://127.0.0.1:$WEB_PORT/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d "{\"username\":\"admin\",\"password\":\"$DEMO_OPERATOR_PASS\"}")
+  -d @"$WORK/login_payload.json")
 if [[ "$LOGIN_RESP" == *"\"ok\":true"* ]]; then
   log_ok "Demonstration operator session authenticated"
+else
+  log_fail "Demonstration operator session authentication failed: $LOGIN_RESP"
 fi
 
 DEV_JSON=$(curl -s -b "$WORK/cookies.txt" "http://127.0.0.1:$WEB_PORT/api/devices")
 DEV_COUNT=$(echo "$DEV_JSON" | { grep -o '"id":' || true; } | wc -l)
 if [[ "$DEV_COUNT" -ge 4 ]]; then
   log_ok "Live authoritative device inventory verified ($DEV_COUNT devices)"
+else
+  log_fail "Live authoritative device inventory verification failed (count: $DEV_COUNT)"
 fi
 
 echo -e "\n================================================================="
@@ -190,4 +201,4 @@ fi
 TOTAL_SUITE_TESTS=$(( ${DEV_PASS:-0} + ${MCP_PASS:-0} ))
 echo -e "\n\033[32m✔ Release Integration Synthetic Demonstration is CERTIFIED (${TOTAL_SUITE_TESTS} Tests Passing: ${DEV_PASS} Dashboard/WebRTC + ${MCP_PASS} MCP Client).\033[0m"
 echo "Demonstration Dashboard URL: http://127.0.0.1:$WEB_PORT"
-echo "Single-run operator credentials: user='admin', password='$DEMO_OPERATOR_PASS'"
+echo "Single-run operator credentials: user='admin', password configured via secure runtime environment"

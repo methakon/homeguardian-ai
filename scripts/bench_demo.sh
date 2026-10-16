@@ -37,7 +37,7 @@ measure_impl() {
   local t0 t1 startup pid port rss_idle rss_peak
   echo "==================== $label ===================="
   t0=$(date +%s.%N)
-  ( eval "cd \"$WORK\" && exec $*" ) >"$out" 2>"$err" &
+  ( cd "$WORK" && eval "$*" ) >"$out" 2>"$err" &
   pid=$!
   wait_ready "$out" || { echo "  did not become ready"; cat "$err"; return; }
   t1=$(date +%s.%N)
@@ -65,7 +65,7 @@ measure_impl() {
   local csrf
   csrf=$(curl -s -X POST "http://127.0.0.1:$port/api/session" \
     -H "Host: 127.0.0.1:$port" -H "Origin: http://127.0.0.1:$port" \
-    -H "Content-Type: application/json" -H "X-HG-Secret: $BENCH_SECRET" -d "{}" \
+    -H "Content-Type: application/json" -H @"$WORK/header_secret.txt" -d "{}" \
     | grep -o '"csrf":"[^"]*"' | cut -d'"' -f4)
   if [ -n "$csrf" ]; then
     lat=$(curl -s -o /dev/null -w "%{time_total}" -X POST "http://127.0.0.1:$port/api/run-scenario?cycles=5" \
@@ -91,6 +91,8 @@ measure_impl() {
 BENCH_SECRET="bench-secret-2026"
 printf '%s' "$BENCH_SECRET" > "$WORK/bench_secret.txt"
 chmod 600 "$WORK/bench_secret.txt"
+printf 'X-HG-Secret: %s\n' "$BENCH_SECRET" > "$WORK/header_secret.txt"
+chmod 600 "$WORK/header_secret.txt"
 printf '%s' "demo-token" > "$WORK/bench_token.txt"
 chmod 600 "$WORK/bench_token.txt"
 

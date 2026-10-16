@@ -186,9 +186,7 @@ build time (CMake `configure_file`) so the binary is self-contained.
   request-time filesystem path (no traversal surface).
 
 **Consequences / semantics preserved.**
-- `--http` mode is GET-only and loopback-only; `run-scenario` is the only
-  state-advancing route (bounded ≤100 cycles); capture/consent/config stay
-  read-only.
+- `--http` mode is loopback-only; static assets and status queries are GET-only; `run-scenario` is strictly POST requiring session authentication and single-use CSRF tokens (updated in HG-SEC-01); capture/consent/config stay read-only.
 - **Per-run reset**: because one process now serves repeated scenario runs, the
   scenario resets per-run state (counters, alert policy, pipeline history,
   runtime/simulator latches) so each run behaves like the legacy fresh-process

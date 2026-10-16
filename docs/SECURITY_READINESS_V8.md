@@ -5,7 +5,7 @@ prevention, access control") applied to the new **native C++ HTTP demo
 transport** (`src/bridge/NativeHttp.h`) and its integration.
 **Date:** 2026-10-13 · **Branch:** `h04/native-http-low-footprint`
 
-> **What this is:** a loopback-only, GET-only, **simulator-only** local demo
+> **What this is:** a loopback-only, **simulator-only** local demo
 > interface with a limited HTTP/1.1 subset. **What this is NOT:** a production or
 > public-network HTTP service. Handwritten parsing is acceptable here *because*
 > the surface is tiny, the transport is loopback-only, and it is explicitly a
@@ -22,7 +22,7 @@ internal detail):
 |---|---|---|
 | Request line framing `METHOD SP TARGET SP HTTP/1.1` | malformed → 400 | `[nativehttp]` |
 | Exact `HTTP/1.1` version (no 1.0) | otherwise 400 | ✔ |
-| Method allowlist: **GET only** | others → 405 (handler never runs) | ✔ |
+| Method allowlist: **GET** for static assets & status, **POST** for `/api/session` & `/api/run-scenario` | others → 405 (handler never runs) | ✔ |
 | Path: non-empty, ≤128 bytes, leading `/`, no `%` `\` `#` NUL | else 400 | ✔ |
 | Absolute-form target (`GET http://…`) | 400 | ✔ |
 | Exactly one `Host`, value must be a **loopback authority** | missing/duplicate/non-loopback → 400/403 | ✔ |
@@ -281,7 +281,7 @@ Evidence:
 - native_http_persist: 1 case, 48 assertions, exit code 0 - fresh temporary SQLite
   database: rejected requests invoke no handler, advance no state and write no alert
   row (confirmed by reopening the file); two authorized controls do write
-- Node suite: 76 tests, 76 passed, exit code 0
+- Node suite: 77 tests, 77 passed, exit code 0
 
 Limitations: loopback Origin and Host checks are defence-in-depth and do NOT establish
 the identity of an arbitrary local process; the operator launch secret is the

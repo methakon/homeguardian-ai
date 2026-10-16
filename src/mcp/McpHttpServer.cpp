@@ -541,8 +541,8 @@ void McpHttpServer::Impl::handle_connection(int fd) {
                 it->second.credential_id != auth.credential_id ||
                 it->second.principal.empty() || auth.principal.empty() ||
                 it->second.principal != auth.principal) {
-                spdlog::warn("mcp: principal '{}' (cred '{}') attempted to delete session '{}' owned by '{}' (cred '{}')",
-                             auth.principal, auth.credential_id, sid, it->second.principal, it->second.credential_id);
+                spdlog::warn("mcp: principal '{}' attempted to delete session '{}' owned by '{}'",
+                             auth.principal, sid, it->second.principal);
                 bump(&Stats::rejected_auth);
                 respond_simple(sock.fd, 403);
                 return;
@@ -619,8 +619,8 @@ void McpHttpServer::Impl::handle_connection(int fd) {
                     it->second.credential_id != auth.credential_id ||
                     it->second.principal.empty() || auth.principal.empty() ||
                     it->second.principal != auth.principal) {
-                    spdlog::warn("mcp: principal '{}' (cred '{}') attempted to access session '{}' owned by '{}' (cred '{}')",
-                                 auth.principal, auth.credential_id, sid, it->second.principal, it->second.credential_id);
+                    spdlog::warn("mcp: principal '{}' attempted to access session '{}' owned by '{}'",
+                                 auth.principal, sid, it->second.principal);
                     bump(&Stats::rejected_auth);
                     respond_simple(sock.fd, 403);
                     return;

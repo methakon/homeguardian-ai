@@ -17,7 +17,7 @@ function redactHeaders(headers) {
   const safe = { ...headers };
   for (const k of Object.keys(safe)) {
     const lk = k.toLowerCase();
-    if (lk === 'authorization' || lk === 'cookie' || lk === 'set-cookie' || lk === 'x-csrf-token' || lk === 'x-hg-secret' || lk === 'x-hg-csrf') {
+    if (lk === 'authorization' || lk === 'cookie' || lk === 'set-cookie' || lk === 'x-csrf-token' || lk === 'x-hg-secret' || lk === 'x-hg-csrf' || lk === 'mcp-session-id') {
       safe[k] = '[REDACTED]';
     }
   }

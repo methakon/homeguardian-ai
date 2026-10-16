@@ -1072,9 +1072,9 @@ request at a time. Details and the simulator-vs-production distinction:
   DELIVERED alerts. It cannot change delivery, ordering, or persistence.
 - `SimulatorRuntime::reset_consent_state()` clears only the synthetic in-memory
   consent repo; it never touches durable state.
-- HTTP: `GET /api/run-scenario[?scenario=<id>][&cycles=N]`, `GET /api/alerts`,
+- HTTP: `POST /api/run-scenario[?scenario=<id>][&cycles=N]` (authenticated POST with session and CSRF token), `POST /api/session`, `GET /api/alerts`,
   `GET /api/scenarios`, plus the existing `/`, `/index.html`, `/api/health`,
-  `/api/status`. All loopback-only, GET-only, with the H-04 protections.
+  `/api/status`. All loopback-only with HG-SEC-01 protections.
 - The dashboard is vanilla HTML/CSS/JS, embedded in the binary; it renders
   backend-derived values using `textContent` / `createElement` (never `innerHTML`
   with backend strings).

@@ -186,9 +186,10 @@ Everything the dashboard shows comes from the real backend inside the container:
 ```bash
 docker compose exec hub bash -lc 'cat < /dev/null > /dev/tcp/127.0.0.1/8080'   # liveness
 docker compose exec hub /usr/local/bin/hg-healthcheck && echo healthy
-# drive the real pipeline (synthetic simulator in D-01) and persist alerts:
+# query the real pipeline status:
 docker compose exec hub bash -lc 'exec 3<>/dev/tcp/127.0.0.1/8080;
-  printf "GET /api/run-scenario?scenario=synthetic-critical-impact HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3; cat <&3 | tail -1'
+  printf "GET /api/status HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3; cat <&3 | tail -1'
+# Note: /api/run-scenario requires authenticated POST with CSRF (see HG-SEC-01)
 ```
 
 `SIMULATION MODE — synthetic data` is the honest banner for D-01: the container

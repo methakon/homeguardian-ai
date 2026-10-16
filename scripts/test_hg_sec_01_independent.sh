@@ -70,6 +70,8 @@ trap cleanup EXIT INT TERM
 cd "$WORK"
 printf '%s' "$OPERATOR_SECRET" > "$WORK/secret.txt"
 chmod 600 "$WORK/secret.txt"
+printf 'X-HG-Secret: %s\n' "$OPERATOR_SECRET" > "$WORK/header_secret.txt"
+chmod 600 "$WORK/header_secret.txt"
 printf '%s' "demo-token" > "$WORK/token.txt"
 chmod 600 "$WORK/token.txt"
 
@@ -99,12 +101,18 @@ if [[ "$LAUNCHED" -ne 1 ]]; then
 fi
 log_ok "hg_alexa_bridge launched and listening on 127.0.0.1:$TEST_PORT"
 
+if [[ ! -f "$DB_PATH" ]]; then
+  echo "ERROR: SQLite audit database not created at $DB_PATH" >&2
+  exit 1
+fi
+log_ok "SQLite audit database verified at $DB_PATH"
+
 get_alert_count() {
-  if [[ -f "$DB_PATH" ]]; then
-    sqlite3 "$DB_PATH" "SELECT count(*) FROM alerts;" 2>/dev/null || echo "0"
-  else
-    echo "0"
+  if [[ ! -f "$DB_PATH" ]]; then
+    echo "ERROR: audit database missing at $DB_PATH" >&2
+    return 1
   fi
+  sqlite3 "$DB_PATH" "SELECT count(*) FROM alerts;" 2>/dev/null || echo "0"
 }
 
 # -----------------------------------------------------------------------
@@ -196,7 +204,7 @@ CODE_CROSS_ORIGIN=$(curl -s -o "$WORK/resp.txt" -w "%{http_code}" -X POST \
   -H "Host: 127.0.0.1:$TEST_PORT" \
   -H "Origin: http://attacker.local:$TEST_PORT" \
   -H "Content-Type: application/json" \
-  -H "X-HG-Secret: $OPERATOR_SECRET" \
+  -H @"$WORK/header_secret.txt" \
   -d "{}" \
   "http://127.0.0.1:$TEST_PORT/api/session")
 
@@ -214,10 +222,10 @@ CODE_URL_SECRET=$(curl -s -o "$WORK/resp.txt" -w "%{http_code}" -X GET \
   -H "Host: 127.0.0.1:$TEST_PORT" \
   "http://127.0.0.1:$TEST_PORT/?k=secret-token")
 
-if [[ "$CODE_URL_SECRET" == "400" || "$CODE_URL_SECRET" == "404" ]]; then
-  log_ok "Request with credentials in query string (?k=...) rejected ($CODE_URL_SECRET)"
+if [[ "$CODE_URL_SECRET" == "400" ]]; then
+  log_ok "Request with credentials in query string (?k=...) rejected with HTTP 400"
 else
-  log_fail "Request with ?k=... returned $CODE_URL_SECRET (expected 400 or 404)"
+  log_fail "Request with ?k=... returned $CODE_URL_SECRET (expected 400)"
 fi
 
 # -----------------------------------------------------------------------
@@ -228,7 +236,7 @@ SESSION_RESP=$(curl -s -X POST \
   -H "Host: 127.0.0.1:$TEST_PORT" \
   -H "Origin: http://127.0.0.1:$TEST_PORT" \
   -H "Content-Type: application/json" \
-  -H "X-HG-Secret: $OPERATOR_SECRET" \
+  -H @"$WORK/header_secret.txt" \
   -d "{}" \
   "http://127.0.0.1:$TEST_PORT/api/session")
 

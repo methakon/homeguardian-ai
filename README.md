@@ -203,6 +203,7 @@ durable persistence.
 is disabled by default (`media_capture_enabled: false`) and every frame/sample
 must pass the consent delivery boundary before processing. Physical-hardware
 capture remains blocked pending explicit approval. See
+[docs/INDEX.md](docs/INDEX.md) for the master component index and architecture guide,
 [docs/ROADMAP.md](docs/ROADMAP.md) for per-layer verification status,
 [docs/STATUS.md](docs/STATUS.md) for the latest status, and
 [docs/RELEASE_CANDIDATE_V21.md](docs/RELEASE_CANDIDATE_V21.md) for the

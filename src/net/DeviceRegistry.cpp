@@ -269,6 +269,7 @@ bool DeviceRegistry::unpair(const std::string& device_id) {
 bool DeviceRegistry::revoke(const std::string& device_id, const std::string& note) {
     Device* d = find_mutable(device_id);
     if (d == nullptr) return false;
+    if (d->revoked) return false;  // already revoked
     d->revoked = true;
     d->revocation_note = note.size() > kMaxNoteChars ? note.substr(0, kMaxNoteChars) : note;
     // Revocation is total: it also drops consent, capture and liveness, so no
@@ -542,9 +543,10 @@ size_t DeviceRegistry::sweep_offline(int64_t now_ms) {
     size_t changed = 0;
     for (Device& d : devices_) {
         if (!d.online) continue;
-        if (now_ms - d.last_heartbeat_ms < cfg_.online_timeout_ms) continue;
-        d.online = false;
-        ++changed;
+        if (d.last_heartbeat_ms > now_ms + 5000 || (now_ms - d.last_heartbeat_ms >= cfg_.online_timeout_ms)) {
+            d.online = false;
+            ++changed;
+        }
     }
     return changed;
 }
