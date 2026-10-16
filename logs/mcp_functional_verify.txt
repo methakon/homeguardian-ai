@@ -1,0 +1,39 @@
+== Mi A3 edge MCP verification ==
+serial=edd53dbd04de  host 127.0.0.1:18790 -> device 127.0.0.1:8790
+
+== auth boundary ==
+  PASS  tools/list WITHOUT Authorization -> 401 (=401)
+  PASS  401 carries WWW-Authenticate: Bearer
+  PASS  tools/list with WRONG bearer -> 401 (=401)
+  PASS  tools/list with foreign Origin -> 403 (=403)
+
+== MCP handshake ==
+  PASS  initialize -> 200 (=200)
+  PASS  Mcp-Session-Id minted
+  server: {'name': 'homeguardian-mcp', 'version': '1.0.0'} proto 2025-11-25
+  PASS  initialize advertises protocolVersion 2025-11-25 (=2025-11-25)
+  PASS  tools/list with NO session -> 400 (=400)
+
+== tools/list ==
+  PASS  tools/list -> 200 (=200)
+  tools: ['get_homeguardian_status', 'get_alert_summary']
+
+== tools/call (real engine, read-only) ==
+  PASS  tools/call get_homeguardian_status -> 200 (=200)
+  payload: {"id":3,"jsonrpc":"2.0","result":{"content":[{"text":"{\"capture_enabled\":false,\"read_only\":true,\"state\":\"Running\"}","type":"text"}]}}
+  PASS  tools/call get_alert_summary -> 200 (=200)
+  payload: {"id":4,"jsonrpc":"2.0","result":{"content":[{"text":"{\"alert_count\":0,\"alert_ids\":[],\"highest_severity\":\"\",\"read_only\":true}","type":"text"}]}}
+
+== read-only contract is enforced ==
+  PASS  mutating tool name -> -32602 (no such tool)
+  arguments-injection attempt -> {"id":6,"jsonrpc":"2.0","result":{"content":[{"text":"{\"capture_enabled\":false,\"read_only\":true,\"state\":\"Running\"}","type":"text"}]}}
+
+== transport rules ==
+  PASS  GET /mcp -> 405 (=405)
+  PASS  DELETE /mcp -> 200 (session terminated) (=200)
+  PASS  DELETE /mcp without session -> 400 (=400)
+  PASS  POST with 70KiB body -> 413 (=413)
+  PASS  POST with chunked Transfer-Encoding -> 501 (refused) (=501)
+  PASS  raw POST with body and no Content-Length -> 411 (=411)
+
+== RESULT: 18 passed, 0 failed ==

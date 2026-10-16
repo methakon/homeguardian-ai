@@ -1,0 +1,38 @@
+==============================================================================
+Mi A3 edge MCP — resource & latency measurement
+serial=edd53dbd04de  n=200 requests  2026-10-17 02:51:29
+==============================================================================
+
+-- device state before load --
+  battery      : level=96% health=2 temp=33.0C status=2 volt=4296mV
+  MemAvailable : MemAvailable:    2795836 kB
+  mcp RSS      : 5512 kB   VSZ from ps: 12416936 hg_mcp_server
+  skin/quiet   : skin=36.4C quiet=37.4C cpuss0=44.6C
+  hottest zone : 44.6C
+
+-- latency: 200 sequential tools/call get_homeguardian_status --
+  status codes : 200/200 -> 200, 0 errors
+  latency ms   : min=5.39 p50=7.98 p95=9.25 p99=11.29 max=14.70 mean=8.07
+  throughput   : 121.8 req/s over adb forward (single connection reuse off)
+  SERVER CPU   : 310.0 ms total for 200 calls = 1.550 ms/call (18.88% of one core)
+
+-- sustained mixed workload: 200 x (tools/list + 2 tool calls) --
+  600 requests in 4.93s = 121.6 req/s
+  latency ms   : p50=7.87 p95=11.07 max=15.93
+  SERVER CPU   : 820.0 ms total = 1.367 ms/req (16.62% of one core)
+
+-- device state after load --
+  battery temp : 33.0C -> 33.0C   level 96% -> 96%
+  mcp RSS      : 5512 kB -> 5512 kB (delta +0 kB over 600 requests)
+  skin-therm   : 36.4C -> 36.6C
+  hottest zone : 44.6C -> 45.6C
+
+-- stability --
+  pid 20073 alive: 20073
+  server log tail:
+    [2026-10-17 02:50:08.771] [hg_mcp] [warning] mcp: rejected an unauthenticated request
+    [2026-10-17 02:50:08.794] [hg_mcp] [warning] mcp: rejected request with a disallowed Origin
+    [2026-10-17 02:50:24.976] [hg_mcp] [warning] mcp: rejected an unauthenticated request
+    [2026-10-17 02:50:24.999] [hg_mcp] [warning] mcp: rejected request with a disallowed Origin
+
+  -> logs/mi_a3_edge_measurements.json
