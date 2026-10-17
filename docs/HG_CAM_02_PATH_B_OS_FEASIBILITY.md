@@ -35,8 +35,11 @@ non-browser client — a zero hit there would have proven nothing.
 |---|---|---|
 | LineageOS official devices | `gh search repos lineage_device_panasonic` | **NO RESULTS** — LineageOS has never carried a Panasonic device |
 | LineageOS wiki list | rendered page, counted `Panasonic`/`Eluga` | 0 occurrences |
+| /e/OS device selector | rendered page, **44,327 chars loaded** (so the list really was present, not a JS stub), counted `Panasonic`/`Eluga` | 0 occurrences — no Panasonic brand at all |
+| TrebleDroid tested-GSI wiki | rendered page, counted `Panasonic`/`Eluga` | 0 occurrences; the only `k39` row is `Coolpad C558 / k39tv1`, a **32-bit `arm`** device — the same MediaTek platform name, a different phone entirely |
 | `android_device_panasonic_*` | `gh search repos` | matches exist, listed below |
 | `ELUGA_I7` | `gh search repos` | **exactly one** hit, listed below |
+| the kernel tree the device tree expects | `gh search repos "kernel panasonic k39tv1"` | **no results** — the `kernel/panasonic/ELUGA_I7_EE` source it points at was never published |
 
 Every Panasonic device tree that exists:
 
@@ -62,6 +65,19 @@ device tree. It is not a ROM, has no kernel, no vendor blobs and no build recipe
 its own tooling documents the output as a starting point that a porter must then fix by
 hand. Treating it as "an existing port" would be wrong. It is at best evidence that
 somebody else pointed the generator at this model once.
+
+I read its `BoardConfig.mk` rather than relying on the README. It confirms the model
+(`TARGET_BOOTLOADER_BOARD_NAME := k39tv1_64_a27`, `TARGET_ARCH := arm64` with an `arm`
+2nd arch), and it declares:
+
+    TARGET_KERNEL_SOURCE := kernel/panasonic/ELUGA_I7_EE
+
+That is the decisive line. The tree **points at a kernel source tree that does not
+exist publicly** — searching for it returns no results. And the repository contents are
+scaffolding only: `Android.bp`, `Android.mk`, `AndroidProducts.mk`, `BoardConfig.mk`,
+`README.md`, `device.mk`, `extract-files.sh`, `omni_ELUGA_I7_EE.mk`, an empty `prebuilt/`,
+`recovery.fstab`, `setup-makefiles.sh`, `vendorsetup.sh`. No kernel, no HAL, no device
+source. It cannot build anything as it stands.
 
 ## B-3. Custom ROMs are blocked by the kernel, not by interest
 
@@ -166,6 +182,40 @@ replacement-OS route is not merely risky, it is *blocked* — there is no ROM to
 and no way to build one. Path A needs no destructive step at all, and the only
 capability Path B would add in theory (a different Android version) is not worth
 trading a verified camera for an unverified one.
+
+## B-8. Sources that look like evidence and are not
+
+Flagged explicitly so nobody re-derives a conclusion from them:
+
+- **Content farms.** Pages titled "How to install AOSP/GSI on Panasonic Eluga I7
+  Enterprise Edition" are templated articles: no build, no test, no boot report. A
+  GSI *install guide* is not evidence that a GSI *boots* on this model. Non-evidence.
+- **Repair-tool listings.** ChimeraTool and similar list this exact model. That is
+  box/SIM-unlock and FRP tooling coverage — it says nothing about custom-ROM or recovery
+  support, and must not be read as such.
+- **Platform-name coincidence.** `k39tv1` is a MediaTek platform identifier, not a device
+  identifier. Finding `k39tv1` in another device's row (the Coolpad C558) does not make
+  that device's results transferable — ours is arm64, that one is 32-bit `arm`.
+
+## B-9. What is inferred rather than verified
+
+Being precise about the boundary, because these are the subsystems a port would live or
+die on and I do **not** have primary evidence for them on this board:
+
+- **Camera HAL and per-sensor configuration** — *inferred*. The generic MT6739 Android 9
+  vendor model puts camera behind a vendor HAL plus per-sensor blobs and configuration.
+  What this *board* actually uses is not confirmed from any primary source. What I did
+  verify is device-side and narrower: the camera reports
+  `android.info.supportedHardwareLevel = LIMITED` with a HAL3-style interface.
+- **Wi-Fi driver and firmware** — *inferred*. MT6739 vendor builds ship the driver blob
+  and firmware in `/vendor`; the exact part on this board is not confirmed. Verified to
+  the extent that the radio is 2.4 GHz only, which is a measurement, not a driver fact.
+- **Audio HAL** — *inferred*. Same reasoning; the AOSP echo canceller being present is a
+  verified device fact, but the HAL variant is not.
+
+None of this weakens the conclusion, and that is the point: B-3 and B-4 fail before
+camera, Wi-Fi or audio even come into scope. There is no kernel to build and no permitted
+unlock, so driver-level uncertainty never becomes the deciding factor.
 
 ## Confidence and what remains unverified
 
