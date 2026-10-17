@@ -2,7 +2,7 @@
 
 **Project:** HomeGuardian AI
 **Hackathon:** Amazon Developer Hackathon 2026
-**Last updated:** 2026-10-10
+**Last updated:** 2026-10-17
 
 This log records only verified friction encountered during development.
 Each incident includes the date, steps, expected vs actual result, severity,
@@ -3070,3 +3070,146 @@ Two lessons worth keeping:
    already had one (config + data paths). The YAML parse check caught it before the build; the knob
    now sits in the existing block. **Parse the file you edited, and assert the keys you expect.**
 
+---
+
+> **Numbering note.** Incidents 73 and 74 were recorded on the parallel release line
+> (`prep/release-package-and-deployment`), which is not an ancestor of this branch. The next
+> unused numbers repo-wide are therefore 75 onward, so nothing collides if the two lines are
+> ever merged.
+
+## Incident 75: Five different things are called "Alexa+" and only one of them is permitted to a hackathon entrant
+
+**Date:** 2026-10-17 (route research 2026-10-10 → 2026-10-17; re-verified 2026-10-17)
+**Task attempted:** Choose the Alexa+ track route for the submission and write a claim that is true.
+
+**Steps:**
+1. Read the official hackathon FAQ and Rules pages (`https://amazonappdev2026.devpost.com/details/faqs`, `https://amazonappdev2026.devpost.com/rules`).
+2. Attempt to reach the Alexa+ Add-on developer tooling: Category SDK, MCP Toolkit, CLI, Web Simulator (`developer.amazon.com/alexaplus/`).
+3. Enumerate the distinct things the repository's own docs, and the ecosystem, call "Alexa+ support".
+4. Implement and test the permitted path end to end at the release candidate.
+
+**Expected result:** Either the gated Alexa+ developer tools are obtainable for the submission, or a clearly documented alternative is permitted.
+
+**Actual result:** **Five unrelated things share the name, and only one is available to a participant:**
+1. **Alexa+ *self-hosted MCP development*** — writing your own MCP server to the open specification. **Permitted and required** by the Rules for this track.
+2. **Alexa+ *partner-only integration tools*** — Category SDK, MCP Toolkit, CLI, Web Simulator, "Alexa+ for Builders". **Not obtainable.**
+3. **Conventional Alexa *Smart Home* camera interfaces** — the classic Smart Home skill/device model. A different API surface, unrelated to the MVP track, and not what the Rules ask for here.
+4. **Alexa Built-in devices** — AVS-based hardware integration; already recorded as deprecated for this project in **Incident 12**, and not an entrant-accessible route either.
+5. **An Alexa-compatible Docker/web simulation** — a front end a team builds itself. **Permitted**, and the FAQ explicitly blesses it.
+
+The FAQ answers the access question outright, and the answer is no:
+
+> **Question:** Will hackathon participants get access to the gated Alexa+ developer tools (Category SDK, MCP Toolkit, CLI, or Web Simulator)?
+> **Answer:** No. Amazon's Alexa+ Add-on developer tools (Category SDK, MCP Toolkit, CLI, and Web Simulator) are in preview and available to select partners only - there is currently no way for hackathon participants to apply for or gain access. This is called out on Amazon's add-on docs home page, though it's sometimes missing from individual setup-guide pages, which has caused some confusion. **You do not need these tools for your submission:** build a self-hosted MCP server (or Agent Skill) per the Official Rules, and demo it via your own web-based simulator or front end.
+
+and it also settles what "a demo" has to be:
+
+> **Question:** For the Alexa+ track, can I demo my self-hosted MCP server through a web page that acts as a real MCP client, instead of a device?
+> **Answer:** Yes. A web page that acts as an actual MCP client (sending initialize, tools-list, and tools-call requests over Streamable HTTP) satisfies the requirement - this is the simulated-experience path the Resources page points to, since there is no way for any participant to connect a self-hosted server to a real Alexa+ device.
+
+The Rules page agrees on the deliverable: *"Alexa+: Build a working Agent Skill or a self-hosted MCP server, implementing MCP spec version (minimum acceptable version is 2025-11-25). Optionally, developers can simulate the Alexa+ experience in a web app using their own agentic tools."*
+
+The practical damage is that the FAQ's own note — *"sometimes missing from individual setup-guide pages, which has caused some confusion"* — is exactly the trap: Amazon's per-tool setup guides read as though the tooling is one click away, while the gate is only stated on two pages. A participant who believes the guides can spend days pursuing an access path that does not exist for them.
+
+**Severity:** Important — not a security defect, but a route-selection and schedule risk, and a claim-integrity risk if the team writes the submission as though the tools were used.
+
+**Workaround:** Take the explicitly permitted route and make the claim narrow enough to be verifiable:
+1. Implement a **self-hosted MCP server** — MCP **2025-11-25**, **Streamable HTTP** — and test it end to end.
+2. Build the **project's own web front end**, label it plainly as a **simulated Alexa-style experience**, and have it act as a **genuine MCP client** (initialize → tools/list → tools/call), which is what the FAQ says satisfies the requirement.
+3. **Never claim** an Echo device, an Alexa+ runtime, Amazon account linking, or any Amazon certification. Say what is real (the MCP server, its protocol compliance, its test results) and what is simulated (the voice-style front end, all household observations).
+4. Record the external limitation in the submission itself so a judge reads it as a known constraint rather than as an omission.
+
+**Actionable suggestion:**
+- *For Amazon:* put the preview/partner-only status of the Add-on tooling on **every** tool's setup page, and publish one table that separates self-hosted MCP, partner-only tooling, Smart Home skills, Alexa Built-in and self-built simulation.
+- *For entrants:* decide the route in the first hour from the FAQ and Rules only — not from individual setup guides — and budget zero days for gated-tool access.
+
+**Evidence:**
+- FAQ and Rules pages retrieved 2026-10-17 with HTTP **200**; quoted verbatim above (`https://amazonappdev2026.devpost.com/details/faqs`, `https://amazonappdev2026.devpost.com/rules`).
+- Implemented MCP server: `src/mcp/McpProtocol.{h,cpp}`, `McpTools.{h,cpp}`, `McpHttpServer.{h,cpp}`, `src/main_mcp_server.cpp`; documented in `docs/MCP_SERVER.md`.
+- **Verified at this branch's candidate commit `5d8cc3b` (code candidate `05e1303`)** — not carried over from another branch:
+  - `bash scripts/verify_mcp.sh` → **71 passed, 0 failed** (real `hg_mcp_server` binary over loopback: protocol negotiation, session rules, Origin validation, auth, error taxonomy, request bounds, SSE-only client, DELETE teardown, clean SIGTERM shutdown).
+  - `node web_mcp/test_client.js` → **26 passed, 0 failed**.
+  - `node web_mcp/test_devices_dashboard.js` → **132 passed, 0 failed**.
+- Distinct from **Incident 12** (AVS developer tools deprecated for Alexa Built-in — a *different* gate) and from **Incident 28** (the earlier honest-README correction): this entry is about which of five same-named routes is actually permitted.
+
+**Status:** **Resolved for this submission** — permitted route taken, implemented, and tested at the candidate commit; the underlying external restriction (preview and partner-only tooling) stands and is not ours to fix.
+
+---
+
+## Incident 76: One camera's ONVIF toggle served anonymous live video; the other camera has no standard interface at all
+
+**Date:** 2026-10-17
+**Task attempted:** Bring two owner-supplied V380 CCTV cameras into HomeGuardian as authorized, consent-gated devices.
+
+**Steps:**
+1. Identify each camera on the LAN without a network sweep: targeted reachability, ARP/MAC, OUI vendor lookup, and the vendor app's own reported address.
+2. Probe only the documented interfaces: RTSP (554, 8554), ONVIF (8899, WS-Discovery 3702), HTTP management (80/443), and the V380 vendor ports (8800, 9800).
+3. **Test for unauthenticated media and control exposure before any integration work** (send no credentials; count interleaved RTP packets rather than recording media).
+4. Attempt capability measurement only if an authenticated local interface exists.
+
+**Expected result:** Each camera exposes a documented, authenticated local media interface (RTSP/ONVIF) that HomeGuardian can consume under consent and per-payload authorization.
+
+**Actual result:** Two different failures, neither of which is a HomeGuardian bug:
+
+*Camera 1 — the interface exists and enforces nothing.* `Hw_HsAkQQVL_WF_QQ_20240412` / `AppEV3L_V2`, MAC `30:be:29:3a:d3:b7`. Enabling the app's ONVIF setting opened `tcp/554` and `tcp/8899` — with **no authentication whatsoever**. With no credential and no auth header, `DESCRIBE` returned the SDP and `SETUP`/`PLAY` succeeded, delivering **360 RTP packets (469,943 B) on `/live/ch00_1` and 922 packets (1,285,254 B) on `/live/ch00_0` in a 6-second window**; `DESCRIBE` also answered on paths that do not exist (`/`, `/1`, `/h264_stream`) with the same default SDP. ONVIF disclosed device information, the **MAC and IP**, the **`admin` account name and level**, all profiles, and the stream URI — all anonymously. Any device on the Wi-Fi network could watch this camera live.
+
+*Camera 2 — no standard interface exists to authenticate.* `Hw_AWT3610E_XHR_E_V1.0_WF_20230807` / `AppEV2W_VA3`, MAC `60:dc:81:6b:86:3d`. Only `tcp/8800` and `tcp/9800` listen; `554`, `8554`, `8899`, `3702` (TCP **and** UDP WS-Discovery), `80`, `443`, `5050`, `5051` and `34567` are all refused, and the device answers no ONVIF discovery probe. The app's Advanced settings shows **no ONVIF row at all** — the vendor documents that row as hidden when the firmware cannot support it. An unauthenticated client gets nothing from the vendor port (silent on connect, `0` bytes back on an HTTP or RTSP request, idle close at ~5.0 s, malformed-payload close at ~0.21 s), but the vendor protocol's **authentication behaviour is unverified**, because no login handshake was sent and constructing one is a proprietary-protocol action that is not authorized. **Media, codec, resolution, frame rate, audio and PTZ therefore remain unmeasured for camera 2**, and the only remaining path to its video is that encrypted proprietary protocol.
+
+Also measured: the two units behave differently on `tcp/9800` (camera 2 stays silent on a bare connect; camera 1 closed immediately with `0` bytes), so one unit's behaviour must not be generalized to the family.
+
+**Severity:** **Critical** for camera 1 (anonymous live video and account disclosure on the home LAN); **Important** for camera 2 (device cannot be integrated through any standard interface).
+
+**Workaround:** Separate the *security* problem from the *capability* problem, and fix each with the tool that actually fits:
+1. **Camera 1: the exposure was closed by disabling the ONVIF setting** — `tcp/554`, `tcp/8899` and `3702` are gone; only the vendor ports remain. No camera setting was changed by the agent itself.
+2. **Do not put an unauthenticated camera protocol on a trusted network.** Reach either camera **only through a component we control** — a security-aware camera adapter behind a transport seam, plus a **network-independent site connector** that sits inside the camera's own segment, dials *out*, and is the single authorized client. This is the design in `docs/HG_NET_ARCH_01_NETWORK_INDEPENDENT_CAMERA_INTEGRATION.md`.
+3. **Separate identity from address.** Both cameras are DHCP clients whose addresses have already moved once (camera 2 went from `192.168.0.164` behind an extender's NAT to `192.168.1.20` on the main subnet). Key on a durable `{site_id, device_id}` bound to a credential, with the address as a refreshable endpoint attribute.
+4. **Timestamp integrity:** camera 1's ONVIF clock measured **9,001.5 s (2 h 30 m 1.5 s) behind true UTC** while reporting `DateTimeType = NTP` — so observations must be stamped with the receiving host's clock, never the device's.
+5. **Do not read the vendor ports as progress.** `8800`/`9800` being open is not an integration point; it is a login-gated protocol whose authentication is unverified.
+
+**Actionable suggestion:**
+- *For V380/Macro-video:* either make the ONVIF/RTSP toggle apply the device username/password that the app already lets the owner set, or state plainly in the app that enabling ONVIF exposes the stream without authentication. The current affordance reads as a feature switch and is in fact an exposure switch.
+- *For HomeGuardian:* finish the adapter/connector implementation; until it exists, treat **both** cameras as "identified, not integrated" and never publish a capability figure that was not measured on the device.
+- *For anyone evaluating cheap CCTV:* test for unauthenticated media **before** building anything on the interface, and note that "no port is open" and "the port enforces authentication" are different findings with different consequences.
+
+**Evidence:**
+- Interface classification and exposure test: `scripts/v380_security_check.sh` (four-way classification DISABLED / AUTHENTICATION ENFORCED / EXPOSED / INCONCLUSIVE, fail-closed exits; its own 6-case self-test `scripts/v380_security_check_selftest.sh`), `scripts/v380_probe.sh`, `scripts/hg_second_camera_check.sh`.
+- Documents: `docs/HG_V380_01_DISCOVERY.md`, `HG_V380_02_MEDIA_PROTOCOLS.md`, `HG_V380_04_ONVIF_ACTIVATION_VERIFICATION.md` (the exposure), `HG_V380_06_EXPOSURE_CLOSURE_AND_AUTH_CONTROLS.md` (closure + the authentication options that do **not** exist), `HG_V380_08_SECOND_CAMERA_VERIFICATION.md` (camera 2), `HG_NET_ARCH_01_*.md` (the connector design). Branch `experiment/hg-v380-ec39-integration`; the exposure evidence is preserved at commit `1ccc028`.
+- Post-closure re-verification: camera 1 `RTSP/554 DISABLED`, `ONVIF/8899 DISABLED`; no ONVIF discovery responder.
+
+**Status:** **Camera 1 exposure CLOSED and re-verified; the integration itself is NOT resolved.** The adapters and site connectors are designed and unbuilt, and nothing here should be read as "the camera problem is fixed" — one camera now simply refuses to expose, while the other still has no interface HomeGuardian can use.
+
+---
+
+## Incident 77: Three documented commands did not produce what the docs then claimed — found by running them at the release candidate
+
+**Date:** 2026-10-17
+**Task attempted:** Independently verify the release candidate's headline claims before a judge reads them.
+
+**Steps:**
+1. Create a clean worktree at the candidate route (`prep/submission-packaging-05e1303`, `5d8cc3b`) and configure/build it fresh.
+2. Follow the README's own build command verbatim.
+3. Run the test commands the submission documents quote numbers for.
+4. Check each resulting artifact against the claim made about it.
+
+**Expected result:** The documented commands build the documented artifacts, and the documented test commands reproduce the documented numbers.
+
+**Actual result:** Three mismatches, all in *commands*, not in the engine:
+1. **The README's build command omits the MCP target it advertises.** The README's hackathon note says an MCP server "is implemented and runs locally on loopback", but its build section reads `make -j4 homeguardian homeguardian_tests hg_alexa_bridge` — no `hg_mcp_server`. A reader who follows the README ends up without the binary the same page claims exists. Every other document on the branch (`DEPLOYMENT_UBUNTU_DOCKER.md`, `DEVPOST_DEMONSTRATION_GUIDE.md`, `MCP_SERVER.md`, `RELEASE_AUDIT_STATUS.md`) does name the target, so the README was the outlier.
+2. **No documented step installs the Node dependencies the MCP web gateway needs.** Root `package.json` declares `werift ^0.25.0` and `ws ^8.22.0`; `web_mcp/server.js` → `web_mcp/webrtc_streamer.js` requires `werift`. On a clean checkout, `node web_mcp/test_client.js` fails with `Cannot find module 'werift'` (`code: 'MODULE_NOT_FOUND'`, require stack `webrtc_streamer.js` → `server.js` → `test_client.js`) *before a single test runs*. `docs/DEMO_WEB.md` additionally states "Standard library only; no `npm install` required for the demo" — true of the legacy demo server, and misleading for the MCP web gateway, with nothing in the README distinguishing the two. After `npm install` (43 packages, 5 s) both Node suites pass.
+3. **`docs/MCP_SERVER.md` still pointed at the pre-integration branch** (`feature/mcp-streamable-http`, worktree `~/worktrees/hg-mcp`), which no longer describes where the code lives on the candidate route.
+
+This is **not** the same defect class as **Incident 17** (stale docs / CMake portability) or **Incident 28** (the README asserting capabilities that did not exist): those were untrue *claims*. Here the claims are true and *the commands to reproduce them were wrong or absent* — found only by executing the documentation on a clean worktree rather than by reviewing it.
+
+**Severity:** Important — a judge or an independent verifier following the README cannot reproduce the advertised MCP capability, which is the submission's headline technical claim.
+
+**Workaround:** Documenting the missing steps (this commit) and confirming each claim by execution: adding `hg_mcp_server` to the README build command, adding the `npm install` precondition with the modules that need it, listing the MCP verification commands in the README's testing section with their measured results, and correcting the stale branch line in `docs/MCP_SERVER.md`.
+
+**Actionable suggestion:** Any document that quotes a test count must sit next to the **command that produces it**, and a clean-clone packaging step (already part of the release process) should run those commands verbatim and fail the package if an artifact or a count is missing. Prefer one canonical "build and verify" block that every document references, instead of repeating the commands per document where they can drift.
+
+**Evidence:**
+- Candidate route `prep/submission-packaging-05e1303` @ `5d8cc3b` (code candidate `05e1303`), built fresh in `homeguardian-ai-worktrees/hermes-submission-03`.
+- Failure reproduced verbatim: `node web_mcp/test_client.js` → `Error: Cannot find module 'werift'` from `web_mcp/webrtc_streamer.js:11`; `npm install` → `added 43 packages in 5s`.
+- Post-fix measured results at the same commit: `scripts/verify_mcp.sh` **71 passed / 0 failed**; `node web_mcp/test_client.js` **26 passed / 0 failed**; `node web_mcp/test_devices_dashboard.js` **132 passed / 0 failed**.
+- Files corrected in this commit: `README.md` (build command, Node dependency prerequisite, MCP verification commands), `docs/MCP_SERVER.md` (branch line).
+
+**Status:** Resolved in this commit for the candidate route; the underlying pattern — commands living apart from the claims they are supposed to reproduce — is the reason the clean-clone step exists.

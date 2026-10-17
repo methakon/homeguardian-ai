@@ -33,7 +33,7 @@ Open that URL in a browser. Press **Ctrl+C** to stop.
 | C++20 compiler | g++ ≥ 11 | The first CMake configure fetches spdlog + nlohmann/json (**network needed once**). |
 | CMake | ≥ 3.20 | |
 | make | any | |
-| Node.js | ≥ 18 | Standard library only; no `npm install` required for the demo. |
+| Node.js | ≥ 18 | Standard library only **for this demo server**; no `npm install` required to run `demo.sh`. (The separate `web_mcp/` MCP gateway does need `npm install` — see the README.) |
 
 ### Options
 

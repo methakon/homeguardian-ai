@@ -4,7 +4,12 @@
 **Specification:** MCP 2025-11-25 (Streamable HTTP). The server also accepts 2025-06-18 and
 2025-03-26 clients; anything else is answered with `2025-11-25` so the client can decide for
 itself rather than being silently downgraded.
-**Branch:** `feature/mcp-streamable-http` (worktree `~/worktrees/hg-mcp`).
+**Integrated in:** the release candidate route — packaging branch `prep/submission-packaging-05e1303`
+@ `5d8cc3b` (code candidate `05e1303`); originally developed on `feature/mcp-streamable-http`.
+**Verified there on 2026-10-17:** `bash scripts/verify_mcp.sh` → **71 passed / 0 failed**,
+`node web_mcp/test_client.js` → **26 / 0**, `node web_mcp/test_devices_dashboard.js` → **132 / 0**.
+The two Node suites need `npm install` from the repository root first — see the README's
+Node prerequisite note.
 
 ## 1. What it is, and what it is not
 
