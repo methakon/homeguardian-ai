@@ -1,9 +1,16 @@
 # HG-V380-02 — V380 EC39 Media Interfaces and Protocol Surface
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Workstream branch:** `experiment/hg-v380-ec39-integration`
-**Target:** `192.168.1.19` (MAC `30:be:29:3a:d3:b7`, OUI AltoBeam) — identified in
+**Target:** `<redacted-lan-host-19>` (MAC `<redacted-mac-a>`, OUI AltoBeam) — identified in
 `docs/HG_V380_01_DISCOVERY.md`.
 
 This document separates three things deliberately:
@@ -48,7 +55,7 @@ These are real observations, useful because they constrain the adapter design:
 | Simultaneous connections | 6 simultaneous sockets accepted; no visible connection-count limit at that level |
 | tcp/9800 on a bare connect | closed immediately (0 bytes), and **resets** the connection when a payload arrives (ECONNRESET) — it is reachable but not a prompt-answering service |
 
-Reproduce all of the above: `bash scripts/v380_probe.sh 192.168.1.19`.
+Reproduce all of the above: `bash scripts/v380_probe.sh <redacted-lan-host-19>`.
 
 Design consequences:
 

@@ -1,10 +1,17 @@
 # HG-V380-04 — Post-ONVIF Activation Verification and Security Verdict
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Workstream branch:** `experiment/hg-v380-ec39-integration`
 **Previous commit:** `8680ddb243ebe4a240460a6b42062ab61f6cfb38`
-**Target:** `192.168.1.19` (MAC `30:be:29:3a:d3:b7`)
+**Target:** `<redacted-lan-host-19>` (MAC `<redacted-mac-a>`)
 **Milestone:** HG-V380-02 — post-ONVIF-activation verification
 
 ---
@@ -24,7 +31,7 @@
 > interface is re-enabled. The workstream can resume the moment a
 > `scripts/v380_security_check.sh` run returns PROTECTED.
 
-Reproduce the verdict: `bash scripts/v380_security_check.sh 192.168.1.19 554 8899` → exit 1.
+Reproduce the verdict: `bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899` → exit 1.
 
 ---
 
@@ -36,8 +43,8 @@ enabled, `1000129427.png` firmware information). Reported values:
 
 | Field | Value | Source |
 |---|---|---|
-| Software | `AppEV3L_V2_V1.0.5.2_20250102` | owner screenshot (NOT independently verified) |
-| Firmware | `Hw_HsAkQQVL_WF_QQ_20240412` | owner screenshot (NOT independently verified) |
+| Software | `<redacted-cam1-software>` | owner screenshot (NOT independently verified) |
+| Firmware | `<redacted-cam1-firmware>` | owner screenshot (NOT independently verified) |
 
 No firmware update, factory reset or device modification was performed — by the owner
 or by this workstream. **I did not access the Drive folder; these two lines are recorded
@@ -59,11 +66,11 @@ Same bounded probe list, same target. **No full-port LAN scan was repeated.**
 | 9800 | open | open (unchanged) | — |
 | 80, 443, 8080, 8554, 5000, 5050, 5051, 8000, 34567 | refused | refused | — |
 
-`RTSP OPTIONS rtsp://192.168.1.19/` → `RTSP/1.0 200 OK`, `Public: OPTIONS, DESCRIBE,
+`RTSP OPTIONS rtsp://<redacted-lan-host-19>/` → `RTSP/1.0 200 OK`, `Public: OPTIONS, DESCRIBE,
 SETUP, TEARDOWN, PLAY, PAUSE`.
 
 WS-Discovery (`Probe` for `NetworkVideoTransmitter`, udp/3702, broadcast + unicast)
-→ 3 responses from `192.168.1.19:3702`, `XAddrs=http://192.168.1.19:8899/onvif/device_service`.
+→ 3 responses from `<redacted-lan-host-19>:3702`, `XAddrs=http://<redacted-lan-host-19>:8899/onvif/device_service`.
 
 So the toggle did exactly what it advertises: it opened a standard RTSP + ONVIF surface
 that did not exist before.
@@ -74,12 +81,12 @@ that did not exist before.
 
 ```
 NetworkInterfaces token="eth0"  Enabled=true
-  Info:   Name=wlan0   HwAddress=30:be:29:3a:d3:b7   MTU=1500
-  IPv4:   Enabled=true  Manual  192.168.1.19/24   DHCP=false
+  Info:   Name=wlan0   HwAddress=<redacted-mac-a>   MTU=1500
+  IPv4:   Enabled=true  Manual  <redacted-lan-host-19>/24   DHCP=false
 ```
 
 `HwAddress` and `Address` match the LAN-discovered device exactly, so the device at
-`192.168.1.19` **is** the camera the owner enabled. It is manually configured (not DHCP),
+`<redacted-lan-host-19>` **is** the camera the owner enabled. It is manually configured (not DHCP),
 so it will not move.
 
 `GetDeviceInformation` (unauthenticated, see §3) reports:
@@ -88,7 +95,7 @@ so it will not move.
 |---|---|
 | Manufacturer | `macro-video-soft` |
 | Model | `IPCamera` |
-| FirmwareVersion | `2.4` (this is the ONVIF-reported number; it is NOT the same string as the owner's app-side `Hw_HsAkQQVL_WF_QQ_20240412`) |
+| FirmwareVersion | `2.4` (this is the ONVIF-reported number; it is NOT the same string as the owner's app-side `<redacted-cam1-firmware>`) |
 | SerialNumber | `123456789` — a placeholder/default, not a unique serial |
 | HardwareId | `1.0` |
 
@@ -105,11 +112,11 @@ app-side firmware string remains the only model-level evidence; treat EC39 as
 
 | URL | Response | Auth challenge | SDP |
 |---|---|---|---|
-| `rtsp://192.168.1.19:554/live/ch00_1` | `RTSP/1.0 200 OK` | **none** | 483 B |
-| `rtsp://192.168.1.19:554/live/ch00_0` | `RTSP/1.0 200 OK` | **none** | 484 B |
-| `rtsp://192.168.1.19:554/` | `RTSP/1.0 200 OK` | **none** | 484 B |
-| `rtsp://192.168.1.19:554/1` | `RTSP/1.0 200 OK` | **none** | 484 B |
-| `rtsp://192.168.1.19:554/` `/h264_stream` | `RTSP/1.0 200 OK` | **none** | 484 B |
+| `rtsp://<redacted-lan-host-19>:554/live/ch00_1` | `RTSP/1.0 200 OK` | **none** | 483 B |
+| `rtsp://<redacted-lan-host-19>:554/live/ch00_0` | `RTSP/1.0 200 OK` | **none** | 484 B |
+| `rtsp://<redacted-lan-host-19>:554/` | `RTSP/1.0 200 OK` | **none** | 484 B |
+| `rtsp://<redacted-lan-host-19>:554/1` | `RTSP/1.0 200 OK` | **none** | 484 B |
+| `rtsp://<redacted-lan-host-19>:554/` `/h264_stream` | `RTSP/1.0 200 OK` | **none** | 484 B |
 
 There is no `WWW-Authenticate` header in any response. The server does not care which URL
 is requested — an unknown path returns the same default stream description, which is
@@ -147,7 +154,7 @@ Every call below was made with **no credentials and no auth header**:
 | `GetNetworkInterfaces` | `200 OK` | interface name, **MAC**, **IP/prefix**, DHCP state |
 | `GetUsers` | `200 OK` | **`admin` / `Administrator`** — the account name and level |
 | `GetProfiles` | `200 OK` | 2 profiles, encoder config, PTZ node/config tokens, multicast address |
-| `GetStreamUri(PROFILE_000)` | `200 OK` | `rtsp://192.168.1.19/live/ch00_0` |
+| `GetStreamUri(PROFILE_000)` | `200 OK` | `rtsp://<redacted-lan-host-19>/live/ch00_0` |
 | `GetServices` | `200 OK` | media, media2, PTZ, events, imaging endpoints |
 | `GetVideoSources` | `200 OK` | source token, resolution, frame rate, full imaging block (exposure, focus, white balance, IR-cut) |
 | `GetAudioSources` | `200 OK` | 1 audio source, 2 channels |
@@ -246,7 +253,7 @@ The milestone asks for that distinction explicitly, and it matters:
 4. **Do not treat the supplied firmware screenshots as sufficient for the security
    decision** — the numbers in §1 are yours, not independently verified here.
 
-**Resume criterion:** `bash scripts/v380_security_check.sh 192.168.1.19 554 8899`
+**Resume criterion:** `bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899`
 returns **PROTECTED (exit 0)**. Until then, Stage 3 and Stage 4 stay blocked.
 
 ## 8. Evidence paths

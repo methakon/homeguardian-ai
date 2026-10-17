@@ -1,5 +1,12 @@
 # H-04 - Oracle VPS repurposing: HomeGuardian WireGuard relay + x402 retirement plan
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **STATUS: PLAN ONLY, NOTHING EXECUTED ON THE VPS.**
 No connection has been made to `161.33.146.238`; nothing has been started, stopped, installed,
 reconfigured, rebooted or deleted; no security list, NSG, host-firewall rule, DNS record or
@@ -191,7 +198,7 @@ the instance is never left having lost one thing and not yet gained the other.
 * The phone's endpoint becomes `10.66.0.2:8443`; the device client verifies the **dialled address**
   (`X509_VERIFY_PARAM_set1_ip`) with **no way to disable it** (D-03.1). Therefore the hub's server
   certificate must carry `IP:10.66.0.2`:
-  `bash tools/provision_ca.sh server --server-names "DNS:localhost,IP:127.0.0.1,IP:192.168.1.6,IP:10.66.0.2"`
+  `bash tools/provision_ca.sh server --server-names "DNS:localhost,IP:127.0.0.1,IP:<redacted-lan-host-6>,IP:10.66.0.2"`
 * Unchanged: the registry binding (certificate CN = device id **and** SHA-256 fingerprint),
   `identity_mismatch` refusal, delivery-time authorization refresh, and the two-phase durable replay
   watermark (on the hub, so it survives a relay restart).

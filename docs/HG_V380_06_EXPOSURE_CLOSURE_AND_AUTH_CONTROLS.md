@@ -1,11 +1,18 @@
 # HG-V380-06 — Exposure Closure, Correct Check Semantics, and Authentication Options
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Workstream branch:** `experiment/hg-v380-ec39-integration`
 **Evidence SHA of the exposure report:** `1ccc028d3ccdceac5fc700f181956dd899c6d3db`
 **Previous commit:** `2784d770b475ae50d34e27e8c3cf7909322c3f5e`
-**Camera under test:** first camera only, `192.168.1.19` (MAC `30:be:29:3a:d3:b7`)
+**Camera under test:** first camera only, `<redacted-lan-host-19>` (MAC `<redacted-mac-a>`)
 
 ---
 
@@ -50,7 +57,7 @@
 ### 1.2 Both checker revisions agree the exposure is gone, and they say different things about it
 
 ```
-old revision (preserved):  bash scripts/v380_security_check.sh 192.168.1.19 554 8899
+old revision (preserved):  bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899
                            -> "PROTECTED - no unauthenticated access found", exit 0
 new revision (v2):         -> RTSP/554 DISABLED, ONVIF/8899 DISABLED, exit 0
 ```
@@ -178,7 +185,7 @@ the isolated-network design below.
 ### 4.1 Shape
 
 ```
-        main home LAN (192.168.1.0/24)          isolated camera network
+        main home LAN (<redacted-lan-host-0>/24)          isolated camera network
         Airtel router, Mi A3, workstation       (no route to the internet, no route in
                     |                            except through the broker)
                     |                                    |
@@ -204,7 +211,7 @@ Properties this buys, none of which depend on the camera's own access control:
 ### 4.2 The hardware is already in the house
 
 The extender measured in `HG-V380_05` is a NAT'ing router: **it already isolates its
-`192.168.0.0/24` segment from the main LAN, and nothing can reach in from upstream.** The
+`<redacted-nat-host-0>/24` segment from the main LAN, and nothing can reach in from upstream.** The
 existing topology can therefore be turned into the design above without new equipment:
 
 1. connect the broker host to the extender's LAN side (the idle `enp5s0` Ethernet port takes
@@ -298,9 +305,9 @@ within reach of every device on the LAN.
 Commands:
 ```bash
 bash scripts/v380_security_check_selftest.sh                       # 6/6, no camera contacted
-bash scripts/v380_security_check.sh 192.168.1.19 554 8899          # -> DISABLED, DISABLED
+bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899          # -> DISABLED, DISABLED
 bash scripts/v380_security_check.sh <cam> 554 8899 --creds c.json  # adds the authorized half
-bash scripts/hg_second_camera_check.sh 192.168.0.164               # second camera reachability
+bash scripts/hg_second_camera_check.sh <redacted-nat-host-164>               # second camera reachability
 ```
 
 ## 9. Status

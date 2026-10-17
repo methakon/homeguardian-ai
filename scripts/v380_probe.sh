@@ -19,7 +19,7 @@ set -uo pipefail
 CAM="${1:-}"
 if [ -z "$CAM" ]; then
     echo "usage: bash scripts/v380_probe.sh <camera-ip>" >&2
-    echo "  e.g. bash scripts/v380_probe.sh 192.168.1.19" >&2
+    echo "  e.g. bash scripts/v380_probe.sh <camera-lan-address>" >&2
     exit 2
 fi
 

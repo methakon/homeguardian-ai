@@ -1,11 +1,18 @@
 # HG-V380-07 — Post-Network-Change Rediscovery and Permanent Multi-Network Design
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Workstream branch:** `experiment/hg-v380-ec39-integration`
 **Milestone base commit named in the brief:** `2784d770b475ae50d34e27e8c3cf7909322c3f5e`
 **Actual HEAD when this ran:** `28c249d7282bec05cc9b5b3166998a79abdb0d6b` (the brief's base is one commit behind; nothing in that commit touches networking)
-**Camera under test:** second camera only, reported at `192.168.0.164`
+**Camera under test:** second camera only, reported at `<redacted-nat-host-164>`
 
 ---
 
@@ -18,9 +25,9 @@ Measured, not assumed:
 
 | Question | Answer |
 |---|---|
-| Is the workstation on Tenda's `kusankurdhar` network? | **No — it remains on Airtel** (`192.168.1.6/24`, default via `192.168.1.1`, SSID `Airtel_Dhar`, BSSID `08:AA:89:A7:7A:E6`) |
-| Is the second camera reachable at `192.168.0.164`? | **No** — 100 % ICMP loss, every probed port filtered (timeout, not refusal) |
-| Is the extender still NAT'ing? | **Yes, as far as anything here can tell** — `192.168.0.0/24` is still not on-link, still not routed, and the extender still broadcasts `kusankurdhar` from `192.168.1.3` |
+| Is the workstation on Tenda's `kusankurdhar` network? | **No — it remains on Airtel** (`<redacted-lan-host-6>/24`, default via `<redacted-lan-host-1>`, SSID `<redacted-wifi-ssid>`, BSSID `<redacted-mac-g>`) |
+| Is the second camera reachable at `<redacted-nat-host-164>`? | **No** — 100 % ICMP loss, every probed port filtered (timeout, not refusal) |
+| Is the extender still NAT'ing? | **Yes, as far as anything here can tell** — `<redacted-nat-host-0>/24` is still not on-link, still not routed, and the extender still broadcasts `kusankurdhar` from `<redacted-lan-host-3>` |
 | Did any new LAN client appear? | **No** — the neighbour table holds exactly the same six entries as before the change |
 | Did the workstation gain a second path? | **No** — `enp5s0` is still `NO-CARRIER`, no cable |
 
@@ -37,26 +44,26 @@ Nothing was reconfigured. The first camera's ONVIF state was re-verified as stil
 ### 1.1 Interfaces, routes, subnets
 
 ```
-wlp6s0   UP    192.168.1.6/24      SSID Airtel_Dhar, BSSID 08:AA:89:A7:7A:E6 (2.4 GHz, ch 6)
-enp5s0   DOWN  <NO-CARRIER>        MAC 00:e0:26:1d:03:8f   (no cable)
+wlp6s0   UP    <redacted-lan-host-6>/24      SSID <redacted-wifi-ssid>, BSSID <redacted-mac-g> (2.4 GHz, ch 6)
+enp5s0   DOWN  <NO-CARRIER>        MAC <redacted-mac-h>   (no cable)
 docker0 / br-412d2fc93c32          local container bridges, unrelated
 
-default via 192.168.1.1 dev wlp6s0 proto dhcp src 192.168.1.6 metric 600
-directly connected: 192.168.1.0/24 (wlp6s0), 172.17.0.0/16, 172.18.0.0/16
-nothing on 192.168.0.0/24
+default via <redacted-lan-host-1> dev wlp6s0 proto dhcp src <redacted-lan-host-6> metric 600
+directly connected: <redacted-lan-host-0>/24 (wlp6s0), 172.17.0.0/16, 172.18.0.0/16
+nothing on <redacted-nat-host-0>/24
 ```
 
 ### 1.2 The workstation did **not** move to the Tenda network
 
-`nmcli dev status` → `wlp6s0:wifi:connected:Airtel_Dhar`. The DHCP lease is unchanged
-(`192.168.1.6/24`, gateway and DNS `192.168.1.1`).
+`nmcli dev status` → `wlp6s0:wifi:connected:<redacted-wifi-ssid>`. The DHCP lease is unchanged
+(`<redacted-lan-host-6>/24`, gateway and DNS `<redacted-lan-host-1>`).
 
 ### 1.3 The extender and its network are still there
 
-- `kusankurdhar` is still broadcast by BSSID **`50:0F:F5:7F:3D:31`** on channel 6
+- `kusankurdhar` is still broadcast by BSSID **`<redacted-mac-c>`** on channel 6
   (RSSI 27). Note it took **three rescans** to appear again — the same flakiness recorded in
   `HG_V380_05`; one scan is not evidence of absence, from either the laptop or the phone.
-- The Tenda host `192.168.1.3` (same MAC) is still on the Airtel LAN: it does not answer ICMP,
+- The Tenda host `<redacted-lan-host-3>` (same MAC) is still on the Airtel LAN: it does not answer ICMP,
   but its ARP entry resolves `REACHABLE`, so the device is alive and powered.
 - It still exposes **no** TCP port from the Airtel side (checked 80/443/53/8080/8443), exactly
   as before.
@@ -64,12 +71,12 @@ nothing on 192.168.0.0/24
 ### 1.4 Neighbour table — no new client
 
 ```
-192.168.1.1   08:aa:89:a7:7a:e6   ZTE F670L V9.0 gateway
-192.168.1.3   50:0f:f5:7f:3d:31   Tenda extender (kusankurdhar)
-192.168.1.4   20:93:94:95:bc:67   unidentified (no open ports, replies to ping)
-192.168.1.14  ba:ba:6b:94:0c:03   Mi A3 (randomised MAC)
-192.168.1.16  8c:c5:e1:ee:18:f5   Panasonic ELUGA I7
-192.168.1.19  30:be:29:3a:d3:b7   camera 1
+<redacted-lan-host-1>   <redacted-mac-g>   ZTE F670L V9.0 gateway
+<redacted-lan-host-3>   <redacted-mac-c>   Tenda extender (kusankurdhar)
+<redacted-lan-host-4>   <redacted-mac-f>   unidentified (no open ports, replies to ping)
+<redacted-lan-host-14>  <redacted-mac-e>   Mi A3 (randomised MAC)
+<redacted-lan-host-16>  <redacted-mac-d>   Panasonic ELUGA I7
+<redacted-lan-host-19>  <redacted-mac-a>   camera 1
 ```
 
 Identical to the set recorded in `HG_V380_05`. **A note on what this proves:** an ARP table
@@ -85,11 +92,11 @@ Every probe below is a single-cast/multicast protocol query, not a subnet scan:
 | SSDP `M-SEARCH ssdp:all` → 239.255.255.250:1900 | **no responder** |
 | mDNS PTR `_services._dns-sd._udp.local` → 224.0.0.251:5353 | **no responder** |
 | ONVIF WS-Discovery `Probe`/`NetworkVideoTransmitter` → 239.255.255.250:3702 + broadcast | **no responder** |
-| Targeted probe of `192.168.0.164` (ICMP + 11 camera ports) | **all filtered, no answer** |
+| Targeted probe of `<redacted-nat-host-164>` (ICMP + 11 camera ports) | **all filtered, no answer** |
 | Targeted probe of the two unexplained hosts (`.3`, `.4`) on 554/8899/8800/9800/80/443 | **no open ports on either** |
 
 **Conclusion for Stage 1: the topology I recorded in `HG_V380_05` still holds.** The extender
-is still a NAT'ing router at `192.168.1.3` serving its own `192.168.0.0/24`, and `192.168.0.164`
+is still a NAT'ing router at `<redacted-lan-host-3>` serving its own `<redacted-nat-host-0>/24`, and `<redacted-nat-host-164>`
 is still behind that boundary. **If the owner changed something, it was not on the path this
 workstation can see** — see §6 for what would make the change observable.
 
@@ -114,7 +121,7 @@ Two honest notes on the firmware question:
   simply not enabled. From the network side both look identical — nothing listening — which is
   why the app screenshot is the decisive evidence and why `HG_V380_06` insists on classifying
   rather than declaring.
-- **The `AppEV2W_VA3` family is not the first camera's `AppEV3L` family** and nothing measured
+- **The `<redacted-cam2-software-family>` family is not the first camera's `<redacted-sw-token>` family** and nothing measured
   on camera 1 is carried over. The only existing data point for this family is a public
   reverse-engineering project whose premise is that these cameras encrypt their stream and
   expose no native RTSP/ONVIF — a **hypothesis to test**, not a finding.
@@ -128,13 +135,13 @@ it. No decryption, no bypass, no password guessing — those remain prohibited.
 ### Option A — Tenda in bridge/AP mode
 
 The camera keeps associating wirelessly through the Tenda but receives an address on the Airtel
-LAN (`192.168.1.0/24`).
+LAN (`<redacted-lan-host-0>/24`).
 
 - **Routing behaviour:** confirmed simple — one broadcast domain, camera gets a DHCP lease from
   the Airtel router; reachable by every authorised node with no NAT traversal.
 - **Disruption:** highest of the three. Every current client of `kusankurdhar` is re-addressed
-  and drops for the duration; the extender's own `192.168.0.1` admin plane disappears; anything
-  that has pinned a `192.168.0.x` address breaks until it re-leases. Requires admin access and
+  and drops for the duration; the extender's own `<redacted-nat-host-1>` admin plane disappears; anything
+  that has pinned a `<redacted-nat-subnet>.x` address breaks until it re-leases. Requires admin access and
   **owner approval**, ideally with the owner present.
 - **Security consequence, stated plainly:** it puts the camera **on the same subnet as every
   other household device**, which is the opposite of what `HG_V380_06` recommends, because this
@@ -144,7 +151,7 @@ LAN (`192.168.1.0/24`).
 
 ### Option B — keep the Tenda in router mode, reach it through a local dual-network adapter (RECOMMENDED)
 
-The Tenda already provides isolation for free: its `192.168.0.0/24` is unreachable from the
+The Tenda already provides isolation for free: its `<redacted-nat-host-0>/24` is unreachable from the
 Airtel LAN, and nothing can reach in from upstream. Give **one** trusted host a second interface
 on that segment:
 
@@ -152,9 +159,9 @@ on that segment:
   workstation's idle `enp5s0`. This is a **zero-configuration** change — no router, extender or
   firewall setting is touched, and Wi-Fi keeps the Airtel address and default route, so both
   networks are reachable simultaneously and routing is unambiguous (a directly connected
-  `192.168.0.0/24` route via `enp5s0`, everything else via Airtel).
+  `<redacted-nat-host-0>/24` route via `enp5s0`, everything else via Airtel).
 - **Routing behaviour:** confirmed by construction, and verifiable in one command
-  (`ip route get 192.168.0.164` must resolve via `enp5s0`, not the default gateway).
+  (`ip route get <redacted-nat-host-164>` must resolve via `enp5s0`, not the default gateway).
 - **Disruption:** none to any other device. The extender is not reconfigured.
 - **Security:** this *is* the isolated-segment design from `HG_V380_06` §4 — the camera is
   reachable by exactly one host, which then enforces consent, per-payload authorization and a
@@ -183,7 +190,7 @@ subnet as the whole household.
 Re-verified during this milestone, configuration untouched:
 
 ```
-bash scripts/v380_security_check.sh 192.168.1.19 554 8899
+bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899
   RTSP/554    DISABLED   no RTSP listener (connection refused)
   ONVIF/8899  DISABLED   no ONVIF listener (connection refused)
 ```
@@ -212,21 +219,21 @@ observable, **any one** of the following closes it:
    **V380 Pro app now shows for the second camera** (the app's device detail page carries it).
    That is the single most useful piece of information and it costs you one screen.
 2. **Cable the Tenda's LAN port to this workstation's Ethernet port** (`enp5s0`,
-   `00:e0:26:1d:03:8f`, currently NO-CARRIER). No configuration changes anywhere; the camera
+   `<redacted-mac-h>`, currently NO-CARRIER). No configuration changes anywhere; the camera
    becomes directly reachable and Stage 2 can run immediately.
 3. **Or read the camera's address off the Airtel router's DHCP client list** and pass it on
    (the router admin needs your password; I did not access it).
 
 If instead the change was to put the extender into bridge mode, note that the camera would then
-appear on `192.168.1.0/24` — and `kusankurdhar` would normally still broadcast, as it does now,
+appear on `<redacted-lan-host-0>/24` — and `kusankurdhar` would normally still broadcast, as it does now,
 so I would need its new Airtel-assigned address from one of the three sources above.
 
 ## 7. Evidence paths
 
 | Artifact | Path / command |
 |---|---|
-| Reachability verdict for the second camera | `bash scripts/hg_second_camera_check.sh 192.168.0.164` |
-| Access-control classification (camera 1, preserved state) | `bash scripts/v380_security_check.sh 192.168.1.19 554 8899` |
+| Reachability verdict for the second camera | `bash scripts/hg_second_camera_check.sh <redacted-nat-host-164>` |
+| Access-control classification (camera 1, preserved state) | `bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899` |
 | Checker self-test (proves the classifier can fail) | `bash scripts/v380_security_check_selftest.sh` |
 | Prior topology evidence | `docs/HG_V380_05_SECOND_CAMERA_EXTENDER_TOPOLOGY.md` |
 | Exposure closure + auth options | `docs/HG_V380_06_EXPOSURE_CLOSURE_AND_AUTH_CONTROLS.md` |
@@ -236,7 +243,7 @@ so I would need its new Airtel-assigned address from one of the three sources ab
 
 | Stage | Status |
 |---|---|
-| 1 — actual new network state | **COMPLETE.** Workstation still on Airtel; extender still NAT'ing at `192.168.1.3` broadcasting `kusankurdhar`; `192.168.0.164` still unreachable; no new client; no second interface. **The reported change is not observable from here** |
+| 1 — actual new network state | **COMPLETE.** Workstation still on Airtel; extender still NAT'ing at `<redacted-lan-host-3>` broadcasting `kusankurdhar`; `<redacted-nat-host-164>` still unreachable; no new client; no second interface. **The reported change is not observable from here** |
 | 2 — inspect the second camera | **BLOCKED — no reachability.** Nothing tested, nothing assumed |
 | 3 — permanent design | **COMPLETE (analysis only).** Option B recommended: dual-network via the idle Ethernet port — zero-configuration, lowest disruption, and it doubles as the `HG_V380_06` isolated-segment design. Option A needs owner approval plus a re-introduced isolation mechanism. Option C deferred and unchanged |
 | 4 — report + preserve | **DONE.** First camera's disabled ONVIF state re-verified and preserved; no system touched |

@@ -308,8 +308,8 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Device | MediaTek MT6580 clone (`0e8d:201c`), API 27, armeabi-v7a, ~962 MB RAM, ~12.1 GB storage |
 | App | installed (v0.2.0, 883,891 B), launched clean, idle by design, permissions granted |
 | Node identity | `hg-443a03b54537c21f` (reported by the app's own native layer) |
-| Provisioning | CA + server cert (SAN contains IP 192.168.1.6) + unique device cert; credential_id matches the registry |
-| Ingress | running as a least-privilege container, `tls=mutual(min 1.2)`, `registry_devices=1 paired=1`, publishing 192.168.1.6:8443 |
+| Provisioning | CA + server cert (SAN contains IP 10.20.30.6) + unique device cert; credential_id matches the registry |
+| Ingress | running as a least-privilege container, `tls=mutual(min 1.2)`, `registry_devices=1 paired=1`, publishing 10.20.30.6:8443 |
 | Hub accepts this device | **VERIFIED**: `accepted=3 rejected=0` over mutual TLS; spoofed id refused `identity_mismatch`; watermark durable at `last_sequence=3` |
 | Phone over Wi-Fi | **PENDING OPERATOR** (phone is locked; Import + Connect + consent + Start are on-device actions) |
 | Camera/mic on hardware | **PENDING OPERATOR** |
@@ -362,7 +362,7 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | What it verifies | real TLS handshake; server cert chained to the private CA AND covering the expected name/address; mutual-TLS demand reported separately - **not** a TCP port check, and **not** device authentication (`device_auth=NOT_PERFORMED`) |
 | Acceptance (container test stage) | `scripts/verify_ingress_healthcheck.sh` - all checks pass, including the negatives (wrong name, non-TLS listener, missing CA, missing configured CA) |
 | Regressions | D-03 TLS acceptance 24/24, TLS identity 9/9, CA isolation 14/14 (1 skipped), full ctest green |
-| Live deployment | `docker inspect` -> `status=running health=healthy` (uid 10001, 0 restarts); the health log carries the probe's real output; the listener the phone dials is up on 192.168.1.6:8443 |
+| Live deployment | `docker inspect` -> `status=running health=healthy` (uid 10001, 0 restarts); the health log carries the probe's real output; the listener the phone dials is up on 10.20.30.6:8443 |
 | Operator prerequisites confirmed | the mounted credential tree must be readable by the container uid (`sudo chown 10001:10001`, else exit 78) and the data volumes writable by it |
 | H-03 physical acquisition / standalone Wi-Fi | **STILL PENDING** - operator-gated, not claimed |
 

@@ -1,5 +1,12 @@
 # HG-NET-ARCH-01 — Network-Independent Camera Integration
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Branch:** `experiment/hg-v380-ec39-integration`
@@ -17,7 +24,7 @@ The correction is accepted and it changes the design, not the measurements:
 - **The Tenda's NAT is no longer a problem to solve — it is the normal case.** A site connector that
   sits *inside* the camera's own segment and **dials out** never needs inbound access, so camera 2
   behind a NAT'ing extender on a different subnet works exactly as well as a camera on the same LAN.
-  **Bridge mode is not required, and no permanent dependency on `192.168.1.x`, `192.168.0.x`, the
+  **Bridge mode is not required, and no permanent dependency on `<redacted-lan-subnet>.x`, `<redacted-nat-subnet>.x`, the
   Tenda, or a cable to the development workstation is part of this design.**
 - **Identity is logical, not locational.** A camera is `{site_id, device_id}` bound to a keypair;
   IP address, MAC, SSID and subnet are *attributes that may change at any moment*, never identity.
@@ -31,7 +38,7 @@ The correction is accepted and it changes the design, not the measurements:
   control plane as a first-class registered device.
 
 And the immediate development task, re-measured at 20:14 IST: **the workstation's connection is
-unchanged** (Airtel, `192.168.1.6/24`, via `192.168.1.1`; `enp5s0` still `NO-CARRIER`) and camera 2
+unchanged** (Airtel, `<redacted-lan-host-6>/24`, via `<redacted-lan-host-1>`; `enp5s0` still `NO-CARRIER`) and camera 2
 is still unreachable. That is a *temporary development-convenience* problem only — §11 gives the
 smallest thing that unblocks capability testing, and §12 records what is still needed from you.
 
@@ -272,7 +279,7 @@ enforces anything.
 | Dropped as permanent | Replaced by |
 |---|---|
 | Tenda in bridge/AP mode | **nothing** — a NAT'ing extender is a supported, normal topology for a site connector |
-| `192.168.1.0/24` / `192.168.0.0/24` assumptions | logical `site_id` + outbound registration |
+| `<redacted-lan-host-0>/24` / `<redacted-nat-host-0>/24` assumptions | logical `site_id` + outbound registration |
 | An Ethernet cable to the development workstation | a site connector on the site's own segment (the cable stays a *development* convenience only, §11) |
 | Oracle as a media path | Oracle as coordination only, media direct or site-originated |
 | Mi A3 as the fixed analysis location | capture/analytics/viewing as independently deployable roles |
@@ -295,7 +302,7 @@ This is a **development-only bridge**, explicitly temporary, and **removable wit
 design in §3–§10**:
 
 - **Smallest step:** one Ethernet cable from a LAN port of the Tenda (or any port on the camera's own
-  segment) into this workstation's currently idle `enp5s0` (`00:e0:26:1d:03:8f`, `NO-CARRIER`). No
+  segment) into this workstation's currently idle `enp5s0` (`<redacted-mac-h>`, `NO-CARRIER`). No
   router, extender or firewall setting changes; Wi-Fi keeps the Airtel address and default route, and
   routing is unambiguous (directly connected route for the camera segment, everything else via
   Airtel). Confirmed by `ip route get <camera-ip>` naming `enp5s0`.
@@ -307,17 +314,17 @@ design in §3–§10**:
 
 Testing order once there is a path (unchanged from `HG_V380_06`): access-control check **first**; if
 any interface is EXPOSED, stop media work and report; then RTSP/ONVIF inventory; then capability
-(`AppEV2W_VA3` family — do not carry over anything measured on camera 1's `AppEV3L`); no decryption,
+(`<redacted-cam2-software-family>` family — do not carry over anything measured on camera 1's `<redacted-sw-token>`); no decryption,
 no bypass, no credential guessing.
 
-**Current state, re-measured 20:14 IST:** workstation still on Airtel (`192.168.1.6/24` via
-`192.168.1.1`), `enp5s0` still `NO-CARRIER`, camera 2 still unreachable, and the first camera's ONVIF
+**Current state, re-measured 20:14 IST:** workstation still on Airtel (`<redacted-lan-host-6>/24` via
+`<redacted-lan-host-1>`), `enp5s0` still `NO-CARRIER`, camera 2 still unreachable, and the first camera's ONVIF
 remains **DISABLED** (security restrictions intact, unchanged by this milestone).
 
 ## 12. What is needed from the owner
 
 1. **The address the V380 Pro app currently shows for camera 2** (the app's device page carries it) —
-   the fastest way to confirm whether it is still `192.168.0.164` or has moved.
+   the fastest way to confirm whether it is still `<redacted-nat-host-164>` or has moved.
 2. **One cable into `enp5s0`** (or the Wi-Fi alternative above) to create a path for capability
    testing.
 3. Confirmation of whether camera 2's Advanced settings still shows **no ONVIF row** (absent vs

@@ -9,7 +9,7 @@
 // WHY IT IS SHAPED THIS WAY
 //   The two V380 units failed in two different ways, and both failures are
 //   representable here rather than hidden:
-//     * camera 1 (Hw_HsAkQQVL_WF_QQ_20240412): the standard interface existed and
+//     * camera 1 (<redacted-cam1-firmware>): the standard interface existed and
 //       enforced nothing -> an adapter for it must be able to report
 //       `refused_unsafe_interface` and be left stopped.
 //     * camera 2 (Hw_DEMOBOARD_XHR_E_V1.0_WF_20240101): no standard interface exists

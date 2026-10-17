@@ -595,11 +595,11 @@ HomeGuardian is not to be exposed to the public internet. The deployment publish
 host firewall should restrict it to the LAN or, better, to the specific devices:
 
 ```bash
-# Restrict the ingress to the home subnet (example: 192.168.1.0/24 on enp3s0)
-sudo nft add rule inet filter input tcp dport 8443 ip saddr != 192.168.1.0/24 drop
+# Restrict the ingress to the home subnet (example: 10.20.30.0/24 on enp3s0)
+sudo nft add rule inet filter input tcp dport 8443 ip saddr != 10.20.30.0/24 drop
 
 # Or with ufw: allow only from the LAN.
-sudo ufw allow from 192.168.1.0/24 to any port 8443 proto tcp
+sudo ufw allow from 10.20.30.0/24 to any port 8443 proto tcp
 sudo ufw deny 8443/tcp
 
 # Do NOT forward 8443 from the WAN. There is no public-endpoint mode, no ACME
@@ -866,7 +866,7 @@ What the probe proves, and what it deliberately does not:
 Example output (live, from the healthy container's own health log):
 
     hg_ingress_probe: OK endpoint=127.0.0.1:8443 tls=TLSv1.3 server=CN=homeguardian-hub
-      san=DNS:ingress,DNS:localhost,IP:192.168.1.6 server_cert_verified=yes
+      san=DNS:ingress,DNS:localhost,IP:10.20.30.6 server_cert_verified=yes
       mutual_tls_demanded=yes device_auth=NOT_PERFORMED
       detail=server identity verified; the server demanded a client certificate (tlsv13 alert certificate required)
 

@@ -1,11 +1,18 @@
 # HG-V380-08 — Second Camera Verified on the Airtel Subnet
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Branch:** `experiment/hg-v380-ec39-integration`
 **Reference commit:** `ca0ac8c5cac73d53a438ca8d4f6fa2d693d092e9`
-**Camera under test:** camera 2, now reported by the V380 Pro app at **`192.168.1.20`**
-(previous `192.168.0.164` superseded)
+**Camera under test:** camera 2, now reported by the V380 Pro app at **`<redacted-lan-host-20>`**
+(previous `<redacted-nat-host-164>` superseded)
 **Scope note:** this same-subnet connection is a **development arrangement**. The
 network-independent multi-site design in `docs/HG_NET_ARCH_01_*.md` is unchanged and does not
 depend on this subnet.
@@ -17,7 +24,7 @@ depend on this subnet.
 | Question | Answer |
 |---|---|
 | Reachable from the workstation? | **YES** — directly on-link, no NAT in the path, `0 %` packet loss |
-| Identity correlated? | **YES** — MAC `60:dc:81:6b:86:3d`, OUI **AltoBeam Inc.** (the same Wi-Fi silicon vendor as camera 1), distinct MAC and a different firmware family |
+| Identity correlated? | **YES** — MAC `<redacted-mac-b>`, OUI **AltoBeam Inc.** (the same Wi-Fi silicon vendor as camera 1), distinct MAC and a different firmware family |
 | Standard local interfaces? | **NONE.** Only `tcp/8800` and `tcp/9800` listen — identical to camera 1's as-shipped surface |
 | Unauthorized media exposure? | **None found on any documented interface.** RTSP `DISABLED`, ONVIF `DISABLED`; no ONVIF discovery responder; the vendor port yields nothing without a login handshake |
 | Secure local media interface for integration? | **DOES NOT EXIST on this firmware** — so real capability measurement (§5) is **not possible**, and no adapter should be built against a non-existent interface |
@@ -32,24 +39,24 @@ integrated through RTSP/ONVIF today.
 ## 1. Reachability (step 1)
 
 ```
-ip route get 192.168.1.20   ->  192.168.1.20 dev wlp6s0 src 192.168.1.6     (directly connected)
+ip route get <redacted-lan-host-20>   ->  <redacted-lan-host-20> dev wlp6s0 src <redacted-lan-host-6>     (directly connected)
 ping -c 3                   ->  3/3 received, 0% loss, rtt avg 5.2 ms, ttl 255
 ```
 
-The route names the **local interface**, not the default gateway: `192.168.1.20` is on the same
+The route names the **local interface**, not the default gateway: `<redacted-lan-host-20>` is on the same
 `/24` as the workstation, so there is **no NAT boundary** between them — a complete change from the
-`192.168.0.164` situation, where every packet left for the ISP.
+`<redacted-nat-host-164>` situation, where every packet left for the ISP.
 
 ## 2. Device identity correlation (step 2 — done BEFORE touching services)
 
 | Evidence | Value |
 |---|---|
-| ARP neighbour | `192.168.1.20` → `60:dc:81:6b:86:3d` (`REACHABLE`) |
+| ARP neighbour | `<redacted-lan-host-20>` → `<redacted-mac-b>` (`REACHABLE`) |
 | OUI vendor (IEEE registry) | **AltoBeam Inc.** |
-| Camera 1's OUI for contrast | `30:be:29…` → **also AltoBeam Inc.** |
-| MAC comparison | **different** (`60:dc:81…` vs `30:be:29…`) → two distinct devices, not one camera seen twice |
-| Reported network | `Airtel_Dhar`, Wi-Fi station, DHCP (owner screenshots) |
-| Firmware family | `AppEV2W_VA3` / `Hw_AWT3610E_XHR_E_V1.0_WF_20230807` (owner-supplied) vs camera 1's `AppEV3L_V2` / `Hw_HsAkQQVL_WF_QQ_20240412` |
+| Camera 1's OUI for contrast | `<redacted-mac-prefix>…` → **also AltoBeam Inc.** |
+| MAC comparison | **different** (`<redacted-mac-prefix>…` vs `<redacted-mac-prefix>…`) → two distinct devices, not one camera seen twice |
+| Reported network | `<redacted-wifi-ssid>`, Wi-Fi station, DHCP (owner screenshots) |
+| Firmware family | `<redacted-cam2-software-family>` / `<redacted-cam2-firmware>` (owner-supplied) vs camera 1's `<redacted-cam1-software-family>` / `<redacted-cam1-firmware>` |
 
 Both cameras using AltoBeam Wi-Fi silicon is expected and is **not** an identity: the OUI
 identifies the radio vendor, and it is shared across the family's units. The distinct MAC plus the
@@ -93,7 +100,7 @@ job and is available on request — it was deliberately not taken beyond the sta
 ### 4.1 Access-control classification
 
 ```
-bash scripts/v380_security_check.sh 192.168.1.20 554 8899
+bash scripts/v380_security_check.sh <redacted-lan-host-20> 554 8899
   RTSP/554     DISABLED   no RTSP listener (connection refused)
   ONVIF/8899   DISABLED   no ONVIF listener (connection refused)
 ```
@@ -103,7 +110,7 @@ report does not claim it is. There is no interface to expose.
 
 ### 4.2 Behaviour of the one interface that is live — no credential sent
 
-| Property | Camera 2 (`192.168.1.20`) | Camera 1, same probe | Read |
+| Property | Camera 2 (`<redacted-lan-host-20>`) | Camera 1, same probe | Read |
 |---|---|---|---|
 | 8800 on bare connect | silent, waits for a client hello | silent | same |
 | 8800 on HTTP `GET /` | 0 bytes, connection closed | 0 bytes, closed | **not HTTP** |
@@ -170,18 +177,18 @@ precisely so that decision stays separable.
 ## 7. Camera 1 kept separate (step 7)
 
 ```
-bash scripts/v380_security_check.sh 192.168.1.19 554 8899
+bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899
   RTSP/554    DISABLED    ONVIF/8899  DISABLED
 ports: 554 refused, 8899 refused, 8800 OPEN, 9800 OPEN
 ```
 
-Camera 1 remains at `192.168.1.19`, MAC `30:be:29:3a:d3:b7`, ONVIF **disabled**, unchanged and
+Camera 1 remains at `<redacted-lan-host-19>`, MAC `<redacted-mac-a>`, ONVIF **disabled**, unchanged and
 untouched by this milestone. Its evidence (`HG_V380_01`/`_02`/`_04`) is not mixed with camera 2's
 anywhere in this document.
 
 ## 8. What is still true about the network
 
-Nothing here creates a dependency: camera 2 is currently on `Airtel_Dhar` at `192.168.1.20` via DHCP,
+Nothing here creates a dependency: camera 2 is currently on `<redacted-wifi-ssid>` at `<redacted-lan-host-20>` via DHCP,
 and **that address is a DHCP lease, not an identity**. Per `HG_NET_ARCH_01`, the permanent design
 keys on `{site_id, device_id}` + a credential, with the address as a refreshable `endpoint`
 attribute. This same-subnet arrangement is development-only, as instructed.
@@ -189,11 +196,11 @@ attribute. This same-subnet arrangement is development-only, as instructed.
 ## 9. Reproduce
 
 ```bash
-ip route get 192.168.1.20 && ping -c 3 192.168.1.20
-ip neighbor | grep '192.168.1.20'                      # MAC -> OUI lookup
-bash scripts/v380_security_check.sh 192.168.1.20 554 8899
-bash scripts/v380_probe.sh 192.168.1.20                # port state + listener behaviour
-bash scripts/v380_security_check.sh 192.168.1.19 554 8899   # camera 1: still DISABLED
+ip route get <redacted-lan-host-20> && ping -c 3 <redacted-lan-host-20>
+ip neighbor | grep '<redacted-lan-host-20>'                      # MAC -> OUI lookup
+bash scripts/v380_security_check.sh <redacted-lan-host-20> 554 8899
+bash scripts/v380_probe.sh <redacted-lan-host-20>                # port state + listener behaviour
+bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899   # camera 1: still DISABLED
 ```
 
 ## 10. Status
@@ -201,7 +208,7 @@ bash scripts/v380_security_check.sh 192.168.1.19 554 8899   # camera 1: still DI
 | Step | Status |
 |---|---|
 | 1 — reachability | **DONE** — reachable on-link, 0 % loss, no NAT |
-| 2 — identity correlation before probing | **DONE** — `60:dc:81:6b:86:3d` (AltoBeam), distinct from camera 1, matches the app report and the port signature |
+| 2 — identity correlation before probing | **DONE** — `<redacted-mac-b>` (AltoBeam), distinct from camera 1, matches the app report and the port signature |
 | 3 — documented interface inventory | **DONE** — only 8800/9800; no RTSP, ONVIF, HTTP. Full-range inventory deliberately NOT run (scope); disclosed as a residual gap |
 | 4 — exposure test before integration | **DONE** — no anonymous media or state on any documented interface; vendor-protocol authentication left explicitly unverified |
 | 5 — capability measurement | **NOT POSSIBLE** — no secure supported local interface exists; no capability figure is claimed for camera 2 |

@@ -1,5 +1,12 @@
 # HG-V380-01 — Live V380 EC39 Camera Discovery
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Workstream branch:** `experiment/hg-v380-ec39-integration`
@@ -27,8 +34,8 @@ ports only, to establish which host is *not* the camera.
 
 ## 2. Method (minimally invasive, bounded)
 
-1. Interface and subnet from the host's own Wi-Fi interface (`wlp6s0`, 192.168.1.0/24).
-2. Host liveness: ICMP sweep of 192.168.1.0/24 (1 packet, 1 s timeout, 50 threads).
+1. Interface and subnet from the host's own Wi-Fi interface (`wlp6s0`, <redacted-lan-host-0>/24).
+2. Host liveness: ICMP sweep of <redacted-lan-host-0>/24 (1 packet, 1 s timeout, 50 threads).
 3. ARP/neighbour table read (`ip neighbor`) for MAC addresses of the hosts that answered.
 4. Vendor identification: MAC OUI looked up against the IEEE registry (`api.macvendors.com`).
 5. Per-host TCP port profile, restricted to a fixed list of camera-relevant ports
@@ -46,23 +53,23 @@ ports only, to establish which host is *not* the camera.
 
 | Address | MAC | OUI vendor (IEEE registry) | Open TCP | Assessment |
 |---|---|---|---|---|
-| 192.168.1.1 | 08:aa:89:a7:7a:e6 | **ZTE Corporation** | 53, 80, 443 | Home gateway — HTTP title decodes to `F670LV9.0` (ZTE F670L GPON ONT/router) |
-| 192.168.1.3 | 50:0f:f5:7f:3d:31 | Tenda Technology (Dongguan) | none | Tenda network device (no open TCP) |
-| 192.168.1.4 | 20:93:94:95:bc:67 | not in registry (no PTR record) | none | Unidentified household device, not a camera by port signature |
-| 192.168.1.6 | — | — | 80, 8443 | **This workstation** (HomeGuardian demo surface) |
-| 192.168.1.14 | ba:ba:6b:94:0c:03 | locally-administered (randomized MAC) | none | Phone-class device (MAC randomization) |
-| 192.168.1.16 | 8c:c5:e1:ee:18:f5 | ShenZhen Konka Telecom | none | Consumer electronics (Konka-branded) |
-| **192.168.1.19** | **30:be:29:3a:d3:b7** | **AltoBeam Inc.** | **8800, 9800** | **Camera candidate — see §4** |
+| <redacted-lan-host-1> | <redacted-mac-g> | **ZTE Corporation** | 53, 80, 443 | Home gateway — HTTP title decodes to `F670LV9.0` (ZTE F670L GPON ONT/router) |
+| <redacted-lan-host-3> | <redacted-mac-c> | Tenda Technology (Dongguan) | none | Tenda network device (no open TCP) |
+| <redacted-lan-host-4> | <redacted-mac-f> | not in registry (no PTR record) | none | Unidentified household device, not a camera by port signature |
+| <redacted-lan-host-6> | — | — | 80, 8443 | **This workstation** (HomeGuardian demo surface) |
+| <redacted-lan-host-14> | <redacted-mac-e> | locally-administered (randomized MAC) | none | Phone-class device (MAC randomization) |
+| <redacted-lan-host-16> | <redacted-mac-d> | ShenZhen Konka Telecom | none | Consumer electronics (Konka-branded) |
+| **<redacted-lan-host-19>** | **<redacted-mac-a>** | **AltoBeam Inc.** | **8800, 9800** | **Camera candidate — see §4** |
 
-No device other than 192.168.1.19 exposes any camera-relevant port. Two hosts that were
-expected to be candidates on the earlier ARP read (192.168.1.3, 192.168.1.4) have **zero**
+No device other than <redacted-lan-host-19> exposes any camera-relevant port. Two hosts that were
+expected to be candidates on the earlier ARP read (<redacted-lan-host-3>, <redacted-lan-host-4>) have **zero**
 open TCP ports on a full 1–65535 sweep.
 
 ---
 
 ## 4. Camera identification
 
-**Verified on the LAN:** `192.168.1.19`, MAC `30:be:29:3a:d3:b7` (OUI **AltoBeam Inc.**,
+**Verified on the LAN:** `<redacted-lan-host-19>`, MAC `<redacted-mac-a>` (OUI **AltoBeam Inc.**,
 a Wi-Fi silicon vendor whose parts are used in low-cost IP cameras).
 
 Evidence that this host is the V380/Macro-video camera:
@@ -87,7 +94,7 @@ Evidence that this host is the V380/Macro-video camera:
 The brief lists the camera's identity as *historical owner-provided*: "V380 Smart Net Camera,
 model EC39, E27 bulb-style dual-lens PTZ, 2.4 GHz, V380 / V380 Pro app". **This document does
 not upgrade any of that to verified.** From the LAN alone I can prove *a* Macro-video-signature
-camera is at 192.168.1.19; I cannot prove it is specifically the EC39, nor read its firmware
+camera is at <redacted-lan-host-19>; I cannot prove it is specifically the EC39, nor read its firmware
 version, device ID or serial, because:
 
 - the V380 app is the only authorized source for the device identity block, and
@@ -100,7 +107,7 @@ version, device ID or serial, because:
 2. Read and report: device model string, **firmware / system software version** (the vendor FAQ
    locates this at *App → Device Configuration → Device Upgrade → System Software Version*),
    and the **IP / MAC** the app shows for the device.
-3. Compare the app's IP/MAC with `192.168.1.19` / `30:be:29:3a:d3:b7`. If they match, the
+3. Compare the app's IP/MAC with `<redacted-lan-host-19>` / `<redacted-mac-a>`. If they match, the
    identification is closed. If they do not, a second camera exists and this workstream's
    target is the app-reported address instead.
 
@@ -113,7 +120,7 @@ are enough.
 - Router DHCP client list: the ZTE gateway's admin page requires the owner's credentials and
   no credential was requested or used. A DHCP **reservation** for the camera is a reasonable
   follow-up, but it is a router configuration change and needs separate owner approval first
-  (the brief says so explicitly). Address 192.168.1.19 is currently stable but unverified as
+  (the brief says so explicitly). Address <redacted-lan-host-19> is currently stable but unverified as
   reserved.
 
 ---
@@ -123,7 +130,7 @@ are enough.
 | Interface | Candidate probe | Result |
 |---|---|---|
 | RTSP | tcp/554, plus documented alternates 8554 | **refused** (RST, 0.00 s) |
-| RTSP over the vendor port | `rtsp://192.168.1.19:8800/live/ch00_0` | connects, then `Invalid data found when processing input` — i.e. **not RTSP** |
+| RTSP over the vendor port | `rtsp://<redacted-lan-host-19>:8800/live/ch00_0` | connects, then `Invalid data found when processing input` — i.e. **not RTSP** |
 | ONVIF | ONVIF candidate port tcp/8899, and WS-Discovery udp/3702 `Probe` for `NetworkVideoTransmitter` | **refused** / **no response** |
 | HTTP device management | tcp/80, 443, 8080 | **refused** |
 | UPnP/SSDP advertising | `M-SEARCH ssdp:all` to 239.255.255.250:1900 | **no responder** on this LAN |
@@ -171,21 +178,21 @@ import subprocess, concurrent.futures
 def ping(ip):
     return ip if subprocess.run(['ping','-c','1','-W','1',ip],
         stdout=subprocess.DEVNULL).returncode == 0 else None
-ips=[f'192.168.1.{i}' for i in range(1,255)]
+ips=[f'<redacted-lan-subnet>.{i}' for i in range(1,255)]
 with concurrent.futures.ThreadPoolExecutor(max_workers=50) as ex:
     print([r for r in ex.map(ping, ips) if r])
 EOF
 
 # 2. MACs / vendors
 ip neighbor
-curl -s https://api.macvendors.com/30:be:29    # -> AltoBeam Inc.
+curl -s https://api.macvendors.com/<redacted-mac-prefix>    # -> AltoBeam Inc.
 
 # 3. camera port profile (bounded list; full range only against the camera)
 python3 -c "
 import socket
 for p in (80,443,554,8554,3702,8899,8800,9800,34567):
     s=socket.socket(); s.settimeout(2)
-    print(p, 'OPEN' if s.connect_ex(('192.168.1.19',p))==0 else 'closed')
+    print(p, 'OPEN' if s.connect_ex(('<redacted-lan-host-19>',p))==0 else 'closed')
     s.close()"
 ```
 
@@ -199,6 +206,6 @@ for p in (80,443,554,8554,3702,8899,8800,9800,34567):
 | `docs/HG_V380_02_MEDIA_PROTOCOLS.md` | the measured protocol surface and the documented V380 media interfaces |
 | `docs/HG_V380_03_HOMEGUARDIAN_ADAPTER_PLAN.md` | adapter design against the existing `IMediaDevice` / consent architecture, and what it needs to become implementable |
 
-**Status: HG-V380-01 identification = CONDITIONAL — one LAN-verified camera at 192.168.1.19;
+**Status: HG-V380-01 identification = CONDITIONAL — one LAN-verified camera at <redacted-lan-host-19>;
 model/firmware identity BLOCKED PENDING OWNER (app read-out). Interface discovery = COMPLETE
 and negative: no RTSP/ONVIF/HTTP interface present as shipped.**

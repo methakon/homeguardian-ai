@@ -326,6 +326,6 @@ TEST_CASE("mcp: build refusal rules for the transport bind are unit-testable", "
     REQUIRE(is_loopback_literal("localhost"));
     REQUIRE(is_loopback_literal("::1"));
     REQUIRE_FALSE(is_loopback_literal("0.0.0.0"));
-    REQUIRE_FALSE(is_loopback_literal("192.168.1.6"));
+    REQUIRE_FALSE(is_loopback_literal("10.20.30.6"));
     REQUIRE_FALSE(is_loopback_literal(""));
 }

@@ -196,7 +196,7 @@ case "$ACTION" in
     openssl x509 -in "$RUNTIME_DIR/server.crt" -noout -ext subjectAltName | sed 's/^/  /'
     echo
     echo "NEXT: add the address the phones will actually dial, e.g."
-    echo "  $0 server --server-names \"DNS:homeguardian.local,IP:192.168.1.10,IP:127.0.0.1\""
+    echo "  $0 server --server-names \"DNS:homeguardian.local,IP:10.20.30.10,IP:127.0.0.1\""
     ;;
 
   server)

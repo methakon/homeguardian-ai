@@ -1,5 +1,12 @@
 # HG-V380-09 — Camera Adapter Boundary Specification
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Branch:** `experiment/hg-v380-09-secure-camera-integration`
@@ -83,9 +90,9 @@ Rules, all enforced in code (`src/camera/CameraTypes.h`):
 
 1. **Character set and length are bounded** — lowercase alphanumerics, `.`, `-`, `_`; ≤ 64 chars per
    segment. An identity that cannot be printed safely cannot be logged safely.
-2. **An IPv4 literal is REFUSED as an identity segment** — `192.168.1.19` as a `device_id` fails
+2. **An IPv4 literal is REFUSED as an identity segment** — `<redacted-lan-host-19>` as a `device_id` fails
    `valid()`. This is not pedantry: both cameras have already changed address once (camera 2 moved
-   from a NAT'ed `192.168.0.164` to `192.168.1.20`), so an address in an identity field is a latent
+   from a NAT'ed `<redacted-nat-host-164>` to `<redacted-lan-host-20>`), so an address in an identity field is a latent
    identity bug. The check is a real dotted-quad test, so `cam.v380.ec39.01` and `999.1.1.1` (not a
    valid octet) both pass.
 3. **MAC, SSID, subnet, model and serial are ATTRIBUTES**, exposed only through

@@ -1,5 +1,12 @@
 # HG-V380-09 — Vendor-Protocol Feasibility and Alexa Camera Readiness
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Branch:** `experiment/hg-v380-09-secure-camera-integration`
@@ -69,9 +76,9 @@ Legend: **VERIFIED** = demonstrated by us on the device · **ABSENT** = demonstr
 | Dimension | Camera 1 — `cam.v380.ec39.01` | Camera 2 — `cam.v380.ec39.02` |
 |---|---|---|
 | Logical id (assigned) | `site.home.dev/cam.v380.ec39.01` | `site.home.dev/cam.v380.ec39.02` |
-| Dev address | `192.168.1.19` (an ATTRIBUTE, not identity) | `192.168.1.20` (ditto; previously `192.168.0.164`) |
-| MAC / OUI | `30:be:29:3a:d3:b7` · AltoBeam | `60:dc:81:6b:86:3d` · AltoBeam |
-| Firmware family | `Hw_HsAkQQVL_WF_QQ_20240412` / `AppEV3L_V2` | `Hw_AWT3610E_XHR_E_V1.0_WF_20230807` / `AppEV2W_VA3` |
+| Dev address | `<redacted-lan-host-19>` (an ATTRIBUTE, not identity) | `<redacted-lan-host-20>` (ditto; previously `<redacted-nat-host-164>`) |
+| MAC / OUI | `<redacted-mac-a>` · AltoBeam | `<redacted-mac-b>` · AltoBeam |
+| Firmware family | `<redacted-cam1-firmware>` / `<redacted-cam1-software-family>` | `<redacted-cam2-firmware>` / `<redacted-cam2-software-family>` |
 | **Discovery readiness** | Reachable on link; ONVIF WS-Discovery answers **only when the toggle is on** — now off, so nothing advertises it | Reachable on link; **no discovery responder at all** (no WS-Discovery, no SSDP, no mDNS). The vendor's own app finds it by "Lan Search"/Device ID, which is *not* a HomeGuardian-usable discovery method |
 | **Authentication status** | **FAILED, and closed by disabling.** With ONVIF on, **no** credential was demanded for anything | **Unverified.** The vendor ports return nothing without a login handshake, which we did not construct. No standard interface exists to authenticate to |
 | **Video capability evidence** | **VERIFIED — and it is the problem.** Anonymous `DESCRIBE` returned the SDP; `PLAY` delivered **360 RTP packets (469,943 B)** on `/live/ch00_1` and **922 packets (1,285,254 B)** on `/live/ch00_0` in a 6 s window. Codec per SDP: **H.265/90000** | **Nothing.** No RTSP, no ONVIF, no HTTP; no frame has ever been obtained from this unit |
@@ -144,8 +151,8 @@ route, and it is not wired to any camera.
 HG_SOURCE_DIR=$PWD ./build/homeguardian_tests "[v380]"
 
 # the two real cameras' current state (read-only, no credentials)
-bash scripts/v380_security_check.sh 192.168.1.19 554 8899     # camera 1: DISABLED / DISABLED
-bash scripts/v380_probe.sh 192.168.1.20                       # camera 2: 8800/9800 only
+bash scripts/v380_security_check.sh <redacted-lan-host-19> 554 8899     # camera 1: DISABLED / DISABLED
+bash scripts/v380_probe.sh <redacted-lan-host-20>                       # camera 2: 8800/9800 only
 ```
 
 ## 7. Status

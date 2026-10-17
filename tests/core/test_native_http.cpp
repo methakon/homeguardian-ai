@@ -169,7 +169,7 @@ TEST_CASE("NativeHttp: missing or duplicate Host is rejected", "[nativehttp][h04
 
 TEST_CASE("NativeHttp: non-loopback Host is forbidden (DNS-rebinding defence)", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
-    for (const char* bad : {"evil.example", "127.0.0.1.evil.com", "192.168.1.10", "[::1]:80", "0.0.0.0", "169.254.1.1"}) {
+    for (const char* bad : {"evil.example", "127.0.0.1.evil.com", "10.20.30.10", "[::1]:80", "0.0.0.0", "169.254.1.1"}) {
         auto out = dispatch(req("GET /api/status HTTP/1.1", std::string("Host: ") + bad + "\r\n"), "<html>", handler);
         REQUIRE(starts_with(out, "HTTP/1.1 403"));
     }
