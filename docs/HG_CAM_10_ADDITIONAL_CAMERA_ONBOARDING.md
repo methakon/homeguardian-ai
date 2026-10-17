@@ -89,9 +89,12 @@ requires all three of:
 3. an **explicit owner authorization** for that device.
 
 The owner supplied a V380 Pro screenshot of the camera's own **General** settings page, which
-carries the Device ID and the Equipment Model. It was read with **local OCR** (tesseract, on this
-machine); the configured vision backend rejected the request outright because its API key is
-invalid, so no image was processed by any remote service. The identifier is **not** in this
+carries the Device ID and the Equipment Model. The first read was **local OCR** (tesseract, on this
+machine) - the configured vision backend rejected the request outright because its API key is
+invalid, so no image was processed by any remote service - and that OCR returned three candidate
+readings for one digit. The identifier now in use is the **owner's own read-out from the app
+screen**, which supersedes the OCR: an identifier is only as good as its source, and here the vendor
+app is the source, not a text-recognition pass over it. The identifier is **not** in this
 repository — the record and the identifier are held in the owner-restricted evidence file, and the
 committed code and tests use synthetic fingerprints and identities throughout.
 
@@ -108,6 +111,12 @@ identifier that distinguishes them, and that is precisely why the gate demands a
 identity instead of accepting a model, a product name or an address. (The device in the screenshot
 is not shown to be camera 1, because camera 1 is independently accounted for on the LAN in the same
 pass in which the third unit appears.)
+
+**Recorded honestly:** the OCR misread one digit of the identifier, and that was caught and
+corrected by the owner. It is worth naming because it is the exact failure mode this design guards
+against elsewhere - a machine-derived value quietly becoming an identity. The correction cost one
+character in a record held privately; had the identifier been an address or a model string, the same
+correction would have been impossible to make soundly.
 
 **Still not verified for this unit:** firmware/software version, IP/MAC as the app reports them, and
 the retail model number with its specification table (chip, sensor, resolution, lens, PTZ range).
