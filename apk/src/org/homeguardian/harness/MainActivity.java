@@ -48,6 +48,16 @@ public class MainActivity extends Activity {
     private static final int REQ_CAMERA = 1001;
     private static final int REQ_MIC = 1002;
 
+    // Attended launcher actions. These exist so an operator (or a scripted acceptance test)
+    // can drive the SAME code paths the UI buttons use, without tapping the screen and without
+    // weakening any gate: consent, permission and the native delivery gate are all still checked.
+    static final String ACTION_CONSENT_GRANT = "org.homeguardian.harness.CONSENT_GRANT";
+    static final String ACTION_CONSENT_WITHDRAW = "org.homeguardian.harness.CONSENT_WITHDRAW";
+    static final String ACTION_CAMERA_START = "org.homeguardian.harness.CAMERA_START";
+    static final String ACTION_CAMERA_STOP = "org.homeguardian.harness.CAMERA_STOP";
+    static final String ACTION_MIC_START = "org.homeguardian.harness.MIC_START";
+    static final String ACTION_MIC_STOP = "org.homeguardian.harness.MIC_STOP";
+
     // Which capture is waiting on a permission grant, if any.
     private static final int PENDING_NONE = 0;
     private static final int PENDING_CAMERA = 1;
@@ -321,17 +331,14 @@ public class MainActivity extends Activity {
         scroll.addView(root);
         setContentView(scroll);
 
-        // Attended launcher hook for a remote/scripted test:
-        //   am start -n org.homeguardian.harness/.MainActivity \
-        //          -a org.homeguardian.harness.CCTV_START
-        // This routes the start through the exported activity, which is the supported method,
-        // rather than un-exporting the service to make adb convenient.
-        String launchAction = (getIntent() == null) ? null : getIntent().getAction();
-        if (CctvService.ACTION_START.equals(launchAction)) {
-            startCctvService();
-        } else if (CctvService.ACTION_STOP.equals(launchAction)) {
-            stopCctvService();
-        }
+        // Attended launcher hook for a remote/scripted test. This routes everything through the
+        // exported activity, which is the supported method, rather than un-exporting services or
+        // weakening the consent gate. Recognised actions:
+        //   ...CCTV_START / ...CCTV_STOP     foreground service
+        //   ...CONSENT_GRANT / ...CONSENT_WITHDRAW
+        //   ...CAMERA_START / ...CAMERA_STOP
+        //   ...MIC_START / ...MIC_STOP
+        handleLaunchAction(getIntent() == null ? null : getIntent().getAction());
         refreshCctvStatus();
 
         camera1 = new Camera1Bridge();
@@ -616,11 +623,35 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (intent == null) return;
-        String act = intent.getAction();
+        handleLaunchAction(intent.getAction());
+    }
+
+    /** Attended actions, shared by onCreate and onNewIntent so a repeat is never a no-op. */
+    private void handleLaunchAction(String act) {
+        if (act == null) return;
         if (CctvService.ACTION_START.equals(act)) {
             startCctvService();
         } else if (CctvService.ACTION_STOP.equals(act)) {
             stopCctvService();
+        } else if (ACTION_CONSENT_GRANT.equals(act)) {
+            consentCamera = true;
+            consentMic = true;
+            setStatus(nativeGrantConsent(true, true));
+            refreshConsentView();
+        } else if (ACTION_CONSENT_WITHDRAW.equals(act)) {
+            consentCamera = false;
+            consentMic = false;
+            stopEverything();
+            setStatus(nativeWithdrawConsent());
+            refreshConsentView();
+        } else if (ACTION_CAMERA_START.equals(act)) {
+            startCameraRequested();
+        } else if (ACTION_CAMERA_STOP.equals(act)) {
+            stopCamera();
+        } else if (ACTION_MIC_START.equals(act)) {
+            startMicRequested();
+        } else if (ACTION_MIC_STOP.equals(act)) {
+            stopMic("operator stop");
         }
     }
 

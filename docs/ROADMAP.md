@@ -593,7 +593,8 @@ arm64-v8a, Android 9 / API 28, A-only, Treble-enabled (vndk 28).
 | CAM-13 | Power-failure resilience for install/test operations | CAM-04 | Install/test steps idempotent and state re-read before acting; no long maintenance; no unnecessary reboots | DONE (design recorded in `docs/HG_CAM_04_POWER_RESILIENCE.md`) |
 | CAM-14 | Remove unnecessary user-installed apps | CAM-12 | Each removal individually approved and verified; system/camera/audio/media/Wi-Fi/ADB/security/installer preserved; WhatsApp/Facebook/Messenger separately confirmed | DONE — 6/6 removed individually, 1,198,908 KB freed, essential services PASS, shared storage intact |
 | CAM-15 | Panasonic APK installation and foreground-service acceptance | CAM-06 | APK installs on the device; foreground service runs with its required notification; start/stop/restart/cleanup all verified | DONE — see `docs/HG_CAM_07_MEDIA_ACCEPTANCE.md` |
-| CAM-16 | Wire camera + microphone capture into the foreground service | CAM-15 | Real frame arrival and sample delivery measured under the consent architecture; encoder initialized and validated | PROPOSED (next engineering step) |
+| CAM-16 | Wire camera + microphone capture into the foreground service | CAM-15 | Real frame arrival and sample delivery measured under the consent architecture; encoder initialized and validated | **BLOCKED** — camera opens and negotiates but delivers 0 frames on this device; see CAM-17 and `docs/HG_CAM_08_CAPTURE_ACCEPTANCE.md` |
+| CAM-17 | Fix Camera1 frame delivery on the MT6739 vendor stack | CAM-16 | `onPreviewFrame` fires and frames are accounted (>0 authorized) | PROPOSED — MTK HAL wants a real consumer surface; try encoder-input surface, then camera2 NDK |
 
 ### CAM progress: device findings and constraints
 
