@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -31,7 +32,9 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <nlohmann/json.hpp>
 #include "net/DeviceRegistry.h"
@@ -99,53 +102,121 @@ bool constant_time_equals(std::string_view a, std::string_view b) {
     return result == 0;
 }
 
+// Validates secret file safety:
+// 1. Must exist, be accessible, and be a regular file (S_ISREG). Symlinks (S_ISLNK) are strictly rejected.
+// 2. Must be owned by current process effective UID or root (0).
+// 3. Must have strict owner-only permissions: mode 0600 or 0400 ((st.st_mode & 0077) == 0).
+// 4. Must not be empty.
+bool read_secure_secret_file(const std::string& path, std::string& out_secret, std::string* err_msg = nullptr) {
+    if (path.empty()) {
+        if (err_msg) *err_msg = "secret file path is empty";
+        return false;
+    }
+    struct stat st{};
+    // Use lstat to detect symlinks before any open
+    if (::lstat(path.c_str(), &st) != 0) {
+        if (err_msg) *err_msg = "secret file not found or inaccessible: " + path;
+        return false;
+    }
+    if (S_ISLNK(st.st_mode)) {
+        if (err_msg) *err_msg = "secret file rejected: symlinks are prohibited: " + path;
+        return false;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        if (err_msg) *err_msg = "secret file rejected: not a regular file: " + path;
+        return false;
+    }
+    uid_t euid = ::geteuid();
+    if (st.st_uid != euid && st.st_uid != 0) {
+        if (err_msg) *err_msg = "secret file rejected: file owner UID (" + std::to_string(st.st_uid) +
+                                ") does not match process UID (" + std::to_string(euid) + ") or root";
+        return false;
+    }
+    if ((st.st_mode & 0077) != 0) {
+        if (err_msg) *err_msg = "secret file rejected: insecure permissions; must be 0600 or 0400: " + path;
+        return false;
+    }
+    std::ifstream sf(path);
+    if (!sf.good()) {
+        if (err_msg) *err_msg = "failed to open secret file for reading: " + path;
+        return false;
+    }
+    std::string line;
+    std::getline(sf, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ' || line.back() == '\t')) {
+        line.pop_back();
+    }
+    size_t start = 0;
+    while (start < line.size() && (line[start] == ' ' || line[start] == '\t')) {
+        start++;
+    }
+    std::string secret = line.substr(start);
+    if (secret.empty()) {
+        if (err_msg) *err_msg = "secret file is empty: " + path;
+        return false;
+    }
+    out_secret = secret;
+    return true;
+}
+
 // Verifies trusted operator authorization for administrative actions (enrollment, recovery, unpairing).
-// Does NOT accept caller-supplied booleans from device JSON.
-bool verify_operator_authorization(bool action_flag, const std::string& secret_flag, const std::string& secret_file_flag, bool stdin_flag = false) {
+// Ensures:
+// 1. Expected credential is anchored in an authority controlled independently of caller.
+//    Process environment (HG_OPERATOR_SECRET / HG_OPERATOR_PASSWORD) cannot define the authority.
+// 2. Fallback files in world-writable /tmp are prohibited.
+// 3. Symlinks, special files, wrong-owner files, and insecure permissions (0644) are rejected.
+// 4. Stdin and process environment only present credentials; they never define expected authority.
+bool verify_operator_authorization(
+    bool action_flag,
+    const std::string& registry_path,
+    const std::string& authority_file_flag,
+    const std::string& secret_flag,
+    const std::string& secret_file_flag,
+    bool stdin_flag = false)
+{
     if (!action_flag) return false;
 
+    // 1. Resolve EXPECTED secret from trusted authority store.
+    // Untrusted caller environment variables MUST NEVER define the authority.
     std::string expected_secret;
-    if (const char* s = std::getenv("HG_OPERATOR_SECRET")) {
-        expected_secret = s;
-    } else if (const char* s = std::getenv("HG_OPERATOR_PASSWORD")) {
-        expected_secret = s;
-    } else {
-        std::string daemon_secret_file;
-        if (const char* file_path = std::getenv("HG_OPERATOR_SECRET_FILE")) {
-            daemon_secret_file = file_path;
-        } else {
-            daemon_secret_file = "/tmp/hg_operator_password.secret";
-        }
-        struct stat st{};
-        if (::stat(daemon_secret_file.c_str(), &st) == 0) {
-            // Reject group- or world-accessible operator secret file (must be 0600 or 0400)
-            if ((st.st_mode & 0077) == 0) {
-                std::ifstream sf(daemon_secret_file);
-                if (sf.good()) {
-                    std::getline(sf, expected_secret);
-                }
-            }
+    std::string auth_err;
+
+    std::string authority_path = authority_file_flag;
+    if (authority_path.empty()) {
+        // Default to operator.secret in the directory of the registry file
+        std::filesystem::path reg_path(registry_path);
+        std::filesystem::path reg_dir = reg_path.parent_path();
+        if (reg_dir.empty()) reg_dir = ".";
+        authority_path = (reg_dir / "operator.secret").string();
+    }
+
+    if (!read_secure_secret_file(authority_path, expected_secret, &auth_err)) {
+        if (authority_file_flag.empty()) {
+            std::filesystem::path reg_path(registry_path);
+            std::filesystem::path reg_dir = reg_path.parent_path();
+            if (reg_dir.empty()) reg_dir = ".";
+            std::string hidden_path = (reg_dir / ".operator.secret").string();
+            read_secure_secret_file(hidden_path, expected_secret, nullptr);
         }
     }
 
+    // Fail-closed: If no trusted operator authority file exists or fails validation, refuse authorization
+    if (expected_secret.empty() || is_blacklisted_secret(expected_secret)) {
+        std::cerr << "{\"error\": \"operator authorization unavailable: trusted authority secret file absent, unreadable, or insecure\"}\n";
+        return false;
+    }
+
+    // 2. Resolve PRESENTED secret from caller.
+    // The caller can present credentials via CLI argument (scrubbed), stdin, secure secret file,
+    // or environment variable HG_OPERATOR_SECRET / HG_OPERATOR_PASSWORD.
     std::string presented_secret = secret_flag;
     if (presented_secret.empty() && stdin_flag) {
         std::getline(std::cin, presented_secret);
     }
     if (presented_secret.empty() && !secret_file_flag.empty()) {
-        struct stat st{};
-        if (::stat(secret_file_flag.c_str(), &st) == 0) {
-            // Reject group- or world-accessible operator secret file (must be 0600 or 0400)
-            if ((st.st_mode & 0077) != 0) {
-                std::cerr << "{\"error\": \"operator secret file rejected: insecure permissions; must be 0600 or 0400\"}\n";
-                return false;
-            }
-            std::ifstream sf(secret_file_flag);
-            if (sf.good()) {
-                std::getline(sf, presented_secret);
-            }
-        } else {
-            std::cerr << "{\"error\": \"operator secret file not found or inaccessible\"}\n";
+        std::string pres_err;
+        if (!read_secure_secret_file(secret_file_flag, presented_secret, &pres_err)) {
+            std::cerr << "{\"error\": \"" << pres_err << "\"}\n";
             return false;
         }
     }
@@ -158,17 +229,14 @@ bool verify_operator_authorization(bool action_flag, const std::string& secret_f
     }
 
     // Strip trailing whitespace/newlines
-    while (!expected_secret.empty() && (expected_secret.back() == '\r' || expected_secret.back() == '\n' || expected_secret.back() == ' ' || expected_secret.back() == '\t')) {
-        expected_secret.pop_back();
-    }
     while (!presented_secret.empty() && (presented_secret.back() == '\r' || presented_secret.back() == '\n' || presented_secret.back() == ' ' || presented_secret.back() == '\t')) {
         presented_secret.pop_back();
     }
-
-    // Fail closed: If no operator secret is configured anywhere, operator authorization cannot be granted
-    if (expected_secret.empty() || is_blacklisted_secret(expected_secret)) {
-        return false;
+    size_t pstart = 0;
+    while (pstart < presented_secret.size() && (presented_secret[pstart] == ' ' || presented_secret[pstart] == '\t')) {
+        pstart++;
     }
+    presented_secret = presented_secret.substr(pstart);
 
     if (presented_secret.empty() || is_blacklisted_secret(presented_secret)) {
         return false;
@@ -364,6 +432,25 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
 
     if (save_to_disk) {
         reg.save(path, &reason);
+        // Provision secure operator authority file in registry directory if absent
+        std::filesystem::path reg_file(path);
+        std::filesystem::path reg_dir = reg_file.parent_path();
+        if (reg_dir.empty()) reg_dir = ".";
+        std::filesystem::path op_secret_file = reg_dir / "operator.secret";
+        struct stat ost{};
+        if (::lstat(op_secret_file.c_str(), &ost) != 0) {
+            try {
+                std::string op_sec = generate_csprng_secret(32);
+                int fd = ::open(op_secret_file.c_str(), O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+                if (fd >= 0) {
+                    std::string line = op_sec + "\n";
+                    ssize_t w = ::write(fd, line.data(), line.size());
+                    (void)w;
+                    ::close(fd);
+                    ::chmod(op_secret_file.c_str(), S_IRUSR | S_IWUSR);
+                }
+            } catch (...) {}
+        }
     }
 }
 
@@ -374,6 +461,7 @@ int main(int argc, char* argv[]) {
     std::string credential_file_flag;
     bool operator_auth_flag = false;
     bool operator_recovery_flag = false;
+    std::string operator_authority_file_flag;
     std::string operator_secret_flag;
     std::string operator_secret_file_flag;
     bool operator_secret_stdin_flag = false;
@@ -390,6 +478,8 @@ int main(int argc, char* argv[]) {
             operator_auth_flag = true;
         } else if (a == "--operator-recovery") {
             operator_recovery_flag = true;
+        } else if (a == "--operator-authority-file" && i + 1 < argc) {
+            operator_authority_file_flag = argv[++i];
         } else if (a == "--operator-secret-stdin") {
             operator_secret_stdin_flag = true;
         } else if (a == "--operator-secret" && i + 1 < argc) {
@@ -399,7 +489,7 @@ int main(int argc, char* argv[]) {
         } else if (a == "--operator-secret-file" && i + 1 < argc) {
             operator_secret_file_flag = argv[++i];
         } else if (a == "--help" || a == "-h") {
-            std::cout << "Usage: hg_device_registry_cli [--registry <path>] [--credential-file <path>] [--operator-auth] [--operator-recovery] [--operator-secret-file <path>] <command> [args...]\n"
+            std::cout << "Usage: hg_device_registry_cli [--registry <path>] [--credential-file <path>] [--operator-auth] [--operator-recovery] [--operator-authority-file <path>] [--operator-secret-file <path>] <command> [args...]\n"
                       << "Commands:\n"
                       << "  list                          List all peripheral devices in HG-UI-03 format\n"
                       << "  get <device_id>               Get single device details\n"
@@ -653,12 +743,16 @@ int main(int argc, char* argv[]) {
 
         const bool operator_authorized = verify_operator_authorization(
             operator_auth_flag || operator_recovery_flag,
+            registry_path,
+            operator_authority_file_flag,
             operator_secret_flag,
             operator_secret_file_flag,
             operator_secret_stdin_flag);
 
         const bool operator_recovery_authorized = verify_operator_authorization(
             operator_recovery_flag,
+            registry_path,
+            operator_authority_file_flag,
             operator_secret_flag,
             operator_secret_file_flag,
             operator_secret_stdin_flag);

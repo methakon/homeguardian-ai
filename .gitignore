@@ -116,3 +116,7 @@ node_modules/
 
 # Distribution archives
 dist/
+
+# Secret files
+*.secret
+

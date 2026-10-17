@@ -22,16 +22,22 @@ class SessionManager {
       this.operatorPassword = process.env.HG_OPERATOR_PASSWORD;
     } else {
       this.operatorPassword = crypto.randomBytes(16).toString('hex');
-      try {
-        const os = require('node:os');
-        const fs = require('node:fs');
-        const path = require('node:path');
-        const secretFile = process.env.HG_OPERATOR_SECRET_FILE || path.join(os.tmpdir(), 'hg_operator_password.secret');
-        fs.writeFileSync(secretFile, this.operatorPassword, { mode: 0o600 });
-        console.log(`[Auth] No HG_OPERATOR_PASSWORD set. Generated one-time launch credential for '${this.operatorUsername}' stored securely in 0600 file.`);
-      } catch (_) {
-        console.log(`[Auth] Generated one-time launch credential initialized in memory.`);
-      }
+    }
+    try {
+      const os = require('node:os');
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const repoRoot = options.repoRoot || path.resolve(__dirname, '..');
+      const configDir = path.join(repoRoot, 'config');
+      const defaultSecretFile = fs.existsSync(configDir)
+        ? path.join(configDir, 'operator.secret')
+        : path.join(os.tmpdir(), 'hg_operator_password.secret');
+      const secretFile = process.env.HG_OPERATOR_SECRET_FILE || defaultSecretFile;
+      fs.writeFileSync(secretFile, this.operatorPassword, { mode: 0o600 });
+      try { fs.chmodSync(secretFile, 0o600); } catch (_) {}
+      console.log(`[Auth] Operator credential for '${this.operatorUsername}' stored securely in 0600 file: ${secretFile}`);
+    } catch (_) {
+      console.log(`[Auth] Operator credential initialized in memory.`);
     }
     this.sessionDestroyListeners = [];
   }

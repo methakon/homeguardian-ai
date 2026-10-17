@@ -19,6 +19,7 @@
 const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 const { spawn, execFileSync } = require('node:child_process');
 const { RTCPeerConnection } = require('werift');
 
@@ -99,11 +100,16 @@ async function runSuite() {
   const cliPath = path.join(repoRoot, 'build', 'hg_device_registry_cli');
   const configPath = path.join(repoRoot, 'config', 'devices.json');
 
+  const operatorAuthorityFile = path.join(path.dirname(configPath), 'operator.secret');
+  fs.writeFileSync(operatorAuthorityFile, 'trusted-operator-secret-2026\n', { mode: 0o600 });
+
   if (fs.existsSync(cliPath)) {
     try {
       execFileSync(cliPath, ['--registry', configPath, 'init_defaults']);
     } catch (_) {}
   }
+
+  const OPERATOR_PASSWORD = 'trusted-operator-secret-2026';
 
   const serverProc = spawn(process.execPath, [serverPath], {
     cwd: repoRoot,
@@ -113,7 +119,7 @@ async function runSuite() {
       HG_MCP_PORT: String(MCP_PORT),
       HG_MCP_TOKEN: process.env.HG_MCP_TOKEN || 'demo-token',
       HG_OPERATOR_USER: 'test-operator',
-      HG_OPERATOR_PASSWORD: 'SecurePassword2026!',
+      HG_OPERATOR_PASSWORD: OPERATOR_PASSWORD,
     },
   });
 
@@ -200,7 +206,7 @@ async function runSuite() {
     const badLogin = await request('POST', '/api/auth/login', {}, { username: 'test-operator', password: 'WrongPassword' });
     assert(badLogin.status === 401, `Invalid credentials rejected HTTP 401`);
 
-    const goodLogin = await request('POST', '/api/auth/login', {}, { username: 'test-operator', password: 'SecurePassword2026!' });
+    const goodLogin = await request('POST', '/api/auth/login', {}, { username: 'test-operator', password: OPERATOR_PASSWORD });
     assert(goodLogin.status === 200, `Valid login returned HTTP 200`);
     assert(goodLogin.body.ok === true, `Login response ok === true`);
     assert(typeof goodLogin.body.csrfToken === 'string' && goodLogin.body.csrfToken.length >= 32, `CSRF token minted`);
@@ -525,6 +531,118 @@ async function runSuite() {
     assert(pairResult.provisioned_auth_secret.startsWith('sec_live_'), `Secret has sec_live_ prefix`);
     assert(pairResult.provisioned_auth_secret.length === 73, `Secret is 256-bit CSPRNG hex (73 chars with prefix)`);
     const liveSecret = pairResult.provisioned_auth_secret;
+
+    // -----------------------------------------------------------------
+    // HG-SEC-06D: Trust-Root Hardening & Operator Authority Verification
+    // -----------------------------------------------------------------
+    // Negative test 1: Untrusted caller environment variable cannot turn untrusted input into authority
+    let envBypassFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath,
+        '--operator-auth',
+        'pair',
+        JSON.stringify({
+          device_id: 'cam-exploit-env',
+          display_name: 'Exploit Camera',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'attacker-evil-secret-not-matching-authority' },
+      });
+    } catch (e) {
+      envBypassFailed = true;
+    }
+    assert(envBypassFailed, `Untrusted caller environment variable cannot authenticate without authority match (HG-SEC-06D)`);
+
+    // Negative test 2: Missing authority store fails closed
+    const emptySandboxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-sec06d-empty-'));
+    const emptyConfigPath = path.join(emptySandboxDir, 'devices.json');
+    execFileSync(cliPath, ['--registry', emptyConfigPath, 'init_defaults']);
+    // Remove the automatically provisioned operator.secret to simulate missing authority store
+    const emptyOpSecret = path.join(emptySandboxDir, 'operator.secret');
+    try { fs.unlinkSync(emptyOpSecret); } catch (_) {}
+    let missingAuthorityFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', emptyConfigPath,
+        '--operator-auth',
+        'pair',
+        JSON.stringify({
+          device_id: 'cam-exploit-noauth',
+          display_name: 'Exploit Camera No Auth',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'any-secret' },
+      });
+    } catch (e) {
+      missingAuthorityFailed = true;
+    }
+    assert(missingAuthorityFailed, `Missing authority store fails closed (HG-SEC-06D)`);
+    try { fs.rmSync(emptySandboxDir, { recursive: true, force: true }); } catch (_) {}
+
+    // Negative test 3: Symlink operator secret files are strictly rejected
+    const symlinkTarget = path.join(path.dirname(configPath), 'test_symlink_target.secret');
+    const symlinkFile = path.join(path.dirname(configPath), 'test_symlink.secret');
+    fs.writeFileSync(symlinkTarget, 'trusted-operator-secret-2026\n', { mode: 0o600 });
+    try { fs.unlinkSync(symlinkFile); } catch (_) {}
+    try { fs.symlinkSync(symlinkTarget, symlinkFile); } catch (_) {}
+    let symlinkSecretFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath,
+        '--operator-auth',
+        '--operator-secret-file', symlinkFile,
+        'pair',
+        JSON.stringify({
+          device_id: 'cam-exploit-symlink',
+          display_name: 'Exploit Camera Symlink',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      symlinkSecretFailed = true;
+    }
+    assert(symlinkSecretFailed, `Symlink operator secret file strictly rejected (HG-SEC-06D)`);
+    try { fs.unlinkSync(symlinkFile); } catch (_) {}
+    try { fs.unlinkSync(symlinkTarget); } catch (_) {}
+
+    // Negative test 4: Pre-created /tmp fallback file is ignored
+    const tmpAttackerSecret = path.join(os.tmpdir(), 'hg_operator_password.secret');
+    fs.writeFileSync(tmpAttackerSecret, 'attacker-tmp-secret\n', { mode: 0o600 });
+    const noFallbackDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-sec06d-nofallback-'));
+    const noFallbackConfig = path.join(noFallbackDir, 'devices.json');
+    execFileSync(cliPath, ['--registry', noFallbackConfig, 'init_defaults']);
+    try { fs.unlinkSync(path.join(noFallbackDir, 'operator.secret')); } catch (_) {}
+    let tmpFallbackIgnored = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', noFallbackConfig,
+        '--operator-auth',
+        'pair',
+        JSON.stringify({
+          device_id: 'cam-exploit-tmp',
+          display_name: 'Exploit Camera /tmp',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'attacker-tmp-secret' },
+      });
+    } catch (e) {
+      tmpFallbackIgnored = true;
+    }
+    assert(tmpFallbackIgnored, `Pre-created /tmp fallback file is ignored and fails closed (HG-SEC-06D)`);
+    try { fs.rmSync(noFallbackDir, { recursive: true, force: true }); } catch (_) {}
+    try { fs.unlinkSync(tmpAttackerSecret); } catch (_) {}
 
     // 5. Query registry over public API: secret must NEVER be disclosed in get or list
     const devListAfterPair = await request('GET', '/api/devices', { Cookie: sessionCookie });
@@ -975,7 +1093,7 @@ async function runSuite() {
     // -----------------------------------------------------------------
     console.log('\n[Test 9] WebRTC Stream Ownership: Cross-Operator Tampering Refusal');
     // Login as a second operator session
-    const opBLogin = await request('POST', '/api/auth/login', {}, { username: 'test-operator', password: 'SecurePassword2026!' });
+    const opBLogin = await request('POST', '/api/auth/login', {}, { username: 'test-operator', password: OPERATOR_PASSWORD });
     assert(opBLogin.status === 200, `Operator B logged in with independent session`);
     const opBCookie = opBLogin.headers['set-cookie'][0].split(';')[0];
     const opBCsrf = opBLogin.body.csrfToken;
@@ -1037,6 +1155,7 @@ async function runSuite() {
         execFileSync(cliPath, ['--registry', configPath, 'init_defaults']);
       } catch (_) {}
     }
+    try { fs.unlinkSync(operatorAuthorityFile); } catch (_) {}
   }
 }
 

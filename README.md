@@ -92,12 +92,21 @@ processing.
 - nlohmann/json v3.11.3 (JSON) — via CMake FetchContent
 - SQLite amalgamation (persistence) — vendored in `third_party/sqlite`
 - Catch2 v2.13.10 (testing) — vendored in `third_party/catch2`
-- Node.js (standard library only) — **optional**, for the legacy demo server and
-  the Alexa skill prototype tests only; not required by the default demo
+- Node.js — **optional**; not required by the default demo or by `demo.sh`
+  - the legacy demo server (`src/bridge/hg_demo_server.js`) and the Alexa skill
+    prototype use the **Node.js standard library only**
+  - the MCP web gateway (`web_mcp/server.js`), its dashboard and its test suites
+    additionally need two npm packages, declared in the root `package.json`
+    (`werift`, `ws`). Install them once from the repository root before using
+    anything under `web_mcp/`:
+    ```bash
+    npm install          # one-time; 43 packages, ~5 s on a warm cache
+    ```
 
-No unreviewed third-party dependency is used by the demo or bridge; the native
-demo and bridge use only the C++ standard library. The optional legacy demo
-server and the Alexa skill prototype use only the Node.js standard library.
+No unreviewed third-party dependency is used by the native demo or bridge: both
+use only the C++ standard library. The Node packages above are used **only** by
+the optional `web_mcp/` gateway, dashboard and their tests, and by nothing in
+`demo.sh`.
 
 ## Quick start — run the demo
 
@@ -132,12 +141,15 @@ populate the dependency cache.
 ```bash
 mkdir -p hg_build && cd hg_build
 cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ..
-make -j4 homeguardian homeguardian_tests hg_alexa_bridge
+make -j4 homeguardian homeguardian_tests hg_alexa_bridge hg_mcp_server hg_device_registry_cli
 ```
 
-This builds the `homeguardian` application, the `homeguardian_tests` target,
-and the `hg_alexa_bridge` used by the web demo. To build only the tests:
-`make -j4 homeguardian_tests`.
+This builds the `homeguardian` application, the `homeguardian_tests` target, the
+`hg_alexa_bridge` used by the web demo, the **`hg_mcp_server`** (the MCP server
+described above — MCP 2025-11-25 over Streamable HTTP) and the
+`hg_device_registry_cli` used by the device dashboard. To build only the tests:
+`make -j4 homeguardian_tests`. `hg_mcp_server` binds to loopback only and is not
+required by `demo.sh`.
 
 ## Testing
 
@@ -162,6 +174,20 @@ demo):
 cd alexa_skill
 npm test
 ```
+
+MCP server and MCP client verification (requires `hg_mcp_server` to be built and
+`npm install` to have been run from the repository root — see above). These are
+the commands behind the MCP numbers quoted elsewhere in the submission:
+
+```bash
+bash scripts/verify_mcp.sh              # native protocol suite: 71 checks, 0 failures
+node web_mcp/test_client.js             # MCP client suite: 26 checks, 0 failures
+node web_mcp/test_devices_dashboard.js   # dashboard/WebRTC/secrets: 158 checks, 0 failures
+```
+
+`scripts/verify_mcp.sh` provisions its own 0600 credential file in a temporary
+directory at run time and drives the real binary over loopback; it commits
+nothing and exposes no listener beyond `127.0.0.1`.
 
 ## Project Structure
 
