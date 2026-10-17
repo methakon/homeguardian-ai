@@ -46,8 +46,8 @@ public class EdgeService extends Service {
      */
     public static final String ACTION_BRIDGE_START = "org.homeguardian.edgeservice.BRIDGE_START";
     public static final String ACTION_BRIDGE_STOP = "org.homeguardian.edgeservice.BRIDGE_STOP";
-    public static final String EXTRA_BRIDGE_HOST = "bridge_host";
-    public static final String EXTRA_BRIDGE_PORT = "bridge_port";
+    /** Coordinator WebSocket URL, e.g. ws://127.0.0.1:18995/bridge - operator-supplied, never compiled in. */
+    public static final String EXTRA_BRIDGE_URL = "bridge_url";
 
     private static final String CHANNEL_ID = "hg_edge_service";
     private static final int NOTIFICATION_ID = 4711;
@@ -112,9 +112,8 @@ public class EdgeService extends Service {
         if (ACTION_BRIDGE_START.equals(action)) {
             // Coordinator endpoint comes from the caller (operator), never from a compiled-in LAN
             // address: a dev LAN address must never be a device identity or a fixed destination.
-            String host = (intent == null) ? null : intent.getStringExtra(EXTRA_BRIDGE_HOST);
-            int port = (intent == null) ? 0 : intent.getIntExtra(EXTRA_BRIDGE_PORT, 0);
-            startBridge(host, port);
+            String url = (intent == null) ? null : intent.getStringExtra(EXTRA_BRIDGE_URL);
+            startBridge(url);
             return START_STICKY;
         }
         if (ACTION_BRIDGE_STOP.equals(action)) {
@@ -350,15 +349,15 @@ public class EdgeService extends Service {
     // ---------------------------------------------------------------- outbound control bridge
 
     /** The single bridge instance. Null until an operator explicitly starts it. */
-    private volatile ControlBridge bridge;
+    private volatile OutboundMcpBridge bridge;
 
     /**
-     * Start the outbound authenticated control bridge. Refuses without a coordinator endpoint, so
-     * the production default (nothing configured) dials nowhere.
+     * Start the outbound authenticated control bridge. Refuses without a coordinator URL, so the
+     * production default (nothing configured) dials nowhere.
      */
-    private void startBridge(String host, int port) {
-        if (host == null || host.length() == 0 || port <= 0) {
-            Log.w(TAG, "bridge start refused: no coordinator endpoint supplied");
+    private void startBridge(String url) {
+        if (url == null || url.length() == 0) {
+            Log.w(TAG, "bridge start refused: no coordinator URL supplied");
             updateNotification("bridge: refused - no coordinator configured");
             return;
         }
@@ -366,8 +365,8 @@ public class EdgeService extends Service {
             Log.i(TAG, "bridge already running; not creating a second session");
             return;
         }
-        bridge = new ControlBridge(this);
-        bridge.configure(host, port);
+        bridge = new OutboundMcpBridge(this);
+        bridge.configure(url);
         String r = bridge.start();
         Log.i(TAG, "bridge: " + r);
         updateNotification("bridge: " + r);
@@ -375,7 +374,7 @@ public class EdgeService extends Service {
 
     /** Stop the bridge and close its session. Safe when it was never started. */
     private void stopBridge() {
-        ControlBridge b = bridge;
+        OutboundMcpBridge b = bridge;
         bridge = null;
         if (b != null) {
             b.stop();
