@@ -95,6 +95,14 @@ public class OutboundMcpBridge {
     private volatile OutputStream wsOut;
     private final AtomicInteger inFlight = new AtomicInteger(0);
     private volatile long lastInboundMs = 0L;
+    /**
+     * The LOCAL MCP session id. The native C++ engine returns Mcp-Session-Id on initialize and
+     * rejects every later call on a fresh connection with "initialize must be called first", so a
+     * stateless relay would relay an error for every call after the first. Measured against the
+     * real hg_mcp_server: without this the engine answers errors, with it tools/list and tools/call
+     * both succeed. Only ever holds a loopback-scoped value.
+     */
+    private volatile String mcpSessionId = null;
     private static volatile String lastStatus = "bridge: idle";
 
     public OutboundMcpBridge(Context context) { this.ctx = context; }
@@ -367,16 +375,32 @@ public class OutboundMcpBridge {
             c.setReadTimeout(REQUEST_TIMEOUT_MS);
             c.setDoOutput(true);
             c.setRequestProperty("Content-Type", "application/json");
+            // MCP Streamable HTTP requires this Accept header. Without it the native C++ engine
+            // answers "{}" with HTTP 200, which relays as an empty result rather than an error -
+            // measured against the real hg_mcp_server, not assumed.
+            c.setRequestProperty("Accept", "application/json, text/event-stream");
             c.setRequestProperty("Authorization", "Bearer " + token);
+            // Carry the local MCP session forward. Without it the native engine treats each relayed
+            // call as a brand-new client and answers "initialize must be called first".
+            String sid = mcpSessionId;
+            if (sid != null) c.setRequestProperty("Mcp-Session-Id", sid);
             byte[] b = body.getBytes("UTF-8");
             c.setFixedLengthStreamingMode(b.length);
             OutputStream os = c.getOutputStream();
             os.write(b);
             os.flush();
             os.close();
+            // initialize mints the session; remember it for every later call.
+            String respSid = c.getHeaderField("Mcp-Session-Id");
+            if (respSid != null && respSid.length() > 0) mcpSessionId = respSid;
             int code = c.getResponseCode();
             InputStream is = (code >= 200 && code < 300) ? c.getInputStream() : c.getErrorStream();
             String text = is == null ? "" : readAll(is);
+            // A stale or rejected session must not latch: drop it so the next initialize re-mints.
+            if (text.contains("initialize must be called first")) {
+                Log.w(TAG, "local MCP session rejected; dropping it for re-initialization");
+                mcpSessionId = null;
+            }
             if (text.length() == 0) return errorBody(-1, -32603, "empty response").toString();
             return text;
         } catch (Exception e) {

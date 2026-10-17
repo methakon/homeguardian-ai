@@ -38,6 +38,9 @@ public class Harness {
         System.out.println("DEVICE_ID=" + deviceId);
         System.out.println("AUTH_TOKEN=" + authToken);
         System.out.println("TOKEN_FP=" + OutboundMcpBridge.tokenFingerprint(ctx));
+        // The loopback bearer token, so the runner can provision the genuine C++ MCP server with
+        // the SAME token this bridge will present. Temp dir only; never the production token.
+        System.out.println("MCP_TOKEN=" + Provisioner.readToken(ctx));
         System.out.flush();
 
         OutboundMcpBridge bridge = new OutboundMcpBridge(ctx);
