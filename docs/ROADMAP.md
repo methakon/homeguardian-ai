@@ -588,7 +588,7 @@ existing D-03 mutual-TLS ingress) for anything beyond loopback, a server-initiat
 a client needs one, `resources/*` and `prompts/*` capabilities, per-token quotas, and session
 resumability.
 
-## HG-EDGE-01 / HG-EDGE-02 / HG-EDGE-03 / HG-EDGE-04 — Mi A3 edge device (EXPERIMENTAL, unmerged)
+## HG-EDGE-01 / HG-EDGE-02 / HG-EDGE-03 / HG-EDGE-04 / HG-EDGE-05 — Mi A3 edge device (EXPERIMENTAL, unmerged)
 
 **Status:** experimental work on `experiment/mi-a3-edge` (HG-EDGE-01),
 `experiment/mi-a3-edge-sec02` (the same work re-validated on the corrected SHA) and
@@ -669,3 +669,27 @@ requires the debuggable test build the brief asks for. Bluetooth was assessed an
 rejected as a substitute (adbd has no Bluetooth transport; PAN is ~30–60× slower and
 would still need the forbidden `adb tcpip`). No root, ROM change, port forwarding,
 tunnelling or LAN exposure; MCP stays loopback-only; no sensitive permission requested.
+
+**HG-EDGE-05 (implemented, tested, not yet wired into the app):** the environmental
+context engine — the Android-to-C++ sensor interface. New
+`src/core/EnvironmentalContext.{h,cpp}`, `tests/core/test_environmental_context.cpp`
+(12 cases / 162 assertions, tag `[envcontext]`) and `tools/envcontext_bench.cpp`; design
+and handoff in `docs/EDGE_ENVIRONMENTAL_CONTEXT.md`. The module encodes the HG-EDGE-03
+inventory finding as structure rather than convention: atmospheric and device-thermal
+are disjoint channel namespaces, so `atmospheric_temperature()` can never return a
+battery reading, and a test proves that a plausible 46.9 °C SoC value still fails to
+satisfy an atmospheric request. Readings carry dual timestamps, the existing
+`Provenance` split, computed freshness against per-channel max ages, quality, and an
+explicit uncertainty that fusion actually propagates (inverse-variance weighted). No
+threshold is invented: daylight and thermal-health banding are injected with a
+`*_source` string naming their provenance, and both return nullopt/unknown otherwise.
+Positional channels are double-gated and off by default, and coarsened to ~1 km on
+ingest so no precise coordinate is retained. Correlation output vocabulary is exactly
+`environmental_correlation` / `insufficient_evidence`, with a test asserting no
+predictive term (forecast, earthquake, seismic, disaster, flood, species, animal) can
+appear — the same unrepresentability discipline DempsterShafer uses for
+`SeismicPrecursor`. Verified: full suite green at 39,088 assertions / 538 cases (exit 0,
+no regressions); 200k ingests at 0.79–0.89 µs/reading and 20k snapshots at 2.6–2.7 µs on
+the host, bounded at 160 retained readings / +100 kB RSS. ARM64 cost is NOT measured
+on-device and is not claimed. No app integration, no JNI, no permission requested, no
+GNSS enabled, MCP still loopback-only.

@@ -1,0 +1,1 @@
+/usr/bin/c++  -Wall -Wextra -Wpedantic -g CMakeFiles/hg_device_registry_cli.dir/src/main_device_registry_cli.cpp.o CMakeFiles/hg_device_registry_cli.dir/src/net/DeviceRegistry.cpp.o -o hg_device_registry_cli 
