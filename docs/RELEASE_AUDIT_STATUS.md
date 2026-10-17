@@ -12,7 +12,7 @@
 | `d19d230d10baf135c6c22ccadbd988ec5a055598` | Hermes Session 1 | HG-SEC-03 / HG-SEC-04 | **FAIL** | WebRTC keepalive CSRF method mismatch, unhandled device exception crashes. |
 | `11ad94548f65bfe22a0db4297a6e92218448d1f4` | Hermes Session 1 | HG-SEC-05 | **FAIL** | Localhost port mismatch CORS vulnerability, simulator forgery, unauthenticated physical device defaults. |
 | `52d3d1436e115fe9061127a35f33b35d10c8dd73` | Hermes Session 1 | HG-SEC-05 / HG-SEC-06 | **FAIL (P0-3)** | **P0-1 PASS** (Browser origin exact-port enforcement)<br>**P0-2 PASS** (Simulator identity restricted to authoritative provider)<br>**P0-3 FAIL** (Physical device heartbeat authentication secrets hardcoded in publicly reviewable source, unauthenticated re-pairing, sequence replay vulnerability).<br>*Status: Frozen for audit records.* |
-| `[PENDING_AUDIT]` (on `fix/hg-sec-06-device-secrets`) | Hermes Session 1 | HG-SEC-06 Comprehensive Remediation | **AWAITING VERDICT** | Complete physical device authentication hardening, CSPRNG secret provisioning, POSIX 0700/0600 storage protection, authenticated re-pairing, sequence replay protection across restarts. |
+| `05e130395b1d3244bb38202c929902b6e1d93f28` (on `fix/hg-sec-06-device-secrets`) | Hermes Session 1 | HG-SEC-06 Comprehensive Remediation | **SECURITY APPROVAL PENDING** (Audit in Progress) | Complete physical device authentication hardening, CSPRNG secret provisioning, POSIX 0700/0600 storage protection, authenticated re-pairing, sequence replay protection across restarts. All local suites 100% passing (526 C++ tests, 132 UI/device tests, 71 MCP tests, 15 security gates). Packaging proceeding in parallel per HG-SUBMISSION-02. |
 
 ---
 
