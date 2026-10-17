@@ -687,6 +687,60 @@ async function runTests() {
 
   edgeClient2.disconnect();
 
+  // --- 8. Private Network Confinement & Interface Binding ---
+  console.log('\n--- 8. Private Network Confinement & Interface Binding ---');
+
+  // 8.1 Refuse wildcard binding
+  let bindErr = null;
+  try {
+    new McpBridgeCoordinator({ bindAddress: '0.0.0.0' });
+  } catch (err) {
+    bindErr = err;
+  }
+  assert(bindErr !== null && /refusing to bind wildcard/.test(bindErr.message), 'refuses wildcard bind address 0.0.0.0');
+
+  // 8.2 Subnet filtering unit checks
+  const vpnOnlyCoord = new McpBridgeCoordinator({
+    bindAddress: '127.0.0.1',
+    allowedSubnets: ['10.42.0.'],
+  });
+  assert(vpnOnlyCoord._isPermittedRemoteIp('10.42.0.2'), 'permits WireGuard peer 10.42.0.2');
+  assert(vpnOnlyCoord._isPermittedRemoteIp('::ffff:10.42.0.2'), 'permits IPv4-mapped WireGuard peer ::ffff:10.42.0.2');
+  assert(!vpnOnlyCoord._isPermittedRemoteIp('127.0.0.1'), 'rejects loopback when VPN-only configured');
+  assert(!vpnOnlyCoord._isPermittedRemoteIp('192.168.1.100'), 'rejects LAN IP 192.168.1.100');
+  assert(!vpnOnlyCoord._isPermittedRemoteIp('140.238.10.1'), 'rejects public WAN IP');
+
+  // 8.3 Live connection rejection from non-permitted subnet
+  const testSubnetPort = 20050 + Math.floor(Math.random() * 40);
+  const strictCoord = new McpBridgeCoordinator({
+    bindAddress: '127.0.0.1',
+    wsPort: testSubnetPort,
+    httpPort: testSubnetPort + 1,
+    allowedSubnets: ['10.42.0.'], // loopback 127.0.0.1 is forbidden
+  });
+  await strictCoord.start();
+
+  let closeCode = null;
+  const nonVpnClient = new McpBridgeEdgeClient({
+    coordinatorUrl: `ws://127.0.0.1:${testSubnetPort}/`,
+    deviceId: 'mi_a3_edge_001',
+    authToken: TOKENS.EDGE_AUTH,
+    mcpLocalUrl: `http://127.0.0.1:${PORTS.LOCAL_CXX_MCP}/mcp`,
+    mcpBearerToken: TOKENS.LOCAL_CXX,
+    autoReconnect: false,
+  });
+
+  await new Promise((resolve) => {
+    nonVpnClient.on('disconnected', ({ code }) => {
+      closeCode = code;
+      resolve();
+    });
+    nonVpnClient.connect();
+  });
+
+  assert(closeCode === 4403, `connection from non-VPN interface terminated with code 4403 (got ${closeCode})`);
+  await strictCoord.close();
+
   // --- Final Summary ---
   console.log('\n================================================================================');
   console.log(`  SUMMARY: ${passCount} PASSED, ${failCount} FAILED`);

@@ -222,8 +222,16 @@ Measured during sustained end-to-end load against the real C++ engine:
   PASS  reconnect with revoked credentials rejected with code 4403
 --- 7. Bounded Buffers & Payload Limits ---
   PASS  payload exceeding 64KB rejected with HTTP 413 Payload Too Large
+--- 8. Private Network Confinement & Interface Binding ---
+  PASS  refuses wildcard bind address 0.0.0.0
+  PASS  permits WireGuard peer 10.42.0.2
+  PASS  permits IPv4-mapped WireGuard peer ::ffff:10.42.0.2
+  PASS  rejects loopback when VPN-only configured
+  PASS  rejects LAN IP 192.168.1.100
+  PASS  rejects public WAN IP
+  PASS  connection from non-VPN interface terminated with code 4403 (got 4403)
 ================================================================================
-  SUMMARY: 39 PASSED, 0 FAILED
+  SUMMARY: 46 PASSED, 0 FAILED
 ================================================================================
 ```
 
@@ -263,8 +271,50 @@ Measured during sustained end-to-end load against the real C++ engine:
   4.1 Coordinator reports edge device online prior to revocation: PASS
   4.2 Coordinator revoking device immediately severs active WebSocket: PASS
   4.3 Post-revocation client call returns 503 EDGE_OFFLINE: PASS
-  5.1 Coordinator heap memory usage is < 25MB (actual: 8.61 MB): PASS
+  5.1 Coordinator heap memory usage is < 25MB (actual: 8.16 MB): PASS
   5.2 Coordinator Process RSS is < 100MB (actual: 58.38 MB): PASS
   5.2 initialize latency through bridge is < 200ms (actual: 31.14 ms): PASS
   5.3 tools/call latency through bridge is < 200ms (actual: 6.23 ms): PASS
 ```
+
+### Suite 4: Hermes 2 Three-Component Interoperability Runner (`scripts/bridge_ws_compat/run_interop_test.js`)
+```
+=== interoperability (real Java + real coordinator + native C++): 15/15 passed ===
+  0 genuine native C++ MCP server started                PASS  pid on 127.0.0.1:8790
+  1 Java edge authenticates to the real coordinator      PASS  edge session established
+  2 initialize relayed to the NATIVE C++ engine          PASS  http=200 session=minted
+  3 tools/list from the native engine                    PASS  http=200 tools=2
+  4 tools/call on the native engine                      PASS  http=200
+  5 SESSION CONTINUITY: 2nd call on the same client session PASS  http=200
+  6 mutating tool refused (policy)                       PASS  http=400
+  7 arbitrary method refused (policy)                    PASS  http=400
+  8 unauthenticated client refused                       PASS  http=401
+  9 bogus client session refused                         PASS  http=404
+  10 bridge RECONNECTS after an edge socket drop         PASS  new session edge_sess_...
+  11 serving again after reconnect (no duplicate sessions) PASS  http=200
+  12 revoke closes the edge (4403)                       PASS  edge offline after revoke
+  13 bridge HALTED - no redial after revocation          PASS  no reconnect in 16 s (correct)
+  14 bridge logged the halt explicitly                   PASS  STATUS=bridge: HALTED
+```
+
+### Suite 5: Deployment Package Self-Test (`deploy/coordinator/test_package.sh`)
+```
+================================================================================
+  DEPLOYMENT PACKAGE SELF-TEST: 12 PASSED, 0 FAILED
+================================================================================
+  1. install.sh --dry-run completes successfully: PASS
+  2. manage_devices.sh enroll generated 64-char hex CSPRNG token: PASS
+  3. devices.json permissions set to secure 0600: PASS
+  4. manage_devices.sh list shows enrolled device: PASS
+  5. enrolled device status is AUTHORIZED: PASS
+  6. service.js daemon started and running: PASS
+  7. healthcheck.sh reports coordinator ONLINE: PASS
+  8. healthcheck.sh truthfully reports MI A3 OFFLINE when disconnected: PASS
+  9. edge client successfully authenticated over WebSocket: PASS
+  10. Streamable HTTP MCP request forwarded through coordinator: PASS
+  11. manage_devices.sh revoke marked device as revoked: PASS
+  12. device status updated to REVOKED in registry: PASS
+```
+
+**Grand Total:** **103 / 103 PASS (100% SUCCESS)**
+

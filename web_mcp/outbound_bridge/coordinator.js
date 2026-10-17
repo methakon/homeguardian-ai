@@ -27,6 +27,7 @@ class McpBridgeCoordinator {
    * @param {number} [options.wsPort=18994] - WebSocket port for edge connections
    * @param {number} [options.httpPort=18995] - HTTP port for client MCP requests
    * @param {string} [options.clientToken] - Shared Bearer token for client HTTP callers
+   * @param {string[]} [options.allowedSubnets] - Permitted remote IP prefixes (default: loopback and 10.42.0.0/24 VPN)
    * @param {Map<string, { authToken: string, name: string, revoked: boolean }>} [options.authorizedDevices]
    */
   constructor(options = {}) {
@@ -39,6 +40,7 @@ class McpBridgeCoordinator {
     this.wsPort = options.wsPort || 18994;
     this.httpPort = options.httpPort || 18995;
     this.clientToken = options.clientToken || crypto.randomBytes(32).toString('hex');
+    this.allowedSubnets = options.allowedSubnets || ['127.', '10.42.', '::1', '::ffff:127.', '::ffff:10.42.'];
 
     // Registered edge devices: deviceId -> { authToken, name, revoked, lastSeen, connectedAt }
     this.authorizedDevices = options.authorizedDevices || new Map();
@@ -163,7 +165,23 @@ class McpBridgeCoordinator {
   // Edge WebSocket Protocol Handling
   // --------------------------------------------------------------------------
 
+  _isPermittedRemoteIp(remoteIp) {
+    if (!remoteIp) return false;
+    const normalized = remoteIp.startsWith('::ffff:') ? remoteIp.slice(7) : remoteIp;
+    return this.allowedSubnets.some((prefix) => {
+      const cleanPrefix = prefix.startsWith('::ffff:') ? prefix.slice(7) : prefix;
+      return remoteIp.startsWith(prefix) || normalized.startsWith(cleanPrefix);
+    });
+  }
+
   _handleEdgeConnection(ws, req) {
+    const remoteIp = (req && req.socket && req.socket.remoteAddress) || '';
+    if (!this._isPermittedRemoteIp(remoteIp)) {
+      this._terminateEdgeConnection(ws, 4403, 'Connection from non-VPN interface rejected');
+      try { ws.terminate(); } catch (_) {}
+      return;
+    }
+
     let authenticated = false;
     let deviceId = null;
 
@@ -417,6 +435,31 @@ class McpBridgeCoordinator {
 
   async _handleClientHttp(req, res) {
     const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+
+    if (url.pathname === '/health' || url.pathname === '/status') {
+      const edge = this.getEdgeInfo();
+      const statusLabel = edge && edge.online
+        ? 'ONLINE'
+        : 'LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE';
+      const mem = process.memoryUsage();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: statusLabel,
+        edge_online: edge ? edge.online : false,
+        device_id: edge ? edge.deviceId : null,
+        session_id: edge ? edge.sessionId : null,
+        inflight_requests: edge ? edge.inflight : 0,
+        last_seen: edge ? edge.lastSeen : null,
+        uptime_seconds: Math.floor(process.uptime()),
+        memory_mb: {
+          rss: +(mem.rss / 1024 / 1024).toFixed(2),
+          heap_used: +(mem.heapUsed / 1024 / 1024).toFixed(2),
+          heap_total: +(mem.heapTotal / 1024 / 1024).toFixed(2),
+        },
+        stats: this.stats,
+      }, null, 2));
+      return;
+    }
 
     if (url.pathname !== '/mcp') {
       res.writeHead(404, { 'Content-Type': 'application/json' });
