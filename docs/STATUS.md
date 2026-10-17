@@ -1,6 +1,10 @@
 # HomeGuardian AI — Status
 
-**Last updated:** 2026-10-12
+**Last updated:** 2026-10-17
+
+## Security Audit & Release Candidate Status
+- **Candidate `52d3d1436e115fe9061127a35f33b35d10c8dd73`:** Evaluated by Hermes Session 1 (P0-1 PASS, P0-2 PASS, P0-3 FAIL). Failed due to hardcoded physical device seed secrets, unauthenticated re-pairing, and lack of heartbeat sequence replay protection.
+- **Successor Candidate (Branch `fix/hg-sec-06-device-secrets`):** Implements complete physical-device credential remediation (Fix 1-5: CSPRNG 256-bit secrets, POSIX 0700/0600 storage protection, authenticated re-pairing, sequence replay protection across restarts). Complete details in `docs/RELEASE_AUDIT_STATUS.md`.
 
 ## Current Phase
 

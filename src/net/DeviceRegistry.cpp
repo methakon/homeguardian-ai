@@ -2,8 +2,10 @@
 
 #include <chrono>
 #include <cstdio>
+#include <fcntl.h>
 #include <fstream>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <unordered_set>
 
 #include <nlohmann/json.hpp>
@@ -218,13 +220,27 @@ bool DeviceRegistry::save(const std::string& path, std::string* reason) const {
             std::chrono::system_clock::now().time_since_epoch())
             .count());
 
+    // Ensure parent directory permissions (0700) on POSIX platforms
+    size_t last_slash = path.find_last_of("/\\");
+    if (last_slash != std::string::npos && last_slash > 0) {
+        std::string parent_dir = path.substr(0, last_slash);
+        struct stat st{};
+        if (::stat(parent_dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+            ::chmod(parent_dir.c_str(), S_IRWXU);
+        }
+    }
+
     // Write-then-rename so a crash cannot leave a truncated registry.
     const std::string temp = path + ".tmp";
     {
-        std::ofstream file(temp, std::ios::binary | std::ios::trunc);
-        if (!file) return fail("registry temp file is not writable");
-        file << out.dump(2) << "\n";
-        if (!file.good()) return fail("registry write failed");
+        // Atomically create temp file with 0600 permissions to avoid any window of public readability
+        int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+        if (fd < 0) return fail("registry temp file is not writable");
+        ::chmod(temp.c_str(), S_IRUSR | S_IWUSR);
+        std::string content = out.dump(2) + "\n";
+        ssize_t written = ::write(fd, content.data(), content.size());
+        ::close(fd);
+        if (written != static_cast<ssize_t>(content.size())) return fail("registry write failed");
     }
     ::chmod(temp.c_str(), S_IRUSR | S_IWUSR);
     if (std::rename(temp.c_str(), path.c_str()) != 0) return fail("registry rename failed");

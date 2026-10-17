@@ -517,10 +517,189 @@ async function runSuite() {
     }
     assert(revokedHbFailed, `Heartbeat for revoked device unconditionally rejected`);
 
-    // 14. Strict registry file permissions (0600)
+    // 14. Strict registry file permissions (0600) and directory permissions (0700)
     const fileStat = fs.statSync(configPath);
     const modeOctal = (fileStat.mode & 0o777).toString(8);
     assert(modeOctal === '600', `Registry file permissions enforced at 0600 (owner-only read/write, got 0${modeOctal})`);
+
+    const dirStat = fs.statSync(path.dirname(configPath));
+    const dirModeOctal = (dirStat.mode & 0o777).toString(8);
+    assert(dirModeOctal === '700', `Registry parent directory permissions enforced at 0700 (got 0${dirModeOctal})`);
+
+    // 15. Fix 3: Reject arbitrary client-supplied auth_secret during pairing
+    let clientSuppliedSecretFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'cam-fake-secret-001',
+          display_name: 'Fake Secret Cam',
+          device_type: 'camera',
+          auth_secret: 'attacker_supplied_credential_value_123',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      clientSuppliedSecretFailed = true;
+    }
+    assert(clientSuppliedSecretFailed, `Pairing with arbitrary client-supplied auth_secret rejected (Fix 3)`);
+
+    // 16. Fix 3: Initial enrollment vs unauthorized re-pairing
+    const enrollRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'pair',
+      JSON.stringify({
+        device_id: 'cam-re-001',
+        display_name: 'Re-pairable Camera',
+        device_type: 'camera',
+        has_camera: true,
+        capabilities: ['camera'],
+      }),
+    ]).toString('utf-8');
+    const enrollResult = JSON.parse(enrollRaw);
+    const secretA = enrollResult.provisioned_auth_secret;
+    assert(typeof secretA === 'string' && secretA.startsWith('sec_live_'), `Initial enrollment provisioned secretA`);
+
+    // Unauthorized re-pairing attempt (without existing credential proof or operator recovery)
+    let unauthRePairFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'cam-re-001',
+          display_name: 'Hijacked Camera',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      unauthRePairFailed = true;
+    }
+    assert(unauthRePairFailed, `Unauthorized re-pairing of enrolled device rejected (Fix 3)`);
+
+    // Authorized re-pairing with proof of current secret (existing_auth_secret)
+    const authRePairRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'pair',
+      JSON.stringify({
+        device_id: 'cam-re-001',
+        display_name: 'Re-paired Camera',
+        device_type: 'camera',
+        existing_auth_secret: secretA,
+        has_camera: true,
+        capabilities: ['camera'],
+      }),
+    ]).toString('utf-8');
+    const authRePairResult = JSON.parse(authRePairRaw);
+    const secretB = authRePairResult.provisioned_auth_secret;
+    assert(typeof secretB === 'string' && secretB !== secretA, `Authorized re-pairing with proof minted secretB`);
+
+    // Operator-authorized recovery re-pairing (operator_recovery: true)
+    const recoveryRePairRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'pair',
+      JSON.stringify({
+        device_id: 'cam-re-001',
+        display_name: 'Recovered Camera',
+        device_type: 'camera',
+        operator_recovery: true,
+        has_camera: true,
+        capabilities: ['camera'],
+      }),
+    ]).toString('utf-8');
+    const recoveryResult = JSON.parse(recoveryRePairRaw);
+    const secretC = recoveryResult.provisioned_auth_secret;
+    assert(typeof secretC === 'string' && secretC !== secretB, `Operator recovery re-pairing minted secretC`);
+
+    // 17. Fix 4: Heartbeat sequence validation and replay protection
+    const seqDevRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'pair',
+      JSON.stringify({
+        device_id: 'cam-seq-001',
+        display_name: 'Sequence Protected Camera',
+        device_type: 'camera',
+        has_camera: true,
+        capabilities: ['camera'],
+      }),
+    ]).toString('utf-8');
+    const seqDevResult = JSON.parse(seqDevRaw);
+    const seqSecret = seqDevResult.provisioned_auth_secret;
+
+    // First heartbeat with sequence 1 succeeds
+    const hbSeq1Raw = execFileSync(cliPath, [
+      '--registry', configPath, 'heartbeat', 'cam-seq-001', '1', String(Date.now()),
+    ], {
+      env: { ...process.env, HG_DEVICE_SECRET: seqSecret },
+    }).toString('utf-8');
+    assert(JSON.parse(hbSeq1Raw).online === true, `Heartbeat sequence 1 accepted`);
+
+    // Duplicate heartbeat with identical sequence 1 MUST BE REJECTED (Replay attack blocked)
+    let duplicateSeqFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'heartbeat', 'cam-seq-001', '1', String(Date.now()),
+      ], {
+        env: { ...process.env, HG_DEVICE_SECRET: seqSecret },
+      });
+    } catch (e) {
+      duplicateSeqFailed = true;
+    }
+    assert(duplicateSeqFailed, `Duplicate heartbeat sequence 1 rejected (Replay protection enforced)`);
+
+    // Older sequence number (sequence 0 <= 1) MUST BE REJECTED
+    let olderSeqFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'heartbeat', 'cam-seq-001', '0', String(Date.now()),
+      ], {
+        env: { ...process.env, HG_DEVICE_SECRET: seqSecret },
+      });
+    } catch (e) {
+      olderSeqFailed = true;
+    }
+    assert(olderSeqFailed, `Older heartbeat sequence 0 rejected (Monotonicity enforced)`);
+
+    // Malformed sequence number MUST BE REJECTED
+    let malformedSeqFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'heartbeat', 'cam-seq-001', 'invalid_seq_NaN', String(Date.now()),
+      ], {
+        env: { ...process.env, HG_DEVICE_SECRET: seqSecret },
+      });
+    } catch (e) {
+      malformedSeqFailed = true;
+    }
+    assert(malformedSeqFailed, `Malformed heartbeat sequence rejected`);
+
+    // Monotonically advanced sequence 5 succeeds
+    const hbSeq5Raw = execFileSync(cliPath, [
+      '--registry', configPath, 'heartbeat', 'cam-seq-001', '5', String(Date.now()),
+    ], {
+      env: { ...process.env, HG_DEVICE_SECRET: seqSecret },
+    }).toString('utf-8');
+    assert(JSON.parse(hbSeq5Raw).online === true, `Heartbeat sequence 5 accepted`);
+
+    // 18. Fix 4: Replay protection survives application/process restart
+    // Simulating process restart by running an entirely new CLI invocation against the persisted registry file
+    let restartReplayFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'heartbeat', 'cam-seq-001', '5', String(Date.now()),
+      ], {
+        env: { ...process.env, HG_DEVICE_SECRET: seqSecret },
+      });
+    } catch (e) {
+      restartReplayFailed = true;
+    }
+    assert(restartReplayFailed, `Old sequence 5 rejected after restart (Watermark persisted on disk)`);
+
+    // Fresh sequence 6 succeeds after restart
+    const hbSeq6Raw = execFileSync(cliPath, [
+      '--registry', configPath, 'heartbeat', 'cam-seq-001', '6', String(Date.now()),
+    ], {
+      env: { ...process.env, HG_DEVICE_SECRET: seqSecret },
+    }).toString('utf-8');
+    assert(JSON.parse(hbSeq6Raw).online === true, `Monotonically higher sequence 6 succeeds after restart`);
 
     // -----------------------------------------------------------------
     // TEST 8: WebRTC Signaling & Connection

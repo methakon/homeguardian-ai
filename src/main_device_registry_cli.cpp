@@ -463,17 +463,48 @@ int main(int argc, char* argv[]) {
             return 3;
         }
 
-        int64_t hb_ms = now_ms;
+        // Strictly increasing sequence verification (Heartbeat replay protection)
+        uint64_t seq = 0;
         if (args.size() > 1) {
             try {
-                uint64_t seq = std::stoull(args[1]);
-                registry.seed_sequence_watermark(dev_id, seq);
-            } catch (const std::exception&) {}
+                size_t idx = 0;
+                seq = std::stoull(args[1], &idx);
+                if (idx != args[1].size()) {
+                    std::cerr << "{\"error\": \"heartbeat rejected: malformed sequence number\"}\n";
+                    std::cout << format_device(*d, now_ms).dump(2) << "\n";
+                    return 3;
+                }
+            } catch (const std::exception&) {
+                std::cerr << "{\"error\": \"heartbeat rejected: malformed sequence number\"}\n";
+                std::cout << format_device(*d, now_ms).dump(2) << "\n";
+                return 3;
+            }
+
+            if (seq <= d->last_sequence) {
+                std::cerr << "{\"error\": \"heartbeat rejected: duplicate or older sequence number (replay detected)\"}\n";
+                std::cout << format_device(*d, now_ms).dump(2) << "\n";
+                return 3;
+            }
+        } else {
+            seq = d->last_sequence + 1;
         }
+
+        // Timestamp freshness check
+        int64_t hb_ms = now_ms;
         if (args.size() > 2) {
             try {
-                hb_ms = std::stoll(args[2]);
-            } catch (const std::exception&) {}
+                size_t idx = 0;
+                hb_ms = std::stoll(args[2], &idx);
+                if (idx != args[2].size()) {
+                    std::cerr << "{\"error\": \"heartbeat rejected: malformed timestamp\"}\n";
+                    std::cout << format_device(*d, now_ms).dump(2) << "\n";
+                    return 3;
+                }
+            } catch (const std::exception&) {
+                std::cerr << "{\"error\": \"heartbeat rejected: malformed timestamp\"}\n";
+                std::cout << format_device(*d, now_ms).dump(2) << "\n";
+                return 3;
+            }
         }
         if (hb_ms > now_ms + 5000) {
             std::cerr << "{\"error\": \"heartbeat rejected: timestamp is in the future\"}\n";
@@ -485,6 +516,8 @@ int main(int argc, char* argv[]) {
             std::cout << format_device(*d, now_ms).dump(2) << "\n";
             return 3;
         }
+
+        d->last_sequence = seq;
         registry.note_heartbeat(dev_id, hb_ms, d->capabilities);
         registry.sweep_offline(now_ms);
         registry.save(registry_path, &reason);
@@ -504,25 +537,43 @@ int main(int argc, char* argv[]) {
             std::cerr << "{\"error\": \"invalid json: " << e.what() << "\"}\n";
             return 1;
         }
-        DeviceRegistry::Device d;
-        d.device_id = dev_j.value("device_id", "");
-        d.display_name = dev_j.value("display_name", d.device_id);
-        d.device_type = dev_j.value("device_type", "sensor");
-        d.credential_id = dev_j.value("credential_id", "");
-        d.auth_secret = dev_j.value("auth_secret", "");
+        std::string dev_id = dev_j.value("device_id", "");
+        if (dev_id.empty()) {
+            std::cerr << "{\"error\": \"pair rejected: device_id is required\"}\n";
+            return 1;
+        }
 
-        if (is_blacklisted_secret(d.auth_secret)) {
-            std::cerr << "{\"error\": \"pair rejected: supplied auth_secret is blacklisted/insecure\"}\n";
+        // Hard gate: Do not accept arbitrary client-supplied auth_secret to acquire trusted identity
+        if (dev_j.contains("auth_secret") && !dev_j["auth_secret"].get<std::string>().empty()) {
+            std::cerr << "{\"error\": \"pair rejected: client-supplied auth_secret not permitted; host CSPRNG provisions credentials\"}\n";
             return 2;
         }
 
-        if (d.auth_secret.empty()) {
-            d.auth_secret = generate_csprng_secret(32);
-        }
-        if (d.credential_id.empty() && !d.device_id.empty()) {
-            d.credential_id = d.device_id + "-cred-" + d.auth_secret.substr(9, 8);
+        const DeviceRegistry::Device* existing = registry.find(dev_id);
+        const bool is_already_enrolled = (existing != nullptr && existing->paired && !existing->auth_secret.empty() && !existing->revoked);
+
+        if (is_already_enrolled) {
+            // Re-pairing requires either proof of existing credential or explicit operator recovery authorization
+            std::string presented_proof;
+            if (const char* s = std::getenv("HG_DEVICE_SECRET")) {
+                presented_proof = s;
+            } else if (dev_j.contains("existing_auth_secret")) {
+                presented_proof = dev_j["existing_auth_secret"].get<std::string>();
+            }
+            const bool operator_recovery = dev_j.value("force_re-pair", false) || dev_j.value("operator_recovery", false);
+
+            if (!operator_recovery && (presented_proof.empty() || !constant_time_equals(presented_proof, existing->auth_secret))) {
+                std::cerr << "{\"error\": \"re-pairing rejected: device is already enrolled; proof of existing credential or explicit operator recovery required\"}\n";
+                return 3;
+            }
         }
 
+        DeviceRegistry::Device d;
+        d.device_id = dev_id;
+        d.display_name = dev_j.value("display_name", d.device_id);
+        d.device_type = dev_j.value("device_type", "sensor");
+        d.auth_secret = generate_csprng_secret(32);
+        d.credential_id = d.device_id + "-cred-" + d.auth_secret.substr(9, 8);
         d.paired = true;
         d.revoked = false;
         d.has_camera = dev_j.value("has_camera", false);
@@ -535,6 +586,11 @@ int main(int argc, char* argv[]) {
                 if (cap.is_string()) d.capabilities.push_back(cap.get<std::string>());
             }
         }
+        // Preserve existing sequence watermark across re-pairing unless operator reset requested
+        if (existing != nullptr && !dev_j.value("reset_sequence", false)) {
+            d.last_sequence = existing->last_sequence;
+        }
+
         if (!registry.pair(d, &reason)) {
             std::cerr << "{\"error\": \"pair failed: " << reason << "\"}\n";
             return 2;
