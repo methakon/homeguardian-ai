@@ -57,6 +57,9 @@ public class MainActivity extends Activity {
     static final String ACTION_CAMERA_STOP = "org.homeguardian.harness.CAMERA_STOP";
     static final String ACTION_MIC_START = "org.homeguardian.harness.MIC_START";
     static final String ACTION_MIC_STOP = "org.homeguardian.harness.MIC_STOP";
+    // HG-CAM-08B: Camera2 -> MediaCodec probe (manual, bounded, no auto-start).
+    static final String ACTION_CAM2_START = "org.homeguardian.harness.CAM2_START";
+    static final String ACTION_CAM2_STOP = "org.homeguardian.harness.CAM2_STOP";
 
     // Which capture is waiting on a permission grant, if any.
     private static final int PENDING_NONE = 0;
@@ -127,6 +130,9 @@ public class MainActivity extends Activity {
                 // device (uiautomator crashes with "UiAutomationService already registered").
                 Log.i(TAG, "counters " + nativeStats());
                 if (nodePanel != null) Log.i(TAG, "counters " + nodePanel.transportCounters());
+                // HG-CAM-08B: surface the Camera2->MediaCodec probe counters in the same bounded
+                // heartbeat so frame delivery is measurable from the log rather than the screen.
+                if (cam2 != null) Log.i(TAG, "cam2probe " + cam2.result().summary());
                 // RECONCILE: if the native layer is not capturing (stop, consent withdrawal, camera
                 // permission revocation, pause) while the bridge still holds a preview, release it.
                 // Java asks the native side - never the reverse - so no lock is held across a call
@@ -652,6 +658,30 @@ public class MainActivity extends Activity {
             startMicRequested();
         } else if (ACTION_MIC_STOP.equals(act)) {
             stopMic("operator stop");
+        } else if (ACTION_CAM2_START.equals(act)) {
+            startCam2();
+        } else if (ACTION_CAM2_STOP.equals(act)) {
+            stopCam2();
+        }
+    }
+
+    // ---- HG-CAM-08B: Camera2 -> MediaCodec probe ---------------------------
+
+    private Camera2EncoderProbe cam2;
+
+    private void startCam2() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            setStatus("cam2probe: CAMERA permission not granted; nothing started");
+            return;
+        }
+        if (cam2 == null) cam2 = new Camera2EncoderProbe(this);
+        setStatus(cam2.start());
+    }
+
+    private void stopCam2() {
+        if (cam2 != null) {
+            cam2.stop();
+            setStatus("cam2probe: " + cam2.result().summary());
         }
     }
 
