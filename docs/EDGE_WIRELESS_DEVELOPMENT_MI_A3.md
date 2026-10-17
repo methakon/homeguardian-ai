@@ -8,12 +8,18 @@ workstation over authorized Wi-Fi.
 were not touched).
 
 **Status at time of writing:**
-* The toolkit is **written and proven over USB** (12/12 MCP checks, log collection,
-  identity verification) — see §8.
-* The wireless pairing itself **is not yet done**: Android 11 exposes no
-  adb-reachable toggle, so it needs one action on the phone screen. See §5. Nothing in
-  this document should be read as claiming wireless debugging has been demonstrated
-  until §9 says so.
+* **Cable-free development is demonstrated and working.** USB was physically removed
+  (proven electrically: `lsusb` showed **0** phones and `/sys/bus/usb/devices/2-3` was
+  gone), and over Wi-Fi alone: identity verification, APK deploy with SHA-256 match,
+  service auto-restart, MCP functional tests and file transfer all passed. See §9.
+* No pairing code was ever needed — Android 11 auto-trusts the USB-connected host's
+  key. See §5b.
+* Two findings materially constrain the workflow and are **not** worked around:
+  the debugging **port rotates** on a Wi-Fi reconnect, and after a Wi-Fi outage the
+  listener is absent for a window, so recovery needs patience and/or a phone action.
+  See §13 and §14.
+* mDNS works **intermittently**, not reliably, and `adb mdns services` never works
+  here. See §15.
 
 ---
 
@@ -158,7 +164,11 @@ every adb call, target one explicitly verified device, and exit non-zero on fail
 | `edge_dev_test.sh` | MCP functional tests over `adb forward` (§8) | 7 any check failed |
 | `edge_dev_logs.sh` | sanitized evidence collection (redaction is mandatory) | 3 device gone |
 | `edge_dev_disconnect.sh` | drop the wireless transport; `--off` also tries to disable Wireless Debugging | 3 nothing to do |
-| `_common.sh` | identity verification + timeouts + redaction | 2 identity mismatch, 3 not found |
+| `edge_dev_enable_wireless.sh` | **recovery**: drives the UI to re-enable Wireless Debugging (needs an existing adb transport); re-applies the operator's trust choice, never touches the checkbox | 1 could not drive UI, 3 no transport |
+| `edge_dev_mdns_resolve.py` | real mDNS resolution (PTR → SRV) to `ip:port`; stdlib only, because `adb mdns services` finds nothing here | 0 resolved, 1 none |
+| `edge_dev_discover_port.py` | **fallback**: bounded TCP probe of one host's ephemeral range | 0 found, 1 none |
+| `edge_dev_mdns_probe.py` | raw multicast probe used to prove whether mDNS answers at all | 0 answered, 1 none |
+| `_common.sh` | identity verification + timeouts + redaction + target resolution | 2 identity mismatch, 3 not found |
 
 **Service control note.** `EdgeService` is `android:exported="false"` — deliberately, so
 no other app can start this server — which means `am start-service` is correctly refused
@@ -240,24 +250,53 @@ a token actually exists. Recorded because the earlier HG-EDGE-01/02 reports desc
 
 ---
 
-## 9. Wireless demonstration — PENDING
+## 9. Wireless demonstration — RESULTS
 
-Not yet demonstrated. To be filled in after the §5 action, and each item will be
-reported as PASS/FAIL with the actual command output:
+All items below were executed over the **wireless transport only** (`adb -s
+192.168.1.14:<port>`), with USB physically removed for the primary run at 10:55.
 
-| # | Check | Status |
-|---|---|---|
-| 1 | `adb pair` / `adb connect` to the TLS endpoint | PENDING |
-| 2 | `adb devices -l` over Wi-Fi shows the authorized Mi A3, identity-verified | PENDING |
-| 3 | Shell + property inspection over Wi-Fi | PENDING |
-| 4 | APK install/update over Wi-Fi with SHA-256 match | PENDING |
-| 5 | Service startup/status/restart over Wi-Fi | PENDING |
-| 6 | Logcat + native crash buffer collection over Wi-Fi | PENDING |
-| 7 | File transfer in both directions | PENDING |
-| 8 | MCP initialize/tools/auth over Wi-Fi (host-local adb forward) | PENDING |
-| 9 | Reconnect after Wi-Fi drop, screen lock, Ubuntu restart, device reboot | PENDING |
-| 10 | Screen-off behaviour | PENDING |
-| 11 | Bluetooth assessment | **DONE — see §11** |
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| 1 | `adb connect` to the TLS endpoint | **PASS** | `connected to 192.168.1.14:41639`; no pairing step needed (§5b) |
+| 2 | `adb devices -l` shows the authorized Mi A3, identity-verified | **PASS** | only `192.168.1.14:41639` present; reports `laurel_sprout`/`trinket`/`arm64-v8a` |
+| 3 | Shell + property inspection over Wi-Fi | **PASS** | identity check, `getprop`, socket table all read remotely |
+| 4 | APK install/update over Wi-Fi with SHA-256 match | **PASS** | 1,634,936 B in 4 s; device SHA-256 == local `2d6018e0…47246`; `1.0.0 (code 1, minSdk 30)`, `arm64-v8a` |
+| 5 | Service startup/status/restart over Wi-Fi | **PASS** | service auto-restarted by `MY_PACKAGE_REPLACED` on install (pid 9266→24322→25036→26444) with no screen interaction |
+| 6 | Logcat + native crash buffer over Wi-Fi | **PASS** | 11 sanitized artifacts; crash buffer empty; 0 redaction leaks |
+| 7 | File transfer both directions | **PASS** | push 200 KB SHA-256 match; pull of the 57 KB probe log succeeded |
+| 8 | MCP initialize/tools/auth over host-local adb forward | **PASS** | **12 passed, 0 failed**; 410 authenticated cycles by the watchdog, 0 failures |
+| 9 | Reconnect after Wi-Fi drop / screen lock / adb restart / reboot | **PARTIAL** | screen lock + adb-stack restart PASS; Wi-Fi drop requires patience or a phone action (§13); reboot not tested |
+| 10 | Screen-off behaviour | **PASS** | screen `Dozing`, `adb shell` still alive, service up, MCP still loopback-only |
+| 11 | Bluetooth assessment | **DONE** | see §11 — rejected as a substitute |
+
+### 9.1 The port rotates, and there is a dead window
+
+Two distinct behaviours, both measured:
+
+1. **The port changes on a Wi-Fi reconnect.** 41639 before the drop → 40815 after.
+   "A fixed IP does not mean a fixed ADB port" is exactly right.
+2. **Immediately after the reconnect nothing is listening at all.** For several
+   minutes, every port on the phone returned an immediate `ConnectionRefusedError`
+   (0.1 s, i.e. an RST from a live stack — *not* a timeout). A 2.5 s-timeout scan of the
+   whole ephemeral range at that moment found nothing while a control scan found the
+   router's `:80`. Later the listener reappeared on the new port with no user action.
+
+So a single probe right after a reconnect is a **false negative**. Retries are
+mandatory, and `edge_dev_connect.sh --wait N` exists for that.
+
+### 9.2 A correction I had to make mid-investigation
+
+I first reported that "wireless debugging STOPPED" after the Wi-Fi toggle, and that
+mDNS was "definitively dead". **Both were wrong**, and for the same reason: the tests
+ran during the dead window and after the state had changed.
+
+* `adb_wifi_enabled` still read **1**, and the listener did come back (new port). So the
+  setting survived; only the listener took time to rebind. "Requires a manual
+  re-enable" is therefore accurate only for a *sustained* outage — a transient drop can
+  recover by itself. §13 states this precisely rather than overclaiming either way.
+* A raw stdlib multicast query **did** get 8 records from the phone once wireless
+  debugging was verified listening, which disproves "mDNS is dead". The actual behaviour
+  is intermittent — see §15.
 
 ---
 
@@ -318,3 +357,142 @@ better.
   status-code expectations should be read.
 * `docs/ROADMAP.md`'s HG-EDGE block is updated with an HG-EDGE-04 line. No numbered
   control-plane row is invented (AGENTS.md rule 9).
+
+---
+
+## 13. Recovery after a Wi-Fi interruption — stated accurately
+
+**Do not claim unattended ADB reconnection where Android requires user interaction.**
+Here is exactly what is and is not automatic:
+
+| Situation | Behaviour | Automatic? |
+|---|---|---|
+| `adb kill-server` (Ubuntu/adb restart) | the wireless transport is **not** auto-restored; `edge_dev_connect.sh` re-establishes it from the remembered endpoint | **Yes**, by the helper |
+| Screen off / locked | unaffected; shell and service keep working | **Yes** |
+| Transient Wi-Fi blip | the listener returns on a **new port** after a window of minutes | **Yes**, but only if the caller retries (`--wait`) |
+| Sustained Wi-Fi outage | `adb_wifi_enabled` survives, but the listener did **not** come back on its own within the observed window in the T4 run | **NO** — may need a phone action |
+| Phone reboot | **not tested** — see below | **UNKNOWN** |
+
+**The manual step, when needed** (Android 11 exposes no adb-callable toggle; `settings
+put global adb_wifi_enabled 1` is reset by the framework — verified twice):
+
+```
+Settings > System > Developer options > Wireless debugging > toggle OFF, then ON
+```
+
+`scripts/edge_dev/edge_dev_enable_wireless.sh` automates exactly that navigation and
+re-applies the operator's standing network-trust choice (ALLOW, with *Always allow on
+this network* deliberately **unticked**). It needs an existing adb transport, so it is
+the "reconnect the USB cable briefly" recovery path — which is precisely why the phone
+must remain independently useful without ADB (§16).
+
+**Phone reboot is UNVERIFIED and deliberately not tested here**, because the operator's
+standing instruction for this phase was no further interruption tests. It should not be
+assumed either way: Android's wireless-debugging toggle is not guaranteed to survive a
+reboot, and the honest expectation is that it will need re-enabling.
+
+---
+
+## 14. Layered discovery — resilient to both an IP change and a port change
+
+A fixed address alone was never going to be enough, and it is not implemented here. The
+discovery is layered, and each candidate is **identity-verified before acceptance**:
+
+| # | Source | Covers |
+|---|---|---|
+| 1 | `--port N` | the operator reads the port off the phone |
+| 2 | remembered endpoint (`~/.hermes/cache/scratch/hg-edge/target`, mode 600) | the common case where nothing changed |
+| 3 | `edge_dev_mdns_resolve.py` | IP **and** port rotation, when mDNS answers |
+| 4 | `edge_dev_discover_port.py` | port rotation when mDNS is silent — the fallback |
+| — | `--wait N` retries | the post-reconnect dead window (§9.1) |
+
+**Verified against the actual failure mode.** With the wireless transport dropped and a
+deliberately **stale** port (41639) planted in the remembered endpoint, the helper:
+
+```
+trying 192.168.1.14:41639  -> failed to connect ... Connection refused
+mDNS/remembered candidates did not verify - probing the phone's ports (fallback 4)
+trying 192.168.1.14:40815  -> identity OK: device=laurel_sprout platform=trinket abi=arm64-v8a
+wireless ADB established      remembered : 192.168.1.14:40815
+```
+
+So a rotated port is recovered without operator input and without a fixed IP, and the
+corrected endpoint is remembered for next time. The probe is scoped to **one host** and
+its ephemeral range — never a `/24` sweep — and is validated with a control (it finds
+`192.168.1.1:80`), because "no port found" is otherwise indistinguishable from a broken
+scanner.
+
+---
+
+## 15. mDNS: what actually happens here
+
+Re-tested with wireless debugging **verified listening** (the operator was right to
+demand this — the first pass was confounded):
+
+| Method | Result |
+|---|---|
+| `adb mdns services` | **never returns anything**, even while the phone answers raw queries |
+| `resolvectl service _adb-tls-connect._tcp` | "Name not found" |
+| raw stdlib multicast query to `224.0.0.251:5353` | **answered on one attempt — 8 records** from 192.168.1.14: `_adb-tls-connect._tcp.local` PTR → `adb-edd53dbd04de-hLZcH2._adb-tls-connect._tcp.local`; nothing on the next four attempts |
+| PTR browse for the service type (QU bit set and clear, 12 s window) | **no answer** |
+| direct SRV for the known instance name | **answered once**, then stopped |
+
+Conclusions, stated at the strength the evidence supports:
+
+1. **Multicast mDNS does traverse this LAN** — the phone answered a real query. It is not
+   filtered. My earlier "mDNS is dead" verdict was wrong.
+2. **It is not reliable enough to be the only mechanism.** It answers intermittently,
+   and it did not answer PTR browse queries in the later runs. `init.svc.mdnsd` is
+   `running` on the device, so this is responder behaviour, not a daemon failure.
+3. **`adb mdns services` is the wrong tool here**, regardless of the network: it returns
+   nothing even when the phone demonstrably answers. That is why the resolver is written
+   in Python against the real protocol rather than shelling out to adb.
+4. The instance name **embeds the serial** (`adb-edd53dbd04de-…`), so mDNS results can be
+   filtered to the intended handset — useful on a LAN with more than one phone.
+
+Therefore mDNS is candidate source 3 of 4, and the port probe is the fallback that
+actually carried the recovery in testing.
+
+---
+
+## 16. Address stability, router DHCP, and why no static IP was applied
+
+**LAN facts (all verified, none guessed):**
+
+| Item | Value |
+|---|---|
+| Subnet | `192.168.1.0/24`, mask `255.255.255.0` |
+| Gateway / DHCP server / DNS | `192.168.1.1` (MAC `08:aa:89:a7:7a:e6`) |
+| DHCP lease time | 86400 s (24 h) |
+| Router | **ZTE F670LV9.0** Airtel Xstream ONT — `©2008-2025 ZTE Corporation`, `<span id="pdtVer">F670LV9.0</span>` |
+| Router firmware build | **not exposed** pre-auth (`/cgi-bin/luci`, `/getpage.gch`, `/version`, `/sysinfo` all 404) |
+| Host | `192.168.1.6` (DHCP) |
+| Mi A3 | `192.168.1.14`, **randomized** per-network MAC `ba:ba:6b:94:0c:03` (locally-administered bit set) |
+
+**Address stability observed: the phone kept `192.168.1.14` and the same randomized MAC
+straight through a Wi-Fi disconnect/reconnect.** With a 24 h lease and the same MAC, the
+address is stable in practice without any reservation.
+
+**Why a DHCP reservation is not in place.** It requires router admin access, and the
+operator has no credentials. The documented factory defaults (modem.tools: `admin`/`admin`
+for F670LV9.0; Airtel's support site: `admin`/`password`) may be tried **once**, and the
+operator is checking the sticker on the router, which Airtel documents as carrying the
+credentials. Separately, I will not type a password into a login form — that is a hard
+constraint regardless of authorization — so the login is entered by the operator (masked
+prompt) or performed by them directly.
+
+**Why no Android static IP was applied.** Per the standing instruction, a static address
+must not be assigned until the DHCP range and collision risk are verified and approved.
+The host cannot enumerate the LAN reliably (its ARP table held only 2 hosts before an
+active probe created misleading entries), so the DHCP pool must come from the router's
+own lease list — which needs the login. **Nothing has been changed on the phone or the
+router.** The reservation also interacts with the MAC below.
+
+**MAC policy.** The phone uses a *randomized per-network* MAC, which is Android's privacy
+feature and must not be disabled globally. Two legitimate options, neither applied:
+* set this one network to use the device MAC (a **per-network** setting, leaving
+  randomization intact everywhere else), then reserve against that stable identity; or
+* reserve against the current randomized MAC, accepting that Android may rotate it
+  (which would silently break the reservation).
+
+The first is the correct approach if a reservation is wanted; the second is the trap.

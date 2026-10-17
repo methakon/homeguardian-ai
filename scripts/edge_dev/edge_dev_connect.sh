@@ -1,153 +1,147 @@
 #!/usr/bin/env bash
-# Connect to the Mi A3 over authorized Wi-Fi (Android 11 native TLS Wireless Debugging).
+# Connect to the Mi A3 over authorized Wi-Fi, resilient to BOTH an IP change and a
+# rotating debugging port.
 #
-#   edge_dev_connect.sh            # discover + connect + verify identity
-#   edge_dev_connect.sh --port N   # pin the connect port explicitly
-#   edge_dev_connect.sh --status   # report current wireless state only
+#   edge_dev_connect.sh                 # layered discovery
+#   edge_dev_connect.sh --port N        # pin the port
+#   edge_dev_connect.sh --wait N        # extra patience passes (N x 30s)
+#   edge_dev_connect.sh --status        # report state only
 #
-# Does NOT use legacy `adb tcpip 5555` (plaintext, no pairing, listens on all
-# interfaces). This uses `adb connect` to the TLS endpoint only.
+# WHY LAYERED - all measured on this LAN, none of it assumed away:
+#   * the wireless-debugging PORT ROTATES when Wi-Fi reconnects (41639 -> 40815);
+#   * after a Wi-Fi reconnect there is a window of minutes with NOTHING listening
+#     (an immediate TCP RST: a live stack, no listener), so one probe is a false
+#     negative and retries are mandatory;
+#   * mDNS answers only INTERMITTENTLY: a raw multicast query to
+#     _adb-tls-connect._tcp.local returned 8 records from the phone on one attempt
+#     and nothing on the next four. So mDNS is ONE candidate source, never the only;
+#   * `adb mdns services` lists nothing here even when the phone does answer - adb's
+#     own mDNS client is the broken part, hence the Python resolver.
 #
+# Candidate sources, each VERIFIED by identity before acceptance:
+#   1. --port   2. remembered endpoint   3. mDNS   4. bounded port probe (fallback)
+#
+# Never uses `adb tcpip 5555` (plaintext, unauthenticated, all-interfaces).
 # Exit: 0 ok, 3 not found, 4 not paired, 8 no network path.
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PIN_PORT=""
-MODE="connect"
+PIN_PORT=""; MODE="connect"; PATIENCE="${HG_EDGE_PATIENCE:-1}"
 while (( $# )); do
   case "$1" in
     --port)   PIN_PORT="$2"; shift 2 ;;
+    --wait)   PATIENCE="$2"; shift 2 ;;
     --status) MODE="status"; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) hg_die "unknown argument: $1" 1 ;;
   esac
 done
 
-# --- 1. is the phone on the network at all? ---------------------------------
-hg_net_ok() {
-  ping -c 2 -W 2 "$HG_EDGE_HOST" >/dev/null 2>&1
-}
+hg_net_ok() { ping -c 2 -W 2 "$1" >/dev/null 2>&1; }
 
 report_status() {
-  echo "wireless debugging state"
-  echo "  expected host : $HG_EDGE_HOST"
-  echo "  reachable     : $(hg_net_ok && echo yes || echo NO)"
-  echo "  adb mdns      :"
-  timeout 15 adb mdns services 2>&1 | sed 's/^/    /'
-  echo "  adb devices   :"
-  adb devices -l | sed 's/^/    /'
-  echo "  paired keys   :"
-  ls -1 ~/.android/adbkey* 2>/dev/null | sed 's/^/    /'
+  echo "wireless discovery state"
+  echo "  remembered endpoint : $([[ -f "$(hg_target_file)" ]] && cat "$(hg_target_file)" || echo '<none>')"
+  echo "  LAN address         : $HG_EDGE_HOST   reachable: $(hg_net_ok "$HG_EDGE_HOST" && echo yes || echo NO)"
+  echo "  adb mdns services   : $(timeout 15 adb mdns services 2>/dev/null | wc -l) lines (0 = adb's client finds nothing)"
+  echo "  adb devices         :"; adb devices -l | sed 's/^/    /'
+  echo "  python mDNS resolver:"; timeout 25 python3 "$HERE/edge_dev_mdns_resolve.py" 2>/dev/null | sed 's/^/    /'
+}
+[[ "$MODE" == "status" ]] && { report_status; exit 0; }
+
+hg_net_ok "$HG_EDGE_HOST" || hg_die "cannot reach $HG_EDGE_HOST on the LAN (phone off Wi-Fi, or wrong address)" 8
+
+CANDS=()
+add_cand() {
+  local c="$1"; [[ -n "$c" ]] || return 0
+  local x; for x in ${CANDS[@]+"${CANDS[@]}"}; do [[ "$x" == "$c" ]] && return 0; done
+  CANDS+=("$c")
 }
 
-if [[ "$MODE" == "status" ]]; then report_status; exit 0; fi
-
-hg_net_ok || hg_die "cannot reach $HG_EDGE_HOST - is the phone on the same Wi-Fi (and not asleep)?" 8
-
-# --- 2. find candidate TLS endpoints ----------------------------------------
-# Preferred: mDNS, which is how Android advertises the rotating port.
-# `_adb-tls-connect._tcp` is the port for `adb connect` on an already-paired host;
-# `_adb-tls-pairing._tcp` exists only while the pairing dialog is open.
-find_mdns() {
-  timeout 20 adb mdns services 2>/dev/null \
-    | awk '/_adb-tls-connect\._tcp/ {print $3}' | sort -u
-}
-find_mdns_pairing() {
-  timeout 20 adb mdns services 2>/dev/null \
-    | awk '/_adb-tls-pairing\._tcp/ {print $3}' | sort -u
-}
-
-CANDIDATES=""
-if [[ -n "$PIN_PORT" ]]; then
-  CANDIDATES="$HG_EDGE_HOST:$PIN_PORT"
-else
-  CANDIDATES="$(find_mdns || true)"
-  if [[ -z "$CANDIDATES" ]]; then
-    # mDNS is filtered by many consumer APs - measured to be the case here, where
-    # `adb mdns services` lists nothing even though the phone is advertising.
-    # Fall back to the endpoint verified last time: the port only rotates when
-    # Wireless Debugging is toggled or the device reboots, so it usually still
-    # works. This is the practical "discover the paired device" path on this LAN.
-    rf="$(hg_target_file)"
-    if [[ -f "$rf" ]]; then
-      LAST="$(head -1 "$rf")"
-      if [[ -n "$LAST" ]]; then
-        hg_log "mDNS found nothing; retrying the last verified endpoint ($LAST)"
-        CANDIDATES="$LAST"
+try_candidates() {
+  local ep serial out
+  for ep in ${CANDS[@]+"${CANDS[@]}"}; do
+    [[ -n "$ep" ]] || continue
+    hg_log "trying $ep"
+    out="$(timeout 25 adb connect "$ep" 2>&1)"
+    if grep -qiE 'already connected|connected to' <<<"$out"; then
+      serial="$(adb devices -l | awk -v e="${ep%%:*}" '$0 ~ e && $2=="device" {print $1}' | head -1)"
+      if [[ -z "$serial" ]]; then sleep 2; serial="$(adb devices -l | awk -v e="${ep%%:*}" '$0 ~ e && $2=="device" {print $1}' | head -1)"; fi
+      if [[ -n "$serial" ]] && hg_assert_mi_a3 "$serial" quiet 2>/dev/null; then
+        OK="$serial"; return 0
       fi
+      hg_log "  $ep answered but the identity check failed - ignoring"
+    else
+      hg_log "  $(tr '\n' ' ' <<<"$out")"
+      grep -qiE 'failed to authenticate|cannot authenticate' <<<"$out" \
+        && hg_log "  -> this host key is not trusted; pairing is required (edge_dev_pair.sh)"
     fi
-  fi
+  done
+  return 1
+}
+
+probe_ports() {
+  timeout 240 python3 "$HERE/edge_dev_discover_port.py" "$HG_EDGE_HOST" 2>/dev/null \
+    | grep -oE 'open:.*' | sed 's/open: *//'
+}
+
+if [[ -n "$PIN_PORT" ]]; then
+  add_cand "$HG_EDGE_HOST:$PIN_PORT"
+else
+  [[ -f "$(hg_target_file)" ]] && add_cand "$(head -1 "$(hg_target_file)")"
+  echo "  mDNS resolution (candidate source 3)..."
+  while read -r line; do add_cand "$(awk '{print $1}' <<<"$line")"; done \
+    < <(timeout 25 python3 "$HERE/edge_dev_mdns_resolve.py" --serial "$HG_EDGE_SERIAL" 2>/dev/null || true)
 fi
 
-if [[ -z "$CANDIDATES" ]]; then
-  local_hint="$(find_mdns_pairing || true)"
-  hg_log "no _adb-tls-connect service discovered via mDNS"
-  if [[ -n "$local_hint" ]]; then
-    hg_log "BUT a pairing service IS advertising: $local_hint"
-    hg_log "-> the phone is still waiting to be paired; run edge_dev_pair.sh first"
-    exit 4
-  fi
+OK=""
+try_candidates || true
+
+if [[ -z "$OK" ]]; then
+  echo "  mDNS/remembered candidates did not verify - probing the phone's ports (fallback 4)"
+  for p in $(probe_ports); do add_cand "$HG_EDGE_HOST:$p"; done
+  try_candidates || true
+fi
+
+if [[ -z "$OK" && "$PATIENCE" -gt 0 ]]; then
+  hg_log "nothing yet; retrying for ${PATIENCE} x 30s (the post-reconnect window has no listener)"
+  for i in $(seq 1 "$PATIENCE"); do
+    sleep 30
+    hg_log "retry $i"
+    CANDS=()
+    for p in $(probe_ports); do add_cand "$HG_EDGE_HOST:$p"; done
+    while read -r line; do add_cand "$(awk '{print $1}' <<<"$line")"; done \
+      < <(timeout 25 python3 "$HERE/edge_dev_mdns_resolve.py" --serial "$HG_EDGE_SERIAL" 2>/dev/null || true)
+    try_candidates && break
+  done
+fi
+
+if [[ -z "$OK" ]]; then
   cat >&2 <<EOF
-No wireless-debugging endpoint found. Most likely causes, in order:
-  1. 'Wireless debugging' is OFF. It cannot be enabled over adb - Android 11 only
-     exposes the toggle in the UI (a 'settings put global adb_wifi_enabled 1' was
-     tried and the framework immediately reset it back to 0). On the phone:
-       Settings > System > Developer options > Wireless debugging > toggle ON
-  2. mDNS/multicast is blocked between this host and the phone by the AP. Then pass
-     the port shown on the Wireless debugging screen explicitly:
-       $0 --port <PORT_FROM_PHONE_SCREEN>
-  3. The phone dropped off Wi-Fi. Check: the Wireless debugging screen shows an
-     'IP address & Port'. Host expects the phone at $HG_EDGE_HOST.
+No verified Mi A3 reachable over Wi-Fi. In order of likelihood:
+  1. Wireless Debugging is OFF. It CANNOT be enabled from adb - the framework resets
+     'settings put global adb_wifi_enabled'. Use edge_dev_enable_wireless.sh with a
+     temporary USB cable, or toggle it on the phone:
+       Settings > System > Developer options > Wireless debugging
+  2. Just after a Wi-Fi reconnect the listener is absent for a while. Re-run with
+     --wait 4 and let it run.
+  3. The port shown on the phone's Wireless debugging screen can be pinned: --port N
+  4. This host's key is already trusted, so a re-pair is normally NOT needed.
 EOF
   exit 3
 fi
 
-# --- 3. connect to each candidate until one authorises + verifies ------------
-OK=""
-while read -r EP; do
-  [[ -n "$EP" ]] || continue
-  hg_log "trying $EP"
-  out="$(timeout 25 adb connect "$EP" 2>&1)" && rc=0 || rc=$?
-  hg_log "  adb connect rc=$rc: $(tr '\n' ' ' <<<"$out")"
-  if grep -qiE 'already connected|connected to' <<<"$out"; then
-    # Resolve which serial now answers on that endpoint and verify it.
-    SERIAL="$(adb devices -l | awk -v e="${EP%%:*}" '$0 ~ e {print $1}' | head -1)"
-    if [[ -z "$SERIAL" ]]; then
-      # Transport present but serial not yet resolved - re-query.
-      sleep 2
-      SERIAL="$(adb devices -l | awk -v e="${EP%%:*}" '$0 ~ e {print $1}' | head -1)"
-    fi
-    if [[ -n "$SERIAL" ]]; then
-      if hg_assert_mi_a3 "$SERIAL" quiet 2>/dev/null; then
-        OK="$SERIAL"
-        hg_log "connected and identity-verified: $SERIAL @ $EP"
-        break
-      else
-        hg_log "  WARNING: $EP answered but the target is NOT a verified Mi A3 - ignoring"
-      fi
-    fi
-  fi
-  grep -qiE 'failed to authenticate|cannot authenticate' <<<"$out" && hg_log "  -> this host key is not trusted yet; pairing is required"
-done < <(tr ' ' '\n' <<<"$CANDIDATES")
-
-if [[ -z "$OK" ]]; then
-  hg_die "no verified Mi A3 reachable over Wi-Fi (see reasons above)" 4
-fi
-
-# Remember it, so the other scripts work once the USB cable is gone and the
-# device serial is the wireless endpoint rather than the USB serial.
 hg_remember_target "$OK"
-
-# --- 4. prove it is the real device, over the wireless transport -------------
 echo
 hg_assert_mi_a3 "$OK"
 cat <<EOF
 
 wireless ADB established
-  serial      : $OK
-  transport   : $(adb devices -l | awk -v s="$OK" '$1==s')
-  phone LAN   : $HG_EDGE_HOST
-  MCP stays   : 127.0.0.1:$HG_EDGE_MCP_PORT on the device (never exposed)
+  serial     : $OK
+  transport  : $(adb devices -l | awk -v s="$OK" '$1==s')
+  remembered : $(cat "$(hg_target_file)")
+  MCP stays  : 127.0.0.1:$HG_EDGE_MCP_PORT on the device (never exposed)
 
 Next: ./edge_dev_deploy.sh   ./edge_dev_status.sh   ./edge_dev_test.sh
 EOF
