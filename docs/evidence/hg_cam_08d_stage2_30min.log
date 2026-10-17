@@ -1,0 +1,85 @@
+=== SETUP 2026-10-17T20:32:05+05:30 ===
+power: ACpowered:false USBpowered:false 
+arming video...
+arming microphone...
+isForeground=isForeground=true
+=== SCREEN OFF + LOCK 2026-10-17T20:32:45+05:30 ===
+wakefulness=mWakefulness=Asleep
+screen=mScreenState=OFF
+t=0s pid=11872 isForeground=true rss=118460kB cpu=?% up=7092.26 level=95 temp=340 encodedBuffers=1018 keyFrames=68 samples=1006080 fatal=0
+t=61s pid=11872 isForeground=true rss=117736kB cpu=28.5% up=7152.72 level=94 temp=340 encodedBuffers=2798 keyFrames=187 samples=3893760 fatal=0
+t=121s pid=11872 isForeground=true rss=123792kB cpu=28.8% up=7213.21 level=94 temp=340 encodedBuffers=4578 keyFrames=306 samples=6781440 fatal=0
+t=182s pid=11872 isForeground=true rss=119380kB cpu=28.5% up=7273.76 level=94 temp=350 encodedBuffers=6358 keyFrames=424 samples=9665280 fatal=0
+t=242s pid=11872 isForeground=true rss=126080kB cpu=28.9% up=7334.37 level=94 temp=340 encodedBuffers=8286 keyFrames=553 samples=12794880 fatal=0
+t=303s pid=11872 isForeground=true rss=121224kB cpu=28.5% up=7394.80 level=94 temp=340 encodedBuffers=10066 keyFrames=671 samples=15678720 fatal=0
+t=363s pid=11872 isForeground=true rss=116748kB cpu=29.5% up=7455.42 level=94 temp=340 encodedBuffers=11846 keyFrames=790 samples=18566400 fatal=0
+t=424s pid=11872 isForeground=true rss=123592kB cpu=28.5% up=7515.89 level=94 temp=340 encodedBuffers=13626 keyFrames=909 samples=21450240 fatal=0
+t=484s pid=11872 isForeground=true rss=119652kB cpu=29.0% up=7576.37 level=93 temp=340 encodedBuffers=15405 keyFrames=1027 samples=24337920 fatal=0
+t=545s pid=11872 isForeground=true rss=125668kB cpu=28.5% up=7636.98 level=93 temp=340 encodedBuffers=17185 keyFrames=1146 samples=27225600 fatal=0
+t=606s pid=11872 isForeground=true rss=121640kB cpu=28.6% up=7697.58 level=93 temp=340 encodedBuffers=18964 keyFrames=1265 samples=30109440 fatal=0
+t=666s pid=11872 isForeground=true rss=117164kB cpu=29.0% up=7758.03 level=93 temp=340 encodedBuffers=20745 keyFrames=1383 samples=32997120 fatal=0
+t=727s pid=11872 isForeground=true rss=123220kB cpu=28.4% up=7818.64 level=93 temp=340 encodedBuffers=22525 keyFrames=1502 samples=35880960 fatal=0
+t=787s pid=11872 isForeground=true rss=118144kB cpu=29.0% up=7879.26 level=93 temp=340 encodedBuffers=24305 keyFrames=1621 samples=38768640 fatal=0
+t=848s pid=11872 isForeground=true rss=124508kB cpu=28.5% up=7939.86 level=93 temp=340 encodedBuffers=26084 keyFrames=1739 samples=41656320 fatal=0
+t=908s pid=11872 isForeground=true rss=120232kB cpu=28.9% up=8000.31 level=92 temp=340 encodedBuffers=27864 keyFrames=1858 samples=44540160 fatal=0
+t=969s pid=11872 isForeground=true rss=124944kB cpu=28.5% up=8060.83 level=92 temp=340 encodedBuffers=29792 keyFrames=1987 samples=47665920 fatal=0
+t=1029s pid=11872 isForeground=true rss=122096kB cpu=29.0% up=8121.42 level=92 temp=340 encodedBuffers=31571 keyFrames=2105 samples=50553600 fatal=0
+t=1090s pid=11872 isForeground=true rss=118296kB cpu=28.5% up=8182.03 level=92 temp=340 encodedBuffers=33351 keyFrames=2224 samples=53437440 fatal=0
+t=1151s pid=11872 isForeground=true rss=124008kB cpu=28.5% up=8242.58 level=92 temp=340 encodedBuffers=35131 keyFrames=2342 samples=56325120 fatal=0
+t=1211s pid=11872 isForeground=true rss=119344kB cpu=29.0% up=8303.19 level=92 temp=340 encodedBuffers=36911 keyFrames=2461 samples=59212800 fatal=0
+t=1272s pid=11872 isForeground=true rss=125780kB cpu=28.4% up=8363.63 level=92 temp=340 encodedBuffers=38691 keyFrames=2580 samples=62096640 fatal=0
+t=1332s pid=11872 isForeground=true rss=121380kB cpu=29.0% up=8424.14 level=91 temp=340 encodedBuffers=40471 keyFrames=2698 samples=64984320 fatal=0
+t=1393s pid=11872 isForeground=true rss=117524kB cpu=28.5% up=8484.66 level=91 temp=340 encodedBuffers=42250 keyFrames=2817 samples=67868160 fatal=0
+t=1453s pid=11872 isForeground=true rss=123432kB cpu=28.9% up=8545.11 level=91 temp=350 encodedBuffers=44030 keyFrames=2936 samples=70755840 fatal=0
+t=1514s pid=11872 isForeground=true rss=119464kB cpu=28.5% up=8605.69 level=91 temp=350 encodedBuffers=45810 keyFrames=3054 samples=73639680 fatal=0
+t=1574s pid=11872 isForeground=true rss=125116kB cpu=28.9% up=8666.30 level=91 temp=350 encodedBuffers=47590 keyFrames=3173 samples=76527360 fatal=0
+t=1635s pid=11872 isForeground=true rss=120860kB cpu=28.6% up=8726.89 level=91 temp=340 encodedBuffers=49517 keyFrames=3302 samples=79653120 fatal=0
+t=1695s pid=11872 isForeground=true rss=121748kB cpu=28.9% up=8787.42 level=91 temp=350 encodedBuffers=51297 keyFrames=3420 samples=82540800 fatal=0
+t=1756s pid=11872 isForeground=true rss=122760kB cpu=28.3% up=8847.87 level=90 temp=350 encodedBuffers=53077 keyFrames=3539 samples=85424640 fatal=0
+=== 30-MINUTE WINDOW ENDED 2026-10-17T21:03:08+05:30 ===
+VIDEO first->last: encodedBuffers=128 -> encodedBuffers=54857
+VIDEO keyframes first->last: keyFrames=9 -> keyFrames=3658
+MIC   first->last: samples=0 -> samples=88312320
+ticks=740 restarts: arming_video=1 arming_mic=1 camera_reopens=1 disarms=0
+errors: fatal=0 camera_denied=0 aac_fail=0 probe_fail=0
+=== screen back ON, control check ===
+wakefulness=mWakefulness=Awake
+still capturing: encodedBuffers=55005
+=== DISARM both, verify IDLE RELEASE ===
+camera_clients=[]
+idle cpu: 53539 -> 53541 ticks over 20s = 0.10%
+idle rss: 121076 kB
+battery: health:2 level:90 temperature:340 
+=== DONE 2026-10-17T21:03:48+05:30 ===
+
+=========== HG-CAM-08D Stage 2 summary ===========
+window      : 20:33:08 -> 21:03:08 IST, 1800 s, off USB power (AC/USB/wireless false)
+display     : mWakefulness=Asleep, mScreenState=OFF for the whole window
+VIDEO       : 1,018 -> 54,857 encoded H.264 buffers (+53,839); keyframes 68 -> 3,658
+              per-interval fps min 29.2 / max 32.1 across 29 sampled intervals - ZERO stalls
+MIC         : 1,006,080 -> 88,312,320 samples; per-interval 47,276 - 51,242 Hz
+SERVICE     : isForeground=true throughout; arming_video=1 arming_mic=1 camera_reopens=1 disarms=0
+              => the camera opened ONCE and was never restarted or stopped during the window
+RESOURCES   : CPU steady 28.3-29.5% of ONE core; VmRSS 116,748-125,780 kB (stable, no leak);
+              temp 33.0-35.0 C stable; battery 95% -> 90% (5% for 30 min of concurrent A/V)
+ERRORS      : fatal=0 camera_denied=0 aac_fail=0 probe_fail=0
+POST-WINDOW : screen on -> mWakefulness=Awake, still capturing (encodedBuffers 55,005)
+IDLE RELEASE: both disarmed -> camera_clients=[]; idle CPU 0.10% of one core (2 ticks / 20 s)
+              idle RSS 121,076 kB; battery 90% health=GOOD 34.0 C
+
+STAGE 3 codec results (same build):
+  H.264 round-trip: 285 encoded buffers -> 283 DECODED frames, SPS/PPS present,
+                    video/avc 640x480, decoder configured from the encoder's own CSD,
+                    null surface (decoded in memory, never rendered or stored). COMPATIBLE.
+  Audio encoder  : device has NO Opus encoder and NO G.711 encoder (Opus is DECODER only).
+                   Only encoders: OMX.google.aac.encoder (audio/mp4a-latm) and AMR-NB/WB.
+                   Mic -> AAC-LC measured: 710,400 PCM frames -> 694 encoded frames,
+                   118,394 bytes, ~64 kbps, ~21.3 ms/frame, timestamps advancing.
+
+STAGE 4 local delivery interface self-test (7/7 PASS, non-vacuous: accepted=1 rejected=2 frames=1):
+  1 no-token-refuses-start PASS (fail-closed: an absent token refuses to START the sink)
+  2 starts-with-token PASS   3 loopback-only PASS (binds 127.0.0.1 explicitly)
+  4 no-token-client-rejected PASS   5 wrong-token-rejected PASS
+  6 right-token-accepted PASS       7 frame-delivered PASS (record size=64)
+  NOTE: Android needs the INTERNET permission to bind ANY socket, loopback included
+        (EACCES otherwise); socket I/O from onStartCommand throws NetworkOnMainThreadException.
