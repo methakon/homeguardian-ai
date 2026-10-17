@@ -588,7 +588,7 @@ existing D-03 mutual-TLS ingress) for anything beyond loopback, a server-initiat
 a client needs one, `resources/*` and `prompts/*` capabilities, per-token quotas, and session
 resumability.
 
-## HG-EDGE-01 / HG-EDGE-02 — Mi A3 edge device (EXPERIMENTAL, unmerged)
+## HG-EDGE-01 / HG-EDGE-02 / HG-EDGE-03 — Mi A3 edge device (EXPERIMENTAL, unmerged)
 
 **Status:** experimental work on `experiment/mi-a3-edge` (HG-EDGE-01),
 `experiment/mi-a3-edge-sec02` (the same work re-validated on the corrected SHA) and
@@ -627,3 +627,24 @@ Android until OpenSSL is cross-compiled (NDK r26d ships none).
 corrected SHA by the security-audit workstream; the supervised 48–72 h soak is not
 started and will not be proposed until charging safety, service restart and crash
 recovery are demonstrated.
+
+**HG-EDGE-03 (discovery done, specification proposed):** the phone evaluated as an
+environmental-context and sensor-fusion hub. Report:
+`docs/EDGE_DEVICE_SENSORS_MI_A3.md`. The device reports 28 hardware/HAL-backed
+sensors, but of the four environmental metrics the engine already allowlists
+(`temperature | humidity | pressure | illuminance`) it can supply **one** —
+`illuminance`, from the `stk_stk3x3x` ambient-light sensor, which is permission-free
+and on-change. **Ambient temperature, barometric pressure and humidity are absent
+hardware** (0 hits for those types across the full 439-line `dumpsys sensorservice`
+dump), so the edge node is not and cannot be a local weather station. The 60+ thermal
+zones — including `battery` and `bms` — are explicitly recorded as **not**
+atmospheric readings and are never substituted for one. Motion, presence and
+orientation sensing is plentiful and mostly permission-free and belongs to the
+existing `SecurityObservation` path; GNSS is enabled device-wide (not by this work,
+and nothing is collected) and BLE external sensors are the only route to the missing
+metrics but require `ACCESS_FINE_LOCATION` on API 30, because `BLUETOOTH_SCAN` does
+not exist before API 31. No sensor was activated, no permission requested, no
+coordinate printed, no hardware purchased. Thresholds and allowlists unchanged; the
+proposed interface additions are additive (accuracy, confidence, and a staleness
+bound) and **not implemented** — the measurement step in section 9.3 is the
+prerequisite.
