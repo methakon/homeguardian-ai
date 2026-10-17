@@ -262,3 +262,78 @@ done here.
 
 The camera-3 Device ID, its per-unit MAC and its LAN address live only in the owner-restricted
 evidence file outside every repository, together with the seed file the code consumes.
+
+---
+
+## 12. Site-connector placement and deployment prerequisites (HG-NET-02C follow-up)
+
+This section answers "what is left before a connector could actually run", and records the evidence
+behind each statement. It deliberately adds no code and no deployment.
+
+### 12.1 What does not exist yet
+
+| Capability | State | Why it matters |
+|---|---|---|
+| A deployable **site-connector host process** | **MISSING.** The connector layer is registered in the **test target only** — `CMakeLists.txt` lists `src/camera/SiteConnector.cpp` inside the `homeguardian_tests` block, under a comment stating that no shipped binary references it. Verified by locating the target that owns it. | The framework is code, not a deployable component. Deployment needs a host target (new, or the connector folded into an existing host binary). |
+| A **transport adapter for camera 3** | **MISSING, and not writable without authorization.** The connector is transport-agnostic and opens no socket; the adapter is the only piece that would. | Without an authorized interface there is nothing for an adapter to speak. This is the terminal blocker for media, not a coding gap. |
+| **Site enrolment + connector credential provisioning** | **NOT PERFORMED.** `SiteProfile` carries the connector's own device identity and credential id; issuing that credential to a host and enrolling the site is an operational step. | A connector with no credential is not a connector; the identity exists, the distribution does not. |
+| An **always-on host with measured reliability** | **MISSING.** See 12.2. | Everything else is ready and waiting on a host. |
+
+### 12.2 Placement prerequisites, with the evidence
+
+**Reach.** The workstation and all three cameras share one `/24` broadcast domain and are directly
+on-link (`ip route get` resolves the third camera with a local source address, no gateway hop). So a
+connector must live **in this LAN** — not in a cloud, not on the Oracle VPS, not behind a NAT boundary
+it would then have to traverse.
+
+**The development workstation is NOT evidenced as an always-on host**, and the measurements say why:
+
+| Check | Measured | Reading |
+|---|---|---|
+| Chassis | SMBIOS chassis type 3 (desktop), product `X99-TI D4 PLUS`; no battery device present | It *could* physically stay on — this is not about hardware capability |
+| Link | No wired carrier (Ethernet down); Wi-Fi only | A single Wi-Fi path for a production connector host, and Wi-Fi-only is what this project already measured as fragile |
+| Uptime at measurement | 2 h 22 m | Not a 24/7 profile. Its address had also changed between sessions, and an address it previously held is now held by a different device |
+| Role | The owner's interactive workstation (heavy builds, other agent workstreams) | Per the owner's architecture, the development host must not be a required production component |
+
+So the honest position is: **no host exists today**, and the workstation is disqualified by evidence
+rather than by assumption.
+
+**The Mi A3 is a technically plausible candidate and a coordination dependency, not a plan.** At
+measurement it was present on the LAN, answering, and attached over adb — i.e. it is on the same
+network as the cameras. But its priority is the native Android C++/MCP service and authenticated
+remote operation (Hermes 2), and the standing instruction is that no new camera scanning or streaming
+goes onto it without Session 2 coordination plus resource and Doze evidence. It would also have to be
+permanently co-located with the cameras to serve as the connector host.
+
+**Remaining option:** a small dedicated always-on host in the LAN. That is a procurement and
+placement decision for the owner, not a coding task.
+
+### 12.3 Integration blockers and their owners
+
+| Blocker | Blocks | Owner |
+|---|---|---|
+| No authorized media interface on the third camera (vendor-protocol only) | video, microphone, two-way audio | **Owner** — a decision about the proprietary protocol; forbidden by standing instruction, so it stays closed until changed |
+| No always-on LAN host | any connector deployment; remote readiness | **Owner** — procurement/placement |
+| Mi A3 as connector host | would consume Hermes 2's device | **Hermes 2 (Session 2)** — priority and resource/Doze assessment |
+| Connector credential issuance + control-plane enrolment | site enrolment | **Hermes 1 (#14)** for the overlay, **Antigravity (#17)** for MCP ingress; the credential binding itself is local |
+| Retail model number and specification table | documentation only — nothing depends on it | **Owner** — the QR screen or the retail box |
+
+Nothing above blocks the C++/MCP demonstration, the security review or submission preparation.
+
+### 12.4 Smallest safe next test
+
+**A control-only, media-free enrolment rehearsal of the third camera's health path, run on the
+workstation while it is up.** Scope: fingerprint check from the neighbour table (never an address),
+a read-only connect to the four documented ports, an inventory health update, and the control-channel
+messages. Explicitly out of scope: no media, no adapter beyond reachability, no ONVIF/RTSP activation,
+no firmware, no proprietary authentication, no public exposure, no Oracle media, nothing on the Mi A3.
+
+What it buys: it turns the missing host process into a measured one — its actual footprint, the
+permissions it needs, and what a host must provide — so that whichever always-on host the owner picks
+can be evaluated against real numbers instead of a guess. It needs no hardware decision and no
+permission that is not already granted.
+
+**Priority, stated plainly:** this test is optional. With roughly six days to the Devpost deadline
+(23 October 2026, 12:00 PDT = 24 October 00:30 IST), the C++/MCP demonstration, the independent
+security review and submission preparation come first, and optional camera media work must not
+displace them. If time is short, skip it; nothing in the submission depends on the third camera.
