@@ -381,24 +381,45 @@ async function runSuite() {
     }
     assert(pairUnknownTypeFailed, `Pairing non-allowlisted device_type rejected`);
 
-    // 3. Blacklisted exposed secret rejected on pairing
-    let pairBlacklistedFailed = false;
-    try {
-      execFileSync(cliPath, [
-        '--registry', configPath, 'pair',
-        JSON.stringify({
-          device_id: 'cam-evil-001',
-          display_name: 'Evil Camera',
-          device_type: 'camera',
-          auth_secret: 'sec_cam1_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c', // Known exposed secret
-          has_camera: true,
-          capabilities: ['camera'],
-        }),
-      ]);
-    } catch (e) {
-      pairBlacklistedFailed = true;
+    // 3. Reconcile all 5 historical credential literals: verify every one is rejected (HG-SEC-06B Action 2)
+    const kFivePublishedLiterals = [
+      'sec_cam1_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c',
+      'sec_syn_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d',
+      'sec_mic1_9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b',
+      'sec_spk1_5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d',
+      'sec_env1_3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f',
+    ];
+    for (const lit of kFivePublishedLiterals) {
+      let litPairFailed = false;
+      try {
+        execFileSync(cliPath, [
+          '--registry', configPath, 'pair',
+          JSON.stringify({
+            device_id: 'cam-lit-test',
+            display_name: 'Historical Literal Test Camera',
+            device_type: 'camera',
+            auth_secret: lit,
+            has_camera: true,
+            capabilities: ['camera'],
+          }),
+        ]);
+      } catch (e) {
+        litPairFailed = true;
+      }
+      assert(litPairFailed, `Pairing with historical credential literal '${lit.slice(0, 12)}...' rejected`);
+
+      let litHbFailed = false;
+      try {
+        execFileSync(cliPath, [
+          '--registry', configPath, 'heartbeat', 'cam-live-001', '1', String(Date.now()),
+        ], {
+          env: { ...process.env, HG_DEVICE_SECRET: lit },
+        });
+      } catch (e) {
+        litHbFailed = true;
+      }
+      assert(litHbFailed, `Heartbeat presenting historical credential literal '${lit.slice(0, 12)}...' rejected`);
     }
-    assert(pairBlacklistedFailed, `Pairing with known published/blacklisted secret rejected`);
 
     // 4. Secure physical device pairing with CSPRNG secret generation
     const pairRaw = execFileSync(cliPath, [
@@ -594,21 +615,68 @@ async function runSuite() {
     const secretB = authRePairResult.provisioned_auth_secret;
     assert(typeof secretB === 'string' && secretB !== secretA, `Authorized re-pairing with proof minted secretB`);
 
-    // Operator-authorized recovery re-pairing (operator_recovery: true)
+    // HG-SEC-06B Action 1: Reject caller-supplied operator_recovery boolean from JSON
+    let callerBooleanRecoveryFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'cam-re-001',
+          display_name: 'Hijacked via JSON boolean',
+          device_type: 'camera',
+          operator_recovery: true,
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      callerBooleanRecoveryFailed = true;
+    }
+    assert(callerBooleanRecoveryFailed, `Caller-supplied operator_recovery: true in JSON without trusted operator auth is rejected (HG-SEC-06B Action 1)`);
+
+    // Recovery flag present but no operator secret configured / invalid secret: rejected
+    let unauthenticatedRecoveryFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath,
+        '--operator-recovery',
+        '--operator-secret', 'wrong-operator-secret',
+        'pair',
+        JSON.stringify({
+          device_id: 'cam-re-001',
+          display_name: 'Unauth Recovery Attempt',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+      });
+    } catch (e) {
+      unauthenticatedRecoveryFailed = true;
+    }
+    assert(unauthenticatedRecoveryFailed, `Operator recovery with invalid operator secret is rejected (HG-SEC-06B Action 1)`);
+
+    // Operator-authorized recovery re-pairing with trusted operator secret
     const recoveryRePairRaw = execFileSync(cliPath, [
-      '--registry', configPath, 'pair',
+      '--registry', configPath,
+      '--operator-recovery',
+      '--operator-secret', 'trusted-operator-secret-2026',
+      'pair',
       JSON.stringify({
         device_id: 'cam-re-001',
         display_name: 'Recovered Camera',
         device_type: 'camera',
-        operator_recovery: true,
         has_camera: true,
         capabilities: ['camera'],
       }),
-    ]).toString('utf-8');
+    ], {
+      env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+    }).toString('utf-8');
     const recoveryResult = JSON.parse(recoveryRePairRaw);
     const secretC = recoveryResult.provisioned_auth_secret;
-    assert(typeof secretC === 'string' && secretC !== secretB, `Operator recovery re-pairing minted secretC`);
+    assert(typeof secretC === 'string' && secretC !== secretB, `Trusted operator recovery re-pairing minted secretC`);
+    assert(recoveryResult.online === false, `Recovered device remains offline until authenticated heartbeat`);
 
     // 17. Fix 4: Heartbeat sequence validation and replay protection
     const seqDevRaw = execFileSync(cliPath, [

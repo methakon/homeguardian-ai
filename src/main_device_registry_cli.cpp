@@ -40,6 +40,10 @@ using json = nlohmann::json;
 
 namespace {
 
+// Proactive Denylist: Rejects historical test credentials and publicly exposed secrets.
+// These 5 literals (sec_cam1_..., sec_syn_..., sec_mic1_..., sec_spk1_..., sec_env1_...)
+// are solely denylist entries retained for proactive rejection. No seeded or active device
+// accepts them (all default devices initialize unprovisioned with auth_secret == "").
 bool is_blacklisted_secret(std::string_view secret) {
     if (secret.empty()) return false;
     static const std::unordered_set<std::string_view> kBlacklist = {
@@ -65,17 +69,17 @@ bool is_blacklisted_secret(std::string_view secret) {
     return kBlacklist.find(secret) != kBlacklist.end();
 }
 
+// Fail-closed CSPRNG secret generator: strictly requires /dev/urandom.
+// Refuses to fall back to non-cryptographic or unspecified pseudo-random sources.
 std::string generate_csprng_secret(size_t num_bytes = 32) {
     std::vector<unsigned char> buf(num_bytes);
     std::ifstream urandom("/dev/urandom", std::ios::binary);
-    if (urandom.is_open()) {
-        urandom.read(reinterpret_cast<char*>(buf.data()), num_bytes);
+    if (!urandom.is_open() || !urandom.good()) {
+        throw std::runtime_error("csprng_unavailable: unable to open /dev/urandom for cryptographically secure entropy");
     }
-    if (!urandom.good()) {
-        std::random_device rd;
-        for (size_t i = 0; i < num_bytes; ++i) {
-            buf[i] = static_cast<unsigned char>(rd());
-        }
+    urandom.read(reinterpret_cast<char*>(buf.data()), num_bytes);
+    if (static_cast<size_t>(urandom.gcount()) != num_bytes) {
+        throw std::runtime_error("csprng_insufficient_entropy: failed to read required bytes from /dev/urandom");
     }
     std::ostringstream ss;
     ss << "sec_live_";
@@ -92,6 +96,52 @@ bool constant_time_equals(std::string_view a, std::string_view b) {
         result |= static_cast<unsigned char>(a[i] ^ b[i]);
     }
     return result == 0;
+}
+
+// Verifies trusted operator recovery authorization.
+// Does NOT accept caller-supplied booleans from device JSON.
+bool verify_operator_authorization(bool recovery_flag, const std::string& secret_flag, const std::string& secret_file_flag) {
+    if (!recovery_flag) return false;
+
+    std::string expected_secret;
+    if (const char* s = std::getenv("HG_OPERATOR_SECRET")) {
+        expected_secret = s;
+    } else if (const char* s = std::getenv("HG_OPERATOR_PASSWORD")) {
+        expected_secret = s;
+    } else {
+        std::string secret_file = secret_file_flag;
+        if (secret_file.empty()) {
+            if (const char* file_path = std::getenv("HG_OPERATOR_SECRET_FILE")) {
+                secret_file = file_path;
+            }
+        }
+        if (!secret_file.empty()) {
+            std::ifstream sf(secret_file);
+            if (sf.good()) {
+                std::getline(sf, expected_secret);
+            }
+        }
+    }
+
+    // Fail closed: If no operator secret is configured anywhere, operator recovery cannot be authorized
+    if (expected_secret.empty() || is_blacklisted_secret(expected_secret)) {
+        return false;
+    }
+
+    std::string presented_secret = secret_flag;
+    if (presented_secret.empty()) {
+        if (const char* s = std::getenv("HG_OPERATOR_SECRET")) {
+            presented_secret = s;
+        } else if (const char* s = std::getenv("HG_OPERATOR_PASSWORD")) {
+            presented_secret = s;
+        }
+    }
+
+    if (presented_secret.empty() || is_blacklisted_secret(presented_secret)) {
+        return false;
+    }
+
+    return constant_time_equals(presented_secret, expected_secret);
 }
 
 int64_t get_now_ms() {
@@ -289,6 +339,9 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
 int main(int argc, char* argv[]) {
     std::string registry_path = "devices.json";
     std::string credential_file_flag;
+    bool operator_recovery_flag = false;
+    std::string operator_secret_flag;
+    std::string operator_secret_file_flag;
     std::string command;
     std::vector<std::string> args;
 
@@ -298,8 +351,14 @@ int main(int argc, char* argv[]) {
             registry_path = argv[++i];
         } else if (a == "--credential-file" && i + 1 < argc) {
             credential_file_flag = argv[++i];
+        } else if (a == "--operator-recovery") {
+            operator_recovery_flag = true;
+        } else if (a == "--operator-secret" && i + 1 < argc) {
+            operator_secret_flag = argv[++i];
+        } else if (a == "--operator-secret-file" && i + 1 < argc) {
+            operator_secret_file_flag = argv[++i];
         } else if (a == "--help" || a == "-h") {
-            std::cout << "Usage: hg_device_registry_cli [--registry <path>] [--credential-file <path>] <command> [args...]\n"
+            std::cout << "Usage: hg_device_registry_cli [--registry <path>] [--credential-file <path>] [--operator-recovery] [--operator-secret <secret>] <command> [args...]\n"
                       << "Commands:\n"
                       << "  list                          List all peripheral devices in HG-UI-03 format\n"
                       << "  get <device_id>               Get single device details\n"
@@ -552,19 +611,32 @@ int main(int argc, char* argv[]) {
         const DeviceRegistry::Device* existing = registry.find(dev_id);
         const bool is_already_enrolled = (existing != nullptr && existing->paired && !existing->auth_secret.empty() && !existing->revoked);
 
-        if (is_already_enrolled) {
-            // Re-pairing requires either proof of existing credential or explicit operator recovery authorization
-            std::string presented_proof;
-            if (const char* s = std::getenv("HG_DEVICE_SECRET")) {
-                presented_proof = s;
-            } else if (dev_j.contains("existing_auth_secret")) {
-                presented_proof = dev_j["existing_auth_secret"].get<std::string>();
-            }
-            const bool operator_recovery = dev_j.value("force_re-pair", false) || dev_j.value("operator_recovery", false);
+        const bool operator_recovery_authorized = verify_operator_authorization(
+            operator_recovery_flag, operator_secret_flag, operator_secret_file_flag);
 
-            if (!operator_recovery && (presented_proof.empty() || !constant_time_equals(presented_proof, existing->auth_secret))) {
-                std::cerr << "{\"error\": \"re-pairing rejected: device is already enrolled; proof of existing credential or explicit operator recovery required\"}\n";
-                return 3;
+        if (is_already_enrolled) {
+            // Reject any unauthenticated requester attempting to claim operator recovery via caller-controlled JSON
+            if ((dev_j.contains("operator_recovery") && dev_j["operator_recovery"].is_boolean() && dev_j["operator_recovery"].get<bool>()) ||
+                (dev_j.contains("force_re-pair") && dev_j["force_re-pair"].is_boolean() && dev_j["force_re-pair"].get<bool>())) {
+                if (!operator_recovery_authorized) {
+                    std::cerr << "{\"error\": \"re-pairing rejected: caller-supplied operator_recovery boolean is not permitted; operator recovery requires trusted operator authorization\"}\n";
+                    return 3;
+                }
+            }
+
+            if (!operator_recovery_authorized) {
+                // Normal re-pairing strictly requires proof of existing device credential
+                std::string presented_proof;
+                if (const char* s = std::getenv("HG_DEVICE_SECRET")) {
+                    presented_proof = s;
+                } else if (dev_j.contains("existing_auth_secret")) {
+                    presented_proof = dev_j["existing_auth_secret"].get<std::string>();
+                }
+
+                if (presented_proof.empty() || is_blacklisted_secret(presented_proof) || !constant_time_equals(presented_proof, existing->auth_secret)) {
+                    std::cerr << "{\"error\": \"re-pairing rejected: device is already enrolled; valid proof of existing credential or trusted operator recovery authorization required\"}\n";
+                    return 3;
+                }
             }
         }
 
@@ -572,10 +644,20 @@ int main(int argc, char* argv[]) {
         d.device_id = dev_id;
         d.display_name = dev_j.value("display_name", d.device_id);
         d.device_type = dev_j.value("device_type", "sensor");
-        d.auth_secret = generate_csprng_secret(32);
+        try {
+            d.auth_secret = generate_csprng_secret(32);
+        } catch (const std::exception& e) {
+            std::cerr << "{\"error\": \"credential generation failed closed: " << e.what() << "\"}\n";
+            return 5;
+        }
         d.credential_id = d.device_id + "-cred-" + d.auth_secret.substr(9, 8);
         d.paired = true;
         d.revoked = false;
+        d.online = false; // Always enforce offline state on pairing/re-pairing until authenticated heartbeat
+        d.last_heartbeat_ms = 0;
+        if (operator_recovery_authorized) {
+            d.revocation_note = "recovered by authorized operator";
+        }
         d.has_camera = dev_j.value("has_camera", false);
         d.has_microphone = dev_j.value("has_microphone", false);
         d.consent_granted = dev_j.value("consent_granted", false);
@@ -586,9 +668,13 @@ int main(int argc, char* argv[]) {
                 if (cap.is_string()) d.capabilities.push_back(cap.get<std::string>());
             }
         }
-        // Preserve existing sequence watermark across re-pairing unless operator reset requested
-        if (existing != nullptr && !dev_j.value("reset_sequence", false)) {
-            d.last_sequence = existing->last_sequence;
+        // Preserve existing sequence watermark across re-pairing unless authorized operator explicitly requested reset
+        if (existing != nullptr) {
+            if (operator_recovery_authorized && dev_j.value("reset_sequence", false)) {
+                d.last_sequence = 0;
+            } else {
+                d.last_sequence = existing->last_sequence;
+            }
         }
 
         if (!registry.pair(d, &reason)) {
@@ -622,9 +708,16 @@ int main(int argc, char* argv[]) {
             std::cerr << "{\"error\": \"cannot rotate secret for revoked device\"}\n";
             return 3;
         }
-        std::string new_secret = generate_csprng_secret(32);
+        std::string new_secret;
+        try {
+            new_secret = generate_csprng_secret(32);
+        } catch (const std::exception& e) {
+            std::cerr << "{\"error\": \"credential generation failed closed: " << e.what() << "\"}\n";
+            return 5;
+        }
         d->auth_secret = new_secret;
         d->online = false; // Fresh heartbeat with rotated secret is required
+        d->last_heartbeat_ms = 0;
         if (!registry.save(registry_path, &reason)) {
             std::cerr << "{\"error\": \"failed to save registry: " << reason << "\"}\n";
             return 4;
