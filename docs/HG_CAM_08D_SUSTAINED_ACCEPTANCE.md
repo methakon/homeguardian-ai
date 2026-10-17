@@ -33,6 +33,23 @@ Independent release (the part that actually proves separate ownership):
     disarm VIDEO only  -> camera clients [], mic STILL running (readCalls 2478 -> 2603, samples climbing)
     disarm MIC only    -> "mic stopped and released", final 2,661 readCalls / 10,216,320 samples / 212,923 ms
 
+### Permission withdrawal while BOTH sensors are live
+
+    pm revoke ... CAMERA
+    ActivityManager: Killing 13392:org.homeguardian.harness/u0a101 (adj 200): permissions revoked
+    after: camera clients []          new pid 13535 (START_STICKY restart)
+           restart camera client     none -> a null-intent restart arms nothing (fail-safe)
+
+Android kills the process when a runtime permission is revoked, so **the resources are released by
+process death, not by our stop path** — the microphone logged 0 "stopped and released" lines for
+exactly that reason. That is expected behaviour and not a leak, but it is worth stating plainly
+rather than counting release lines and claiming the disarm path ran.
+
+Note on method: the first check used the count of `arming capture` log lines as a proxy for "did the
+restart re-arm the camera", and it read 1 — which was my *own* initial arm, not a restart. The
+authoritative evidence is `Active Camera Clients: []` after the restart. A count that includes the
+setup action is not a test of the restart.
+
 ## 3. Stage 2 — the 30-minute acceptance
 
 Window 20:33:08 → 21:03:08 IST (1800 s), **off USB power** (`AC/USB/wireless` all false), display
