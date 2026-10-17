@@ -1,0 +1,68 @@
+############ RECONNECT TESTS (cable-free) ############
+2026-10-17 10:56:20 IST
+endpoint: 192.168.1.14:41639
+
+===== T1. transport failure: adb disconnect, then reconnect =====
+  disconnected 192.168.1.14:41639
+  transports after disconnect:
+    List of devices attached
+    
+  connected to 192.168.1.14:41639
+  transports after reconnect:
+    List of devices attached
+    192.168.1.14:41639     device product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:38
+    
+  port unchanged? 192.168.1.14:41639  == endpoint still used
+  shell works: ALIVE
+
+===== T2. adb stack restart (the Ubuntu-restart recovery path) =====
+NOTE: the workstation itself was NOT rebooted - that is the operator's machine,
+      not mine to restart. This restarts the whole adb client+server stack, which
+      is the part a reboot actually affects for this workflow.
+* daemon not running; starting now at tcp:5037
+* daemon started successfully
+  transports after kill-server: 1 entries
+  transports after start-server:
+    List of devices attached
+    
+  reconnecting via the helper:
+    10:56:32 mDNS found nothing; retrying the last verified endpoint (192.168.1.14:41639)
+    10:56:32   adb connect rc=0: connected to 192.168.1.14:41639 
+    10:56:32 connected and identity-verified: 192.168.1.14:41639 @ 192.168.1.14:41639
+    10:56:32 identity OK: serial=192.168.1.14:41639 device=laurel_sprout platform=trinket abi=arm64-v8a sdk=30 mem=5603MB
+    wireless ADB established
+
+===== T3. screen off / lock (does wireless ADB survive a locked screen?) =====
+  state: mWakefulness=Dozing
+  keyguard showing: isKeyguardShowing=false
+  ADB shell over Wi-Fi with the screen OFF: STILL_ALIVE
+  service still up: pid 25036
+  MCP listener    : 0100007F:2256
+  (screen woken again)
+
+===== T4. Wi-Fi interruption (device-side toggle with a self-healing re-enable) =====
+start 10:57:23
+  endpoint before: 192.168.1.14:41639
+  MCP pid before : 25036
+  scheduling on the DEVICE: svc wifi disable; sleep 25; svc wifi enable (x2)
+  scheduled. observing the drop:
+    t+3s: 192.168.1.14:41639     device product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:1||
+    t+6s: 192.168.1.14:41639     device product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:1||
+    t+9s: 192.168.1.14:41639     device product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:1||
+    t+12s: 192.168.1.14:41639     offline product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:1||
+    t+15s: 192.168.1.14:41639     offline product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:1||
+    t+18s: 192.168.1.14:41639     offline product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:1||
+  waiting for the device to bring Wi-Fi back (25s from the toggle)...
+  reconnecting attempts:
+    attempt 1: failed to connect to '192.168.1.14:41639': Connection refused 
+    attempt 2: failed to connect to '192.168.1.14:41639': Connection refused 
+    attempt 3: failed to connect to '192.168.1.14:41639': Connection refused 
+    attempt 4: failed to connect to '192.168.1.14:41639': Connection refused 
+    attempt 5: failed to connect to '192.168.1.14:41639': Connection refused 
+    attempt 6: failed to connect to '192.168.1.14:41639': Connection refused 
+    attempt 7: failed to connect to '192.168.1.14:41639': Connection refused 
+    attempt 8: failed to connect to '192.168.1.14:41639': Connection refused 
+  RESULT: NOT recovered automatically. The device re-enabled Wi-Fi on its own timer,
+          so this would mean the wireless-debugging PORT rotated (or the device did not
+          rejoin the SSID). The port would then have to be read from the phone screen.
+end 10:59:17

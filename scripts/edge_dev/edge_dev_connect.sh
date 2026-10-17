@@ -62,6 +62,21 @@ if [[ -n "$PIN_PORT" ]]; then
   CANDIDATES="$HG_EDGE_HOST:$PIN_PORT"
 else
   CANDIDATES="$(find_mdns || true)"
+  if [[ -z "$CANDIDATES" ]]; then
+    # mDNS is filtered by many consumer APs - measured to be the case here, where
+    # `adb mdns services` lists nothing even though the phone is advertising.
+    # Fall back to the endpoint verified last time: the port only rotates when
+    # Wireless Debugging is toggled or the device reboots, so it usually still
+    # works. This is the practical "discover the paired device" path on this LAN.
+    rf="$(hg_target_file)"
+    if [[ -f "$rf" ]]; then
+      LAST="$(head -1 "$rf")"
+      if [[ -n "$LAST" ]]; then
+        hg_log "mDNS found nothing; retrying the last verified endpoint ($LAST)"
+        CANDIDATES="$LAST"
+      fi
+    fi
+  fi
 fi
 
 if [[ -z "$CANDIDATES" ]]; then

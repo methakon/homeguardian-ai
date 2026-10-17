@@ -14,22 +14,21 @@
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 SRC_APK="${1:-$(dirname "${BASH_SOURCE[0]}")/../../hg_service_apk_build/homeguardian-edge-service.apk}"
-SERIAL="${HG_EDGE_TARGET:-}"
 
 [[ -f "$SRC_APK" ]] || hg_die "APK not found: $SRC_APK" 5
 
-# --- resolve the target: wireless serial if already connected, else USB ------
-if [[ -z "$SERIAL" ]]; then
-  # Prefer a wireless transport of the known serial, else the USB one.
-  if hg_state "$HG_EDGE_SERIAL" >/dev/null 2>&1; then
-    SERIAL="$HG_EDGE_SERIAL"
-  else
-    # Any *other* serial present? Refuse rather than guess.
-    mapfile -t others < <(adb devices | awk 'NR>1 && $2=="device" && $1!="'"$HG_EDGE_SERIAL"'" {print $1}')
-    (( ${#others[@]} == 0 )) || hg_die "expected serial $HG_EDGE_SERIAL is absent but found: ${others[*]} - refusing to deploy to an unverified device" 3
-    hg_die "no device $HG_EDGE_SERIAL attached (USB or Wi-Fi)" 3
-  fi
-fi
+# --- resolve the target -----------------------------------------------------
+# Uses the shared resolver (explicit override -> remembered wireless endpoint ->
+# USB serial). This deliberately does NOT fall back to "the only device present":
+# if nothing resolves, it names what is attached and refuses. Learned the hard
+# way: with the cable out, the USB serial does not exist and the device serial is
+# the wireless endpoint, so hardcoding HG_EDGE_SERIAL made deploy fail with exit 3.
+SERIAL="$(hg_resolve_target)" || {
+  mapfile -t present < <(adb devices | awk 'NR>1 && $2=="device" {print $1}')
+  (( ${#present[@]} == 0 )) || hg_die "no verified target resolvable, but these are attached: ${present[*]} - refusing to guess" 3
+  hg_die "no device attached: neither the remembered wireless endpoint nor USB $HG_EDGE_SERIAL" 3
+}
+hg_log "target: $SERIAL"
 
 hg_assert_mi_a3 "$SERIAL"
 hg_log "deploying $(basename "$SRC_APK") to $SERIAL"
