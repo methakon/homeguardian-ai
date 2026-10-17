@@ -279,16 +279,13 @@ bool DeviceRegistry::pair(const Device& device, std::string* reason) {
     }
     Device* existing = find_mutable(device.device_id);
     if (existing != nullptr) {
-        // Re-pairing keeps the trust facts the operator set explicitly, and
-        // always clears runtime state.
-        const bool consent_granted = existing->consent_granted;
-        const std::string subject = existing->consent_subject;
-        const std::string purpose = existing->consent_purpose;
+        // Re-pairing invalidates stale viewing grants, previous consent, and all runtime liveness
         *existing = device;
         existing->is_synthetic = (existing->device_id == Device::kAuthoritativeSyntheticDeviceId && existing->device_type == "simulator");
-        existing->consent_granted = consent_granted;
-        existing->consent_subject = subject;
-        existing->consent_purpose = purpose;
+        existing->consent_granted = device.consent_granted;
+        existing->consent_subject = device.consent_subject;
+        existing->consent_purpose = device.consent_purpose;
+        existing->capture_enabled = device.capture_enabled && existing->consent_granted;
         existing->last_sequence = 0;
         existing->last_observation_at_ms = 0;
         existing->last_heartbeat_ms = 0;
@@ -311,11 +308,14 @@ bool DeviceRegistry::unpair(const std::string& device_id) {
     Device* d = find_mutable(device_id);
     if (d == nullptr) return false;
     d->paired = false;
+    d->auth_secret.clear();
+    d->credential_id.clear();
     d->consent_granted = false;
     d->capture_enabled = false;
     d->online = false;
     d->last_sequence = 0;
     d->last_observation_at_ms = 0;
+    d->last_heartbeat_ms = 0;
     return true;
 }
 
@@ -325,12 +325,15 @@ bool DeviceRegistry::revoke(const std::string& device_id, const std::string& not
     if (d->revoked) return false;  // already revoked
     d->revoked = true;
     d->revocation_note = note.size() > kMaxNoteChars ? note.substr(0, kMaxNoteChars) : note;
-    // Revocation is total: it also drops consent, capture and liveness, so no
-    // residual flag can keep a revoked device partially authorized.
+    // Revocation is total: it drops credentials, consent, capture, sequence, and liveness
+    d->auth_secret.clear();
     d->consent_granted = false;
     d->capture_enabled = false;
     d->online = false;
     d->paired = false;
+    d->last_heartbeat_ms = 0;
+    d->last_sequence = 0;
+    d->last_observation_at_ms = 0;
     return true;
 }
 

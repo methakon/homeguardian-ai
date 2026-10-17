@@ -31,6 +31,7 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <sys/stat.h>
 
 #include <nlohmann/json.hpp>
 #include "net/DeviceRegistry.h"
@@ -98,10 +99,10 @@ bool constant_time_equals(std::string_view a, std::string_view b) {
     return result == 0;
 }
 
-// Verifies trusted operator recovery authorization.
+// Verifies trusted operator authorization for administrative actions (enrollment, recovery, unpairing).
 // Does NOT accept caller-supplied booleans from device JSON.
-bool verify_operator_authorization(bool recovery_flag, const std::string& secret_flag, const std::string& secret_file_flag) {
-    if (!recovery_flag) return false;
+bool verify_operator_authorization(bool action_flag, const std::string& secret_flag, const std::string& secret_file_flag, bool stdin_flag = false) {
+    if (!action_flag) return false;
 
     std::string expected_secret;
     if (const char* s = std::getenv("HG_OPERATOR_SECRET")) {
@@ -109,32 +110,64 @@ bool verify_operator_authorization(bool recovery_flag, const std::string& secret
     } else if (const char* s = std::getenv("HG_OPERATOR_PASSWORD")) {
         expected_secret = s;
     } else {
-        std::string secret_file = secret_file_flag;
-        if (secret_file.empty()) {
-            if (const char* file_path = std::getenv("HG_OPERATOR_SECRET_FILE")) {
-                secret_file = file_path;
+        std::string daemon_secret_file;
+        if (const char* file_path = std::getenv("HG_OPERATOR_SECRET_FILE")) {
+            daemon_secret_file = file_path;
+        } else {
+            daemon_secret_file = "/tmp/hg_operator_password.secret";
+        }
+        struct stat st{};
+        if (::stat(daemon_secret_file.c_str(), &st) == 0) {
+            // Reject group- or world-accessible operator secret file (must be 0600 or 0400)
+            if ((st.st_mode & 0077) == 0) {
+                std::ifstream sf(daemon_secret_file);
+                if (sf.good()) {
+                    std::getline(sf, expected_secret);
+                }
             }
         }
-        if (!secret_file.empty()) {
-            std::ifstream sf(secret_file);
-            if (sf.good()) {
-                std::getline(sf, expected_secret);
-            }
-        }
-    }
-
-    // Fail closed: If no operator secret is configured anywhere, operator recovery cannot be authorized
-    if (expected_secret.empty() || is_blacklisted_secret(expected_secret)) {
-        return false;
     }
 
     std::string presented_secret = secret_flag;
+    if (presented_secret.empty() && stdin_flag) {
+        std::getline(std::cin, presented_secret);
+    }
+    if (presented_secret.empty() && !secret_file_flag.empty()) {
+        struct stat st{};
+        if (::stat(secret_file_flag.c_str(), &st) == 0) {
+            // Reject group- or world-accessible operator secret file (must be 0600 or 0400)
+            if ((st.st_mode & 0077) != 0) {
+                std::cerr << "{\"error\": \"operator secret file rejected: insecure permissions; must be 0600 or 0400\"}\n";
+                return false;
+            }
+            std::ifstream sf(secret_file_flag);
+            if (sf.good()) {
+                std::getline(sf, presented_secret);
+            }
+        } else {
+            std::cerr << "{\"error\": \"operator secret file not found or inaccessible\"}\n";
+            return false;
+        }
+    }
     if (presented_secret.empty()) {
         if (const char* s = std::getenv("HG_OPERATOR_SECRET")) {
             presented_secret = s;
         } else if (const char* s = std::getenv("HG_OPERATOR_PASSWORD")) {
             presented_secret = s;
         }
+    }
+
+    // Strip trailing whitespace/newlines
+    while (!expected_secret.empty() && (expected_secret.back() == '\r' || expected_secret.back() == '\n' || expected_secret.back() == ' ' || expected_secret.back() == '\t')) {
+        expected_secret.pop_back();
+    }
+    while (!presented_secret.empty() && (presented_secret.back() == '\r' || presented_secret.back() == '\n' || presented_secret.back() == ' ' || presented_secret.back() == '\t')) {
+        presented_secret.pop_back();
+    }
+
+    // Fail closed: If no operator secret is configured anywhere, operator authorization cannot be granted
+    if (expected_secret.empty() || is_blacklisted_secret(expected_secret)) {
+        return false;
     }
 
     if (presented_secret.empty() || is_blacklisted_secret(presented_secret)) {
@@ -339,9 +372,11 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
 int main(int argc, char* argv[]) {
     std::string registry_path = "devices.json";
     std::string credential_file_flag;
+    bool operator_auth_flag = false;
     bool operator_recovery_flag = false;
     std::string operator_secret_flag;
     std::string operator_secret_file_flag;
+    bool operator_secret_stdin_flag = false;
     std::string command;
     std::vector<std::string> args;
 
@@ -351,14 +386,20 @@ int main(int argc, char* argv[]) {
             registry_path = argv[++i];
         } else if (a == "--credential-file" && i + 1 < argc) {
             credential_file_flag = argv[++i];
+        } else if (a == "--operator-auth") {
+            operator_auth_flag = true;
         } else if (a == "--operator-recovery") {
             operator_recovery_flag = true;
+        } else if (a == "--operator-secret-stdin") {
+            operator_secret_stdin_flag = true;
         } else if (a == "--operator-secret" && i + 1 < argc) {
             operator_secret_flag = argv[++i];
+            // Security hardening: scrub operator secret from process memory to avoid ps inspection
+            std::fill_n(argv[i], std::strlen(argv[i]), '\0');
         } else if (a == "--operator-secret-file" && i + 1 < argc) {
             operator_secret_file_flag = argv[++i];
         } else if (a == "--help" || a == "-h") {
-            std::cout << "Usage: hg_device_registry_cli [--registry <path>] [--credential-file <path>] [--operator-recovery] [--operator-secret <secret>] <command> [args...]\n"
+            std::cout << "Usage: hg_device_registry_cli [--registry <path>] [--credential-file <path>] [--operator-auth] [--operator-recovery] [--operator-secret-file <path>] <command> [args...]\n"
                       << "Commands:\n"
                       << "  list                          List all peripheral devices in HG-UI-03 format\n"
                       << "  get <device_id>               Get single device details\n"
@@ -609,12 +650,29 @@ int main(int argc, char* argv[]) {
         }
 
         const DeviceRegistry::Device* existing = registry.find(dev_id);
-        const bool is_already_enrolled = (existing != nullptr && existing->paired && !existing->auth_secret.empty() && !existing->revoked);
+
+        const bool operator_authorized = verify_operator_authorization(
+            operator_auth_flag || operator_recovery_flag,
+            operator_secret_flag,
+            operator_secret_file_flag,
+            operator_secret_stdin_flag);
 
         const bool operator_recovery_authorized = verify_operator_authorization(
-            operator_recovery_flag, operator_secret_flag, operator_secret_file_flag);
+            operator_recovery_flag,
+            operator_secret_flag,
+            operator_secret_file_flag,
+            operator_secret_stdin_flag);
 
-        if (is_already_enrolled) {
+        // Security Lifecycle Gates:
+        // Gate 1: Revoked device cannot be reclaimed by ordinary pairing or credential proof; requires trusted operator recovery
+        if (existing != nullptr && existing->revoked) {
+            if (!operator_recovery_authorized) {
+                std::cerr << "{\"error\": \"re-pairing rejected: device is revoked; trusted operator recovery authorization required (--operator-recovery)\"}\n";
+                return 3;
+            }
+        }
+        // Gate 2: Actively enrolled device requires either proof of current credential or trusted operator recovery
+        else if (existing != nullptr && existing->paired && !existing->auth_secret.empty()) {
             // Reject any unauthenticated requester attempting to claim operator recovery via caller-controlled JSON
             if ((dev_j.contains("operator_recovery") && dev_j["operator_recovery"].is_boolean() && dev_j["operator_recovery"].get<bool>()) ||
                 (dev_j.contains("force_re-pair") && dev_j["force_re-pair"].is_boolean() && dev_j["force_re-pair"].get<bool>())) {
@@ -639,6 +697,13 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        // Gate 3: Initial enrollment (new device) or unprovisioned candidate / unpaired device requires trusted operator authorization
+        else {
+            if (!operator_authorized) {
+                std::cerr << "{\"error\": \"pairing rejected: initial device enrollment requires trusted operator authorization (--operator-auth)\"}\n";
+                return 3;
+            }
+        }
 
         DeviceRegistry::Device d;
         d.device_id = dev_id;
@@ -660,8 +725,20 @@ int main(int argc, char* argv[]) {
         }
         d.has_camera = dev_j.value("has_camera", false);
         d.has_microphone = dev_j.value("has_microphone", false);
-        d.consent_granted = dev_j.value("consent_granted", false);
-        d.capture_enabled = dev_j.value("capture_enabled", false) && d.consent_granted;
+
+        // Security Lifecycle Requirement B:
+        // Re-pairing and recovery invalidate existing verified-online state, stale viewing grants and previously authenticated liveness.
+        if (existing != nullptr) {
+            d.consent_granted = false;
+            d.consent_subject.clear();
+            d.consent_purpose.clear();
+            d.capture_enabled = false;
+        } else {
+            d.consent_granted = dev_j.value("consent_granted", false);
+            d.consent_subject = dev_j.value("consent_subject", "");
+            d.consent_purpose = dev_j.value("consent_purpose", "");
+            d.capture_enabled = dev_j.value("capture_enabled", false) && d.consent_granted;
+        }
         d.is_synthetic = (d.device_id == DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId && d.device_type == "simulator");
         if (dev_j.contains("capabilities") && dev_j["capabilities"].is_array()) {
             for (const auto& cap : dev_j["capabilities"]) {

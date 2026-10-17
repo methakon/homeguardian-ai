@@ -50,6 +50,17 @@
 - **CSPRNG Fail-Closed Hardening:** Secret generation strictly requires `/dev/urandom` and fails closed if cryptographic entropy cannot be read, eliminating any silent fallback to pseudo-random generators of unspecified security strength.
 - **Reconciliation of Published Literals:** Confirmed that the 5 literals (`sec_cam1_...`, `sec_syn_...`, `sec_mic1_...`, `sec_spk1_...`, `sec_env1_...`) are historical denylist entries solely and are rejected across all authentication paths.
 
+### Fix 6 (HG-SEC-06C) — Lifecycle Authorization & Operator Credential Hardening
+- **A. Initial Enrollment Authorization:** Prevents unauthorized local callers from claiming unprovisioned physical-camera identities (e.g. seeded `camera-001`) or new devices. First-time enrollment strictly requires independently authorized operator action (`--operator-auth` or `--operator-recovery`) and verified operator credentials.
+- **B. Recovery and Revocation Lifecycle:**
+  - Revoked devices cannot be reclaimed through ordinary unauthenticated pairing or device credential proof; strictly requires trusted operator recovery (`--operator-recovery`).
+  - Re-pairing and recovery invalidate existing verified-online state (`online = false`), stale viewing grants (`consent_granted = false`, `capture_enabled = false`), and previously authenticated liveness.
+  - Unpairing and revocation immediately wipe active credentials (`auth_secret.clear()`), sequence, and liveness state.
+- **C. Operator Credential Handling:**
+  - Prevents exposing operator secrets in process arguments (`argv`) by memory-scrubbing argument vectors in-place immediately upon parsing.
+  - Enforces strict `0600` or `0400` owner-only POSIX file permissions on `--operator-secret-file`, failing closed if group- or world-readable permissions are detected.
+  - Supports secure delivery via `HG_OPERATOR_SECRET` environment variable and `--operator-secret-stdin`.
+
 ---
 
 ## 3. Independent Verification Instructions
@@ -62,7 +73,7 @@ cmake --build build --target homeguardian_tests hg_device_registry_cli hg_mcp_se
 # 2. Run full C++ regression test suite (38,926 assertions in 526 test cases)
 ./build/homeguardian_tests
 
-# 3. Run HG-UI-03 & HG-SEC-06/06B Node & C++ integration suite (144 assertions)
+# 3. Run HG-UI-03 & HG-SEC-06/06B/06C Node & C++ integration suite (154 assertions)
 node web_mcp/test_devices_dashboard.js
 
 # 4. Run native MCP streamable HTTP suite (71 assertions)

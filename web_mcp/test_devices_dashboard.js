@@ -345,7 +345,9 @@ async function runSuite() {
     let pairForgedSimFailed = false;
     try {
       execFileSync(cliPath, [
-        '--registry', configPath, 'pair',
+        '--registry', configPath,
+        '--operator-auth',
+        'pair',
         JSON.stringify({
           device_id: 'cam-forged-001',
           display_name: 'Forged Sim',
@@ -356,7 +358,9 @@ async function runSuite() {
           capture_enabled: true,
           capabilities: ['camera'],
         }),
-      ]);
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+      });
     } catch (e) {
       pairForgedSimFailed = true;
     }
@@ -366,7 +370,9 @@ async function runSuite() {
     let pairUnknownTypeFailed = false;
     try {
       execFileSync(cliPath, [
-        '--registry', configPath, 'pair',
+        '--registry', configPath,
+        '--operator-auth',
+        'pair',
         JSON.stringify({
           device_id: 'cam-bad-001',
           display_name: 'Bad Type',
@@ -375,7 +381,9 @@ async function runSuite() {
           has_camera: true,
           capabilities: ['camera'],
         }),
-      ]);
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+      });
     } catch (e) {
       pairUnknownTypeFailed = true;
     }
@@ -393,7 +401,9 @@ async function runSuite() {
       let litPairFailed = false;
       try {
         execFileSync(cliPath, [
-          '--registry', configPath, 'pair',
+          '--registry', configPath,
+          '--operator-auth',
+          'pair',
           JSON.stringify({
             device_id: 'cam-lit-test',
             display_name: 'Historical Literal Test Camera',
@@ -402,7 +412,9 @@ async function runSuite() {
             has_camera: true,
             capabilities: ['camera'],
           }),
-        ]);
+        ], {
+          env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+        });
       } catch (e) {
         litPairFailed = true;
       }
@@ -421,9 +433,79 @@ async function runSuite() {
       assert(litHbFailed, `Heartbeat presenting historical credential literal '${lit.slice(0, 12)}...' rejected`);
     }
 
-    // 4. Secure physical device pairing with CSPRNG secret generation
+    // 3b. HG-SEC-06C Task A: Initial Enrollment Authorization Enforcement
+    // Negative test: Unauthenticated local caller cannot claim unprovisioned seeded camera (camera-001)
+    let unauthClaimSeededFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'camera-001',
+          display_name: 'Hijacked camera-001',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      unauthClaimSeededFailed = true;
+    }
+    assert(unauthClaimSeededFailed, `Claiming unprovisioned seeded camera without operator auth rejected (HG-SEC-06C Task A)`);
+
+    // Negative test: Unauthenticated local caller cannot enroll a new device
+    let unauthEnrollNewFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'cam-live-001',
+          display_name: 'Android Live Physical Camera',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      unauthEnrollNewFailed = true;
+    }
+    assert(unauthEnrollNewFailed, `Initial device enrollment without operator auth rejected (HG-SEC-06C Task A)`);
+
+    // Negative test: Operator secret file with insecure permissions (0644) rejected (HG-SEC-06C Task C)
+    const insecureSecretFile = path.join(path.dirname(configPath), 'test_operator_insecure.secret');
+    fs.writeFileSync(insecureSecretFile, 'trusted-operator-secret-2026\n', { mode: 0o644 });
+    let insecureSecretFileFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath,
+        '--operator-auth',
+        '--operator-secret-file', insecureSecretFile,
+        'pair',
+        JSON.stringify({
+          device_id: 'cam-live-001',
+          display_name: 'Android Live Physical Camera',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+      });
+    } catch (e) {
+      insecureSecretFileFailed = true;
+    }
+    assert(insecureSecretFileFailed, `Operator secret file with insecure permissions (0644) rejected (HG-SEC-06C Task C)`);
+    try { fs.unlinkSync(insecureSecretFile); } catch (_) {}
+
+    // Positive test: Operator secret file with strict 0600 permissions accepted
+    const secureSecretFile = path.join(path.dirname(configPath), 'test_operator_secure.secret');
+    fs.writeFileSync(secureSecretFile, 'trusted-operator-secret-2026\n', { mode: 0o600 });
+
+    // 4. Secure physical device pairing with CSPRNG secret generation via trusted operator secret file
     const pairRaw = execFileSync(cliPath, [
-      '--registry', configPath, 'pair',
+      '--registry', configPath,
+      '--operator-auth',
+      '--operator-secret-file', secureSecretFile,
+      'pair',
       JSON.stringify({
         device_id: 'cam-live-001',
         display_name: 'Android Live Physical Camera',
@@ -433,7 +515,10 @@ async function runSuite() {
         capture_enabled: true,
         capabilities: ['camera', 'microphone'],
       }),
-    ]).toString('utf-8');
+    ], {
+      env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+    }).toString('utf-8');
+    try { fs.unlinkSync(secureSecretFile); } catch (_) {}
     const pairResult = JSON.parse(pairRaw);
     assert(pairResult.id === 'cam-live-001', `Explicit pairing created cam-live-001`);
     assert(typeof pairResult.provisioned_auth_secret === 'string', `Pairing returned provisioned_auth_secret`);
@@ -525,6 +610,47 @@ async function runSuite() {
     const revokeResult = JSON.parse(revokeRaw);
     assert(revokeResult.revoked === true, `cam-live-001 revoked: true`);
 
+    // 12b. HG-SEC-06C Task B: Revoked device reclaim lifecycle protection
+    // Negative test: Revoked device CANNOT simply be reclaimed through ordinary unauthenticated pairing
+    let revokedReclaimUnauthFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'cam-live-001',
+          display_name: 'Reclaimed Revoked Camera',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      revokedReclaimUnauthFailed = true;
+    }
+    assert(revokedReclaimUnauthFailed, `Reclaiming revoked device via ordinary unauthenticated pairing rejected (HG-SEC-06C Task B)`);
+
+    // Negative test: Revoked device CANNOT be reclaimed with ordinary operator auth without recovery flag
+    let revokedReclaimWithoutRecoveryFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath,
+        '--operator-auth',
+        'pair',
+        JSON.stringify({
+          device_id: 'cam-live-001',
+          display_name: 'Reclaimed Revoked Camera',
+          device_type: 'camera',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+      });
+    } catch (e) {
+      revokedReclaimWithoutRecoveryFailed = true;
+    }
+    assert(revokedReclaimWithoutRecoveryFailed, `Reclaiming revoked device requires operator-recovery, not simple operator-auth (HG-SEC-06C Task B)`);
+
     // 13. Revoked device heartbeat is unconditionally rejected
     let revokedHbFailed = false;
     try {
@@ -551,7 +677,9 @@ async function runSuite() {
     let clientSuppliedSecretFailed = false;
     try {
       execFileSync(cliPath, [
-        '--registry', configPath, 'pair',
+        '--registry', configPath,
+        '--operator-auth',
+        'pair',
         JSON.stringify({
           device_id: 'cam-fake-secret-001',
           display_name: 'Fake Secret Cam',
@@ -560,7 +688,9 @@ async function runSuite() {
           has_camera: true,
           capabilities: ['camera'],
         }),
-      ]);
+      ], {
+        env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+      });
     } catch (e) {
       clientSuppliedSecretFailed = true;
     }
@@ -568,7 +698,9 @@ async function runSuite() {
 
     // 16. Fix 3: Initial enrollment vs unauthorized re-pairing
     const enrollRaw = execFileSync(cliPath, [
-      '--registry', configPath, 'pair',
+      '--registry', configPath,
+      '--operator-auth',
+      'pair',
       JSON.stringify({
         device_id: 'cam-re-001',
         display_name: 'Re-pairable Camera',
@@ -576,10 +708,17 @@ async function runSuite() {
         has_camera: true,
         capabilities: ['camera'],
       }),
-    ]).toString('utf-8');
+    ], {
+      env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+    }).toString('utf-8');
     const enrollResult = JSON.parse(enrollRaw);
     const secretA = enrollResult.provisioned_auth_secret;
     assert(typeof secretA === 'string' && secretA.startsWith('sec_live_'), `Initial enrollment provisioned secretA`);
+
+    // Prior to re-pairing, grant consent to cam-re-001 to verify it gets invalidated on re-pairing
+    execFileSync(cliPath, ['--registry', configPath, 'set_consent', 'cam-re-001', 'true', 'operator', 'test_consent']);
+    const preDevRaw = execFileSync(cliPath, ['--registry', configPath, 'get', 'cam-re-001']).toString('utf-8');
+    assert(JSON.parse(preDevRaw).consent === 'granted', `Consent was granted to cam-re-001 prior to re-pairing`);
 
     // Unauthorized re-pairing attempt (without existing credential proof or operator recovery)
     let unauthRePairFailed = false;
@@ -614,6 +753,9 @@ async function runSuite() {
     const authRePairResult = JSON.parse(authRePairRaw);
     const secretB = authRePairResult.provisioned_auth_secret;
     assert(typeof secretB === 'string' && secretB !== secretA, `Authorized re-pairing with proof minted secretB`);
+    assert(authRePairResult.consent === 'not_granted', `Re-pairing invalidated prior consent (HG-SEC-06C Task B)`);
+    assert(authRePairResult.authorized === false, `Re-pairing invalidated prior viewing grant (HG-SEC-06C Task B)`);
+    assert(authRePairResult.online === false, `Re-pairing reset online state to false (HG-SEC-06C Task B)`);
 
     // HG-SEC-06B Action 1: Reject caller-supplied operator_recovery boolean from JSON
     let callerBooleanRecoveryFailed = false;
@@ -677,10 +819,13 @@ async function runSuite() {
     const secretC = recoveryResult.provisioned_auth_secret;
     assert(typeof secretC === 'string' && secretC !== secretB, `Trusted operator recovery re-pairing minted secretC`);
     assert(recoveryResult.online === false, `Recovered device remains offline until authenticated heartbeat`);
+    assert(recoveryResult.consent === 'not_granted', `Recovery invalidated prior consent (HG-SEC-06C Task B)`);
 
     // 17. Fix 4: Heartbeat sequence validation and replay protection
     const seqDevRaw = execFileSync(cliPath, [
-      '--registry', configPath, 'pair',
+      '--registry', configPath,
+      '--operator-auth',
+      'pair',
       JSON.stringify({
         device_id: 'cam-seq-001',
         display_name: 'Sequence Protected Camera',
@@ -688,7 +833,9 @@ async function runSuite() {
         has_camera: true,
         capabilities: ['camera'],
       }),
-    ]).toString('utf-8');
+    ], {
+      env: { ...process.env, HG_OPERATOR_SECRET: 'trusted-operator-secret-2026' },
+    }).toString('utf-8');
     const seqDevResult = JSON.parse(seqDevRaw);
     const seqSecret = seqDevResult.provisioned_auth_secret;
 
