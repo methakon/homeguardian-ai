@@ -567,3 +567,52 @@ ingress runs least-privilege and ACCEPTS this device's certificate over mutual T
 spoofed id refused as `identity_mismatch`, durable watermark advanced). Remaining: the on-device
 Import/Connect/consent/Start taps (phone is locked; owner-only), then camera/mic counters, then
 Wi-Fi delivery, and only then the physical USB unplug.
+
+## Phase CAM — Panasonic ELUGA I7 CCTV node (added 2026-10-17, branch `experiment/hg-cam-eluga-cctv`)
+
+A second, deliberately independent hardware workstream. Kept separate from H-03: that workstream
+is the C++ MCP hub on the Mi A3 / MT6580 clone, this one is a candidate CCTV camera node.
+
+Target: Panasonic `ELUGA_I7_EE`, serial `LRW86SC6RO8TZ99H`, board `k39tv1_64_a27`, MT6739,
+arm64-v8a, Android 9 / API 28, A-only, Treble-enabled (vndk 28).
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| CAM-01 | Device and capability assessment (Path A) | — | Camera2 support, hardware H.264 encoder, audio in/out, AEC and Wi-Fi inventoried on the real device; Android 9 background-restriction path identified | DONE |
+| CAM-02 | Alternative-OS feasibility (Path B) | CAM-01 | Model-specific ROM availability settled by API-level search, not page scraping; kernel source, bootloader unlock, GSI and recovery options documented with sources | DONE |
+| CAM-03 | Recoverable backup before any destructive step | CAM-01 | Shared storage captured, checksummed, encrypted outside the repo, and proven restorable by decrypting the archive and verifying the extracted tree | DONE |
+| CAM-04 | Reset decision brief including FRP | CAM-03 | FRP requirements, unrecoverable data, recovery procedure and a reset-vs-keep comparison reported to the owner | DONE (owner confirmation pending) |
+| CAM-05 | Second encrypted copy on physically separate storage | CAM-04 | Archive and key on storage that survives loss of this workstation, key held separately from the archive | BLOCKED (owner action — key and archive currently share one disk) |
+| CAM-06 | CCTV APK: foreground service + arm64/API-28 build | CAM-02 | Foreground service declared and running; APK builds for arm64-v8a and installs on API 28 | PROPOSED (needs separate capture approval) |
+| CAM-07 | CCTV APK: screen-off survival acceptance | CAM-06 | Capture continues with the screen off for >= 30 minutes with counters advancing | PROPOSED |
+| CAM-08 | CCTV APK: hub delivery proven from the real device | CAM-06 | A real Panasonic delivers observations to the hub over the existing mutual-TLS transport, with a reproducible evidence artifact | PROPOSED |
+| CAM-09 | CCTV APK: speaker talkback with AEC | CAM-06 | Two-way audio with the AOSP acoustic echo canceller active and no audible echo | PROPOSED |
+| CAM-10 | CCTV APK: visible capture indicator | CAM-06 | Operator-visible indication whenever capture is live | PROPOSED |
+| CAM-11 | Factory reset and dedicated-node provisioning | CAM-04, CAM-05 | FRP disarmed by owner account removal; device provisioned as a dedicated node | BLOCKED (explicit owner authorization required) |
+
+### CAM progress: device findings and constraints
+
+* **Path B is closed as a dead end, on evidence rather than opinion.** No device-specific ROM exists
+  for this model (`gh search repos lineage_device_panasonic` returns no results at all); the only
+  artifact for the exact model is auto-generated `twrpdtgen` output that is scaffolding, not a ROM,
+  and the kernel source it expects (`kernel/panasonic/ELUGA_I7_EE`) was never published. The
+  bootloader reports `flash.locked=1` with `sys.oem_unlock_allowed=0`, so a fastboot unlock is not
+  available as shipped. A GSI is architecturally possible (Treble, vndk 28) but unverified here and
+  would most likely cost the camera — the feature the device exists for.
+* **Stock Android 9 stays the preferred OS.** Path A needs no destructive step.
+* **Hardware is sufficient and measured**: `OMX.MTK.VIDEO.ENCODER.AVC` H.264 to 1920x1080
+  (70-155 fps measured at 720p), PCM-16 audio to 48 kHz, AOSP acoustic echo canceller present,
+  2.4 GHz Wi-Fi at 65 Mbps. Real constraints: 975 MB free on `/data` (so stream, never store),
+  ~464 MB swap in use, `LIMITED` camera HAL, root-only thermal telemetry, 2.4 GHz only.
+* **FRP is armed and verified as such**, not merely assumed: a Google account is signed in *and*
+  both Google MDM device-admin receivers are active, which means Find My Device is enabled. A reset
+  would require a previously-added Google credential to complete setup.
+* **Backup scale was larger than the device reported.** The device's own `du` is unreliable over
+  FUSE (it reported 0 for `/sdcard` and 106 MB for a directory holding 2.83 GB). Trusted figures are
+  measured workstation-side after transfer: 3,839 files, 4,288,477,523 bytes.
+* **The APK to extend already exists.** `apk/` (consent gating, per-payload accounting, bounded
+  queues, Camera1, AAudio capture, framed mutual TLS) builds cleanly on this host with 22/22 JNI
+  exports. Its manifest explicitly declares no foreground service, which is precisely the gap a
+  screen-off CCTV node must close. Plan in `docs/HG_CAM_04_CCTV_APK_SPEC.md`.
+* **Do not conflate the two phones.** The Mi A3 is the MCP hub; the ELUGA is the camera. The
+  MT6580 clone is a third, unrelated device.

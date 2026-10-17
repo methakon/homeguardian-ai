@@ -79,8 +79,9 @@ State this plainly, because it defines what a reset actually costs:
   per-unit calibration and IMEI. They are not readable without root, they are in no backup,
   and if a flash corrupts them the phone is permanently degraded. This is the single
   strongest technical argument against flashing anything on this device.
-- **Every account credential.** Re-entered by hand after a reset, including the
-  `gmail.legacyimap` / `gmail.pop3` accounts configured inside Gmail.
+- **Every account credential.** Re-entered by hand after a reset. There is exactly one
+  Google account and three non-Google accounts (Facebook, Messenger, WhatsApp) — see §5
+  for the correction to an earlier claim about Gmail IMAP/POP accounts.
 - **No partition image exists** — `boot`, `recovery`, `system`, `vendor`, `userdata`,
   `nvram`, `proinfo`, `seccfg`, `frp` all verified `DENIED` to a non-root shell.
 
@@ -103,14 +104,19 @@ defeat it.
 **The legitimate way to disarm it — before the reset, not after:**
 
 1. Confirm you can sign in to every account currently on the device.
-2. Remove **all** accounts on the device (Settings → Accounts). With no account present at
-   reset time, FRP is not armed.
+2. Remove the **Google** account (Settings → Accounts). **Only the Google account is
+   required** — FRP is tied to Google accounts, so removing it is sufficient to disarm FRP.
+   The Facebook, Messenger and WhatsApp accounts are *not* Google accounts and do not need to
+   be removed for this purpose; the owner has instructed that they be kept.
 3. Only then perform the factory reset.
 
-**You have instructed me not to remove those accounts, so I have not.** Steps 1–2 are
-owner actions: removing an account prompts for the credential or screen lock, and
+**Status update (HG-CAM-04):** removal of the **Google** account is now explicitly
+authorized, and is the next step. The Facebook, Messenger and WhatsApp accounts remain
+protected and are not to be removed. Steps 1–2 are owner actions performed on the phone:
+removing a Google account prompts for the credential or screen lock, and
 **do not send me any password, PIN or pattern** — I do not need them and will not accept
-them. You perform the removal on the phone; I verify only that no account remains.
+them. You perform the removal on the phone; I verify afterwards, by re-reading
+`dumpsys account`, that the Google account is gone and that the other three remain.
 
 **Two facts I cannot verify from here, and which you must confirm:**
 

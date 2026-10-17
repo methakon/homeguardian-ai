@@ -127,16 +127,29 @@ the platform backup in §5, or root, which is not authorised.
 
 ## 5. Account-dependent data — re-authentication required after any reset
 
-`dumpsys account` shows accounts of these **types** (identifiers deliberately not recorded
-in this document):
+`dumpsys account` reports **exactly four accounts** — the `Accounts:` field says `Accounts: 4`:
 
-    com.google                      com.facebook.auth.login
-    com.google.android.apps.tachyon com.facebook.messenger
-    com.google.android.gm.exchange  com.whatsapp
-    com.google.android.gm.legacyimap   com.jio.myjio
-    com.google.android.gm.pop3
+    com.google                dhar742103@gmail.com
+    com.facebook.auth.login   Facebook
+    com.facebook.messenger    Messenger
+    com.whatsapp              WhatsApp
 
-Two findings that bear directly on the reset decision:
+**Correction to an earlier version of this document.** It listed account *types* including
+`com.google.android.gm.legacyimap`, `gmail.pop3`, `gmail.exchange`,
+`com.google.android.apps.tachyon` and `com.jio.myjio`, and inferred from them that additional
+non-Google mail accounts were configured inside Gmail, plus Jio and Duo accounts. **That was
+wrong.** Those strings are `AuthenticatorDescription` registrations in the `dumpsys account`
+`RegisteredServicesCache` section — a list of apps that are *able* to add an account of that
+type, which is not the same as an account that exists. There are no Gmail IMAP/POP/Exchange
+accounts on this device, no Jio account and no Duo account. The earlier "13 account entries"
+figure came from counting `type=` matches across the entire dump rather than reading the
+`Accounts:` field, which is the authoritative one.
+
+This matters practically in both directions: there is no additional mail account that a
+Google-account removal could cascade into losing, and conversely there is no second mail
+credential to re-enter. Only the three non-Google accounts above need to survive.
+
+Two findings that do bear on the reset decision:
 
 1. **Google Backup is configured and auto-restore is enabled**, with `D2dTransport` and
    `BackupTransportService` whitelisted, and a backup pass that has actually run. Some app
