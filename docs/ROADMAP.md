@@ -591,6 +591,7 @@ arm64-v8a, Android 9 / API 28, A-only, Treble-enabled (vndk 28).
 | CAM-11 | Factory reset and dedicated-node provisioning | CAM-12, CAM-05 | FRP disarmed by owner account removal; device provisioned as a dedicated node | BLOCKED (explicit owner authorization required) |
 | CAM-12 | Remove the unwanted Google account (disarms FRP) | CAM-04 | Google account absent from `dumpsys account`; Facebook/Messenger/WhatsApp accounts intact | READY (owner taps; normal Settings UI only) |
 | CAM-13 | Power-failure resilience for install/test operations | CAM-04 | Install/test steps idempotent and state re-read before acting; no long maintenance; no unnecessary reboots | DONE (design recorded in `docs/HG_CAM_04_POWER_RESILIENCE.md`) |
+| CAM-14 | Remove unnecessary user-installed apps | CAM-12 | Each removal individually approved and verified; system/camera/audio/media/Wi-Fi/ADB/security/installer preserved; WhatsApp/Facebook/Messenger separately confirmed | READY — blocked, Panasonic not attached (read-only inventory tool staged) |
 
 ### CAM progress: device findings and constraints
 
