@@ -595,7 +595,7 @@ arm64-v8a, Android 9 / API 28, A-only, Treble-enabled (vndk 28).
 | CAM-15 | Panasonic APK installation and foreground-service acceptance | CAM-06 | APK installs on the device; foreground service runs with its required notification; start/stop/restart/cleanup all verified | DONE — see `docs/HG_CAM_07_MEDIA_ACCEPTANCE.md` |
 | CAM-16 | Wire camera + microphone capture into the foreground service | CAM-15 | Real frame arrival and sample delivery measured under the consent architecture; encoder initialized and validated | **BLOCKED** — camera opens and negotiates but delivers 0 frames on this device; see CAM-17 and `docs/HG_CAM_08_CAPTURE_ACCEPTANCE.md` |
 | CAM-17 | Fix Camera1 frame delivery on the MT6739 vendor stack | CAM-16 | `onPreviewFrame` fires and frames are accounted (>0 authorized) | PROPOSED — MTK HAL wants a real consumer surface; try encoder-input surface, then camera2 NDK |
-| CAM-18 | USB-free Wi-Fi ADB development access | CAM-15 | Wi-Fi ADB usable with USB physically removed; stable endpoint; shutdown procedure documented | PARTIAL — Wi-Fi ADB verified over the Wi-Fi transport only (install, logcat, push/pull, service control, 10/10 reconnects); USB unplug not performed (owner action) and reboot does NOT persist |
+| CAM-18 | USB-free Wi-Fi ADB development access | CAM-15 | Wi-Fi ADB usable with USB physically removed; stable endpoint; shutdown procedure documented | DONE — USB-free acceptance PASSED with USB physically absent (shell, logcat, deploy, launch/restart, 10/10 reconnects); does NOT survive reboot (re-arm `tcpip 5555`); DHCP reservation still outstanding |
 
 ### CAM progress: device findings and constraints
 
