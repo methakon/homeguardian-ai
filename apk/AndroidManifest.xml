@@ -22,6 +22,16 @@
     <!-- Required for a foreground service on API 28+. Normal permission: no runtime prompt,
          no user data. This is the Android 9 documented fix for background camera/mic access. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Required to CREATE A SOCKET AT ALL on Android, including a loopback-only one: binding a
+         ServerSocket without INTERNET fails with "socket failed: EACCES (Permission denied)".
+         MEASURED on hardware (HG-CAM-08D), not assumed.
+
+         This is a network-capability grant, so record its scope honestly: the only socket this app
+         opens is MediaSink, which binds 127.0.0.1 explicitly (never 0.0.0.0), requires a bearer
+         token before sending a byte, and emits already-encoded frames only. There is no outbound
+         connection, no public exposure, no reverse proxy and no VPS routing anywhere in this app.
+         Flagged for operator review because it widens the app's declared surface. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Normal permission (no runtime prompt, no user data): without it
          ConnectivityManager.getActiveNetworkInfo() throws SecurityException, which is why the
          panel reported "wi-fi: unknown". The SSID is deliberately NOT read: on API 27+ that

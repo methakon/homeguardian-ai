@@ -63,6 +63,11 @@ public class MainActivity extends Activity {
     // HG-CAM-08C Stage 4: service-owned REAL microphone (separate from the CAM2 video path).
     static final String ACTION_MIC2_START = "org.homeguardian.harness.MIC2_START";
     static final String ACTION_MIC2_STOP = "org.homeguardian.harness.MIC2_STOP";
+    /** HG-CAM-08D Stage 3: mic through the AAC encoder, and the H.264 decoder round-trip. */
+    static final String ACTION_MIC2_ENCODE = "org.homeguardian.harness.MIC2_ENCODE";
+    static final String ACTION_DECODE_CHECK = "org.homeguardian.harness.DECODE_CHECK";
+    /** HG-CAM-08D Stage 4: media-sink security self-test. */
+    static final String ACTION_SINK_SELFTEST = "org.homeguardian.harness.SINK_SELFTEST";
 
     // Which capture is waiting on a permission grant, if any.
     private static final int PENDING_NONE = 0;
@@ -668,7 +673,30 @@ public class MainActivity extends Activity {
             startMic2();
         } else if (ACTION_MIC2_STOP.equals(act)) {
             stopMic2();
+        } else if (ACTION_MIC2_ENCODE.equals(act)) {
+            relayToService(CctvService.ACTION_MIC_ENCODE);
+        } else if (ACTION_DECODE_CHECK.equals(act)) {
+            relayToService(CctvService.ACTION_DECODE_CHECK);
+        } else if (ACTION_SINK_SELFTEST.equals(act)) {
+            relayToService(CctvService.ACTION_SINK_SELFTEST);
         }
+    }
+
+    /**
+     * Stage 3 helper: forward an action to the service, promoting it to the foreground first so
+     * the OS background-sensor rule cannot refuse the work.
+     */
+    private void relayToService(String serviceAction) {
+        Intent i = new Intent(this, CctvService.class);
+        i.setAction(serviceAction);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(i);
+        } else {
+            startService(i);
+        }
+        Log.i(TAG, "relayed to service: " + serviceAction);
+        setStatus("relayed: " + serviceAction);
+        refreshCctvStatus();
     }
 
     /** Stage 4: arm the service-owned real microphone (separate from the video stream). */

@@ -3,10 +3,14 @@ package org.homeguardian.harness;
 import android.content.Context;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaFormat;
 import android.media.MediaRecorder;
 import android.os.SystemClock;
 import android.util.Log;
 
+import java.nio.ByteBuffer;
 import java.util.Locale;
 
 /**
@@ -41,6 +45,42 @@ public class AudioCaptureProbe {
     private AudioRecord record;
     private Thread readThread;
     private volatile boolean running = false;
+
+    // ---- HG-CAM-08D Stage 3: optional voice-encoder stage -------------------
+    /**
+     * When set, the captured PCM is additionally fed through a real Android audio ENCODER so the
+     * report can say what encoded frames the device actually produces, rather than what codecs it
+     * merely advertises. This matters because raw PCM is not transmittable and because this device
+     * has NO Opus encoder (decoder only), which is the codec WebRTC prefers.
+     */
+    private MediaCodec audioEnc;
+    private volatile boolean encodeAudio = false;
+    private volatile long encInFrames = 0;
+    private volatile long encOutFrames = 0;
+    private volatile long encOutBytes = 0;
+    private volatile String encFormat = "";
+    private volatile String encError = "";
+
+    public String encodedAudioSummary() {
+        if (!encodeAudio) return "voice-encode: not requested";
+        StringBuilder sb = new StringBuilder();
+        sb.append("voice-encode mime=").append(encFormat.length() > 0 ? encFormat : "n/a");
+        sb.append(" pcmInFrames=").append(encInFrames);
+        sb.append(" encodedFrames=").append(encOutFrames);
+        sb.append(" encodedBytes=").append(encOutBytes);
+        if (encError.length() > 0) sb.append(" ERROR=").append(encError);
+        return sb.toString();
+    }
+
+    /** Start capture AND pipe it through the AAC encoder (the one encoder this device has). */
+    public synchronized String startEncoded() {
+        encodeAudio = true;
+        encInFrames = 0; encOutFrames = 0; encOutBytes = 0;
+        encFormat = ""; encError = "";
+        String r = start();
+        if (!result.started) { encodeAudio = false; }
+        return r + " | voice-encode requested (audio/mp4a-latm)";
+    }
 
     public AudioCaptureProbe(Context context) { this.ctx = context; }
 
@@ -171,6 +211,7 @@ public class AudioCaptureProbe {
                         int nz = 0;
                         for (int i = 0; i < n; i++) if (buf[i] != 0) { nz++; }
                         if (nz > 0) { result.nonZeroSamples += nz; result.silent = false; }
+                        if (encodeAudio) feedEncoder(buf, n);
                         if (result.readCalls <= 2 || result.readCalls % 200 == 0) {
                             Log.i(TAG, "mic#" + result.readCalls + " frames=" + n
                                     + " totalSamples=" + result.totalSamples + " nonZero=" + nz);
@@ -192,9 +233,66 @@ public class AudioCaptureProbe {
         if (readThread != null) { try { readThread.join(2000); } catch (InterruptedException ignored) {} readThread = null; }
         try { if (record != null) { record.release(); } } catch (Exception e) { Log.w(TAG, "mic release: " + e); }
         record = null;
+        // Release the voice encoder too, or a muted-but-held codec survives the stop.
+        try { if (audioEnc != null) { audioEnc.stop(); audioEnc.release(); } } catch (Exception e) { Log.w(TAG, "aac release: " + e); }
+        audioEnc = null;
         result.started = false;
         Log.i(TAG, "mic stopped and released: " + result.summary());
+        if (encodeAudio) Log.i(TAG, "mic stopped and released: " + encodedAudioSummary());
     }
 
     public synchronized boolean isRunning() { return running; }
+
+    /**
+     * HG-CAM-08D Stage 3: pipe one PCM block through a REAL audio encoder and count what comes out.
+     * Created lazily on first use. AAC-LC is the only audio encoder this device actually has
+     * (Opus exists as a DECODER only), so this is the available path - the report says so rather
+     * than implying WebRTC-grade Opus is present.
+     */
+    private final MediaCodec.BufferInfo encInfo = new MediaCodec.BufferInfo();
+
+    private void feedEncoder(short[] pcm, int frames) {
+        try {
+            if (audioEnc == null) {
+                MediaFormat f = MediaFormat.createAudioFormat("audio/mp4a-latm",
+                        result.sampleRate, Math.max(1, result.channelCount));
+                f.setInteger(MediaFormat.KEY_BIT_RATE, 64000);
+                f.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+                f.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384);
+                audioEnc = MediaCodec.createEncoderByType("audio/mp4a-latm");
+                audioEnc.configure(f, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+                audioEnc.start();
+                encFormat = "audio/mp4a-latm(AAC-LC) 64kbps";
+                Log.i(TAG, "AAC encoder started: " + encFormat);
+            }
+            int idx = audioEnc.dequeueInputBuffer(0);
+            if (idx >= 0) {
+                ByteBuffer in = audioEnc.getInputBuffer(idx);
+                if (in != null && frames * 2 <= in.capacity()) {
+                    in.clear();
+                    for (int i = 0; i < frames; i++) in.putShort(pcm[i]);
+                    long ptsUs = encInFrames * 1000000L / Math.max(1, result.sampleRate);
+                    audioEnc.queueInputBuffer(idx, 0, frames * 2, ptsUs, 0);
+                    encInFrames += frames;
+                } else if (in != null) {
+                    audioEnc.queueInputBuffer(idx, 0, 0, 0, 0);
+                }
+            }
+            int oidx;
+            while ((oidx = audioEnc.dequeueOutputBuffer(encInfo, 0)) >= 0) {
+                if (encInfo.size > 0) {
+                    encOutFrames++;
+                    encOutBytes += encInfo.size;
+                    if (encOutFrames <= 3 || encOutFrames % 50 == 0) {
+                        Log.i(TAG, "aac#" + encOutFrames + " bytes=" + encInfo.size
+                                + " ptsUs=" + encInfo.presentationTimeUs);
+                    }
+                }
+                audioEnc.releaseOutputBuffer(oidx, false);
+            }
+        } catch (Exception e) {
+            encError = "feedEncoder: " + e;
+            Log.e(TAG, "AAC ENCODE FAILURE: " + encError);
+        }
+    }
 }

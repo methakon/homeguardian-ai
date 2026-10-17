@@ -61,6 +61,12 @@ public class CctvService extends Service {
      */
     public static final String ACTION_MIC_ARM = "org.homeguardian.harness.CCTV_MIC_ARM";
     public static final String ACTION_MIC_DISARM = "org.homeguardian.harness.CCTV_MIC_DISARM";
+    /** Stage 3: arm the microphone THROUGH the AAC encoder (in-memory, counted). */
+    public static final String ACTION_MIC_ENCODE = "org.homeguardian.harness.CCTV_MIC_ENCODE";
+    /** Stage 3: bounded in-memory H.264 encoder->decoder compatibility check. */
+    public static final String ACTION_DECODE_CHECK = "org.homeguardian.harness.CCTV_DECODE_CHECK";
+    /** Stage 4: run the media-sink security self-test (fail-closed auth, loopback-only). */
+    public static final String ACTION_SINK_SELFTEST = "org.homeguardian.harness.CCTV_SINK_SELFTEST";
 
     /**
      * THE capture session. Owned by the service, never by the activity, so that activity
@@ -115,6 +121,12 @@ public class CctvService extends Service {
             // uptime-based timer is the only way to see counters advance while screen-off.
             Log.i(TAG, "tick #" + ticks + " " + captureSummary);
             Log.i(TAG, "tick #" + ticks + " " + micSummary);
+            if (decodeCheck != null) {
+                decodeSummary = decodeCheck.result().summary();
+                decodeRunning = decodeCheck.result().started
+                        && decodeCheck.result().elapsedMs == 0;
+                Log.i(TAG, "tick #" + ticks + " " + decodeSummary);
+            }
             updateNotification();
             // NOTE: uptime-based, so this stops firing while the device is suspended. The
             // notification text makes that visible rather than hiding it.
@@ -175,6 +187,24 @@ public class CctvService extends Service {
             disarmCapture("operator disarm");
         } else if (ACTION_MIC_ARM.equals(action)) {
             armMic();
+        } else if (ACTION_MIC_ENCODE.equals(action)) {
+            armMicEncoded();
+        } else if (ACTION_DECODE_CHECK.equals(action)) {
+            runDecodeCheck();
+        } else if (ACTION_SINK_SELFTEST.equals(action)) {
+            // Android throws NetworkOnMainThreadException for socket I/O on the main thread, and
+            // onStartCommand runs on the main thread. The probes must therefore run on their own
+            // thread - otherwise every client case fails and, if the harness swallowed the
+            // exception, would score as a vacuous "correctly refused" pass.
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        Log.i(TAG, "media-sink selftest: " + MediaSink.selfTest(CctvService.this));
+                    } catch (Exception e) {
+                        Log.e(TAG, "media-sink selftest threw: " + e);
+                    }
+                }
+            }, "hg-sink-selftest").start();
         } else if (ACTION_MIC_DISARM.equals(action)) {
             disarmMic("operator disarm");
         }
@@ -266,7 +296,37 @@ public class CctvService extends Service {
 
     private void refreshMicSummary() {
         if (mic == null) { micSummary = "mic: not armed"; return; }
-        micSummary = mic.result().summary();
+        micSummary = mic.result().summary() + " | " + mic.encodedAudioSummary();
+    }
+
+    // ------------------------------------------------------------------ Stage 3 checks
+
+    /** Bounded, one-shot, in-memory H.264 encoder->decoder compatibility check. */
+    private H264RoundTripCheck decodeCheck;
+    private static volatile String decodeSummary = "decodecheck: not run";
+    public static volatile boolean decodeRunning = false;
+
+    public static String decodeStatus() { return decodeSummary; }
+
+    private synchronized void runDecodeCheck() {
+        if (decodeCheck != null && decodeRunning) {
+            Log.i(TAG, "decode check ignored - one is already running");
+            return;
+        }
+        decodeRunning = true;
+        decodeCheck = new H264RoundTripCheck(this);
+        Log.i(TAG, "starting: " + decodeCheck.start());
+    }
+
+    private synchronized void armMicEncoded() {
+        if (mic != null && mic.isRunning()) {
+            Log.i(TAG, "mic-encode arm ignored - mic already running");
+            return;
+        }
+        if (mic == null) mic = new AudioCaptureProbe(this);
+        micArmed = true;
+        Log.i(TAG, "arming mic WITH encoder: " + mic.startEncoded());
+        refreshMicSummary();
     }
 
     // ------------------------------------------------------------------ notification
