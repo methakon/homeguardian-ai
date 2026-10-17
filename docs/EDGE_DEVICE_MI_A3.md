@@ -861,14 +861,25 @@ device to act as a net-current measurement** — it must not be used as one.
 
 **On-battery cost of the node, measured:**
 
-| Process | CPU since boot (5 h 45 m) |
-|---|---|
-| `org.homeguardian.edgeservice` (our node) | **7.5 s** |
-| `com.radio.pocketfm` (third-party radio app) | **463.7 s** |
+**On-battery cost of the node, measured against always-present system processes.** Re-measured
+with one instrument (`/proc/<pid>/stat`) and one clock (`CLK_TCK=100`), normalised by each
+process's own age so the figures are directly comparable:
 
-The node used ~1.6 % of the CPU one unrelated third-party app on the phone burned, and
-did not appear in `top` at all. The persistent load average of 1.5–2.5 on this device
-is the phone's own software, not this service.
+| Process | CPU consumed | Process age | Rate |
+|---|---|---|---|
+| `org.homeguardian.edgeservice` (our node) | 9.8 s | 21,497 s | **0.045 % of one core** |
+| `cnss_diag` (system Wi-Fi/GNSS diagnostics daemon) | 304.7 s | 21,558 s | 1.414 % |
+| `logd` (system log daemon) | 48.2 s | 21,578 s | 0.224 % |
+
+The phone's own connectivity daemon burns **~31×** what this node does, and the system log
+daemon ~5×. The node did not appear in `top` at all, and the device's persistent 1.5–2.5
+load average is the phone's own software.
+
+**A correction to how I first stated this.** My earlier comparison used a third-party app
+(`com.radio.pocketfm`) observed burning ~110 % of a core (463.7 s cumulative). That app has
+since **exited** — `pidof com.radio.pocketfm` now returns nothing and it is absent from `ps`
+— so it is a transient observation, not a stable baseline, and I should not have presented it
+as one. The system processes above are always present and the comparison is reproducible.
 
 **Unattended charging stays unapproved.** The overnight run happened to be on battery,
 so it does not test charging at all — and the supply is a negotiated 500 mA, which is

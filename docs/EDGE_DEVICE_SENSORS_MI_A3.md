@@ -321,13 +321,20 @@ Everything else the phone can contribute arrives as `SecurityObservation`
 
 ### 9.1 What this node costs today (measured, not estimated)
 
-| Process | CPU since boot over 5 h 45 m |
-|---|---|
-| `org.homeguardian.edgeservice` | **7.5 s** (≈0.036 % duty) |
-| one unrelated third-party app on the same phone | 463.7 s |
+Re-measured with one instrument (`/proc/<pid>/stat`) and one clock (`CLK_TCK=100`),
+normalised by each process's own age so the figures are directly comparable:
 
-The node is currently negligible, and the phone's persistent 1.5–2.5 load average is its
-own software, not this service. Any sensor work must be judged against that baseline.
+| Process | CPU | Age | Rate |
+|---|---|---|---|
+| `org.homeguardian.edgeservice` (our node) | **9.8 s** | 21,497 s | **0.045 % of one core** |
+| `cnss_diag` (system Wi-Fi/GNSS diagnostics) | 304.7 s | 21,558 s | 1.414 % |
+| `logd` (system log daemon) | 48.2 s | 21,578 s | 0.224 % |
+
+The phone's own connectivity daemon costs **~31×** this node. These are always-present
+system processes, deliberately chosen over the third-party app I compared against earlier
+(that app has since exited, so its figure was a transient observation and not a baseline).
+
+Any sensor work must be judged against the 0.045 % figure above.
 
 ### 9.2 Why no mW figure appears here
 
