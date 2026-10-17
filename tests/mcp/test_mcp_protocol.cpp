@@ -331,6 +331,23 @@ TEST_CASE("mcp: build refusal rules for the transport bind are unit-testable", "
     REQUIRE_FALSE(is_loopback_literal(""));
 }
 
+TEST_CASE("mcp: transport unconditionally refuses wildcard bind addresses", "[mcp]") {
+    FakeVerifier verifier;
+    FakeProvider provider;
+    ToolRegistry tools = make_homeguardian_tools(verifier, provider);
+
+    for (const char* wildcard : {"0.0.0.0", "::", "0"}) {
+        McpHttpConfig cfg;
+        cfg.bind_address = wildcard;
+        cfg.allow_remote = true;
+        McpHttpServer server(cfg, tools, verifier);
+        std::string err;
+        bool ok = server.start(err);
+        REQUIRE_FALSE(ok);
+        REQUIRE(err.find("refusing to bind wildcard address") != std::string::npos);
+    }
+}
+
 TEST_CASE("mcp: OS-backed CSPRNG generates high-entropy random bytes", "[mcp]") {
     std::array<uint8_t, 32> b1{};
     std::array<uint8_t, 32> b2{};

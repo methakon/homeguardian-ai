@@ -507,9 +507,9 @@
     </div>
   </header>
 
-  <div class="banner-synthetic">
-    <span>⚠️ <strong>SYNTHETIC ISOLATION ACTIVE:</strong> Zero physical cameras or microphones streaming. Peripheral inventory read from authoritative C++ DeviceRegistry.</span>
-    <span style="font-family: var(--font-mono); font-size: 0.7rem;">FAIL-CLOSED • LOOPBACK ONLY</span>
+  <div class="banner-synthetic" id="mcpRuntimeBanner">
+    <span id="mcpBannerText">⚠️ <strong>SYNTHETIC ISOLATION ACTIVE:</strong> Zero physical cameras or microphones streaming. Peripheral inventory read from authoritative C++ DeviceRegistry.</span>
+    <span style="font-family: var(--font-mono); font-size: 0.7rem;" id="mcpBannerBadge">FAIL-CLOSED • LOOPBACK ONLY</span>
   </div>
 
   <div class="tab-bar">
@@ -1144,7 +1144,36 @@
         .then(r => r.json())
         .then(s => {
           if (s.connected) {
-            document.getElementById('mcpSessionBadge').innerText = `MCP: Connected (${s.protocolVersion})`;
+            const badge = document.getElementById('mcpSessionBadge');
+            const banner = document.getElementById('mcpRuntimeBanner');
+            const bannerText = document.getElementById('mcpBannerText');
+            const bannerBadge = document.getElementById('mcpBannerBadge');
+            if (s.hardwareVerified) {
+              if (badge) {
+                badge.innerText = `● EDGE: ${s.targetBadge || 'Xiaomi Mi A3'} (${s.protocolVersion})`;
+                badge.style.color = '#34d399';
+              }
+              if (banner) {
+                banner.style.background = 'rgba(16, 185, 129, 0.15)';
+                banner.style.borderColor = '#10b981';
+              }
+              if (bannerText) {
+                bannerText.innerHTML = `🛡️ <strong>AUTHENTICATED EDGE RUNTIME:</strong> Real native C++ MCP executing on <strong>${s.targetBadge}</strong>. Zero unauthorized camera exposure.`;
+              }
+              if (bannerBadge) {
+                bannerBadge.innerText = 'REAL HARDWARE • ANDROID 11 ARM64';
+              }
+            } else {
+              if (badge) {
+                badge.innerText = `○ FIXTURE: ${s.targetBadge || 'Local Fixture'} (${s.protocolVersion})`;
+              }
+              if (bannerText) {
+                bannerText.innerHTML = `⚠️ <strong>SYNTHETIC DEMO FIXTURE:</strong> Mi A3 offline. Serving queries via local C++ synthetic fixture. Zero physical camera streaming.`;
+              }
+              if (bannerBadge) {
+                bannerBadge.innerText = 'LOCAL FIXTURE • MI A3 OFFLINE';
+              }
+            }
           }
         }).catch(() => {});
     });

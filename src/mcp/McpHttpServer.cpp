@@ -738,6 +738,10 @@ McpHttpServer::~McpHttpServer() {
 }
 
 bool McpHttpServer::start(std::string& error) {
+    if (impl_->cfg.bind_address == "0.0.0.0" || impl_->cfg.bind_address == "::" || impl_->cfg.bind_address == "0") {
+        error = "refusing to bind wildcard address (0.0.0.0); explicit interface or loopback required";
+        return false;
+    }
     if (!impl_->cfg.allow_remote && !is_loopback_literal(impl_->cfg.bind_address)) {
         error = "refusing to bind a non-loopback address without allow_remote";
         return false;

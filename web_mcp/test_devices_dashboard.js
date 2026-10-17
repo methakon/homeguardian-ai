@@ -1123,6 +1123,9 @@ async function runSuite() {
     assert(mcpSess.status === 200, `MCP session endpoint active HTTP 200`);
     assert(mcpSess.body.connected === true, `Connected to native C++ hg_mcp_server`);
     assert(mcpSess.body.protocolVersion === '2025-11-25', `Protocol version is 2025-11-25`);
+    assert(mcpSess.body.runtimeMode === 'synthetic_fixture', `MCP session reports honest runtimeMode ('synthetic_fixture')`);
+    assert(mcpSess.body.hardwareVerified === false, `MCP session reports hardwareVerified is false (no spoofing)`);
+    assert(mcpSess.body.targetBadge.includes('Local Synthetic Fixture'), `MCP session reports honest target badge`);
 
     const chatRes = await request('POST', '/api/mcp/chat', { Cookie: sessionCookie }, { query: 'Is everything okay?' });
     assert(chatRes.status === 200, `MCP chat returned HTTP 200`);

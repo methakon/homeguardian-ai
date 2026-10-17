@@ -89,6 +89,20 @@ rc=$?
 set -e
 check "refuses non-loopback bind when HG_MCP_ALLOW_REMOTE=0" "4" "$rc"
 
+echo "== 3d. startup refusal: wildcard bind 0.0.0.0 refused even when HG_MCP_ALLOW_REMOTE=1"
+set +e
+HG_MCP_ALLOW_REMOTE=1 HG_MCP_BIND=0.0.0.0 "$BIN" "$CONFIG" "$TMP/creds.json" >"$TMP/out2d" 2>&1
+rc=$?
+set -e
+check "refuses wildcard 0.0.0.0 even with HG_MCP_ALLOW_REMOTE=1" "4" "$rc"
+
+echo "== 3e. startup refusal: wildcard bind :: refused unconditionally"
+set +e
+HG_MCP_ALLOW_REMOTE=1 HG_MCP_BIND="::" "$BIN" "$CONFIG" "$TMP/creds.json" >"$TMP/out2e" 2>&1
+rc=$?
+set -e
+check "refuses wildcard :: even with HG_MCP_ALLOW_REMOTE=1" "4" "$rc"
+
 echo "== 4. start the server on 127.0.0.1:$PORT"
 HG_MCP_PORT="$PORT" HG_MCP_AUDIT_DB="$TMP/audit.db" \
   "$BIN" "$CONFIG" "$TMP/creds.json" >"$TMP/server.log" 2>&1 &

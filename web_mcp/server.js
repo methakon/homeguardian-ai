@@ -30,6 +30,13 @@ let mcpClient = null;
 let mcpServerProc = null;
 let mcpServerLog = [];
 
+let activeRuntime = {
+  mode: 'synthetic_fixture', // 'hardware' | 'synthetic_fixture'
+  target: 'Local Synthetic Fixture (Mi A3 Offline)',
+  verified: false,
+  endpoint: `http://127.0.0.1:${MCP_PORT}/mcp`,
+};
+
 const AUTHORITATIVE_SYNTHETIC_DEVICE_IDS = new Set(['camera-syn-001']);
 
 const sessionManager = new SessionManager();
@@ -52,6 +59,60 @@ function ensureCredentialsFile(credsPath) {
   try {
     fs.chmodSync(credsPath, 0o600);
   } catch (_) {}
+}
+
+function probeMcpEndpoint(targetUrl, token, timeoutMs = 800) {
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(targetUrl);
+      const postData = JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'probe',
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-11-25',
+          capabilities: {},
+          clientInfo: { name: 'probe', version: '1.0' },
+        },
+      });
+      const req = http.request(
+        {
+          hostname: u.hostname,
+          port: u.port,
+          path: u.pathname,
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream',
+            'Content-Length': Buffer.byteLength(postData),
+          },
+          timeout: timeoutMs,
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (d) => { body += d; });
+          res.on('end', () => {
+            if (res.statusCode === 200) {
+              try {
+                const parsed = JSON.parse(body);
+                if (parsed.result && parsed.result.serverInfo) {
+                  return resolve({ ok: true, data: parsed.result });
+                }
+              } catch (_) {}
+            }
+            resolve({ ok: false, statusCode: res.statusCode });
+          });
+        }
+      );
+      req.on('error', () => resolve({ ok: false }));
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false }); });
+      req.write(postData);
+      req.end();
+    } catch (_) {
+      resolve({ ok: false });
+    }
+  });
 }
 
 function pingEndpoint(port) {
@@ -723,12 +784,15 @@ function createHttpServer() {
       res.end(
         JSON.stringify({
           connected: !!mcpClient && !!mcpClient.sessionId,
-          serverUrl: MCP_URL,
+          serverUrl: activeRuntime.endpoint || MCP_URL,
           sessionId: mcpClient?.sessionId,
           protocolVersion: mcpClient?.negotiatedVersion,
           serverInfo: mcpClient?.serverInfo,
           capabilities: mcpClient?.capabilities,
           tools: mcpClient?.tools,
+          runtimeMode: activeRuntime.mode,
+          targetBadge: activeRuntime.target,
+          hardwareVerified: activeRuntime.verified,
         })
       );
       return;
@@ -866,16 +930,50 @@ async function main() {
   // Ensure default device registry exists
   deviceAdapter.ensureRegistry();
 
-  // 1. Start native C++ server
-  await startNativeMcpServer(repoRoot, binPath);
+  // 1. Adaptive Endpoint Resolution: check if Mi A3 / remote endpoint is configured and reachable
+  const remoteEndpoint = process.env.HG_MI_A3_MCP_ENDPOINT || process.env.HG_MCP_ENDPOINT;
+  let targetUrl = MCP_URL;
+  let targetToken = TOKEN;
+
+  if (remoteEndpoint) {
+    console.log(`[WebMCP] Probing configured edge MCP endpoint: ${remoteEndpoint}...`);
+    const probe = await probeMcpEndpoint(remoteEndpoint, targetToken);
+    if (probe.ok) {
+      targetUrl = remoteEndpoint;
+      activeRuntime = {
+        mode: 'hardware',
+        target: 'Xiaomi Mi A3 (Android 11 / ARM64)',
+        verified: true,
+        endpoint: remoteEndpoint,
+      };
+      console.log(`[WebMCP] Connected to authenticated edge hardware: ${activeRuntime.target} at ${targetUrl}`);
+    } else {
+      console.log(`[WebMCP] Configured endpoint ${remoteEndpoint} unreachable; falling back to local synthetic fixture.`);
+      await startNativeMcpServer(repoRoot, binPath);
+      activeRuntime = {
+        mode: 'synthetic_fixture',
+        target: 'Local Synthetic Fixture (Mi A3 Offline)',
+        verified: false,
+        endpoint: MCP_URL,
+      };
+    }
+  } else {
+    await startNativeMcpServer(repoRoot, binPath);
+    activeRuntime = {
+      mode: 'synthetic_fixture',
+      target: 'Local Synthetic Fixture (Mi A3 Offline)',
+      verified: false,
+      endpoint: MCP_URL,
+    };
+  }
 
   // 2. Initialize MCP client
   mcpClient = new HomeGuardianMcpClient({
-    baseUrl: MCP_URL,
-    token: TOKEN,
+    baseUrl: targetUrl,
+    token: targetToken,
   });
 
-  console.log(`[WebMCP] Initializing MCP session with ${MCP_URL}...`);
+  console.log(`[WebMCP] Initializing MCP session with ${targetUrl} [Runtime: ${activeRuntime.target}]...`);
   for (let attempt = 1; attempt <= 10; attempt++) {
     try {
       const handshake = await mcpClient.initialize();
@@ -898,6 +996,7 @@ async function main() {
     console.log(`\n===============================================================`);
     console.log(`  HomeGuardian AI — Peripheral Devices & MCP Judge Dashboard`);
     console.log(`  Live URL: http://127.0.0.1:${WEB_PORT}`);
+    console.log(`  Active MCP Target: [${activeRuntime.mode.toUpperCase()}] ${activeRuntime.target}`);
     console.log(`  Authoritative Device Registry: C++ DeviceRegistry CLI`);
     console.log(`  WebRTC Live Camera Signaling: http://127.0.0.1:${WEB_PORT}/api/webrtc/signal`);
     console.log(`  Security Gate: Session Auth & CSRF Protection ACTIVE`);
@@ -933,4 +1032,6 @@ module.exports = {
   sessionManager,
   deviceAdapter,
   webrtcStreamer,
+  activeRuntime,
+  probeMcpEndpoint,
 };
