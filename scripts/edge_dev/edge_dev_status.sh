@@ -25,7 +25,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 ACTION="${1:-status}"
-SERIAL="${HG_EDGE_TARGET:-$HG_EDGE_SERIAL}"
+SERIAL="$(hg_resolve_target)" || hg_die "no usable target: connect first (edge_dev_connect.sh) or set HG_EDGE_TARGET" 3
 hg_assert_mi_a3 "$SERIAL"
 
 PID="$(hg_adb "$SERIAL" shell "pidof $HG_EDGE_PKG" 2>/dev/null | tr -d '\r')"

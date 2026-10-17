@@ -38,8 +38,13 @@ local_sha="$(sha256sum "$SRC_APK" | awk '{print $1}')"
 hg_log "local apk sha256: $local_sha"
 
 # --- install (streamed over the wireless link) ------------------------------
+# --no-incremental: without it adb first attempts an "Incremental Install", which
+# this device refuses with "java.lang.IllegalArgumentException: Incremental
+# installation not allowed." before falling back to a Streamed Install. The
+# fallback works, but it costs a round trip and puts a confusing stack trace into
+# the evidence. Skipping the attempt keeps the deploy a single clean pass.
 t0=$(date +%s)
-out="$(timeout 180 adb -s "$SERIAL" install -r "$SRC_APK" 2>&1)"; rc=$?
+out="$(timeout 180 adb -s "$SERIAL" install -r --no-incremental "$SRC_APK" 2>&1)"; rc=$?
 t1=$(date +%s)
 printf '%s\n' "$out" | sed 's/^/  /' >&2
 grep -qi 'Success' <<<"$out" || hg_die "install failed (rc=$rc)" 5
@@ -51,7 +56,11 @@ dev_apk_path="$(hg_adb "$SERIAL" shell pm path "$HG_EDGE_PKG" | tr -d '\r' | sed
 dev_sha="$(hg_adb "$SERIAL" shell sha256sum "$dev_apk_path" | tr -d '\r' | awk '{print $1}')"
 
 ver="$(hg_adb "$SERIAL" shell dumpsys package "$HG_EDGE_PKG" \
-        | tr -d '\r' | awk -F= '/versionName=/{v=$2} /versionCode=/{c=$2} END{print v, c}')"
+        | tr -d '\r' | sed -n 's/.*versionName=\([^ ]*\).*/\1/p' | head -1)"
+vcode="$(hg_adb "$SERIAL" shell dumpsys package "$HG_EDGE_PKG" \
+        | tr -d '\r' | grep -m1 -oE 'versionCode=[0-9]+' | cut -d= -f2)"
+minsdk="$(hg_adb "$SERIAL" shell dumpsys package "$HG_EDGE_PKG" \
+        | tr -d '\r' | grep -m1 -oE 'minSdk=[0-9]+' | cut -d= -f2)"
 abi="$(hg_adb "$SERIAL" shell dumpsys package "$HG_EDGE_PKG" | tr -d '\r' | awk -F= '/primaryCpuAbi=/{print $2}' | head -1)"
 
 echo
@@ -59,7 +68,7 @@ echo "deployment verified"
 echo "  local sha256    : $local_sha"
 echo "  device sha256   : $dev_sha"
 echo "  match           : $([[ "$local_sha" == "$dev_sha" ]] && echo YES || echo 'NO - MISMATCH')"
-echo "  versionName/code: $ver"
+echo "  versionName    : $ver  (code $vcode, minSdk $minsdk)"
 echo "  primaryCpuAbi   : $abi"
 echo "  installed path  : $dev_apk_path"
 

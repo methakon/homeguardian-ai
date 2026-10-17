@@ -1,0 +1,69 @@
+############ HG-EDGE-04 WIRELESS DEMONSTRATION ############
+date: 2026-10-17 10:50:47 IST
+transport targeted: 192.168.1.14:41639 (Wi-Fi; no USB used for these commands)
+USB cable state at this moment: STILL ATTACHED (physical unplug is the user's step)
+
+---- adb devices -l (both transports visible) ----
+List of devices attached
+edd53dbd04de           device usb:2-3 product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:21
+192.168.1.14:41639     device product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:15
+
+
+---- 1. identity over Wi-Fi ----
+10:50:47 identity OK: serial=192.168.1.14:41639 device=laurel_sprout platform=trinket abi=arm64-v8a sdk=30 mem=5603MB
+10:50:47 deploying homeguardian-edge-service.apk to 192.168.1.14:41639
+10:50:47 local apk sha256: 2d6018e0afa4c7250b621efcb4194dc3d964c4895e18cc043738644d03a47246
+  Performing Streamed Install
+  Success
+10:50:51 installed in 4s
+
+deployment verified
+  local sha256    : 2d6018e0afa4c7250b621efcb4194dc3d964c4895e18cc043738644d03a47246
+  device sha256   : 2d6018e0afa4c7250b621efcb4194dc3d964c4895e18cc043738644d03a47246
+  match           : YES
+  versionName    : 1.0.0  (code 1, minSdk 30)
+  primaryCpuAbi   : arm64-v8a
+  installed path  : /data/app/~~g1XAQiQvPE9MVjBfdX9K8w==/org.homeguardian.edgeservice-58Ou0G_eChiMZTi5ZIiPUg==/base.apk
+10:50:51 waiting for MY_PACKAGE_REPLACED to bring the service up
+  service pid     : 24322 (restarted by the install, no screen interaction needed)
+deploy exit=0
+
+---- 2. service status over Wi-Fi ----
+10:50:51 identity OK: serial=192.168.1.14:41639 device=laurel_sprout platform=trinket abi=arm64-v8a sdk=30 mem=5603MB
+HomeGuardian edge service status (over Wi-Fi)
+  device          : edd53dbd04de (Mi A3)
+  process pid     : 24322
+  isForeground    : yes
+  foreground count: startForegroundCount=1   startRequested=true   createTime=-917ms   restartTime=-916ms
+  MCP listener    : 0100007F:2256   (0100007F:2256 == 127.0.0.1:8790 loopback-only)
+  exposed on LAN  : NO
+  screen          : mWakefulness=Awake
+  probes          : 326 ok / 0 fail
+status exit=0
+
+---- 3. MCP functional tests over Wi-Fi ----
+10:50:53 identity OK: serial=192.168.1.14:41639 device=laurel_sprout platform=trinket abi=arm64-v8a sdk=30 mem=5603MB
+== A. host-side surface (no token; production build safe) ==
+  PASS  GET /mcp unauthenticated -> 401 (auth precedes method dispatch) (=401)
+  PASS  POST with no Authorization -> 401 (=401)
+  PASS  401 advertises WWW-Authenticate: Bearer
+  PASS  POST with a WRONG bearer -> 401 (=401)
+  PASS  DELETE unauthenticated -> 401 (session check is post-auth) (=401)
+  PASS  oversized body (70 KiB) -> 413 without needing auth (size guard precedes it) (=413)
+
+== loopback-only binding (on the device) ==
+  PASS  MCP bound to 0100007F:2256 (127.0.0.1 only)
+  PASS  no all-interfaces MCP listener (LAN exposure absent)
+
+== B1. authenticated exchange, as performed by the service's own watchdog ==
+  PASS  watchdog completed 326 authenticated MCP cycles, 0 failures
+  PASS  negotiated MCP protocol version 2025-11-25
+  PASS  tools/list returned both real tools
+  PASS  a real tools/call result was returned (capture_enabled=false as configured)
+
+== B2. host-side authenticated exchange (debuggable TEST build only) ==
+  SKIP  set HG_EDGE_DEBUGGABLE=1 to run this against a debuggable test build
+        (the production build's token is unreadable without root, by design)
+
+== RESULT: 12 passed, 0 failed ==
+test exit=0

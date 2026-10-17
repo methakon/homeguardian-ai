@@ -106,6 +106,36 @@ hg_wait_present() {
   return 1
 }
 
+# --- target resolution ------------------------------------------------------
+# Once the USB cable is gone the device serial IS the wireless endpoint
+# ("ip:port"), so the scripts must not assume the USB serial. Preference order,
+# with no silent fallback to "whatever happens to be attached":
+#   1. HG_EDGE_TARGET            explicit override
+#   2. remembered wireless endpoint (written by edge_dev_connect.sh), if present
+#   3. the USB serial
+hg_target_file() { echo "${HG_EDGE_STATE:-$HOME/.hermes/cache/scratch/hg-edge/target}"; }
+
+hg_remember_target() {
+  local f; f="$(hg_target_file)"
+  mkdir -p "$(dirname "$f")"
+  printf '%s\n' "$1" > "$f"
+  chmod 600 "$f"
+}
+
+hg_forget_target() { rm -f "$(hg_target_file)"; }
+
+hg_resolve_target() {
+  if [[ -n "${HG_EDGE_TARGET:-}" ]]; then printf '%s\n' "$HG_EDGE_TARGET"; return 0; fi
+  local f; f="$(hg_target_file)"
+  if [[ -f "$f" ]]; then
+    local t; t="$(head -1 "$f")"
+    if [[ -n "$t" && "$(hg_state "$t")" == "device" ]]; then printf '%s\n' "$t"; return 0; fi
+    hg_log "remembered target '$t' is not attached"
+  fi
+  if [[ "$(hg_state "$HG_EDGE_SERIAL")" == "device" ]]; then printf '%s\n' "$HG_EDGE_SERIAL"; return 0; fi
+  return 1
+}
+
 # --- redaction --------------------------------------------------------------
 # Never let a pairing code, token or session id reach a saved log. 6-digit
 # standalone numbers are the pairing-code shape; bearer tokens are long hex.

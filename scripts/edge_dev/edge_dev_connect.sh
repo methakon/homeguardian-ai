@@ -119,6 +119,10 @@ if [[ -z "$OK" ]]; then
   hg_die "no verified Mi A3 reachable over Wi-Fi (see reasons above)" 4
 fi
 
+# Remember it, so the other scripts work once the USB cable is gone and the
+# device serial is the wireless endpoint rather than the USB serial.
+hg_remember_target "$OK"
+
 # --- 4. prove it is the real device, over the wireless transport -------------
 echo
 hg_assert_mi_a3 "$OK"

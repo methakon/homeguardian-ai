@@ -28,9 +28,8 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
-SERIAL="${HG_EDGE_TARGET:-$HG_EDGE_SERIAL}"
+SERIAL="$(hg_resolve_target)" || hg_die "no usable target: connect first (edge_dev_connect.sh) or set HG_EDGE_TARGET" 3
 hg_assert_mi_a3 "$SERIAL"
-
 HGTMP="${HGTMP:-$HOME/.hermes/cache/scratch/hg-edge}"
 mkdir -p "$HGTMP"
 BASE="http://127.0.0.1:${HG_EDGE_FWD_PORT}/mcp"
