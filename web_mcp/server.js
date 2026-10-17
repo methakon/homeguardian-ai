@@ -30,9 +30,11 @@ let mcpClient = null;
 let mcpServerProc = null;
 let mcpServerLog = [];
 
+const AUTHORITATIVE_SYNTHETIC_DEVICE_IDS = new Set(['camera-syn-001']);
+
 const sessionManager = new SessionManager();
 const deviceAdapter = new DeviceRegistryAdapter();
-const webrtcStreamer = new WebRtcStreamer({ sessionManager, deviceAdapter });
+const webrtcStreamer = new WebRtcStreamer({ sessionManager, deviceAdapter, serverPort: WEB_PORT });
 
 // Helper: Ensure 0600 credential file exists for hg_mcp_server with real expiry
 function ensureCredentialsFile(credsPath) {
@@ -321,18 +323,22 @@ function createHttpServer() {
       return;
     }
 
-    // Origin allowlist check for CORS
+    // Exact Origin allowlist check for CORS
     if (originHeader) {
-      if (webrtcStreamer.isOriginAllowed(originHeader, hostHeader)) {
-        res.setHeader('Access-Control-Allow-Origin', originHeader);
-        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      if (!webrtcStreamer.isOriginAllowed(originHeader, WEB_PORT)) {
+        res.writeHead(403, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        res.end(JSON.stringify({ ok: false, error: 'forbidden_origin' }));
+        return;
       }
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Origin', originHeader);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-CSRF-Token');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     }
-
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-CSRF-Token');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -554,10 +560,12 @@ function createHttpServer() {
           return;
         }
 
-        // Authoritative synthetic check: ONLY simulator device type can bypass physical hardware requirements
-        const isAuthoritativeSynthetic = device.is_synthetic === true && device.type === 'simulator';
+        // Authoritative synthetic check: ONLY simulator device type on authoritative provider can bypass physical hardware requirements
+        const isAuthoritativeSynthetic = AUTHORITATIVE_SYNTHETIC_DEVICE_IDS.has(devId) &&
+                                         device.is_synthetic === true &&
+                                         device.type === 'simulator';
         if (!isAuthoritativeSynthetic) {
-          if (!device.paired || device.revoked || !device.credential_id || !device.online) {
+          if (!device.paired || device.revoked || !device.has_credential || !device.online) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               error: 'physical_camera_unverified',

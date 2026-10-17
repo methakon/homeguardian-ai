@@ -26,6 +26,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -37,6 +38,15 @@ using namespace homeguardian::net;
 using json = nlohmann::json;
 
 namespace {
+
+bool constant_time_equals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    unsigned char result = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        result |= static_cast<unsigned char>(a[i] ^ b[i]);
+    }
+    return result == 0;
+}
 
 int64_t get_now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -60,7 +70,7 @@ json format_device(const DeviceRegistry::Device& d, int64_t now_ms) {
     j["type"] = d.device_type.empty() ? "sensor" : d.device_type;
 
     // A device is authorized ONLY if it has verified pairing identity, capture enabled, and consent recorded
-    const bool has_verified_identity = d.paired && !d.revoked && !d.credential_id.empty();
+    const bool has_verified_identity = d.paired && !d.revoked && !d.credential_id.empty() && !d.auth_secret.empty();
     const bool authorized = d.capture_enabled && d.consent_granted && has_verified_identity;
     j["authorized"] = authorized;
 
@@ -114,10 +124,11 @@ json format_device(const DeviceRegistry::Device& d, int64_t now_ms) {
     j["consent_subject"] = d.consent_subject;
     j["consent_purpose"] = d.consent_purpose;
 
-    j["credential_id"] = d.credential_id;
+    // Do NOT publish credential_id or auth_secret over public listings
+    j["has_credential"] = !d.credential_id.empty() && !d.auth_secret.empty();
 
-    // Explicit synthetic provider flag: true for verified simulator device type or synthetic flag
-    const bool is_synthetic = d.is_synthetic || (d.device_type == "simulator");
+    // Explicit synthetic provider flag: true strictly for authoritative simulator provider
+    const bool is_synthetic = (d.device_id == DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId && d.device_type == "simulator");
     j["is_synthetic"] = is_synthetic;
 
     return j;
@@ -132,6 +143,7 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     cam1.display_name = "Android Wi-Fi Camera 1";
     cam1.device_type = "camera";
     cam1.credential_id = "camera-001-cert";
+    cam1.auth_secret = "sec_cam1_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c";
     cam1.paired = true;
     cam1.revoked = false;
     cam1.capabilities = {"camera", "microphone", "talkback"};
@@ -150,6 +162,7 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     camSyn.display_name = "Synthetic Test Camera (Simulation)";
     camSyn.device_type = "simulator";
     camSyn.credential_id = "syn-camera-cert";
+    camSyn.auth_secret = "sec_syn_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d";
     camSyn.paired = true;
     camSyn.revoked = false;
     camSyn.capabilities = {"camera"};
@@ -170,6 +183,7 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     mic1.display_name = "Living Room Microphone Node";
     mic1.device_type = "microphone";
     mic1.credential_id = "mic-001-cert";
+    mic1.auth_secret = "sec_mic1_9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b";
     mic1.paired = true;
     mic1.revoked = false;
     mic1.capabilities = {"microphone"};
@@ -186,6 +200,7 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     spk1.display_name = "Hallway Intercom Speaker";
     spk1.device_type = "speaker";
     spk1.credential_id = "speaker-001-cert";
+    spk1.auth_secret = "sec_spk1_5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d";
     spk1.paired = true;
     spk1.revoked = false;
     spk1.capabilities = {"talkback"};
@@ -204,6 +219,7 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     env1.display_name = "Kitchen Environmental Multi-Sensor";
     env1.device_type = "sensor";
     env1.credential_id = "env-001-cert";
+    env1.auth_secret = "sec_env1_3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f";
     env1.paired = true;
     env1.revoked = false;
     env1.capabilities = {"temperature", "humidity", "motion"};
@@ -342,18 +358,18 @@ int main(int argc, char* argv[]) {
             std::cerr << "{\"error\": \"device not found\"}\n";
             return 2;
         }
-        if (!d->paired || d->revoked || d->credential_id.empty()) {
+        if (!d->paired || d->revoked || d->credential_id.empty() || d->auth_secret.empty()) {
             std::cerr << "{\"error\": \"heartbeat rejected: device is unpaired, revoked, or unauthenticated\"}\n";
             std::cout << format_device(*d, now_ms).dump(2) << "\n";
             return 3;
         }
 
-        // Authenticate against d->credential_id via HG_DEVICE_CREDENTIAL / HG_DEVICE_SECRET / HG_CREDENTIAL_FILE without placing secrets on CLI args
-        std::string presented_credential;
-        if (const char* c = std::getenv("HG_DEVICE_CREDENTIAL")) {
-            presented_credential = c;
-        } else if (const char* s = std::getenv("HG_DEVICE_SECRET")) {
-            presented_credential = s;
+        // Authenticate against d->auth_secret via HG_DEVICE_SECRET / HG_DEVICE_CREDENTIAL / HG_CREDENTIAL_FILE without placing secrets on CLI args
+        std::string presented_secret;
+        if (const char* s = std::getenv("HG_DEVICE_SECRET")) {
+            presented_secret = s;
+        } else if (const char* c = std::getenv("HG_DEVICE_CREDENTIAL")) {
+            presented_secret = c;
         } else {
             std::string cfile;
             if (const char* f = std::getenv("HG_CREDENTIAL_FILE")) {
@@ -373,12 +389,20 @@ int main(int argc, char* argv[]) {
                     while (start < line.size() && (line[start] == ' ' || line[start] == '\t')) {
                         start++;
                     }
-                    presented_credential = line.substr(start);
+                    presented_secret = line.substr(start);
                 }
             }
         }
 
-        if (presented_credential.empty() || presented_credential != d->credential_id) {
+        // Hard gate: strictly reject if caller presents public credential_id as the secret
+        if (!d->credential_id.empty() && presented_secret == d->credential_id) {
+            std::cerr << "{\"error\": \"heartbeat rejected: public credential_id cannot be used as authentication secret\"}\n";
+            std::cout << format_device(*d, now_ms).dump(2) << "\n";
+            return 3;
+        }
+
+        // Constant-time comparison against auth_secret
+        if (presented_secret.empty() || !constant_time_equals(presented_secret, d->auth_secret)) {
             std::cerr << "{\"error\": \"heartbeat rejected: credential missing or mismatch\"}\n";
             std::cout << format_device(*d, now_ms).dump(2) << "\n";
             return 3;
@@ -430,13 +454,23 @@ int main(int argc, char* argv[]) {
         d.display_name = dev_j.value("display_name", d.device_id);
         d.device_type = dev_j.value("device_type", "sensor");
         d.credential_id = dev_j.value("credential_id", "");
+        d.auth_secret = dev_j.value("auth_secret", "");
+        if (d.auth_secret.empty() && !d.credential_id.empty()) {
+            std::random_device rd;
+            std::uniform_int_distribution<unsigned int> dist(0, 255);
+            std::ostringstream ss;
+            for (int i = 0; i < 32; ++i) {
+                ss << std::hex << std::setw(2) << std::setfill('0') << dist(rd);
+            }
+            d.auth_secret = "sec_" + ss.str();
+        }
         d.paired = true;
         d.revoked = false;
         d.has_camera = dev_j.value("has_camera", false);
         d.has_microphone = dev_j.value("has_microphone", false);
         d.consent_granted = dev_j.value("consent_granted", false);
         d.capture_enabled = dev_j.value("capture_enabled", false) && d.consent_granted;
-        d.is_synthetic = (d.device_type == "simulator");
+        d.is_synthetic = (d.device_id == DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId && d.device_type == "simulator");
         if (dev_j.contains("capabilities") && dev_j["capabilities"].is_array()) {
             for (const auto& cap : dev_j["capabilities"]) {
                 if (cap.is_string()) d.capabilities.push_back(cap.get<std::string>());

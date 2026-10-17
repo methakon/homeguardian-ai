@@ -215,6 +215,44 @@ async function runSuite() {
     assert(sessRes.status === 200 && sessRes.body.authenticated === true, `GET /api/auth/session confirmed active operator session`);
 
     // -----------------------------------------------------------------
+    // TEST 4b: P0-1 Browser Origin Authorization (CORS Exact Port Enforcement)
+    // -----------------------------------------------------------------
+    console.log('\n[Test 4b] P0-1 Browser Origin Authorization & Strict Port Matching');
+    // Mismatched loopback port on OPTIONS preflight
+    const hostileOptions = await request('OPTIONS', '/api/auth/session', {
+      Origin: 'http://127.0.0.1:9999',
+    });
+    assert(hostileOptions.status === 403, `OPTIONS from different-port origin (http://127.0.0.1:9999) rejected HTTP 403`);
+    assert(!hostileOptions.headers['access-control-allow-origin'], `Zero Access-Control-Allow-Origin header returned on rejected origin`);
+
+    // Mismatched loopback port on authenticated GET
+    const hostileGet = await request('GET', '/api/auth/session', {
+      Cookie: sessionCookie,
+      Origin: 'http://127.0.0.1:9999',
+    });
+    assert(hostileGet.status === 403, `GET /api/auth/session from different-port origin rejected HTTP 403`);
+    assert(hostileGet.body?.error === 'forbidden_origin', `Body reports error: forbidden_origin`);
+    assert(!hostileGet.headers['access-control-allow-origin'], `Zero Access-Control-Allow-Origin header returned on rejected GET`);
+
+    // Mismatched localhost port on mutation POST
+    const hostilePost = await request('POST', '/api/devices/camera-syn-001/consent', {
+      Cookie: sessionCookie,
+      'X-CSRF-Token': csrfToken,
+      Origin: 'http://localhost:3000',
+    }, { granted: true });
+    assert(hostilePost.status === 403, `POST /api/devices/... from http://localhost:3000 rejected HTTP 403`);
+    assert(!hostilePost.headers['access-control-allow-origin'], `Zero Access-Control-Allow-Origin header on rejected mutation`);
+
+    // Exact matching origin: accepted with ACAO matching exact origin and credentials enabled
+    const genuineOrigin = `http://127.0.0.1:${WEB_PORT}`;
+    const genuineOptions = await request('OPTIONS', '/api/auth/session', {
+      Origin: genuineOrigin,
+    });
+    assert(genuineOptions.status === 204, `OPTIONS from exact listener origin returned HTTP 204`);
+    assert(genuineOptions.headers['access-control-allow-origin'] === genuineOrigin, `ACAO header matches exact origin`);
+    assert(genuineOptions.headers['access-control-allow-credentials'] === 'true', `Access-Control-Allow-Credentials is true`);
+
+    // -----------------------------------------------------------------
     // TEST 5: Peripheral Device Registry (Authenticated GET /api/devices)
     // -----------------------------------------------------------------
     console.log('\n[Test 5] Authoritative C++ Device Registry (GET /api/devices)');
@@ -235,6 +273,13 @@ async function runSuite() {
     assert(cam1.authorized === false, `Unauthorized state verified (capture withheld)`);
     assert(cam1.stream_state === 'inactive', `Initial stream_state is 'inactive'`);
     assert(cam1.last_seen === null, `Unseen physical device reports last_seen: null`);
+    assert(cam1.has_credential === true, `cam1 has_credential is true`);
+    assert(cam1.credential_id === undefined, `cam1 credential_id is NOT disclosed in public listing`);
+    assert(cam1.auth_secret === undefined, `cam1 auth_secret is NOT disclosed in public listing`);
+    for (const dev of devRes.body) {
+      assert(dev.credential_id === undefined, `Device ${dev.id} credential_id not disclosed in registry payload`);
+      assert(dev.auth_secret === undefined, `Device ${dev.id} auth_secret not disclosed in registry payload`);
+    }
 
     const synCam = devRes.body.find((d) => d.id === 'camera-syn-001');
     assert(!!synCam, `Found synthetic test camera 'camera-syn-001'`);
@@ -289,6 +334,59 @@ async function runSuite() {
       'X-CSRF-Token': csrfToken,
     });
     assert(micTokenRes.status === 400, `View token for audio-only microphone refused HTTP 400 (capability_missing)`);
+
+    // P0-2 & P0-3 Regressions: Device type restriction and credential separation
+    console.log('\n[P0-2 & P0-3] Simulator Type Restriction and Heartbeat Credential Separation');
+    let pairForgedSimFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'cam-forged-001',
+          display_name: 'Forged Sim',
+          device_type: 'simulator',
+          credential_id: 'forged-cert',
+          has_camera: true,
+          consent_granted: true,
+          capture_enabled: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      pairForgedSimFailed = true;
+    }
+    assert(pairForgedSimFailed, `Pairing device_type simulator for non-authoritative id rejected`);
+
+    let pairUnknownTypeFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'cam-bad-001',
+          display_name: 'Bad Type',
+          device_type: 'Simulator',
+          credential_id: 'bad-cert',
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      pairUnknownTypeFailed = true;
+    }
+    assert(pairUnknownTypeFailed, `Pairing non-allowlisted device_type rejected`);
+
+    // Public credential replay rejection on heartbeat
+    let replayHbFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'heartbeat', 'camera-001', '1', String(Date.now()),
+      ], {
+        env: { ...process.env, HG_DEVICE_CREDENTIAL: 'camera-001-cert' },
+      });
+    } catch (e) {
+      replayHbFailed = true;
+    }
+    assert(replayHbFailed, `Heartbeat presenting public credential_id rejected`);
 
     // -----------------------------------------------------------------
     // TEST 8: WebRTC Signaling & Connection

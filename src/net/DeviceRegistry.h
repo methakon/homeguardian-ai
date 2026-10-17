@@ -39,7 +39,9 @@ public:
         std::string device_id;
         std::string display_name;
         std::string device_type;      // "android" | "hub-fixture" | ...
-        std::string credential_id;    // certificate fingerprint/CN the device must present
+        std::string credential_id;    // public credential identifier (e.g. certificate CN or fingerprint)
+        std::string auth_secret;      // private cryptographic authentication secret (preshared key)
+        static constexpr std::string_view kAuthoritativeSyntheticDeviceId = "camera-syn-001";
         bool paired = false;
         bool revoked = false;         // registry-file revocation
         // Revocation can also come from the operator's revocation list, which is

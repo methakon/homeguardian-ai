@@ -10,15 +10,15 @@
 const crypto = require('node:crypto');
 const { RTCPeerConnection, MediaStreamTrack, RTCRtpCodecParameters } = require('werift');
 
+const AUTHORITATIVE_SYNTHETIC_DEVICE_IDS = new Set(['camera-syn-001']);
+
 class WebRtcStreamer {
   constructor(options = {}) {
     this.sessionManager = options.sessionManager;
     this.deviceAdapter = options.deviceAdapter;
+    this.serverPort = options.serverPort || 18800;
     this.activeConnections = new Map(); // connectionId -> { pc, deviceId, sessionToken, startedAt, lastActivityAt }
-    this.allowedOrigins = options.allowedOrigins || [
-      'http://127.0.0.1',
-      'http://localhost',
-    ];
+    this.allowedOrigins = options.allowedOrigins || [];
     this.maxStreamLifetimeMs = options.maxStreamLifetimeMs ||
       (process.env.HG_WEBRTC_MAX_LIFETIME_MS ? parseInt(process.env.HG_WEBRTC_MAX_LIFETIME_MS, 10) : 1800 * 1000); // 30 minutes default
     this.idleTimeoutMs = options.idleTimeoutMs ||
@@ -41,13 +41,16 @@ class WebRtcStreamer {
     }
   }
 
-  // Validate request Origin (Strict: loopback only or exact allowedOrigins match)
-  isOriginAllowed(originHeader) {
+  // Validate request Origin (Strict: loopback only on exact matching port or explicit allowedOrigins)
+  isOriginAllowed(originHeader, targetPort = this.serverPort) {
     if (!originHeader) return false; // Strict: browser Origin required
     try {
       const u = new URL(originHeader);
+      const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+      const expectedPort = String(targetPort || this.serverPort);
       if ((u.protocol === 'http:' || u.protocol === 'https:') &&
-          (u.hostname === '127.0.0.1' || u.hostname === 'localhost')) {
+          (u.hostname === '127.0.0.1' || u.hostname === 'localhost') &&
+          port === expectedPort) {
         return true;
       }
       return this.allowedOrigins.includes(`${u.protocol}//${u.host}`);
@@ -129,7 +132,7 @@ class WebRtcStreamer {
     this.pruneExpiredStreams();
 
     // 1. Strict Origin verification
-    if (!this.isOriginAllowed(originHeader)) {
+    if (!this.isOriginAllowed(originHeader, this.serverPort)) {
       throw new Error('forbidden_origin: Origin not permitted for WebRTC signaling');
     }
 
@@ -149,9 +152,11 @@ class WebRtcStreamer {
     }
 
     // 4. Verified pairing identity & authenticated liveness check
-    const isAuthoritativeSynthetic = device.is_synthetic === true && device.type === 'simulator';
+    const isAuthoritativeSynthetic = AUTHORITATIVE_SYNTHETIC_DEVICE_IDS.has(deviceId) &&
+                                     device.is_synthetic === true &&
+                                     device.type === 'simulator';
     if (!isAuthoritativeSynthetic) {
-      if (!device.paired || device.revoked || !device.credential_id || !device.online) {
+      if (!device.paired || device.revoked || !device.has_credential || !device.online) {
         throw new Error(`physical_camera_unverified: Physical camera '${deviceId}' has unverified pairing identity or liveness. Hardware streaming disabled in judge build.`);
       }
     }

@@ -31,6 +31,25 @@ bool credential_id_shape_ok(const std::string& credential_id) {
     return true;
 }
 
+bool is_allowlisted_device_type(std::string_view type) {
+    return type == "camera" ||
+           type == "microphone" ||
+           type == "speaker" ||
+           type == "sensor" ||
+           type == "simulator" ||
+           type == "android" ||
+           type == "hub-fixture";
+}
+
+bool constant_time_equals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    unsigned char result = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        result |= static_cast<unsigned char>(a[i] ^ b[i]);
+    }
+    return result == 0;
+}
+
 bool device_shape_ok(const DeviceRegistry::Device& device, size_t max_capabilities,
                      std::string* reason) {
     auto fail = [reason](const std::string& why) {
@@ -41,6 +60,16 @@ bool device_shape_ok(const DeviceRegistry::Device& device, size_t max_capabiliti
     if (!bounded(device.device_id, kMaxIdChars)) return fail("device_id too long");
     if (!bounded(device.display_name, kMaxNameChars)) return fail("display_name too long");
     if (!bounded(device.device_type, kMaxTypeChars)) return fail("device_type too long");
+    if (device.device_type.empty() || !is_allowlisted_device_type(device.device_type)) {
+        return fail("unrecognized or invalid device_type");
+    }
+    if (device.device_type == "simulator" && device.device_id != DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId) {
+        return fail("device_type simulator is restricted to authoritative provider " +
+                    std::string(DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId));
+    }
+    if (device.device_id == DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId && device.device_type != "simulator") {
+        return fail("authoritative synthetic device must have device_type simulator");
+    }
     if (!bounded(device.revocation_note, kMaxNoteChars)) return fail("revocation_note too long");
     if (!bounded(device.consent_subject, kMaxIdChars)) return fail("consent_subject too long");
     if (!bounded(device.consent_purpose, kMaxTypeChars)) return fail("consent_purpose too long");
@@ -60,6 +89,7 @@ nlohmann::json to_json(const DeviceRegistry::Device& d) {
     j["display_name"] = d.display_name;
     j["device_type"] = d.device_type;
     j["credential_id"] = d.credential_id;
+    if (!d.auth_secret.empty()) j["auth_secret"] = d.auth_secret;
     j["paired"] = d.paired;
     j["revoked"] = d.revoked;
     if (!d.revocation_note.empty()) j["revocation_note"] = d.revocation_note;
@@ -126,8 +156,9 @@ bool DeviceRegistry::load(const std::string& path, std::string* reason) {
         Device d;
         d.device_id = entry.value("device_id", std::string());
         d.display_name = entry.value("display_name", std::string());
-        d.device_type = entry.value("device_type", std::string());
+        d.device_type = entry.value("device_type", std::string("sensor"));
         d.credential_id = entry.value("credential_id", std::string());
+        d.auth_secret = entry.value("auth_secret", std::string());
         d.paired = entry.value("paired", false);
         d.revoked = entry.value("revoked", false);
         d.revocation_note = entry.value("revocation_note", std::string());
@@ -141,7 +172,7 @@ bool DeviceRegistry::load(const std::string& path, std::string* reason) {
         d.last_sequence = entry.value("last_sequence", 0ULL);
         d.last_observation_at_ms = entry.value("last_observation_at_ms", 0LL);
         d.consent_updated_ms = entry.value("consent_updated_ms", 0LL);
-        d.is_synthetic = (d.device_type == "simulator");
+        d.is_synthetic = (d.device_id == Device::kAuthoritativeSyntheticDeviceId && d.device_type == "simulator");
         // A device is online ONLY if persisted online=true, paired, unrevoked, and authenticated
         d.online = entry.value("online", false) && d.paired && !d.revoked && !d.credential_id.empty();
         // Capture is OFF unless the registry explicitly authorizes it AND the
@@ -235,7 +266,7 @@ bool DeviceRegistry::pair(const Device& device, std::string* reason) {
         const std::string subject = existing->consent_subject;
         const std::string purpose = existing->consent_purpose;
         *existing = device;
-        existing->is_synthetic = (existing->device_type == "simulator");
+        existing->is_synthetic = (existing->device_id == Device::kAuthoritativeSyntheticDeviceId && existing->device_type == "simulator");
         existing->consent_granted = consent_granted;
         existing->consent_subject = subject;
         existing->consent_purpose = purpose;
@@ -251,7 +282,7 @@ bool DeviceRegistry::pair(const Device& device, std::string* reason) {
         return false;
     }
     Device to_insert = device;
-    to_insert.is_synthetic = (to_insert.device_type == "simulator");
+    to_insert.is_synthetic = (to_insert.device_id == Device::kAuthoritativeSyntheticDeviceId && to_insert.device_type == "simulator");
     devices_.push_back(to_insert);
     if (reason != nullptr) reason->clear();
     return true;
@@ -406,6 +437,11 @@ DeviceRegistry::RefreshOutcome DeviceRegistry::refresh_authorization(
             note_change(id + ": credential rebound (rotation)");
         }
 
+        const std::string secret = entry.value("auth_secret", std::string());
+        if (!secret.empty()) {
+            device->auth_secret = secret;
+        }
+
         const bool paired = entry.value("paired", false);
         const bool revoked = entry.value("revoked", false);
         const bool consent = entry.value("consent_granted", false) && !revoked;
@@ -464,7 +500,7 @@ DeviceRegistry::AuthResult DeviceRegistry::authenticate(const std::string& devic
     if (d->revoked) return AuthResult::revoked;
     if (!d->paired) return AuthResult::unpaired;
     if (d->credential_id.empty()) return AuthResult::no_credential;
-    if (d->credential_id != credential_id) return AuthResult::credential_mismatch;
+    if (!constant_time_equals(d->credential_id, credential_id)) return AuthResult::credential_mismatch;
     return AuthResult::ok;
 }
 
