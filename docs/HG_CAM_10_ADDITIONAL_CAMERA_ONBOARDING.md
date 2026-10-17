@@ -72,6 +72,13 @@ Discovery services: **no** mDNS answers for `_rtsp`, `_onvif`, `_http` or the ve
 **no** ONVIF WS-Discovery responder for `NetworkVideoTransmitter`. Consistent with camera 1's ONVIF
 being disabled and with cameras 2 and 3 offering no standard interface to advertise.
 
+**Second pass, same day.** The same three fingerprints were present at the same addresses, so nothing
+drifted between the two reads. That pass also produced the cleanest possible demonstration of the
+principle this whole design rests on: the address this workstation itself held in the previous
+milestone is now held by a **different device** (a randomized MAC that was not on the LAN before). One
+address, two different devices, on this network, observed — which is exactly why an address may never
+be an identity, and why the fingerprint (plus the owner's identifier) is what the inventory keys on.
+
 ## 3. Registry onboarding (issue step 3) — **PASS (privately verified)**
 
 Camera 3 is now a registered device. The onboarding gate (in code, `CameraInventory::onboard`)
@@ -107,6 +114,24 @@ the retail model number with its specification table (chip, sensor, resolution, 
 Those need the "View device QR Code" screen, the firmware-information screen for this device, the
 "Reception" screen (Wi-Fi + IP), or the retail box. None of them are needed for registration; they
 are needed before any specification or media claim about camera 3 is written.
+
+### 3.1 Phase-2 verification checklist — the REAL record against the REAL registry
+
+Not a fixture: the artifact below is camera 3's registration record, with the owner-supplied
+identifier and the LAN-verified fingerprint, exercised end-to-end. **44 assertions, all passing.**
+Raw output is in the owner-restricted evidence file.
+
+| Group | Verified |
+|---|---|
+| Registration record | one authorized record; the logical id is not an address and contains none; media readiness sits at the observed fact; no firmware claimed without a verified read-out |
+| Same address | resolves as the known camera; health online |
+| **DHCP address change** | resolves as `known_moved`, **not** as a new device; logical identity unchanged; authorization survives; the old address becomes history, not identity; no duplicate record and no phantom candidate invented |
+| Persistence across restart | the binding survives a save/reload; a further address change after the restart is still recognised as the same camera |
+| Health / offline | silence past the timeout marks it offline **without deleting it**; recovery restores online with the same identity |
+| Camera-specific consent, revocation, capture | authorized with its own credential; a foreign credential is refused; revocation takes effect; re-authorization restores access; consent withdrawal blocks collection; the operator's capture switch blocks collection independently; the registry holds exactly one device |
+
+Camera 1 and camera 2 are untouched by all of this: this registry holds only camera 3's record, and
+neither of the other two cameras' identities, credentials, consent or settings were read or written.
 
 ## 4. Reuse of the site-connector framework (issue step 4) — PASS (code) / BLOCKED (deployment)
 
@@ -196,7 +221,10 @@ New `[inventory]` suite: **8 cases, 257 assertions, all passing.** Full suite: *
 | Video | **BLOCKED** | same blocker; no live feed exists and none is claimed |
 | Microphone audio | **BLOCKED** | not independently testable; no interface |
 | Two-way audio | **BLOCKED** | not independently testable; no interface |
-| Remote readiness | **BLOCKED** | needs a registered identity, a media path and an always-on connector host |
+| Remote readiness | **BLOCKED** | needs a media path and an always-on connector host (the registered identity now exists) |
+| Camera-specific consent / revocation / offline handling | **PASS** | verified against the real record and the real registry (§3.1) |
+| Registry persistence across restart | **PASS** | save/reload round-trip on the real record, malformed files refused |
+| Discovery of the third camera | **PASS** | identified, reachable, fingerprinted and registered; still no standard media interface on it |
 
 ## 10. Standing constraints, honoured
 
