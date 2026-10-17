@@ -698,7 +698,7 @@ Approved scope: tests 1, 2, 3 and 6, then extended by the operator to include 4 
 | 3b | Manual **Restart** | **PASS** | `onStartCommand action=…RESTART` → `restartEngine: operator restart` → `listening on 127.0.0.1:8790`; `LISTEN 0100007F:2256` |
 | 3c | Automatic crash recovery | **PASS** (after fixing D2 below) | `am crash` → AMS `Process … has died` → `Scheduling restart of crashed service … in 1000ms` → new process → `onStartCommand … startId=2` → `listening on 127.0.0.1:8790` → `ENGINE_UP`; `restartCount=1 crashCount=1` |
 | 4 | Power-off/reboot then service recovery | **PASS** | `adb reboot`; uptime reset to 32 s; at t+45 s: `BootReceiver action=android.intent.action.BOOT_COMPLETED` → `BOOT_RECEIVED` → `onStartCommand …START` → `listening on 127.0.0.1:8790` → `ENGINE_UP`; **0** "credentials provisioned" lines in that boot, i.e. the existing 0600 credential file survived and was reused |
-| 5 | Screen-off MCP availability with no ADB | **PASS** | Screen off (`mWakefulness=Dozing`, `mScreenOn=false`), `adb kill-server`, unattended: **66 `PROBE_OK` / 0 `PROBE_FAIL`**, inter-probe cadence **median 20.1 s**, and then repeated under **forced deep Doze** (`dumpsys deviceidle force-idle` → `mState=IDLE mLightState=OVERRIDE`) with ADB again disconnected: probes continued, gaps unchanged |
+| 5 | Screen-off MCP availability with no ADB | **PASS**, with the qualification in 10.10 | Screen off (`mWakefulness=Dozing`, `mScreenOn=false`), `adb kill-server`, unattended: **66 `PROBE_OK` / 0 `PROBE_FAIL`**, inter-probe cadence **median 20.1 s**, and then repeated under **forced deep Doze** (`dumpsys deviceidle force-idle` → `mState=IDLE mLightState=OVERRIDE`) with ADB again disconnected: probes continued, gaps unchanged. **Caveat: this ran on USB power, where the SoC keeps running; it is not a real suspend test. The overnight on-battery run in 10.10 is, and it shows the probe cadence degrading while the server keeps serving.** |
 | 6 | CPU, RAM, battery and thermal | **MEASURED** (see 10.8/10.9) | — |
 
 **Not a PASS:** the 48–72 h supervised soak, and any unattended-charging behaviour —
@@ -797,6 +797,82 @@ number one must not read optimistically: it is the *negotiated* USB current, not
 charge-percentage limit. The phone sits at 95–96 % while plugged in, so "500 mA" does
 not imply "safe charge level". Continuous unattended charging remains **not approved**
 and no unattended soak was started.
+
+### 10.10 Overnight unattended run — and a correction to the test-5 claim
+
+The device was left running from ~04:30 to ~10:15 (5 h 45 m) with nothing attached
+except the cable. That window is the most useful reliability evidence in this report,
+and it **qualifies** what section 10.6 says about test 5.
+
+**What held up.** Same process the whole time (PID 9266, no restart), service still
+`isForeground=true`, socket still `0100007F:2256` (loopback only), **198 `PROBE_OK` /
+0 `PROBE_FAIL`**, probe latency 17–69 ms (median 29 ms), and the engine's own
+lifecycle log shows no `ENGINE_STOP` and no recovery event after `BOOT_RECEIVED`.
+
+**What I have to correct.** The overnight probe cadence is **not** 20 s. It contains
+**45 gaps longer than 30 s**, the largest 680 s. The cause is not a fault in the
+service: `Handler.postDelayed` is based on `SystemClock.uptimeMillis`, which **does
+not advance while the device is suspended**. Measured on the device:
+
+```
+t0 : awake=20706.96  elapsed=23353.45
+t30: awake=20737.07  elapsed=23501.40
+over 148.0 s of wall time the device was AWAKE for 30.1 s
+=> 20% awake, 80% asleep;  46 min of deep sleep since boot
+```
+
+So a "20 s" delay means **20 s of awake time**, which on a mostly-sleeping device is
+minutes of wall time. That is the entire gap pattern.
+
+**Therefore the test-5 PASS means less than I first wrote.** Test 5 was run *on USB
+power*, where the SoC keeps running and `uptime` keeps advancing — which is why the
+cadence held at 20.1 s there. It was a screen-off + device-idle test, **not** a real
+suspend test. The overnight window is the real suspend test, and it shows the *probe*
+degrades while the *server* does not.
+
+**Corrected statement of the result:**
+
+* **MCP availability:** supported. Across 5 h 45 m including ~46 min of real deep
+  sleep, every probe that ran succeeded, the listener stayed bound to loopback, and
+  the process never restarted.
+* **Continuous 20 s monitoring through sleep:** **not** achieved, and I would not want
+  it — forcing a wake every 20 s to run a health probe would wreck the battery, which
+  is the opposite of what this node is for. A sleep gap is expected behaviour, not a
+  failure, and the probe log does not currently distinguish the two. Logging the
+  awake-vs-wall delta alongside each probe is a small change worth making so an
+  operator cannot misread a sleep gap as an outage.
+
+**The phone was mostly UNPLUGGED during that window**, which is why the level fell.
+From `dumpsys batterystats --history`:
+
+```
+(day start) status=discharging health=good plug=none volt=4413 charge=3764 ... fg=u0a226:"org.homeguardian.edgeservice"
++5h16m01s  plug=usb  +plugged
++5h16m44s  status=discharging plug=none  -plugged
++5h16m46s  status=charging  plug=usb     +plugged
+```
+
+So the 96 % → 90 % fall was **normal battery discharge**, not a charging failure, and
+the phone was only connected about 5 h 16 m into the session (the `-plugged/+plugged`
+blip 43 s apart is a USB re-enumeration — the same behaviour that produced the earlier
+`adb offline`). Level has since recovered to 92–93 %. `charge_counter` reads a flat
+3,683,680 µAh across samples while the level rises, so **it is too coarse on this
+device to act as a net-current measurement** — it must not be used as one.
+
+**On-battery cost of the node, measured:**
+
+| Process | CPU since boot (5 h 45 m) |
+|---|---|
+| `org.homeguardian.edgeservice` (our node) | **7.5 s** |
+| `com.radio.pocketfm` (third-party radio app) | **463.7 s** |
+
+The node used ~1.6 % of the CPU one unrelated third-party app on the phone burned, and
+did not appear in `top` at all. The persistent load average of 1.5–2.5 on this device
+is the phone's own software, not this service.
+
+**Unattended charging stays unapproved.** The overnight run happened to be on battery,
+so it does not test charging at all — and the supply is a negotiated 500 mA, which is
+not a charge-level limit.
 
 ## Appendix — evidence files
 
