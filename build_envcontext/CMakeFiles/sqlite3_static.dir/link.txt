@@ -1,2 +1,0 @@
-/usr/bin/ar qc libsqlite3_static.a CMakeFiles/sqlite3_static.dir/third_party/sqlite/sqlite3.c.o
-/usr/bin/ranlib libsqlite3_static.a

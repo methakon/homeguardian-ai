@@ -136,3 +136,6 @@ hg_service_apk_build/
 # Never publish the device's WHOLE logcat: it carries third-party app activity and
 # personal context from a real phone. Filter to our own tag before committing.
 logs/device-artifacts/full_logcat.txt
+
+# HG-EDGE-05: local CMake build dir for the environmental-context work.
+build_envcontext/
