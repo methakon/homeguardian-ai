@@ -127,8 +127,11 @@ finally:
     for x in socks:
         x.close()
 
-print('\n-- expected result for an as-shipped V380 (see HG_V380_02) --')
-print('   OPEN: 8800, 9800 only; 554/8899/3702/80 refused')
-print('   silent on connect; idle close ~5.0s; junk close ~0.2s; 0 bytes back')
-print('   any deviation is a finding: record it before acting on it')
+print('\n-- expected results --')
+print('   ONVIF DISABLED (as shipped): OPEN 8800+9800 only; 554/8899/3702 refused;')
+print('     silent on connect; idle close ~5.0s; junk close ~0.2s; 0 bytes back')
+print('   ONVIF ENABLED: 554 and 8899 also OPEN; 554 answers RTSP/1.0 200 OK to OPTIONS')
+print('     with Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE')
+print('   any other deviation is a finding: record it before acting on it')
+print('   an enabled interface must then pass scripts/v380_security_check.sh')
 PY
