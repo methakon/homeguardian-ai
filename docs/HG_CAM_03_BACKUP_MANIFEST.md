@@ -67,6 +67,20 @@ afterwards because the encrypted archive is the artefact of record. The test als
 the archive against its `.sha256` sidecar first, so silent corruption after the fact is
 caught rather than trusted.
 
+**One correction had to be made to the artefact itself.** The small config+manifest archive
+was first written at 12:47:40 — seconds after the buggy test run — so it carried that false
+`FAIL` *inside it*, with no round-trip record beside it. That is actively misleading to
+discover on decrypt, so the small archive was **rebuilt** rather than merely footnoted. It
+is now 211,261 bytes and contains `result.txt` (PASS, 25/25), `result-buggy-parser-run.txt`
+(the original buggy output, preserved verbatim rather than deleted) and
+`archive_roundtrip.txt`.
+
+The **shared archive was not touched** — its SHA-256 remains
+`d4bba0d8238f1b9cd5c71d7f34a8577e089747eca06eab0f9af8f71e5be0747d`, identical to the value
+recorded before the rebuild, so the round-trip PASS still applies to exactly those bytes.
+Only the regenerated `.sha256` sidecar differs, because it now covers the rebuilt small
+archive.
+
 ## 3. Recovered — in this backup
 
 Aggregates only. Personal filenames are in `manifest/checksums.sha256` and are deliberately
