@@ -583,12 +583,14 @@ arm64-v8a, Android 9 / API 28, A-only, Treble-enabled (vndk 28).
 | CAM-03 | Recoverable backup before any destructive step | CAM-01 | Shared storage captured, checksummed, encrypted outside the repo, and proven restorable by decrypting the archive and verifying the extracted tree | DONE |
 | CAM-04 | Reset decision brief including FRP | CAM-03 | FRP requirements, unrecoverable data, recovery procedure and a reset-vs-keep comparison reported to the owner | DONE (owner confirmation pending) |
 | CAM-05 | Second encrypted copy on physically separate storage | CAM-04 | Archive and key on storage that survives loss of this workstation, key held separately from the archive | BLOCKED (owner action — key and archive currently share one disk) |
-| CAM-06 | CCTV APK: foreground service + arm64/API-28 build | CAM-02 | Foreground service declared and running; APK builds for arm64-v8a and installs on API 28 | PROPOSED (needs separate capture approval) |
+| CAM-06 | CCTV APK: foreground service + arm64/API-28 build | CAM-02 | Foreground service declared and running; APK builds for arm64-v8a and installs on API 28 | PARTIAL — service + arm64/API-28 build DONE and compile-verified (media wiring deliberately not enabled) |
 | CAM-07 | CCTV APK: screen-off survival acceptance | CAM-06 | Capture continues with the screen off for >= 30 minutes with counters advancing | PROPOSED |
 | CAM-08 | CCTV APK: hub delivery proven from the real device | CAM-06 | A real Panasonic delivers observations to the hub over the existing mutual-TLS transport, with a reproducible evidence artifact | PROPOSED |
 | CAM-09 | CCTV APK: speaker talkback with AEC | CAM-06 | Two-way audio with the AOSP acoustic echo canceller active and no audible echo | PROPOSED |
 | CAM-10 | CCTV APK: visible capture indicator | CAM-06 | Operator-visible indication whenever capture is live | PROPOSED |
-| CAM-11 | Factory reset and dedicated-node provisioning | CAM-04, CAM-05 | FRP disarmed by owner account removal; device provisioned as a dedicated node | BLOCKED (explicit owner authorization required) |
+| CAM-11 | Factory reset and dedicated-node provisioning | CAM-12, CAM-05 | FRP disarmed by owner account removal; device provisioned as a dedicated node | BLOCKED (explicit owner authorization required) |
+| CAM-12 | Remove the unwanted Google account (disarms FRP) | CAM-04 | Google account absent from `dumpsys account`; Facebook/Messenger/WhatsApp accounts intact | READY (owner taps; normal Settings UI only) |
+| CAM-13 | Power-failure resilience for install/test operations | CAM-04 | Install/test steps idempotent and state re-read before acting; no long maintenance; no unnecessary reboots | DONE (design recorded in `docs/HG_CAM_04_POWER_RESILIENCE.md`) |
 
 ### CAM progress: device findings and constraints
 

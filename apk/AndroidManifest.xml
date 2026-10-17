@@ -4,15 +4,24 @@
     android:versionCode="2"
     android:versionName="0.2.0">
 
-    <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="27" />
+    <!-- targetSdk 28 (raised from 27): the dedicated CCTV node needs Android 9's documented
+         background-capture path, which is a foreground service. Compiling still happens
+         against android-27 because that is the platform jar installed here; targetSdkVersion
+         is a manifest property, not a property of the jar. Raising it does not affect the
+         API 27 device used by the H-03 harness, since targetSdk only changes behaviour on
+         devices at or above that API level. minSdk stays 27. -->
+    <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="28" />
 
     <!-- Camera and microphone permissions are requested at RUNTIME only, after
          an explicit operator action (Grant consent + Start). The app never
-         starts capture on launch, and never captures in the background: leaving
-         the activity stops and releases every device. No foreground service is
-         declared because no background capture is implemented. -->
+         starts capture on launch. The foreground service (CctvService) owns the
+         lifetime needed for screen-off operation; it is started only by an explicit
+         operator action and does not start itself at boot. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Required for a foreground service on API 28+. Normal permission: no runtime prompt,
+         no user data. This is the Android 9 documented fix for background camera/mic access. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Normal permission (no runtime prompt, no user data): without it
          ConnectivityManager.getActiveNetworkInfo() throws SecurityException, which is why the
          panel reported "wi-fi: unknown". The SSID is deliberately NOT read: on API 27+ that
@@ -34,5 +43,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground service that will own the CCTV capture lifetime. In this step it
+             stands up and survives screen-off WITHOUT opening the camera or microphone:
+             media wiring needs separate owner approval and is not enabled here. No
+             android:foregroundServiceType is declared because that attribute is API 29+,
+             and targeting 28 is deliberate. -->
+        <service
+            android:name=".CctvService"
+            android:exported="false" />
     </application>
 </manifest>
