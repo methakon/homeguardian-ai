@@ -356,20 +356,36 @@ public class EdgeService extends Service {
      * production default (nothing configured) dials nowhere.
      */
     private void startBridge(String url) {
+        // Fall back to the last operator-configured endpoint, so a restart after reboot or after a
+        // process kill resumes the same coordinator rather than silently idling. Nothing is
+        // compiled in: an unconfigured install still has no endpoint and dials nowhere.
+        if (url == null || url.length() == 0) {
+            url = getSharedPreferences("hg_bridge", MODE_PRIVATE)
+                    .getString("endpoint", "");
+        }
         if (url == null || url.length() == 0) {
             Log.w(TAG, "bridge start refused: no coordinator URL supplied");
+            EdgeState.bridgeRunning = false;
+            EdgeState.bridgeStatus = "bridge: refused - no coordinator configured";
             updateNotification("bridge: refused - no coordinator configured");
+            EdgeState.notifyChanged();
             return;
         }
         if (bridge != null && bridge.isRunning()) {
             Log.i(TAG, "bridge already running; not creating a second session");
+            EdgeState.bridgeStatus = OutboundMcpBridge.status();
+            EdgeState.notifyChanged();
             return;
         }
+        EdgeState.bridgeEndpoint = url;
         bridge = new OutboundMcpBridge(this);
         bridge.configure(url);
         String r = bridge.start();
         Log.i(TAG, "bridge: " + r);
+        EdgeState.bridgeRunning = bridge.isRunning();
+        EdgeState.bridgeStatus = r;
         updateNotification("bridge: " + r);
+        EdgeState.notifyChanged();
     }
 
     /** Stop the bridge and close its session. Safe when it was never started. */
@@ -380,6 +396,9 @@ public class EdgeService extends Service {
             b.stop();
             Log.i(TAG, "bridge stopped");
         }
+        EdgeState.bridgeRunning = false;
+        EdgeState.bridgeStatus = "bridge: stopped by operator";
+        EdgeState.notifyChanged();
     }
 
     private void stopEverything(String reason) {

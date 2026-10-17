@@ -36,6 +36,14 @@ public final class EdgeState {
     public static volatile String statsJson = "{}";
     public static volatile boolean nativeLoaded = false;
 
+    // ---- HG-NET-02B outbound control bridge -----------------------------------------------
+    // Mirrors what OutboundMcpBridge reports, so the activity can render the real bridge state
+    // rather than an optimistic local guess. bridgeStatus carries the exact refusal reason when
+    // the transport policy blocks a start, which is what makes a misconfiguration fixable.
+    public static volatile boolean bridgeRunning = false;
+    public static volatile String bridgeStatus = "bridge: idle (not started)";
+    public static volatile String bridgeEndpoint = "";
+
     private static final CopyOnWriteArrayList<Listener> LISTENERS = new CopyOnWriteArrayList<Listener>();
 
     private EdgeState() {}

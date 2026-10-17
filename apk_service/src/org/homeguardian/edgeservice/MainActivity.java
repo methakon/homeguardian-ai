@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -37,6 +38,10 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private Button startBtn;
     private Button stopBtn;
     private Button restartBtn;
+    private EditText endpointField;
+    private Button bridgeStartBtn;
+    private Button bridgeStopBtn;
+    private TextView bridgeView;
     private final Handler ui = new Handler();
     // Last rendered content. A 1 Hz ticker that calls setText() unconditionally emits an
     // accessibility content-changed event every second, which (a) wakes the compositor for
@@ -46,6 +51,8 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private String lastStatusText = null;
     private String lastLogText = null;
     private Boolean lastRunning = null;
+    private String lastBridgeText = null;
+    private Boolean lastBridgeRunning = null;
 
     private final Runnable ticker = new Runnable() {
         public void run() {
@@ -141,6 +148,38 @@ public class MainActivity extends Activity implements EdgeState.Listener {
         }));
         root.addView(row3);
 
+        // ---- HG-NET-02B outbound control bridge -------------------------------------------
+        // Off by default and unusable until an endpoint is entered: an unconfigured install
+        // dials nowhere, which is the property that makes shipping this safe.
+        TextView bridgeTitle = new TextView(this);
+        bridgeTitle.setText("\nOutbound control bridge (private coordinator)\n"
+                + "Off until configured. Refuses public destinations and any non-loopback path "
+                + "without a VPN tunnel up, so credentials never leave unencrypted.");
+        bridgeTitle.setTextSize(13f);
+        bridgeTitle.setPadding(0, pad, 0, 0);
+        root.addView(bridgeTitle);
+
+        endpointField = new EditText(this);
+        endpointField.setHint("ws://<vpn-private-address>:<port>/");
+        endpointField.setText(getSharedPreferences("hg_bridge", MODE_PRIVATE)
+                .getString("endpoint", ""));
+        root.addView(endpointField);
+
+        LinearLayout row4 = new LinearLayout(this);
+        bridgeStartBtn = button("Start bridge", new View.OnClickListener() {
+            public void onClick(View v) { onBridgeStart(); }
+        });
+        bridgeStopBtn = button("Stop bridge", new View.OnClickListener() {
+            public void onClick(View v) { onBridgeStop(); }
+        });
+        row4.addView(bridgeStartBtn);
+        row4.addView(bridgeStopBtn);
+        root.addView(row4);
+
+        bridgeView = new TextView(this);
+        bridgeView.setTextSize(11f);
+        root.addView(bridgeView);
+
         logView = new TextView(this);
         logView.setTextSize(10f);
         logView.setPadding(0, pad, 0, 0);
@@ -191,6 +230,40 @@ public class MainActivity extends Activity implements EdgeState.Listener {
         render();
     }
 
+    // ------------------------------------------------------- bridge (HG-NET-02B) --
+
+    /**
+     * Validates the endpoint BEFORE asking the service to dial, so an unacceptable destination is
+     * rejected in the UI with its reason rather than half-starting. The service re-checks via
+     * OutboundMcpBridge.start(), because a UI check alone would be advisory.
+     */
+    private void onBridgeStart() {
+        String url = endpointField.getText().toString().trim();
+        getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putString("endpoint", url).apply();
+        String refusal = TransportPolicy.refusalReason(url);
+        if (refusal != null) {
+            EdgeState.bridgeRunning = false;
+            EdgeState.bridgeStatus = "bridge: " + refusal;
+            EdgeState.notifyChanged();
+            render();
+            return;
+        }
+        EdgeState.bridgeEndpoint = url;
+        EdgeState.bridgeStatus = "bridge: starting...";
+        Intent i = new Intent(this, EdgeService.class);
+        i.setAction(EdgeService.ACTION_BRIDGE_START);
+        i.putExtra(EdgeService.EXTRA_BRIDGE_URL, url);
+        startService(i);
+        render();
+    }
+
+    private void onBridgeStop() {
+        Intent i = new Intent(this, EdgeService.class);
+        i.setAction(EdgeService.ACTION_BRIDGE_STOP);
+        startService(i);
+        render();
+    }
+
     // -------------------------------------------------------------- render --
 
     private void render() {
@@ -231,6 +304,29 @@ public class MainActivity extends Activity implements EdgeState.Listener {
             stopBtn.setEnabled(running);
             restartBtn.setEnabled(true);
             lastRunning = Boolean.valueOf(running);
+        }
+
+        // ---- bridge render ----------------------------------------------------------------
+        // vpnTunnelUp() is read live rather than cached, so the screen tells the operator the
+        // truth about whether a tunnel exists right now - which is the precondition the transport
+        // policy gates on, and the field most likely to change under them.
+        boolean bridgeUp = EdgeState.bridgeRunning;
+        StringBuilder bb = new StringBuilder();
+        bb.append("bridge         : ").append(bridgeUp ? "RUNNING" : "stopped").append('\n');
+        bb.append("endpoint       : ")
+          .append(EdgeState.bridgeEndpoint.length() == 0 ? "(none configured)" : EdgeState.bridgeEndpoint)
+          .append('\n');
+        bb.append("vpn tunnel     : ").append(TransportPolicy.vpnTunnelUp() ? "UP" : "DOWN").append('\n');
+        bb.append("bridge status  : ").append(EdgeState.bridgeStatus).append('\n');
+        String btext = bb.toString();
+        if (!btext.equals(lastBridgeText)) {
+            bridgeView.setText(btext);
+            lastBridgeText = btext;
+        }
+        if (lastBridgeRunning == null || lastBridgeRunning.booleanValue() != bridgeUp) {
+            bridgeStartBtn.setEnabled(!bridgeUp);
+            bridgeStopBtn.setEnabled(bridgeUp);
+            lastBridgeRunning = Boolean.valueOf(bridgeUp);
         }
 
         String logs = "probe log (tail):\n" + tailProbeLog();

@@ -174,6 +174,14 @@ public class OutboundMcpBridge {
             Log.i(TAG, lastStatus);
             return lastStatus;
         }
+        // Enforced here and not only in the UI: this bridge hands over a device auth token, so a
+        // caller reaching the service without going through the activity must hit the same gate.
+        String refusal = TransportPolicy.refusalReason(coordUrl);
+        if (refusal != null) {
+            lastStatus = "bridge: " + refusal;
+            Log.w(TAG, lastStatus);
+            return lastStatus;
+        }
         running = true;
         worker = new Thread(new Runnable() { @Override public void run() { loop(); } }, "hg-bridge-ws");
         worker.start();
