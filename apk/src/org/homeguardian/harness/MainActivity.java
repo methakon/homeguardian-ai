@@ -2,8 +2,10 @@ package org.homeguardian.harness;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.hardware.Camera;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.text.InputType;
@@ -293,9 +295,44 @@ public class MainActivity extends Activity {
             }
         }));
 
+        // ---- CCTV foreground service ----------------------------------------
+        // The service is deliberately NOT exported, so it cannot be started from adb directly
+        // (the shell uid is refused - verified). These controls are the supported path: an
+        // explicit operator action inside the app. The service opens no camera and no
+        // microphone; it is a lifecycle and notification fixture only.
+        root.addView(header("CCTV node (foreground service)"));
+        cctvStatus = new TextView(this);
+        cctvStatus.setTextSize(12);
+        root.addView(cctvStatus);
+        root.addView(button("Start CCTV foreground service", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startCctvService();
+            }
+        }));
+        root.addView(button("Stop CCTV foreground service", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                stopCctvService();
+            }
+        }));
+
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         setContentView(scroll);
+
+        // Attended launcher hook for a remote/scripted test:
+        //   am start -n org.homeguardian.harness/.MainActivity \
+        //          -a org.homeguardian.harness.CCTV_START
+        // This routes the start through the exported activity, which is the supported method,
+        // rather than un-exporting the service to make adb convenient.
+        String launchAction = (getIntent() == null) ? null : getIntent().getAction();
+        if (CctvService.ACTION_START.equals(launchAction)) {
+            startCctvService();
+        } else if (CctvService.ACTION_STOP.equals(launchAction)) {
+            stopCctvService();
+        }
+        refreshCctvStatus();
 
         camera1 = new Camera1Bridge();
         // Report the LEGACY camera availability to the native layer (the NDK enumeration is
@@ -327,6 +364,39 @@ public class MainActivity extends Activity {
         b.setText(label);
         b.setOnClickListener(onClick);
         return b;
+    }
+
+    // ---- CCTV foreground service helpers -----------------------------------
+
+    /** TextView showing the service's own reported state. */
+    private TextView cctvStatus;
+
+    private void startCctvService() {
+        Intent i = new Intent(this, CctvService.class);
+        i.setAction(CctvService.ACTION_START);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(i);
+        } else {
+            startService(i);
+        }
+        Log.i(TAG, "requested CCTV service start");
+        refreshCctvStatus();
+    }
+
+    private void stopCctvService() {
+        Intent i = new Intent(this, CctvService.class);
+        i.setAction(CctvService.ACTION_STOP);
+        startService(i);
+        Log.i(TAG, "requested CCTV service stop");
+        refreshCctvStatus();
+    }
+
+    /** Reads the service's static state. Reports media as NOT armed, because it is not. */
+    private void refreshCctvStatus() {
+        if (cctvStatus == null) return;
+        cctvStatus.setText("state: " + (CctvService.isRunning ? "RUNNING (foreground)" : "stopped")
+                + "   last stop reason: " + CctvService.lastStopReason()
+                + "\nmedia: NOT armed - this build opens no camera and no microphone");
     }
 
     private Spinner spinner(String[] values) {
@@ -533,11 +603,33 @@ public class MainActivity extends Activity {
         return grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
     }
 
+    /**
+     * Handles the attended launcher action when the activity is ALREADY running.
+     *
+     * Without this, `am start -a org.homeguardian.harness.CCTV_START` only warns "intent has
+     * been delivered to currently running top-most instance" and the service is never started.
+     * That was measured during acceptance testing: the first start worked and the restart
+     * silently did nothing, because the action was only handled in onCreate.
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent == null) return;
+        String act = intent.getAction();
+        if (CctvService.ACTION_START.equals(act)) {
+            startCctvService();
+        } else if (CctvService.ACTION_STOP.equals(act)) {
+            stopCctvService();
+        }
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         syncPermissions();
         ticker.post(tick);
+        refreshCctvStatus();
     }
 
     @Override

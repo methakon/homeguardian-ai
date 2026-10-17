@@ -34,9 +34,15 @@
     <application
         android:label="HomeGuardian Node"
         android:allowBackup="false">
+        <!-- launchMode="singleTop" is REQUIRED for the attended start/stop control to be
+             deterministic. With the default "standard" mode, re-issuing the same action did
+             not reliably reach onCreate or onNewIntent, so a start/stop/start cycle silently
+             failed to restart the service (measured on hardware, 2026-10-17). singleTop
+             guarantees a repeat intent is delivered to the existing instance via onNewIntent. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:label="HomeGuardian Node">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
