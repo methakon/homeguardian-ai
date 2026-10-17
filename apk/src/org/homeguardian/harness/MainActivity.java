@@ -60,6 +60,9 @@ public class MainActivity extends Activity {
     // HG-CAM-08B: Camera2 -> MediaCodec probe (manual, bounded, no auto-start).
     static final String ACTION_CAM2_START = "org.homeguardian.harness.CAM2_START";
     static final String ACTION_CAM2_STOP = "org.homeguardian.harness.CAM2_STOP";
+    // HG-CAM-08C Stage 4: service-owned REAL microphone (separate from the CAM2 video path).
+    static final String ACTION_MIC2_START = "org.homeguardian.harness.MIC2_START";
+    static final String ACTION_MIC2_STOP = "org.homeguardian.harness.MIC2_STOP";
 
     // Which capture is waiting on a permission grant, if any.
     private static final int PENDING_NONE = 0;
@@ -130,9 +133,8 @@ public class MainActivity extends Activity {
                 // device (uiautomator crashes with "UiAutomationService already registered").
                 Log.i(TAG, "counters " + nativeStats());
                 if (nodePanel != null) Log.i(TAG, "counters " + nodePanel.transportCounters());
-                // HG-CAM-08B: surface the Camera2->MediaCodec probe counters in the same bounded
-                // heartbeat so frame delivery is measurable from the log rather than the screen.
-                if (cam2 != null) Log.i(TAG, "cam2probe " + cam2.result().summary());
+                // HG-CAM-08C: report the SERVICE-owned capture counters, not an activity-local one.
+                Log.i(TAG, "service-capture " + CctvService.captureStatus());
                 // RECONCILE: if the native layer is not capturing (stop, consent withdrawal, camera
                 // permission revocation, pause) while the bridge still holds a preview, release it.
                 // Java asks the native side - never the reverse - so no lock is held across a call
@@ -662,27 +664,77 @@ public class MainActivity extends Activity {
             startCam2();
         } else if (ACTION_CAM2_STOP.equals(act)) {
             stopCam2();
+        } else if (ACTION_MIC2_START.equals(act)) {
+            startMic2();
+        } else if (ACTION_MIC2_STOP.equals(act)) {
+            stopMic2();
         }
     }
 
-    // ---- HG-CAM-08B: Camera2 -> MediaCodec probe ---------------------------
-
-    private Camera2EncoderProbe cam2;
-
-    private void startCam2() {
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            setStatus("cam2probe: CAMERA permission not granted; nothing started");
+    /** Stage 4: arm the service-owned real microphone (separate from the video stream). */
+    private void startMic2() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            setStatus("mic: RECORD_AUDIO not granted; nothing armed");
             return;
         }
-        if (cam2 == null) cam2 = new Camera2EncoderProbe(this);
-        setStatus(cam2.start());
+        Intent i = new Intent(this, CctvService.class);
+        i.setAction(CctvService.ACTION_MIC_ARM);
+        // ACTION_MIC_ARM now promotes the service to the foreground itself, so the microphone
+        // is armed WITHOUT touching the camera. Sending ACTION_START here would have armed
+        // video too, breaking the "separately controllable" requirement (measured: it did).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(i);
+        } else {
+            startService(i);
+        }
+        Log.i(TAG, "requested service-owned mic arm");
+        setStatus("mic: service arm requested");
+        refreshCctvStatus();
+    }
+
+    private void stopMic2() {
+        Intent i = new Intent(this, CctvService.class);
+        i.setAction(CctvService.ACTION_MIC_DISARM);
+        startService(i);
+        Log.i(TAG, "requested service-owned mic disarm");
+        setStatus("mic: service disarm requested");
+        refreshCctvStatus();
+    }
+
+    // ---- HG-CAM-08C: capture is owned by CctvService, not by this activity ----
+
+    /**
+     * The activity only checks permission and asks the service to arm. It deliberately holds NO
+     * camera, codec or surface reference, so activity onPause()/onStop() cannot terminate
+     * screen-off capture - which is the whole point of moving ownership into the service.
+     */
+    private void startCam2() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            setStatus("capture: CAMERA permission not granted; nothing armed");
+            return;
+        }
+        Intent i = new Intent(this, CctvService.class);
+        // ACTION_START covers both cases: it promotes to foreground THEN arms when the service
+        // is down, and just arms when it is already up. Foreground-before-camera is mandatory
+        // on Android 9, so this must not be reordered.
+        i.setAction(CctvService.ACTION_START);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(i);
+        } else {
+            startService(i);
+        }
+        Log.i(TAG, "requested service-owned capture arm");
+        setStatus("capture: service arm requested (the service owns the camera)");
+        refreshCctvStatus();
     }
 
     private void stopCam2() {
-        if (cam2 != null) {
-            cam2.stop();
-            setStatus("cam2probe: " + cam2.result().summary());
-        }
+        Intent i = new Intent(this, CctvService.class);
+        i.setAction(CctvService.ACTION_DISARM); // disarms the sensor, keeps the service up
+        startService(i);
+        Log.i(TAG, "requested service-owned capture disarm");
+        setStatus("capture: service disarm requested");
+        refreshCctvStatus();
     }
 
     @Override
@@ -697,8 +749,11 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         ticker.removeCallbacks(tick);
-        // No background capture: leaving the foreground stops and releases
-        // everything. The operator must press Start again on return.
+        // HG-CAM-08C: the ACTIVITY-local devices stop and release here, because they are
+        // activity-scoped. The CCTV capture is deliberately NOT touched: CctvService owns it,
+        // and Android 9 pauses this activity the instant the screen goes off - so stopping the
+        // service here would make screen-off capture impossible by construction.
+        // What stops here: the activity's own Camera1 preview and the native simulator devices.
         stopEverything();
     }
 

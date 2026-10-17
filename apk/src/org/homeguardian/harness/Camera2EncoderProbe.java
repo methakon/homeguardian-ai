@@ -59,6 +59,8 @@ public class Camera2EncoderProbe {
     private static final int FRAME_RATE = 15;
 
     private final Context ctx;
+    /** <= 0 means UNBOUNDED: the foreground service owns the lifetime (HG-CAM-08C). */
+    private final int runMs;
     private final ProbeResult result = new ProbeResult();
 
     private HandlerThread thread;
@@ -70,7 +72,21 @@ public class Camera2EncoderProbe {
     private volatile boolean running = false;
     private Thread drainThread;
 
-    public Camera2EncoderProbe(Context context) { this.ctx = context; }
+    /** Bounded probe run - the HG-CAM-08B acceptance behaviour. */
+    public Camera2EncoderProbe(Context context) { this(context, RUN_MS); }
+
+    /**
+     * runMs > 0  : bounded run that auto-releases on completion (probe / acceptance test).
+     * runMs <= 0 : UNBOUNDED, released only by an explicit stop(). The foreground service uses
+     *              this, because a CCTV node captures until the operator stops it - and because
+     *              auto-releasing on a timer would defeat the screen-off assertion.
+     */
+    public Camera2EncoderProbe(Context context, int runMs) {
+        this.ctx = context;
+        this.runMs = runMs;
+    }
+
+    public boolean isUnbounded() { return runMs <= 0; }
 
     public static class ProbeResult {
         public volatile boolean started = false;
@@ -281,7 +297,7 @@ public class Camera2EncoderProbe {
             @Override public void run() {
                 MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
                 long t0 = SystemClock.elapsedRealtime();
-                while (running && (SystemClock.elapsedRealtime() - t0) < RUN_MS) {
+                while (running && (runMs <= 0 || (SystemClock.elapsedRealtime() - t0) < runMs)) {
                     try {
                         int idx = encoder.dequeueOutputBuffer(info, 2000);
                         if (idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
@@ -315,7 +331,8 @@ public class Camera2EncoderProbe {
                 // The bounded run is over. Clear `running` and release the camera, otherwise
                 // isRunning() stays true forever and the NEXT start() is silently refused as
                 // "already running" - the same silent-refusal class as the singleTop defect.
-                if (running) {
+                // An UNBOUNDED run (the service) is released only by an explicit stop().
+                if (runMs > 0 && running) {
                     running = false;
                     Log.i(TAG, "bounded run complete - auto-releasing the camera (attend a new start to measure again)");
                     if (handler != null) {

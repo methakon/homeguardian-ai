@@ -90,10 +90,13 @@ defeat any privacy control, and no rooting or OS modification was considered.
    target, which both satisfies the HAL's surface requirement and is the shape Stage 3 needs
    anyway. This is probably the strongest option: it turns the blocker into the next milestone.
 
-**Option 3 is the one that worked** (see §7). Option 1 could not work in principle: Camera1's
-`setPreviewTexture` accepts only a `SurfaceTexture`, never a `Surface`, so Camera1 can never target
-an encoder sink. Option 2 was unnecessary — the Java Camera2 API enumerates both cameras on this
-device.
+**Option 3 is the one that worked** (see §7). Option 1 was rejected for this design: Camera1's
+`setPreviewTexture` accepts only a `SurfaceTexture`, never a `Surface`, so Camera1 cannot target an
+encoder sink. **Correction (HG-CAM-08C):** that is a limit of the encoder-sink goal, NOT a claim
+that Camera1 cannot produce frames at all — Android supports preview callbacks and Camera1 can
+deliver frames via `onPreviewFrame` when the consumer is actually drained. The failure documented
+here belongs to the particular undrained-`SurfaceTexture` implementation, not to the Camera1 API.
+Option 2 was unnecessary: the Java Camera2 API enumerates both cameras on this device.
 
 ## 6. Stages as reported at the time
 
@@ -133,6 +136,10 @@ The H-03 design attached a bare `new SurfaceTexture(0)` purely to satisfy `setPr
 never called `updateTexImage()`. `released w/o using` together with `mNonReleasedNum==0` is the
 signature of a buffer queue nobody consumes: the producer runs out of free buffers and stalls.
 The gate-denial absence from §3 is what proves the fault was below our code.
+
+**Scope of this finding (corrected in HG-CAM-08C):** it indicts THAT undrained-`SurfaceTexture`
+implementation, not Camera1 in general. Camera1 preview callbacks are a supported Android
+mechanism and do deliver frames when the consumer is drained.
 
 ## 7.3 The fix
 
