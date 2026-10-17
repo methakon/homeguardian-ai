@@ -1,33 +1,36 @@
-// HomeGuardian AI — Outbound Authenticated MCP Bridge: Coordinator
+// HomeGuardian AI — Outbound Authenticated MCP Bridge: Coordinator (HGB1)
 //
 // Milestone: HG-NET-02E (Remote MCP Integration)
 //
-// The Coordinator runs on the authorized coordination host (Oracle VPS or test harness).
-// It accepts outbound connections from the edge device (Xiaomi Mi A3), performs mutual
-// authentication, strictly enforces operation allowlists, and bridges client MCP requests
-// to the remote edge hardware.
+// The Coordinator runs on the authorized coordination host (Oracle VPS or local test harness).
+// It accepts outbound TCP connections from the edge device (Xiaomi Mi A3), performs mutual
+// authentication using the HGB1 protocol, strictly enforces operation allowlists, and bridges
+// client MCP requests to the remote edge hardware.
 
+const net = require('node:net');
 const http = require('node:http');
 const crypto = require('node:crypto');
-const { WebSocketServer } = require('ws');
 
 const {
+  MAGIC,
   PROTOCOL_VERSION,
   BRIDGE_PROTOCOL_VERSION,
-  MESSAGE_TYPES,
   LIMITS,
   ERROR_CODES,
+  computeFingerprint,
+  encodeFrame,
   validatePermittedMcpOperation,
+  FrameParser,
 } = require('./protocol');
 
 class McpBridgeCoordinator {
   /**
    * @param {object} options
-   * @param {string} [options.bindAddress='127.0.0.1'] - Coordinator bind interface
-   * @param {number} [options.wsPort=18994] - WebSocket port for edge connections
+   * @param {string} [options.bindAddress='127.0.0.1'] - Coordinator bind interface (no wildcard)
+   * @param {number} [options.tcpPort=9443] - TCP port for HGB1 edge connections
    * @param {number} [options.httpPort=18995] - HTTP port for client MCP requests
    * @param {string} [options.clientToken] - Shared Bearer token for client HTTP callers
-   * @param {Map<string, { authToken: string, name: string, revoked: boolean }>} [options.authorizedDevices]
+   * @param {Map<string, { enrolmentSecret: string, name: string, revoked: boolean, fingerprint: string }>} [options.authorizedDevices]
    */
   constructor(options = {}) {
     const bindAddr = options.bindAddress || '127.0.0.1';
@@ -36,27 +39,30 @@ class McpBridgeCoordinator {
     }
 
     this.bindAddress = bindAddr;
-    this.wsPort = options.wsPort || 18994;
+    this.tcpPort = options.tcpPort || 9443;
     this.httpPort = options.httpPort || 18995;
     this.clientToken = options.clientToken || crypto.randomBytes(32).toString('hex');
 
-    // Registered edge devices: deviceId -> { authToken, name, revoked, lastSeen, connectedAt }
+    // Registered edge devices: deviceId -> { enrolmentSecret, name, revoked, fingerprint }
     this.authorizedDevices = options.authorizedDevices || new Map();
 
     // Active Edge Connection state
-    this.activeEdge = null; // { ws, deviceId, sessionId, connectedAt, lastSeen }
-    this.pendingRequests = new Map(); // correlationId -> { resolve, reject, timer, createdAt }
+    this.activeEdge = null; // { socket, deviceId, connectedAt, lastSeen, parser }
+    this.pendingRequests = new Map(); // id -> { resolve, reject, timer, createdAt }
+    this.nextRequestId = 1;
 
     // Client sessions (Streamable HTTP MCP)
     this.clientSessions = new Map(); // sessionId -> { createdAt, lastSeen }
 
     // Internal servers
-    this.wss = null;
+    this.tcpServer = null;
     this.httpServer = null;
-    this.livenessTimer = null;
 
     // Statistics
     this.stats = {
+      connectionsAccepted: 0,
+      handshakesSuccess: 0,
+      handshakesFailed: 0,
       requestsTotal: 0,
       requestsSuccess: 0,
       requestsFailed: 0,
@@ -65,11 +71,13 @@ class McpBridgeCoordinator {
     };
   }
 
-  authorizeDevice(deviceId, authToken, name = 'Mi A3 Edge Node') {
+  authorizeDevice(deviceId, enrolmentSecret, name = 'Mi A3 Edge Node') {
+    const fingerprint = computeFingerprint(enrolmentSecret);
     this.authorizedDevices.set(deviceId, {
-      authToken,
+      enrolmentSecret,
       name,
       revoked: false,
+      fingerprint,
       lastSeen: 0,
       connectedAt: 0,
     });
@@ -80,20 +88,19 @@ class McpBridgeCoordinator {
     if (dev) {
       dev.revoked = true;
       if (this.activeEdge && this.activeEdge.deviceId === deviceId) {
-        this._terminateEdgeConnection(this.activeEdge.ws, 4403, 'Device credentials revoked');
+        this._terminateEdgeConnection(this.activeEdge.socket, 'Device credentials revoked');
       }
     }
   }
 
   isEdgeOnline() {
-    return !!this.activeEdge && this.activeEdge.ws.readyState === 1; // 1 = OPEN
+    return !!this.activeEdge && !this.activeEdge.socket.destroyed && this.activeEdge.socket.writable;
   }
 
   getEdgeInfo() {
     if (!this.activeEdge) return null;
     return {
       deviceId: this.activeEdge.deviceId,
-      sessionId: this.activeEdge.sessionId,
       connectedAt: this.activeEdge.connectedAt,
       lastSeen: this.activeEdge.lastSeen,
       inflight: this.pendingRequests.size,
@@ -101,426 +108,442 @@ class McpBridgeCoordinator {
     };
   }
 
-  async start() {
-    // 1. Initialize WebSocket server for outbound edge connections
-    await new Promise((resolve, reject) => {
-      this.wss = new WebSocketServer(
-        {
-          host: this.bindAddress,
-          port: this.wsPort,
-          maxPayload: LIMITS.MAX_MESSAGE_BYTES,
-        },
-        () => resolve()
-      );
-      this.wss.on('error', reject);
-    });
-
-    this.wss.on('connection', (ws, req) => this._handleEdgeConnection(ws, req));
-
-    // 2. Initialize HTTP server for client Streamable HTTP MCP ingress
-    this.httpServer = http.createServer((req, res) => this._handleClientHttp(req, res));
-    await new Promise((resolve, reject) => {
-      this.httpServer.listen(this.httpPort, this.bindAddress, () => resolve());
-      this.httpServer.on('error', reject);
-    });
-
-    // 3. Start background heartbeat liveness monitor
-    this.livenessTimer = setInterval(() => this._checkEdgeLiveness(), 5000);
+  getStatus() {
+    return {
+      status: 'operational',
+      protocolVersion: PROTOCOL_VERSION,
+      bridgeProtocol: BRIDGE_PROTOCOL_VERSION,
+      edgeOnline: this.isEdgeOnline(),
+      activeEdge: this.getEdgeInfo(),
+      stats: { ...this.stats },
+    };
   }
 
-  async close() {
-    if (this.livenessTimer) {
-      clearInterval(this.livenessTimer);
-      this.livenessTimer = null;
-    }
+  start() {
+    return new Promise((resolve, reject) => {
+      let startedServers = 0;
+      const onError = (err) => {
+        this.stop();
+        reject(err);
+      };
 
-    // Fail all pending requests
-    for (const [corrId, entry] of this.pendingRequests.entries()) {
-      clearTimeout(entry.timer);
-      entry.reject(new Error(ERROR_CODES.EDGE_OFFLINE));
-    }
-    this.pendingRequests.clear();
+      // 1. TCP Server for HGB1 edge connections
+      this.tcpServer = net.createServer((socket) => {
+        this._handleEdgeTcpConnection(socket);
+      });
 
-    if (this.activeEdge) {
-      try {
-        this.activeEdge.ws.close(1000, 'Coordinator shutting down');
-      } catch (_) {}
-      this.activeEdge = null;
-    }
+      this.tcpServer.on('error', onError);
+      this.tcpServer.listen(this.tcpPort, this.bindAddress, () => {
+        startedServers++;
+        if (startedServers === 2) resolve();
+      });
 
-    if (this.wss) {
-      await new Promise((r) => this.wss.close(r));
-      this.wss = null;
-    }
+      // 2. HTTP Server for client MCP requests (Alexa, dashboard, judge tests)
+      this.httpServer = http.createServer((req, res) => {
+        this._handleHttpClientRequest(req, res);
+      });
 
-    if (this.httpServer) {
-      await new Promise((r) => this.httpServer.close(r));
-      this.httpServer = null;
-    }
+      this.httpServer.on('error', onError);
+      this.httpServer.listen(this.httpPort, this.bindAddress, () => {
+        startedServers++;
+        if (startedServers === 2) resolve();
+      });
+    });
+  }
+
+  stop() {
+    return new Promise((resolve) => {
+      // Clear pending requests
+      for (const [id, req] of this.pendingRequests.entries()) {
+        clearTimeout(req.timer);
+        req.reject(new Error('Coordinator stopped'));
+      }
+      this.pendingRequests.clear();
+
+      if (this.activeEdge) {
+        this._terminateEdgeConnection(this.activeEdge.socket, 'Coordinator shutting down');
+      }
+
+      let toClose = 0;
+      let closed = 0;
+      const done = () => {
+        closed++;
+        if (closed >= toClose) resolve();
+      };
+
+      if (this.tcpServer) {
+        toClose++;
+        this.tcpServer.close(() => done());
+        this.tcpServer = null;
+      }
+      if (this.httpServer) {
+        toClose++;
+        this.httpServer.close(() => done());
+        this.httpServer = null;
+      }
+
+      if (toClose === 0) resolve();
+    });
   }
 
   // --------------------------------------------------------------------------
-  // Edge WebSocket Protocol Handling
+  // HGB1 TCP Handshake & Relay Logic
   // --------------------------------------------------------------------------
 
-  _handleEdgeConnection(ws, req) {
-    let authenticated = false;
-    let deviceId = null;
+  _handleEdgeTcpConnection(socket) {
+    this.stats.connectionsAccepted++;
+    socket.setNoDelay(true);
+    socket.setTimeout(LIMITS.HANDSHAKE_TIMEOUT_MS);
 
-    // Guard: Auth timeout if handshake frame not received within 5s
-    const authTimeout = setTimeout(() => {
-      if (!authenticated) {
-        this._terminateEdgeConnection(ws, 4401, 'Handshake authentication timed out');
-      }
-    }, 5000);
+    let stage = 'HELLO'; // HELLO -> VERDICT -> FRAMES
+    let lineBuf = Buffer.alloc(0);
+    let matchedDevice = null;
 
-    ws.on('message', (raw) => {
-      if (raw.length > LIMITS.MAX_MESSAGE_BYTES) {
-        this._terminateEdgeConnection(ws, 4413, 'Message frame exceeded 64KB');
+    const onData = (chunk) => {
+      if (stage === 'FRAMES') {
+        // Frame parser handles data once authenticated
+        if (this.activeEdge && this.activeEdge.parser) {
+          this.activeEdge.parser.push(chunk);
+        }
         return;
       }
 
-      let msg;
-      try {
-        msg = JSON.parse(raw.toString('utf8'));
-      } catch (_) {
-        this._terminateEdgeConnection(ws, 4400, 'Malformed JSON frame');
+      lineBuf = Buffer.concat([lineBuf, chunk]);
+      if (lineBuf.length > LIMITS.MAX_HANDSHAKE_LINE * 2) {
+        this.stats.handshakesFailed++;
+        socket.destroy();
         return;
       }
 
-      if (!authenticated) {
-        // First frame must be bridge_auth
-        if (msg.type !== MESSAGE_TYPES.BRIDGE_AUTH) {
-          this._terminateEdgeConnection(ws, 4401, 'First message must be bridge_auth');
+      const newlineIdx = lineBuf.indexOf(0x0a); // '\n'
+      if (newlineIdx === -1) {
+        if (lineBuf.length > LIMITS.MAX_HANDSHAKE_LINE) {
+          this.stats.handshakesFailed++;
+          socket.destroy();
+        }
+        return;
+      }
+
+      const lineStr = lineBuf.subarray(0, newlineIdx).toString('utf8').replace(/\r$/, '');
+      const remaining = lineBuf.subarray(newlineIdx + 1);
+      lineBuf = remaining;
+
+      if (stage === 'HELLO') {
+        const parts = lineStr.split(' ');
+        if (parts.length !== 3 || parts[0] !== MAGIC) {
+          this.stats.handshakesFailed++;
+          socket.destroy();
           return;
         }
 
-        const authRes = this._verifyEdgeAuth(msg);
-        if (!authRes.ok) {
-          ws.send(JSON.stringify({
-            type: MESSAGE_TYPES.BRIDGE_AUTH_ERR,
-            code: authRes.code,
-            message: authRes.error,
-          }));
-          this._terminateEdgeConnection(ws, authRes.code === ERROR_CODES.DEVICE_REVOKED ? 4403 : 4401, authRes.error);
+        const deviceId = parts[1];
+        const enrolmentFp = parts[2];
+
+        const dev = this.authorizedDevices.get(deviceId);
+        if (!dev || dev.revoked) {
+          this.stats.handshakesFailed++;
+          // Send bad secret or close immediately
+          socket.write('REVOKED\n', () => socket.destroy());
           return;
         }
 
-        clearTimeout(authTimeout);
-        authenticated = true;
-        deviceId = msg.device_id;
+        // Verify fingerprint
+        if (dev.fingerprint !== enrolmentFp) {
+          this.stats.handshakesFailed++;
+          socket.write('BAD_FINGERPRINT\n', () => socket.destroy());
+          return;
+        }
 
-        // If an existing edge session is open, drop it cleanly
-        if (this.activeEdge && this.activeEdge.ws !== ws) {
+        matchedDevice = { id: deviceId, ...dev };
+        stage = 'VERDICT';
+
+        // Send back enrolment secret
+        socket.write(dev.enrolmentSecret + '\n');
+        return;
+      }
+
+      if (stage === 'VERDICT') {
+        if (lineStr.trim() !== 'OK') {
+          this.stats.handshakesFailed++;
+          socket.destroy();
+          return;
+        }
+
+        // Mutual authentication passed!
+        this.stats.handshakesSuccess++;
+        if (this.activeEdge) {
           this.stats.reconnectCount++;
-          try {
-            this.activeEdge.ws.close(1000, 'Superceded by new authenticated connection');
-          } catch (_) {}
+          this._terminateEdgeConnection(this.activeEdge.socket, 'New connection from edge');
         }
 
-        const sessionId = `edge_sess_${crypto.randomBytes(16).toString('hex')}`;
-        const now = Date.now();
+        socket.setTimeout(LIMITS.RELAY_TIMEOUT_MS);
+
+        const parser = new FrameParser(
+          (frame) => this._onEdgeFrame(frame),
+          (err) => {
+            this._terminateEdgeConnection(socket, err.message);
+          }
+        );
+
         this.activeEdge = {
-          ws,
-          deviceId,
-          sessionId,
-          connectedAt: now,
-          lastSeen: now,
+          socket,
+          deviceId: matchedDevice.id,
+          connectedAt: Date.now(),
+          lastSeen: Date.now(),
+          parser,
         };
 
-        const devRecord = this.authorizedDevices.get(deviceId);
-        if (devRecord) {
-          devRecord.lastSeen = now;
-          devRecord.connectedAt = now;
+        stage = 'FRAMES';
+
+        // Process any leftover bytes that were buffered after the \n in VERDICT
+        if (lineBuf.length > 0) {
+          parser.push(lineBuf);
+          lineBuf = Buffer.alloc(0);
         }
-
-        ws.send(JSON.stringify({
-          type: MESSAGE_TYPES.BRIDGE_AUTH_OK,
-          session_id: sessionId,
-          protocol_version: PROTOCOL_VERSION,
-          heartbeat_interval_ms: LIMITS.HEARTBEAT_INTERVAL_MS,
-        }));
-        return;
       }
+    };
 
-      // Handle authenticated frames
-      this._handleAuthenticatedEdgeFrame(ws, msg);
+    socket.on('data', onData);
+    socket.on('timeout', () => {
+      this._terminateEdgeConnection(socket, 'Socket timeout');
     });
-
-    ws.on('close', () => {
-      clearTimeout(authTimeout);
-      if (this.activeEdge && this.activeEdge.ws === ws) {
+    socket.on('error', (err) => {
+      this._terminateEdgeConnection(socket, `Socket error: ${err.message}`);
+    });
+    socket.on('close', () => {
+      if (this.activeEdge && this.activeEdge.socket === socket) {
         this.activeEdge = null;
-        // Fail pending requests
-        for (const [corrId, entry] of this.pendingRequests.entries()) {
-          clearTimeout(entry.timer);
-          entry.reject(new Error(ERROR_CODES.EDGE_OFFLINE));
-        }
-        this.pendingRequests.clear();
       }
     });
-
-    ws.on('error', () => {
-      try { ws.close(); } catch (_) {}
-    });
   }
 
-  _verifyEdgeAuth(msg) {
-    const { device_id, auth_token, bridge_version } = msg;
-    if (!device_id || !auth_token) {
-      return { ok: false, code: ERROR_CODES.AUTH_REQUIRED, error: 'device_id and auth_token required' };
+  _terminateEdgeConnection(socket, reason) {
+    if (this.activeEdge && this.activeEdge.socket === socket) {
+      this.activeEdge = null;
     }
-
-    const reg = this.authorizedDevices.get(device_id);
-    if (!reg) {
-      return { ok: false, code: ERROR_CODES.INVALID_CREDENTIALS, error: 'Unrecognized device identity' };
-    }
-
-    if (reg.revoked) {
-      return { ok: false, code: ERROR_CODES.DEVICE_REVOKED, error: 'Device credentials have been revoked' };
-    }
-
-    // Constant-time token comparison
-    const a = Buffer.from(auth_token);
-    const b = Buffer.from(reg.authToken);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return { ok: false, code: ERROR_CODES.INVALID_CREDENTIALS, error: 'Invalid device auth_token' };
-    }
-
-    return { ok: true };
+    try {
+      socket.destroy();
+    } catch (_) {}
   }
 
-  _handleAuthenticatedEdgeFrame(ws, msg) {
+  _onEdgeFrame(frame) {
     if (this.activeEdge) {
       this.activeEdge.lastSeen = Date.now();
     }
 
-    switch (msg.type) {
-      case MESSAGE_TYPES.HEARTBEAT_PING:
-        ws.send(JSON.stringify({ type: MESSAGE_TYPES.HEARTBEAT_PONG, timestamp: Date.now() }));
-        break;
+    let obj;
+    try {
+      obj = JSON.parse(frame.toString('utf8'));
+    } catch (e) {
+      this.stats.requestsFailed++;
+      return;
+    }
 
-      case MESSAGE_TYPES.MCP_RESPONSE: {
-        const corrId = msg.correlation_id;
-        if (!corrId) return;
-        const pending = this.pendingRequests.get(corrId);
-        if (pending) {
-          clearTimeout(pending.timer);
-          this.pendingRequests.delete(corrId);
-          this.stats.requestsSuccess++;
-          pending.resolve({
-            statusCode: msg.status_code || 200,
-            body: msg.body,
-          });
-        }
-        break;
+    const id = obj.id;
+    if (id !== undefined && this.pendingRequests.has(id)) {
+      const pending = this.pendingRequests.get(id);
+      this.pendingRequests.delete(id);
+      clearTimeout(pending.timer);
+
+      if (obj.error) {
+        this.stats.requestsFailed++;
+      } else {
+        this.stats.requestsSuccess++;
+      }
+      pending.resolve(obj);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Outbound Request Relaying
+  // --------------------------------------------------------------------------
+
+  callEdge(jsonRpcObj, timeoutMs = LIMITS.RELAY_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+      if (!this.isEdgeOnline()) {
+        const err = new Error('Edge device is offline');
+        err.code = ERROR_CODES.EDGE_OFFLINE;
+        return reject(err);
       }
 
-      case MESSAGE_TYPES.SESSION_TERMINATE:
-        this._terminateEdgeConnection(ws, 1000, 'Session termination requested by edge');
-        break;
+      if (this.pendingRequests.size >= LIMITS.MAX_INFLIGHT_REQUESTS) {
+        const err = new Error('Max in-flight requests reached on outbound bridge');
+        err.code = ERROR_CODES.QUEUE_FULL;
+        return reject(err);
+      }
 
-      default:
-        // Ignore unhandled message
-        break;
-    }
+      this.stats.requestsTotal++;
+
+      let id = jsonRpcObj.id;
+      if (id === undefined || id === null) {
+        id = this.nextRequestId++;
+        jsonRpcObj.id = id;
+      }
+
+      let frameBuf;
+      try {
+        frameBuf = encodeFrame(jsonRpcObj);
+      } catch (err) {
+        this.stats.requestsRejected++;
+        return reject(err);
+      }
+
+      const timer = setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          this.stats.requestsFailed++;
+          const err = new Error(`Request timed out after ${timeoutMs}ms`);
+          err.code = ERROR_CODES.TIMEOUT;
+          reject(err);
+        }
+      }, timeoutMs);
+
+      this.pendingRequests.set(id, {
+        resolve,
+        reject,
+        timer,
+        createdAt: Date.now(),
+      });
+
+      try {
+        this.activeEdge.socket.write(frameBuf);
+      } catch (writeErr) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        this.stats.requestsFailed++;
+        reject(writeErr);
+      }
+    });
   }
 
-  _terminateEdgeConnection(ws, code, reason) {
-    try {
-      ws.close(code, reason);
-    } catch (_) {}
-  }
+  callMcp(method, params, timeoutMs = LIMITS.RELAY_TIMEOUT_MS) {
+    const id = this.nextRequestId++;
+    const req = {
+      jsonrpc: '2.0',
+      id,
+      method,
+    };
+    if (params !== undefined) req.params = params;
 
-  _checkEdgeLiveness() {
-    if (!this.activeEdge) return;
-    const elapsed = Date.now() - this.activeEdge.lastSeen;
-    if (elapsed > LIMITS.HEARTBEAT_TIMEOUT_MS) {
-      this._terminateEdgeConnection(this.activeEdge.ws, 4008, 'Heartbeat timeout');
-      this.activeEdge = null;
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Request Dispatcher: Bridges local callers to remote edge
-  // --------------------------------------------------------------------------
-
-  async dispatchMcpRequest(jsonRpcBody, clientSessionId = null) {
-    this.stats.requestsTotal++;
-
-    // 1. Check if edge hardware is connected
-    if (!this.isEdgeOnline()) {
-      this.stats.requestsFailed++;
-      const err = new Error('Remote Mi A3 edge hardware is offline or disconnected');
-      err.code = ERROR_CODES.EDGE_OFFLINE;
-      err.status = 503;
-      throw err;
-    }
-
-    // 2. Strict Zero-Trust Operation Allowlist
-    const validation = validatePermittedMcpOperation(jsonRpcBody);
+    const validation = validatePermittedMcpOperation(req);
     if (!validation.valid) {
       this.stats.requestsRejected++;
       const err = new Error(validation.error);
       err.code = validation.code;
-      err.status = 400;
-      throw err;
+      return Promise.reject(err);
     }
 
-    // 3. Queue bounds check
-    if (this.pendingRequests.size >= LIMITS.MAX_INFLIGHT_REQUESTS) {
-      this.stats.requestsRejected++;
-      const err = new Error('Coordinator request queue full; maximum concurrent in-flight limit reached');
-      err.code = ERROR_CODES.QUEUE_FULL;
-      err.status = 503;
-      throw err;
-    }
-
-    // 4. Dispatch over outbound channel
-    const correlationId = `req_${crypto.randomBytes(16).toString('hex')}`;
-    const frame = {
-      type: MESSAGE_TYPES.MCP_REQUEST,
-      correlation_id: correlationId,
-      client_session_id: clientSessionId,
-      body: jsonRpcBody,
-      timestamp: Date.now(),
-    };
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (this.pendingRequests.has(correlationId)) {
-          this.pendingRequests.delete(correlationId);
-          this.stats.requestsFailed++;
-          const timeoutErr = new Error('Timeout waiting for remote edge response');
-          timeoutErr.code = ERROR_CODES.TIMEOUT;
-          timeoutErr.status = 504;
-          reject(timeoutErr);
-        }
-      }, LIMITS.DEFAULT_REQUEST_TIMEOUT_MS);
-
-      this.pendingRequests.set(correlationId, { resolve, reject, timer, createdAt: Date.now() });
-
-      try {
-        this.activeEdge.ws.send(JSON.stringify(frame));
-      } catch (err) {
-        clearTimeout(timer);
-        this.pendingRequests.delete(correlationId);
-        this.stats.requestsFailed++;
-        reject(err);
-      }
-    });
+    return this.callEdge(req, timeoutMs);
   }
 
   // --------------------------------------------------------------------------
-  // Client Streamable HTTP MCP Ingress Handler
+  // HTTP Client Ingress (Streamable HTTP MCP 2025-11-25)
   // --------------------------------------------------------------------------
 
-  async _handleClientHttp(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+  _handleHttpClientRequest(req, res) {
+    // CORS headers
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-session-id');
 
-    if (url.pathname !== '/mcp') {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'not_found' }));
-      return;
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      return res.end();
     }
 
-    // 1. Method check: only POST or DELETE allowed for Streamable HTTP
-    if (req.method !== 'POST' && req.method !== 'DELETE') {
-      res.writeHead(405, { 'Allow': 'POST, DELETE', 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'method_not_allowed' }));
-      return;
-    }
-
-    // 2. Client Authentication check
-    const authHeader = req.headers['authorization'] || '';
-    if (!authHeader.startsWith('Bearer ') || authHeader.slice(7) !== this.clientToken) {
-      res.writeHead(401, {
-        'WWW-Authenticate': 'Bearer realm="homeguardian-mcp"',
-        'Content-Type': 'application/json',
-      });
-      res.end(JSON.stringify({ error: 'unauthorized', message: 'Valid Bearer token required' }));
-      return;
-    }
-
-    // 3. Handle DELETE (Session teardown)
-    if (req.method === 'DELETE') {
-      const sessId = req.headers['mcp-session-id'];
-      if (!sessId || !this.clientSessions.has(sessId)) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'session_not_found' }));
-        return;
-      }
-      this.clientSessions.delete(sessId);
+    // Status endpoint (no auth required for health monitoring)
+    if (req.url === '/status' || req.url === '/edge/info') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, sessionTerminated: true }));
+      return res.end(JSON.stringify(this.getStatus(), null, 2));
+    }
+
+    // MCP routes require Bearer auth
+    const authHeader = req.headers['authorization'] || '';
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (!match || match[1] !== this.clientToken) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        error: { code: -32000, message: 'Unauthorized: invalid or missing bearer token' },
+      }));
+    }
+
+    if (req.method === 'DELETE' && req.url === '/mcp') {
+      const sessionId = req.headers['mcp-session-id'];
+      if (sessionId) this.clientSessions.delete(sessionId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ status: 'session terminated' }));
+    }
+
+    if (req.method === 'POST' && req.url === '/mcp') {
+      let bodyBuf = Buffer.alloc(0);
+      req.on('data', (chunk) => {
+        bodyBuf = Buffer.concat([bodyBuf, chunk]);
+        if (bodyBuf.length > LIMITS.MAX_FRAME) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32600, message: 'Payload exceeds 64KB limit' },
+          }));
+          req.destroy();
+        }
+      });
+
+      req.on('end', async () => {
+        let jsonRpc;
+        try {
+          jsonRpc = JSON.parse(bodyBuf.toString('utf8'));
+        } catch (_) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32700, message: 'Parse error: invalid JSON' },
+          }));
+        }
+
+        // Validate method & tool allowlist
+        const validation = validatePermittedMcpOperation(jsonRpc);
+        if (!validation.valid) {
+          this.stats.requestsRejected++;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            id: jsonRpc.id || null,
+            error: { code: -32601, message: validation.error },
+          }));
+        }
+
+        // Check if edge is online
+        if (!this.isEdgeOnline()) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            id: jsonRpc.id || null,
+            error: {
+              code: -32001,
+              message: 'Edge device is offline (LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE)',
+            },
+          }));
+        }
+
+        try {
+          const edgeResp = await this.callEdge(jsonRpc);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(edgeResp));
+        } catch (callErr) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            id: jsonRpc.id || null,
+            error: { code: -32603, message: callErr.message },
+          }));
+        }
+      });
       return;
     }
 
-    // 4. Validate Content-Type
-    const contentType = req.headers['content-type'] || '';
-    if (!contentType.includes('application/json')) {
-      res.writeHead(415, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'unsupported_media_type', message: 'Content-Type must be application/json' }));
-      return;
-    }
-
-    // 5. Read body with bounded size
-    let bodyRaw = '';
-    req.on('data', (chunk) => {
-      bodyRaw += chunk;
-      if (bodyRaw.length > LIMITS.MAX_MESSAGE_BYTES) {
-        res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'payload_too_large' }));
-        req.destroy();
-      }
-    });
-
-    req.on('end', async () => {
-      let jsonRpc;
-      try {
-        jsonRpc = JSON.parse(bodyRaw);
-      } catch (_) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
-        return;
-      }
-
-      // Check session requirement
-      let clientSessionId = req.headers['mcp-session-id'];
-      if (jsonRpc.method === 'initialize') {
-        // Mint new client session
-        clientSessionId = `coord_sess_${crypto.randomBytes(32).toString('hex')}`;
-        this.clientSessions.set(clientSessionId, { createdAt: Date.now(), lastSeen: Date.now() });
-      } else {
-        if (!clientSessionId || !this.clientSessions.has(clientSessionId)) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'session_not_found', message: 'Valid Mcp-Session-Id header required' }));
-          return;
-        }
-        this.clientSessions.get(clientSessionId).lastSeen = Date.now();
-      }
-
-      // Dispatch to remote edge hardware
-      try {
-        const edgeReply = await this.dispatchMcpRequest(jsonRpc, clientSessionId);
-        res.writeHead(edgeReply.statusCode, {
-          'Content-Type': 'application/json',
-          'Mcp-Session-Id': clientSessionId,
-        });
-        res.end(typeof edgeReply.body === 'string' ? edgeReply.body : JSON.stringify(edgeReply.body));
-      } catch (err) {
-        const status = err.status || 500;
-        const respHeaders = { 'Content-Type': 'application/json' };
-        if (status === 503) {
-          respHeaders['Retry-After'] = '2';
-        }
-        res.writeHead(status, respHeaders);
-        res.end(JSON.stringify({
-          error: err.code || 'BRIDGE_DISPATCH_ERROR',
-          message: err.message,
-        }));
-      }
-    });
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
   }
 }
 

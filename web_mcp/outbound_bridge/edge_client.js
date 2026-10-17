@@ -1,61 +1,60 @@
-// HomeGuardian AI — Outbound Authenticated MCP Bridge: Edge Client
+// HomeGuardian AI — Outbound Authenticated MCP Bridge: Edge Client (HGB1)
 //
 // Milestone: HG-NET-02E (Remote MCP Integration)
 //
-// The Edge Client runs on the edge device (Xiaomi Mi A3 Android foreground service or companion).
-// It initiates the outbound connection to the authorized coordinator, handles authentication,
-// validates operations, and forwards strictly permitted MCP requests to the local C++ MCP server
-// bound to 127.0.0.1:8790.
+// The Edge Client runs on the edge device (Xiaomi Mi A3 companion or Node test runner).
+// It initiates the outbound TCP connection to the authorized coordinator speaking HGB1,
+// verifies mutual authentication, validates operations, and forwards strictly permitted
+// MCP requests to the local C++ MCP server bound to 127.0.0.1:8790.
 
+const net = require('node:net');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
-const { WebSocket } = require('ws');
 
 const {
-  PROTOCOL_VERSION,
-  BRIDGE_PROTOCOL_VERSION,
-  MESSAGE_TYPES,
+  MAGIC,
   LIMITS,
-  ERROR_CODES,
-  validatePermittedMcpOperation,
+  PERMITTED_MCP_METHODS,
+  computeFingerprint,
+  encodeFrame,
+  FrameParser,
 } = require('./protocol');
 
 class McpBridgeEdgeClient extends EventEmitter {
   /**
    * @param {object} options
-   * @param {string} options.coordinatorUrl - Outbound WebSocket URL (e.g. ws://10.42.0.1:18994)
-   * @param {string} options.deviceId - Unique device identifier (e.g. mi_a3_edge_001)
-   * @param {string} options.authToken - Shared cryptographic secret for coordinator mutual auth
+   * @param {string} options.coordinatorHost - Outbound Coordinator host (e.g. 127.0.0.1 or VPN IP)
+   * @param {number} options.coordinatorPort - Outbound Coordinator TCP port (e.g. 9443 or test port)
+   * @param {string} options.deviceId - Unique device identifier (e.g. hg-android-...)
+   * @param {string} options.enrolmentSecret - Pre-shared CSPRNG secret for coordinator authentication
    * @param {string} [options.localMcpUrl='http://127.0.0.1:8790/mcp'] - Local loopback C++ server
-   * @param {string} [options.localMcpToken] - Bearer token for authenticating with local C++ server
+   * @param {string} [options.localMcpToken] - Bearer token for authenticating with local C++ server (never leaves host)
    * @param {boolean} [options.autoReconnect=true] - Enable exponential backoff reconnect
    */
   constructor(options = {}) {
     super();
 
-    if (!options.coordinatorUrl) throw new Error('coordinatorUrl is required');
+    if (!options.coordinatorHost) throw new Error('coordinatorHost is required');
+    if (!options.coordinatorPort) throw new Error('coordinatorPort is required');
     if (!options.deviceId) throw new Error('deviceId is required');
-    if (!options.authToken) throw new Error('authToken is required');
+    if (!options.enrolmentSecret) throw new Error('enrolmentSecret is required');
 
-    this.coordinatorUrl = options.coordinatorUrl;
+    this.coordinatorHost = options.coordinatorHost;
+    this.coordinatorPort = options.coordinatorPort;
     this.deviceId = options.deviceId;
-    this.authToken = options.authToken;
+    this.enrolmentSecret = options.enrolmentSecret;
     this.localMcpUrl = options.localMcpUrl || 'http://127.0.0.1:8790/mcp';
     this.localMcpToken = options.localMcpToken || '';
     this.autoReconnect = options.autoReconnect !== false;
 
-    this.ws = null;
+    this.socket = null;
     this.connected = false;
     this.authenticated = false;
-    this.revoked = false;
     this.explicitClose = false;
 
-    this.sessionId = null;
-    this.localMcpSessionId = null; // Captured from local C++ server on initialize
-
-    this.heartbeatTimer = null;
     this.reconnectTimer = null;
-    this.reconnectAttempts = 0;
+    this.reconnectDelay = LIMITS.RECONNECT_MIN_MS;
 
     this.stats = {
       messagesReceived: 0,
@@ -74,270 +73,236 @@ class McpBridgeEdgeClient extends EventEmitter {
     this.explicitClose = true;
     this.autoReconnect = false;
     this._cleanup();
-    if (this.ws) {
+    if (this.socket) {
       try {
-        this.ws.close(1000, 'Edge client closing');
+        this.socket.destroy();
       } catch (_) {}
-      this.ws = null;
+      this.socket = null;
     }
   }
 
   _cleanup() {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     this.connected = false;
     this.authenticated = false;
-    this.sessionId = null;
   }
 
   _connectSocket() {
     this._cleanup();
 
-    try {
-      this.ws = new WebSocket(this.coordinatorUrl);
-    } catch (err) {
-      this._scheduleReconnect();
-      return;
-    }
+    const socket = new net.Socket();
+    this.socket = socket;
+    socket.setNoDelay(true);
+    socket.setTimeout(LIMITS.HANDSHAKE_TIMEOUT_MS);
 
-    this.ws.on('open', () => {
+    let stage = 'HELLO_SENT';
+    let lineBuf = Buffer.alloc(0);
+    let parser = null;
+
+    socket.connect(this.coordinatorPort, this.coordinatorHost, () => {
       this.connected = true;
-      // Step 1: Send outbound mutual auth handshake frame
-      const authFrame = {
-        type: MESSAGE_TYPES.BRIDGE_AUTH,
-        device_id: this.deviceId,
-        auth_token: this.authToken,
-        bridge_version: BRIDGE_PROTOCOL_VERSION,
-        timestamp: Date.now(),
-      };
-      this._send(authFrame);
+      const fp = computeFingerprint(this.enrolmentSecret);
+      socket.write(`${MAGIC} ${this.deviceId} ${fp}\n`);
     });
 
-    this.ws.on('message', (raw) => {
-      if (raw.length > LIMITS.MAX_MESSAGE_BYTES) return;
-      let msg;
-      try {
-        msg = JSON.parse(raw.toString('utf8'));
-      } catch (_) {
+    socket.on('data', (chunk) => {
+      if (this.authenticated && parser) {
+        parser.push(chunk);
         return;
       }
-      this._handleIncomingMessage(msg);
-    });
 
-    this.ws.on('close', (code, reason) => {
-      const wasAuth = this.authenticated;
-      this._cleanup();
-      this.emit('disconnected', { code, reason: reason?.toString() });
-
-      if (code === 4403 || reason?.toString().includes('revoked')) {
-        this.revoked = true;
-        this.emit('revoked', { reason: reason?.toString() });
-        return; // Do not reconnect if revoked
+      lineBuf = Buffer.concat([lineBuf, chunk]);
+      const newlineIdx = lineBuf.indexOf(0x0a);
+      if (newlineIdx === -1) {
+        if (lineBuf.length > LIMITS.MAX_HANDSHAKE_LINE) {
+          socket.destroy();
+        }
+        return;
       }
 
-      if (!this.explicitClose && this.autoReconnect) {
-        this._scheduleReconnect();
-      }
-    });
+      const lineStr = lineBuf.subarray(0, newlineIdx).toString('utf8').replace(/\r$/, '');
+      const remaining = lineBuf.subarray(newlineIdx + 1);
+      lineBuf = remaining;
 
-    this.ws.on('error', (err) => {
-      this.emit('error', err);
-    });
-  }
+      if (stage === 'HELLO_SENT') {
+        // Coordinator presents secret
+        const presented = lineStr.trim();
+        const expected = this.enrolmentSecret.trim();
 
-  _handleIncomingMessage(msg) {
-    this.stats.messagesReceived++;
+        const match = this._constantTimeCompare(presented, expected);
+        if (!match) {
+          socket.write('DENY\n');
+          this.emit('error', new Error('Coordinator presented invalid enrolment secret'));
+          socket.destroy();
+          return;
+        }
 
-    switch (msg.type) {
-      case MESSAGE_TYPES.BRIDGE_AUTH_OK:
+        socket.write('OK\n');
         this.authenticated = true;
-        this.sessionId = msg.session_id;
-        this.reconnectAttempts = 0;
-        this._startHeartbeat(msg.heartbeat_interval_ms || LIMITS.HEARTBEAT_INTERVAL_MS);
-        this.emit('connected', { sessionId: this.sessionId });
-        break;
+        this.reconnectDelay = LIMITS.RECONNECT_MIN_MS;
+        socket.setTimeout(LIMITS.RELAY_TIMEOUT_MS);
 
-      case MESSAGE_TYPES.BRIDGE_AUTH_ERR:
-        this.emit('auth_error', { code: msg.code, message: msg.message });
-        if (msg.code === ERROR_CODES.DEVICE_REVOKED) {
-          this.revoked = true;
-        }
-        break;
-
-      case MESSAGE_TYPES.HEARTBEAT_PONG:
-        // Coordinator acknowledged liveness
-        break;
-
-      case MESSAGE_TYPES.MCP_REQUEST:
-        this._handleMcpRequest(msg);
-        break;
-
-      default:
-        break;
-    }
-  }
-
-  _startHeartbeat(intervalMs) {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = setInterval(() => {
-      if (this.connected && this.authenticated) {
-        this._send({ type: MESSAGE_TYPES.HEARTBEAT_PING, timestamp: Date.now() });
-      }
-    }, intervalMs);
-  }
-
-  _scheduleReconnect() {
-    if (this.explicitClose || this.revoked || !this.autoReconnect) return;
-
-    this.reconnectAttempts++;
-    this.stats.reconnectCount++;
-
-    // Exponential backoff with jitter
-    const delay = Math.min(
-      LIMITS.MAX_RECONNECT_DELAY_MS,
-      LIMITS.BASE_RECONNECT_DELAY_MS * Math.pow(2, Math.min(this.reconnectAttempts, 5))
-    ) + Math.floor(Math.random() * 500);
-
-    this.emit('reconnecting', { attempt: this.reconnectAttempts, delayMs: delay });
-
-    this.reconnectTimer = setTimeout(() => {
-      this._connectSocket();
-    }, delay);
-  }
-
-  _send(obj) {
-    if (this.ws && this.ws.readyState === 1) { // 1 = OPEN
-      this.ws.send(JSON.stringify(obj));
-    }
-  }
-
-  // --------------------------------------------------------------------------
-  // Forwarding Engine: Forwards valid MCP operations to local loopback server
-  // --------------------------------------------------------------------------
-
-  async _handleMcpRequest(msg) {
-    const correlationId = msg.correlation_id;
-    const body = msg.body;
-
-    // 1. Strict Zero-Trust Operation Allowlist Check
-    const validation = validatePermittedMcpOperation(body);
-    if (!validation.valid) {
-      this.stats.messagesRejected++;
-      this._send({
-        type: MESSAGE_TYPES.MCP_RESPONSE,
-        correlation_id: correlationId,
-        status_code: 400,
-        body: {
-          jsonrpc: '2.0',
-          id: body?.id !== undefined ? body.id : null,
-          error: {
-            code: -32602,
-            message: validation.error,
-          },
-        },
-      });
-      return;
-    }
-
-    // 2. Forward to local loopback C++ server
-    try {
-      this.stats.messagesForwarded++;
-      const localResult = await this._forwardToLocalMcpServer(body);
-
-      // If initialize, capture local Mcp-Session-Id
-      if (body.method === 'initialize' && localResult.sessionId) {
-        this.localMcpSessionId = localResult.sessionId;
-      }
-
-      this._send({
-        type: MESSAGE_TYPES.MCP_RESPONSE,
-        correlation_id: correlationId,
-        status_code: localResult.statusCode,
-        body: localResult.body,
-      });
-    } catch (err) {
-      this._send({
-        type: MESSAGE_TYPES.MCP_RESPONSE,
-        correlation_id: correlationId,
-        status_code: 502,
-        body: {
-          jsonrpc: '2.0',
-          id: body?.id !== undefined ? body.id : null,
-          error: {
-            code: -32603,
-            message: `Edge local MCP server error: ${err.message}`,
-          },
-        },
-      });
-    }
-  }
-
-  _forwardToLocalMcpServer(jsonRpcBody) {
-    return new Promise((resolve, reject) => {
-      try {
-        const u = new URL(this.localMcpUrl);
-        const postData = JSON.stringify(jsonRpcBody);
-
-        const headers = {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json, text/event-stream',
-          'Content-Length': Buffer.byteLength(postData),
-        };
-
-        if (this.localMcpToken) {
-          headers['Authorization'] = `Bearer ${this.localMcpToken}`;
-        }
-
-        if (this.localMcpSessionId && jsonRpcBody.method !== 'initialize') {
-          headers['Mcp-Session-Id'] = this.localMcpSessionId;
-        }
-
-        const req = http.request(
-          {
-            hostname: u.hostname,
-            port: u.port,
-            path: u.pathname,
-            method: 'POST',
-            headers,
-            timeout: 3000,
-          },
-          (res) => {
-            let bodyRaw = '';
-            res.on('data', (d) => { bodyRaw += d; });
-            res.on('end', () => {
-              let parsed;
-              try {
-                parsed = JSON.parse(bodyRaw);
-              } catch (_) {
-                parsed = bodyRaw;
-              }
-              const sid = res.headers['mcp-session-id'] || null;
-              resolve({
-                statusCode: res.statusCode,
-                body: parsed,
-                sessionId: sid,
-              });
-            });
+        parser = new FrameParser(
+          (frame) => this._onFrame(frame),
+          (err) => {
+            this.emit('error', err);
+            socket.destroy();
           }
         );
 
-        req.on('error', reject);
-        req.on('timeout', () => {
-          req.destroy();
-          reject(new Error('Local C++ MCP server request timeout'));
-        });
+        this.emit('authenticated');
 
-        req.write(postData);
-        req.end();
-      } catch (err) {
-        reject(err);
+        if (lineBuf.length > 0) {
+          parser.push(lineBuf);
+          lineBuf = Buffer.alloc(0);
+        }
       }
+    });
+
+    socket.on('timeout', () => {
+      socket.destroy();
+    });
+
+    socket.on('error', (err) => {
+      this.emit('error', err);
+    });
+
+    socket.on('close', () => {
+      this.connected = false;
+      this.authenticated = false;
+      this.emit('disconnected');
+
+      if (!this.explicitClose && this.autoReconnect) {
+        this.stats.reconnectCount++;
+        this.reconnectTimer = setTimeout(() => {
+          this._connectSocket();
+        }, this.reconnectDelay);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, LIMITS.RECONNECT_MAX_MS);
+      }
+    });
+  }
+
+  _constantTimeCompare(a, b) {
+    const bufA = Buffer.from(a, 'utf8');
+    const bufB = Buffer.from(b, 'utf8');
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  }
+
+  async _onFrame(frame) {
+    this.stats.messagesReceived++;
+    let jsonRpc;
+    let reqId = -1;
+
+    try {
+      jsonRpc = JSON.parse(frame.toString('utf8'));
+      reqId = jsonRpc.id !== undefined ? jsonRpc.id : -1;
+    } catch (_) {
+      this.stats.messagesRejected++;
+      this._sendError(reqId, -32700, 'malformed request');
+      return;
+    }
+
+    const method = jsonRpc.method;
+    if (!method || !PERMITTED_MCP_METHODS.has(method)) {
+      this.stats.messagesRejected++;
+      this._sendError(reqId, -32601, `method not allowed: ${method}`);
+      return;
+    }
+
+    try {
+      const resp = await this._forwardToLocalMcp(jsonRpc);
+      this.stats.messagesForwarded++;
+      this._sendFrame(resp);
+    } catch (relayErr) {
+      this.stats.messagesRejected++;
+      this._sendError(reqId, -32603, `relay failed: ${relayErr.message}`);
+    }
+  }
+
+  _sendError(id, code, message) {
+    const errObj = {
+      jsonrpc: '2.0',
+      id: id,
+      error: { code, message },
+    };
+    this._sendFrame(errObj);
+  }
+
+  _sendFrame(payload) {
+    if (!this.socket || this.socket.destroyed || !this.authenticated) return;
+    try {
+      const buf = encodeFrame(payload);
+      this.socket.write(buf);
+    } catch (_) {}
+  }
+
+  _forwardToLocalMcp(jsonRpc) {
+    return new Promise((resolve, reject) => {
+      const url = new URL(this.localMcpUrl);
+      const postData = JSON.stringify(jsonRpc);
+
+      const headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+      };
+
+      if (this.localMcpToken) {
+        headers['Authorization'] = `Bearer ${this.localMcpToken}`;
+      }
+
+      if (this.localMcpSessionId) {
+        headers['Mcp-Session-Id'] = this.localMcpSessionId;
+      }
+
+      const req = http.request(
+        {
+          hostname: url.hostname,
+          port: url.port || 80,
+          path: url.pathname + (url.search || ''),
+          method: 'POST',
+          headers,
+          timeout: 4000,
+        },
+        (res) => {
+          const sid = res.headers['mcp-session-id'];
+          if (sid) {
+            this.localMcpSessionId = sid;
+          }
+
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            try {
+              const parsed = JSON.parse(body);
+              resolve(parsed);
+            } catch (_) {
+              resolve({
+                jsonrpc: '2.0',
+                id: jsonRpc.id,
+                error: { code: -32603, message: `Invalid JSON from loopback MCP (status ${res.statusCode})` },
+              });
+            }
+          });
+        }
+      );
+
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Local MCP request timeout'));
+      });
+
+      req.on('error', (err) => {
+        reject(err);
+      });
+
+      req.write(postData);
+      req.end();
     });
   }
 }

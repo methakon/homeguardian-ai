@@ -1,31 +1,35 @@
-// HomeGuardian AI — Outbound Authenticated MCP Bridge Protocol Specification
+// HomeGuardian AI — Outbound Authenticated MCP Bridge Protocol Specification (HGB1)
 //
 // Milestone: HG-NET-02E (Remote MCP Integration)
 //
-// Purpose:
-//   Establishes a zero-trust, outbound-only control channel from the edge device
-//   (Xiaomi Mi A3 foreground service or edge bridge daemon) to the coordinator
-//   (Oracle VPS or local mock coordinator).
+// Protocol: HGB1 (Hermes 2 & Antigravity Unified Wire Protocol)
+// Transport: Raw TCP / TLS stream
 //
 // Security Constraints:
-//   - Outbound-only connection: Mi A3 connects out; coordinator never initiates TCP SYN to phone.
-//   - Mutual authentication: Pre-shared device identity + secret, session authorization challenges.
-//   - Strict operation allowlist: Only explicitly permitted MCP operations are forwarded to loopback C++ server.
-//   - Bounded buffers, max in-flight constraints, and rate limiting prevent resource exhaustion.
+//   - Outbound-only connection: Mi A3 Android service initiates TCP connection to Coordinator.
+//   - Mutual authentication:
+//       1. Edge -> Coordinator: "HGB1 <deviceId> <enrolmentFingerprint>\n" (max 256 bytes)
+//       2. Coordinator -> Edge: "<enrolmentSecret>\n"
+//       3. Edge -> Coordinator: "OK\n" (on constant-time match) or "DENY\n"
+//   - Frame Format: [4-byte big-endian unsigned length][UTF-8 JSON-RPC string]
+//   - Max Frame Size: 64 KB (65,536 bytes). Hard cap validated BEFORE buffer allocation.
+//   - Strict operation allowlist: Only explicitly permitted MCP operations forwarded to loopback C++ server.
 //   - Fail-closed: Any unpermitted method, unknown tool, malformed framing, or oversized payload is dropped.
 
-const PROTOCOL_VERSION = '2025-11-25';
-const BRIDGE_PROTOCOL_VERSION = '1.0.0';
+const crypto = require('node:crypto');
 
-const MESSAGE_TYPES = Object.freeze({
-  BRIDGE_AUTH: 'bridge_auth',
-  BRIDGE_AUTH_OK: 'bridge_auth_ok',
-  BRIDGE_AUTH_ERR: 'bridge_auth_err',
-  MCP_REQUEST: 'mcp_request',
-  MCP_RESPONSE: 'mcp_response',
-  HEARTBEAT_PING: 'heartbeat_ping',
-  HEARTBEAT_PONG: 'heartbeat_pong',
-  SESSION_TERMINATE: 'session_terminate',
+const MAGIC = 'HGB1';
+const PROTOCOL_VERSION = '2025-11-25';
+const BRIDGE_PROTOCOL_VERSION = 'HGB1';
+
+const LIMITS = Object.freeze({
+  MAX_HANDSHAKE_LINE: 256,
+  MAX_FRAME: 64 * 1024,             // 64 KB hard cap
+  HANDSHAKE_TIMEOUT_MS: 8000,
+  RELAY_TIMEOUT_MS: 15000,
+  RECONNECT_MIN_MS: 1000,
+  RECONNECT_MAX_MS: 60000,
+  MAX_INFLIGHT_REQUESTS: 8,
 });
 
 // Strictly permitted MCP methods across the bridge
@@ -43,17 +47,6 @@ const PERMITTED_MCP_TOOLS = Object.freeze(new Set([
   'get_alert_summary',
 ]));
 
-const LIMITS = Object.freeze({
-  MAX_MESSAGE_BYTES: 64 * 1024,     // 64 KB per frame
-  MAX_INFLIGHT_REQUESTS: 8,         // Bounded concurrent calls
-  MAX_QUEUE_DEPTH: 16,              // Max pending requests
-  DEFAULT_REQUEST_TIMEOUT_MS: 5000, // 5 second timeout for edge reply
-  HEARTBEAT_INTERVAL_MS: 15000,     // 15 seconds ping interval
-  HEARTBEAT_TIMEOUT_MS: 35000,      // 35 seconds without ping triggers disconnect
-  MAX_RECONNECT_DELAY_MS: 30000,    // Exponential backoff ceiling
-  BASE_RECONNECT_DELAY_MS: 1000,    // Initial backoff
-});
-
 const ERROR_CODES = Object.freeze({
   AUTH_REQUIRED: 'AUTH_REQUIRED',
   INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
@@ -67,6 +60,43 @@ const ERROR_CODES = Object.freeze({
   EDGE_OFFLINE: 'EDGE_OFFLINE',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
 });
+
+/**
+ * Computes the first 16 hex chars of SHA-256 for a secret string.
+ * Matches ControlBridge.java fingerprint().
+ * @param {string} secret
+ * @returns {string}
+ */
+function computeFingerprint(secret) {
+  if (typeof secret !== 'string') return '';
+  return crypto.createHash('sha256').update(secret, 'utf8').digest('hex').substring(0, 16);
+}
+
+/**
+ * Encodes a string or JSON object into a length-prefixed frame buffer:
+ * [4-byte big-endian length][payload]
+ * @param {string|Buffer|object} payload
+ * @returns {Buffer}
+ */
+function encodeFrame(payload) {
+  let buf;
+  if (Buffer.isBuffer(payload)) {
+    buf = payload;
+  } else if (typeof payload === 'string') {
+    buf = Buffer.from(payload, 'utf8');
+  } else {
+    buf = Buffer.from(JSON.stringify(payload), 'utf8');
+  }
+
+  if (buf.length > LIMITS.MAX_FRAME) {
+    throw new Error(`Frame length ${buf.length} exceeds hard cap of ${LIMITS.MAX_FRAME} bytes`);
+  }
+
+  const frame = Buffer.allocUnsafe(4 + buf.length);
+  frame.writeUInt32BE(buf.length, 0);
+  buf.copy(frame, 4);
+  return frame;
+}
 
 /**
  * Validates whether an incoming MCP JSON-RPC payload is permitted by the security contract.
@@ -118,13 +148,58 @@ function validatePermittedMcpOperation(jsonRpc) {
   return { valid: true };
 }
 
+/**
+ * Helper class to parse length-prefixed frames from a stream of chunks.
+ */
+class FrameParser {
+  constructor(onFrame, onError) {
+    this.onFrame = onFrame;
+    this.onError = onError;
+    this.buf = Buffer.alloc(0);
+    this.expectedLen = null;
+  }
+
+  push(chunk) {
+    this.buf = Buffer.concat([this.buf, chunk]);
+    while (true) {
+      if (this.expectedLen === null) {
+        if (this.buf.length < 4) return;
+        const len = this.buf.readUInt32BE(0);
+        if (len <= 0 || len > LIMITS.MAX_FRAME) {
+          if (this.onError) {
+            this.onError(new Error(`Oversized or invalid frame length: ${len}`));
+          }
+          return;
+        }
+        this.expectedLen = len;
+        this.buf = this.buf.subarray(4);
+      }
+
+      if (this.buf.length < this.expectedLen) {
+        return; // wait for remaining bytes
+      }
+
+      const framePayload = this.buf.subarray(0, this.expectedLen);
+      this.buf = this.buf.subarray(this.expectedLen);
+      this.expectedLen = null;
+
+      if (this.onFrame) {
+        this.onFrame(framePayload);
+      }
+    }
+  }
+}
+
 module.exports = {
+  MAGIC,
   PROTOCOL_VERSION,
   BRIDGE_PROTOCOL_VERSION,
-  MESSAGE_TYPES,
+  LIMITS,
   PERMITTED_MCP_METHODS,
   PERMITTED_MCP_TOOLS,
-  LIMITS,
   ERROR_CODES,
+  computeFingerprint,
+  encodeFrame,
   validatePermittedMcpOperation,
+  FrameParser,
 };

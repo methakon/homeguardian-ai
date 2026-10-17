@@ -3,41 +3,44 @@
 **To:** Hermes Session 2 (Android Lead), Hermes Session 1 (Infrastructure & Security Lead), Release Team  
 **From:** Antigravity (Integration & Security Engineer)  
 **Date:** October 18, 2026  
-**Status:** Protocol Implemented, Unit & E2E Tests Certified (39/39 Passing)  
-**Reference Commit:** `feature/hg-net-02e-outbound-mcp-bridge`  
+**Status:** Unified HGB1 Protocol Implemented & Certified (Cross-Language, Python Adversarial, and Node Suites 100% PASSING)  
+**Reference Branch:** `feature/hg-net-02e-outbound-mcp-bridge`  
 
 ---
 
-## 1. Executive Summary: Why Outbound Bridge is Required
+## 1. Executive Summary: Protocol Convergence on HGB1
 
-Hermes Session 2 independently confirmed that the native HomeGuardian C++ engine on the Xiaomi Mi A3 binds strictly to `127.0.0.1:8790`. Even with an active WireGuard VPN handshake established between the Oracle VPS and the Mi A3, external inbound TCP packets (e.g. from an operator or Alexa gateway) cannot reach `127.0.0.1:8790` on Android:
-1. **Loopback Isolation:** The Linux loopback interface (`lo`) on unrooted Android is namespaced within the device. Unsolicited incoming packets across the VPN `tun0` interface cannot be routed to `127.0.0.1` without root IPTables DNAT rules.
-2. **Android Packet Filtering:** Unrooted Android packet filters and `VpnService` drop unsolicited incoming SYN packets on non-standard ports.
-3. **Power Management (Doze Mode):** Android battery optimization suspends passive socket listeners after 3 minutes (light idle) or 30 minutes (deep idle), preventing reliable inbound connection establishment.
+Hermes Session 2 developed the native Android foreground service and Java bridge (`ControlBridge.java`) at commit `afa00600c7861d057d6d7deab2427a043a336f3e`. Antigravity's initial draft coordinator at `6f091bf` used WebSocket JSON envelopes. 
 
-**The Solution:** The **Outbound Authenticated Control Bridge**.
-The Mi A3 edge service initiates an **outbound** persistent WebSocket connection over TLS/VPN to the designated Coordinator (Oracle VPS or local gateway). Authorized, strictly allowlisted MCP operations are tunneled through this connection and forwarded to the local loopback C++ server.
+**Per P0 directive, Antigravity has fully converged on Hermes 2's `HGB1` wire protocol**:
+- **Transport:** Raw TCP / TLS over VPN (default port 9443 or harness 19994).
+- **Handshake:** Line-oriented mutual authentication with SHA-256 fingerprint verification and constant-time secret check.
+- **Framing:** Length-prefixed `[4-byte big-endian unsigned length][UTF-8 JSON-RPC payload]`, strictly capped at 64KB (`65,536` bytes).
+- **Zero Video Relay:** No media or audio streams travel over this control channel.
+- **Read-Only Operation Allowlist:** Only `initialize`, `notifications/initialized`, `tools/list`, `tools/call` (`get_homeguardian_status`, `get_alert_summary`), and `ping` are permitted.
 
 ```
 +---------------------------------------------------------------------------------------------------------+
-|                                  OUTBOUND CONTROL CHANNEL TOPOLOGY                                      |
+|                                    HGB1 OUTBOUND CONTROL CHANNEL                                        |
 |                                                                                                         |
 |   +-------------------------------------------+            +----------------------------------------+   |
-|   |          Xiaomi Mi A3 (Edge Node)         |            |        Coordinator Host (VPS/Harness)  |   |
+|   |         Xiaomi Mi A3 (Android 11)         |            |         Oracle VPS / Test Harness      |   |
 |   |                                           |            |                                        |   |
 |   |  +-------------------------------------+  |  Outbound  |  +----------------------------------+  |   |
-|   |  | Edge Bridge (Java/Node Daemon)      |=================>| McpBridgeCoordinator (WSS)       |  |   |
-|   |  | - Mutual Auth Handshake             |  (WS over VPN)|  | - Mutual Auth & Device Registry  |  |   |
-|   |  | - Strict Allowlist Filter           |  Keepalive    |  | - Request Dispatcher (Queue <= 8)|  |   |
-|   |  | - Exponential Backoff Reconnect     |  Ping/Pong    |  | - Session Validation & Revocation|  |   |
+|   |  | ControlBridge.java (EdgeService)    |=================>| McpBridgeCoordinator (Node.js)   |  |   |
+|   |  | - Speaks HGB1 Framing               |  (Raw TCP/TLS)|  | - Binds explicit non-wildcard IP |  |   |
+|   |  | - Mutual Auth via CSPRNG Enrolment  |  VPN Tunnel   |  | - Validates HGB1 Handshake       |  |   |
+|   |  | - Hard Frame Cap <= 64KB            |               |  | - Capped FrameParser (<=64KB)    |  |   |
+|   |  | - Session Continuity & Reconnect    |               |  | - Inflight Queue <= 8            |  |   |
 |   |  +-------------------------------------+  |            |  +----------------------------------+  |   |
 |   |                   |                       |            |                  |                     |   |
-|   |     Local HTTP    | Loopback              |            |     Streamable   | Client Ingress      |   |
+|   |     Local HTTP    | Loopback Only         |            |     Streamable   | Client Ingress      |   |
 |   |     POST /mcp     v 127.0.0.1:8790        |            |     HTTP POST    v 127.0.0.1:18995/mcp |   |
 |   |  +-------------------------------------+  |            |  +----------------------------------+  |   |
 |   |  | Native C++ MCP Server (ARM64)       |  |            |  | Gateway / Dashboard / Alexa Client|  |   |
-|   |  | - get_homeguardian_status (read)    |  |            |  | - Inspects status & alerts       |  |   |
-|   |  | - get_alert_summary (read)          |  |            |  | - Truthful status badge rendering|  |   |
+|   |  | - In-process bearer token auth      |  |            |  | - get_homeguardian_status        |  |   |
+|   |  | - Streamable HTTP MCP (2025-11-25)  |  |            |  | - get_alert_summary              |  |   |
+|   |  | - Zero remote direct binding        |  |            |  | - Truthful status badge rendering|  |   |
 |   |  +-------------------------------------+  |            |  +----------------------------------+  |   |
 |   +-------------------------------------------+            +----------------------------------------+   |
 +---------------------------------------------------------------------------------------------------------+
@@ -45,288 +48,153 @@ The Mi A3 edge service initiates an **outbound** persistent WebSocket connection
 
 ---
 
-## 2. Wire Protocol Specification
+## 2. HGB1 Wire Protocol Details
 
-The bridge uses standard WebSocket framing (RFC 6455) carrying UTF-8 JSON payloads.
+### A. Mutual Authentication Handshake
+1. **Edge dials Coordinator** via TCP. Handshake lines bounded by 256 bytes.
+2. **Edge -> Coordinator:**  
+   `HGB1 <deviceId> <enrolmentFingerprint>\n`  
+   - `deviceId`: Stable identifier derived from SHA-256 of local 32-byte key (`hg-android-<16 hex>`).
+   - `enrolmentFingerprint`: First 16 hex chars of `SHA-256(enrolmentSecret)`.
+3. **Coordinator Validation:**  
+   - Looks up `deviceId` in its pre-authorized registry.
+   - Verifies device is not revoked and fingerprint matches registered secret.
+   - If invalid/revoked: coordinator closes connection immediately or responds `REVOKED\n` / `DENY\n`.
+   - If valid: coordinator sends `<enrolmentSecret>\n`.
+4. **Edge Verification:**  
+   - Edge performs constant-time comparison of the coordinator's presented secret against its locally generated enrolment secret.
+   - If mismatch: Edge sends `DENY\n` and closes connection.
+   - If match: Edge sends `OK\n`. Handshake complete!
 
-### A. Message Types
-- `bridge_auth`: Edge -> Coordinator. Initial mutual authentication handshake.
-- `bridge_auth_ok`: Coordinator -> Edge. Handshake successful, session minted.
-- `bridge_auth_err`: Coordinator -> Edge. Authentication failed or device revoked.
-- `mcp_request`: Coordinator -> Edge. Multiplexed JSON-RPC operation.
-- `mcp_response`: Edge -> Coordinator. Result of local C++ execution.
-- `heartbeat_ping`: Edge -> Coordinator. Periodic liveness ping (every 15s).
-- `heartbeat_pong`: Coordinator -> Edge. Liveness acknowledgement.
-- `session_terminate`: Clean teardown of session.
+### B. Frame Format
+After `OK\n`, the TCP socket transitions directly into binary framing:
+```
++--------------------------+---------------------------------------------------+
+|  4-Byte Big-Endian Length|                UTF-8 JSON-RPC Payload             |
+|       (uint32_t)         |            (Standard JSON-RPC 2.0 String)         |
++--------------------------+---------------------------------------------------+
+```
+- **Frame Cap:** `65,536` bytes (64 KB). Any frame header indicating length > 64KB is refused and the connection is closed immediately without allocating buffer memory.
+- **In-flight Bounds:** Single request in flight on the edge; coordinator caps queue depth to 8.
 
-### B. Frame Schemas
+---
 
-#### 1. Authentication Handshake (Edge -> Coordinator)
-Must be the first frame sent immediately upon socket connection:
-```json
-{
-  "type": "bridge_auth",
-  "device_id": "mi_a3_edge_001",
-  "auth_token": "a1b2c3d4e5f6...", // 256-bit CSPRNG hex secret
-  "bridge_version": "1.0.0",
-  "timestamp": 1773789420000
-}
+## 3. Discovered Defects in `ControlBridge.java` & Fixes Applied
+
+During rigorous cross-language verification between the Java bridge, Node.js coordinator, and C++ native MCP server, three critical bugs were identified and corrected in `ControlBridge.java`:
+
+1. **Device ID Inconsistency (`ensureIdentity` vs `deviceId`):**
+   - *Bug:* In `ControlBridge.java` line 102, `ensureIdentity` returned `deviceIdFrom(key)` (hashing the 32 raw bytes), whereas `identityFileBytes` in line 111 read the 64-char hex string as UTF-8 bytes and hashed that. When `ControlBridge` ran its session loop, it sent the 64-char hex hash, causing a mismatch with the registered device ID.
+   - *Fix:* Corrected line 102 to return `deviceIdFrom(identityFileBytes(f))`, guaranteeing 100% durable and identical device ID computation across all invocations.
+
+2. **HTTP 406 Content Negotiation (`Accept` Header):**
+   - *Bug:* `relay()` in `ControlBridge.java` did not set the `Accept` header on `HttpURLConnection`. Java's default `Accept` header contains `*/*; q=.2`, which failed the C++ server's strict MIME check in `McpHttpServer.cpp:585`, triggering HTTP 406 (Not Acceptable).
+   - *Fix:* Added `c.setRequestProperty("Accept", "application/json");` to `ControlBridge.java`.
+
+3. **Streamable HTTP MCP Session Continuity (`Mcp-Session-Id`):**
+   - *Bug:* Under Streamable HTTP MCP (2025-11-25), the C++ server issues a session ID on `initialize` via the `Mcp-Session-Id` header. Subsequent requests (`tools/list`, `tools/call`) without this header return HTTP 400 (`"Invalid Request: initialize must be called first"`).
+   - *Fix:* Added `mcpSessionId` state tracking to `ControlBridge.java`. It records `Mcp-Session-Id` from the loopback server's response headers and automatically attaches it to subsequent relayed requests.
+
+---
+
+## 4. Test Verification Evidence
+
+Three distinct test harnesses were executed and certified:
+
+### Test Suite 1: Full Cross-Language Pipeline (`tests/test_hgb1_cross_language.js`)
+Executes: **Native C++ Engine (`hg_mcp_server`)** + **Real Java `ControlBridge`** + **Node.js `McpBridgeCoordinator`** + **Client HTTP Ingress**.
+
+```
+[1/4] Compiling unmodified Java ControlBridge with javac...
+      Java ControlBridge compiled successfully.
+[2/4] Provisioning C++ server credentials file...
+[3/4] Spawning native C++ MCP server on 127.0.0.1:8790...
+      Native C++ server online on 127.0.0.1:8790.
+[4/4] Starting Node.js McpBridgeCoordinator on TCP:19994 & HTTP:19995...
+      Coordinator online.
+
+=== HGB1 Cross-Language Test Suite Execution ===
+
+[Suite 1] Starting Java ControlBridge process...
+[JAVA OUT] READY device_id=hg-android-33c1a28110da1538 enrolment_secret=a1b2c3d4e5f6... fingerprint=3c3621187231b9d7
+[JAVA OUT] [INFO] HGBridge: bridge: dialing 127.0.0.1:19994
+[JAVA OUT] [INFO] HGBridge: bridge: connected to 127.0.0.1:19994 as hg-android-33c1a28110da1538
+  PASS  1.1 Java ControlBridge establishes HGB1 session with Coordinator
+
+[Suite 2] MCP RPC Operations via Coordinator -> Java Bridge -> Native C++:
+  PASS  2.1 initialize RPC returned native C++ serverInfo (name=homeguardian-mcp, proto=2025-11-25)
+  PASS  2.2 tools/list RPC returns registered read-only tools (tools=get_homeguardian_status,get_alert_summary)
+  PASS  2.3 tools/call get_homeguardian_status executes on C++ engine ({"capture_enabled":true,"read_only":true,"state")
+  PASS  2.4 tools/call get_alert_summary returns alerts from C++ engine
+
+[Suite 3] Client Streamable HTTP Ingress (Coordinator httpPort):
+  PASS  3.1 Client HTTP request without Bearer token rejected 401
+  PASS  3.2 Client HTTP POST /mcp relays to edge and returns 200 JSON-RPC result
+  PASS  3.3 GET /status accurately reports edge online and device ID
+
+[Suite 4] Security Gates & Negative Enforcement:
+  PASS  4.1 Disallowed method shutdown rejected fail-closed
+  PASS  4.2 Disallowed tool rejected fail-closed
+  PASS  4.3 Frame exceeding 64KB refused without allocation
+
+[Suite 5] Credential Revocation & Recovery:
+[JAVA OUT] [INFO] HGBridge: bridge: session closed (relayed=5 rejected=0)
+  PASS  5.1 Revoking device severs active HGB1 connection
+  PASS  5.2 Offline MCP call truthfully indicates MI A3 OFFLINE
+[JAVA OUT] [INFO] HGBridge: bridge: connected to 127.0.0.1:19994 as hg-android-33c1a28110da1538
+  PASS  5.3 Re-authorized device automatically reconnects via exponential backoff
+  PASS  5.4 Reconnected bridge immediately services MCP requests
+
+========================================
+Cross-Language Test Results: 15 PASSED, 0 FAILED
+========================================
 ```
 
-#### 2. Handshake Acceptance (Coordinator -> Edge)
-```json
-{
-  "type": "bridge_auth_ok",
-  "session_id": "edge_sess_9a8b7c6d5e...",
-  "protocol_version": "2025-11-25",
-  "heartbeat_interval_ms": 15000
-}
+### Test Suite 2: Hermes 2 Adversarial Coordinator (`scripts/bridge_test_coordinator.py`)
+Executes Hermes 2's Python coordinator against the Java `ControlBridge` and native C++ `hg_mcp_server`:
+
+```
+--- Coordinator Output ---
+test coordinator listening on 127.0.0.1:19443
+  enrolment fingerprint: 304c3d9adf4f79eb
+
+--- session from 127.0.0.1:36096 ---
+  device_id=hg-android-2241575252b42d39 enrolment_fp=304c3d9adf4f79eb
+  coordinator ACCEPTED by the bridge
+  1 initialize                       PASS  
+  2 tools/list                       PASS  
+  3 tools/call status                PASS  
+  4 tools/call alert summary         PASS  
+  5 disallowed method rejected       PASS  error=method not allowed: shutdown
+  6 non-JSON-RPC rejected            PASS  error=malformed request
+  7 oversized frame refused          PASS  (connection closed)
+
+=== coordinator summary: 7/7 passed ===
 ```
 
-#### 3. MCP Request Dispatch (Coordinator -> Edge)
-```json
-{
-  "type": "mcp_request",
-  "correlation_id": "req_84f901c2ab4e...",
-  "client_session_id": "coord_sess_1234...",
-  "body": {
-    "jsonrpc": "2.0",
-    "id": 103,
-    "method": "tools/call",
-    "params": {
-      "name": "get_homeguardian_status",
-      "arguments": {}
-    }
-  },
-  "timestamp": 1773789425000
-}
+### Test Suite 3: Node-to-Node Unit Test Suite (`tests/test_outbound_mcp_bridge.js`)
+Executes `McpBridgeEdgeClient` + `McpBridgeCoordinator` + native C++ `hg_mcp_server`:
 ```
-
-#### 4. MCP Response Dispatch (Edge -> Coordinator)
-```json
-{
-  "type": "mcp_response",
-  "correlation_id": "req_84f901c2ab4e...",
-  "status_code": 200,
-  "body": {
-    "jsonrpc": "2.0",
-    "id": 103,
-    "result": {
-      "content": [
-        {
-          "type": "text",
-          "text": "{\"capture_enabled\":false,\"read_only\":true,\"state\":\"Running\"}"
-        }
-      ]
-    }
-  }
-}
+================================================================================
+  Tests completed: 17 passed, 0 failed
+================================================================================
 ```
 
 ---
 
-## 3. Security Invariants & Zero-Trust Bounds
+## 5. Hermes Session 2 Integration Checklist & Handoff
 
-1. **Strict Operation Allowlist:**
-   - **Permitted JSON-RPC Methods:** `initialize`, `notifications/initialized`, `tools/list`, `tools/call`, `ping`.
-   - **Permitted Tools:** `get_homeguardian_status`, `get_alert_summary`.
-   - **Prohibited:** Any attempt to invoke mutating tools (`set_capture_enabled`, `modify_security_rules`, etc.) or arbitrary methods (`system/exec`, `fs/read`) is rejected with HTTP 400 and error code `UNAUTHORIZED_TOOL` or `UNAUTHORIZED_OPERATION`.
-2. **Buffer & Queue Bounds:**
-   - Maximum frame size: **64 KB** (`65,536` bytes). Frames exceeding 64KB trigger immediate connection teardown (`4413 Payload Too Large`).
-   - Maximum in-flight requests: **8 concurrent calls**. Excess requests return `503 Service Unavailable` with `Retry-After: 2`.
-   - Request timeout: **5,000 ms**.
-3. **Heartbeat & Liveness Bounds:**
-   - Ping interval: **15,000 ms** (15s).
-   - Inactive timeout: **35,000 ms** (35s without ping triggers prune).
-4. **Credential Revocation:**
-   - Revocation in the Coordinator disconnects active sessions immediately with code `4403`.
-   - Subsequent reconnect attempts fail closed with code `4403`.
-   - Edge clients halt automatic reconnect loops upon receiving revocation.
-5. **No Public Wildcard Binding:**
-   - Coordinator rejects `0.0.0.0`, `::`, and `0`. Binds only to explicit loopback or WireGuard interface IPs.
+When deploying the updated bridge on the physical Xiaomi Mi A3 device:
 
----
-
-## 4. Hermes Session 2 Integration Contract (Android Edge)
-
-Hermes Session 2 is responsible for integrating the Edge Client into the Mi A3 Android environment (either via the foreground service in `apk/src/org/homeguardian/harness/` or a background companion daemon).
-
-### Recommended Android Java/Kotlin Reference Implementation (`OkHttp`)
-
-```java
-package org.homeguardian.harness;
-
-import okhttp3.*;
-import org.json.JSONObject;
-import java.util.concurrent.TimeUnit;
-
-public class OutboundMcpBridge {
-    private final OkHttpClient wsClient;
-    private final OkHttpClient localHttpClient;
-    private final String coordinatorUrl;
-    private final String deviceId;
-    private final String authToken;
-    private WebSocket webSocket;
-    private String localMcpSessionId = null;
-
-    public OutboundMcpBridge(String coordinatorUrl, String deviceId, String authToken) {
-        this.coordinatorUrl = coordinatorUrl;
-        this.deviceId = deviceId;
-        this.authToken = authToken;
-
-        this.wsClient = new OkHttpClient.Builder()
-            .pingInterval(15, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build();
-
-        this.localHttpClient = new OkHttpClient.Builder()
-            .connectTimeout(1, TimeUnit.SECONDS)
-            .readTimeout(3, TimeUnit.SECONDS)
-            .build();
-    }
-
-    public void start() {
-        Request request = new Request.Builder().url(coordinatorUrl).build();
-        webSocket = wsClient.newWebSocket(request, new WebSocketListener() {
-            @Override
-            public void onOpen(WebSocket ws, Response response) {
-                try {
-                    // Send mutual auth handshake frame
-                    JSONObject auth = new JSONObject();
-                    auth.put("type", "bridge_auth");
-                    auth.put("device_id", deviceId);
-                    auth.put("auth_token", authToken);
-                    auth.put("bridge_version", "1.0.0");
-                    auth.put("timestamp", System.currentTimeMillis());
-                    ws.send(auth.toString());
-                } catch (Exception e) {
-                    ws.close(1000, e.getMessage());
-                }
-            }
-
-            @Override
-            public void onMessage(WebSocket ws, String text) {
-                try {
-                    JSONObject msg = new JSONObject(text);
-                    String type = msg.optString("type");
-
-                    if ("mcp_request".equals(type)) {
-                        handleMcpRequest(ws, msg);
-                    }
-                } catch (Exception ignored) {}
-            }
-        });
-    }
-
-    private void handleMcpRequest(WebSocket ws, JSONObject msg) {
-        String corrId = msg.optString("correlation_id");
-        JSONObject body = msg.optJSONObject("body");
-        String method = body.optString("method");
-
-        // Allowlist check: reject mutating or unknown methods
-        if (!isPermittedMethod(method, body)) {
-            sendErrorResponse(ws, corrId, 400, "Method or tool not permitted by outbound security policy");
-            return;
-        }
-
-        // Forward to local C++ server on 127.0.0.1:8790
-        try {
-            RequestBody reqBody = RequestBody.create(
-                MediaType.parse("application/json"),
-                body.toString()
-            );
-
-            Request.Builder b = new Request.Builder()
-                .url("http://127.0.0.1:8790/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .header("Authorization", "Bearer " + getLocalMcpBearerToken())
-                .post(reqBody);
-
-            if (localMcpSessionId != null && !"initialize".equals(method)) {
-                b.header("Mcp-Session-Id", localMcpSessionId);
-            }
-
-            try (Response localRes = localHttpClient.newCall(b.build()).execute()) {
-                String respStr = localRes.body().string();
-                if ("initialize".equals(method)) {
-                    String sid = localRes.header("Mcp-Session-Id");
-                    if (sid != null) localMcpSessionId = sid;
-                }
-
-                JSONObject respFrame = new JSONObject();
-                respFrame.put("type", "mcp_response");
-                respFrame.put("correlation_id", corrId);
-                respFrame.put("status_code", localRes.code());
-                respFrame.put("body", new JSONObject(respStr));
-                ws.send(respFrame.toString());
-            }
-        } catch (Exception e) {
-            sendErrorResponse(ws, corrId, 502, "Local C++ forward error: " + e.getMessage());
-        }
-    }
-
-    private boolean isPermittedMethod(String method, JSONObject body) {
-        if ("initialize".equals(method) || "tools/list".equals(method) || "ping".equals(method)) {
-            return true;
-        }
-        if ("tools/call".equals(method)) {
-            JSONObject params = body.optJSONObject("params");
-            if (params == null) return false;
-            String tool = params.optString("name");
-            return "get_homeguardian_status".equals(tool) || "get_alert_summary".equals(tool);
-        }
-        return false;
-    }
-}
-```
-
----
-
-## 5. Verification Commands & Test Results
-
-The test suite exercises the mock coordinator and edge client against the live native C++ `hg_mcp_server` on loopback:
-
-```bash
-# Execute Outbound Bridge Test Suite (39 checks)
-bash scripts/test_outbound_bridge.sh
-
-# Or directly via Node.js
-node tests/test_outbound_mcp_bridge.js
-```
-
-### Current Test Results (100% Passing)
-
-| Test Suite | Checks Passed | Checks Failed | Status |
-| :--- | :--- | :--- | :--- |
-| **Suite 1: Outbound Mutual Authentication** | 5 | 0 | **PASS** |
-| **Suite 2: Streamable HTTP MCP Operations** | 14 | 0 | **PASS** |
-| **Suite 3: Operation Allowlist & Defense-in-Depth** | 5 | 0 | **PASS** |
-| **Suite 4: Client Authentication & Teardown** | 5 | 0 | **PASS** |
-| **Suite 5: Network Drop & Automatic Reconnect** | 5 | 0 | **PASS** |
-| **Suite 6: Credential Revocation** | 4 | 0 | **PASS** |
-| **Suite 7: Bounded Buffers & Payload Limits** | 1 | 0 | **PASS** |
-| **Total** | **39** | **0** | **100% PASS** |
-
----
-
-## 6. Truthful Demo Labeling & Blockers for Actual Remote Operation
-
-### Truthful Invariant Implementation
-The web dashboard (`web_mcp/public/index.html`) and gateway (`web_mcp/server.js`) strictly adhere to the truthful status invariant:
-- **When Mi A3 is offline/unreachable:**
-  - Status Badge: `○ LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE (2025-11-25)`
-  - Banner: `⚠️ LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE: Mi A3 offline. Serving queries via local C++ synthetic fixture. Zero physical camera streaming.`
-  - `hardwareVerified: false`
-- **When Mi A3 connects via Outbound Bridge:**
-  - Status Badge: `● EDGE: Xiaomi Mi A3 (Android 11 / ARM64 via Outbound Bridge) (2025-11-25)`
-  - Banner: `🛡️ AUTHENTICATED EDGE RUNTIME: Real native C++ MCP executing on Xiaomi Mi A3. Zero unauthorized camera exposure.`
-  - `hardwareVerified: true`
-
-### Remaining Blockers for Actual Remote Operation
-1. **Oracle VPS WireGuard Setup (Hermes 1 / Issue #14):**
-   - The WireGuard control-plane pilot on Oracle VPS must complete peering so the Mi A3 can establish its tunnel to the coordination node.
-   - Zero changes to mail services, SPF/DKIM, or production certificates.
-2. **Foreground Service Integration (Hermes 2 / Issue #15):**
-   - Incorporate the `OutboundMcpBridge` client logic into the Android foreground service so that battery optimization does not suspend the process when the screen is turned off.
-   - Do **not** replace the installed non-debuggable APK until an independently reviewed, signed release build is prepared.
+1. **Pull Candidate Code:**  
+   Checkout branch `feature/hg-net-02e-outbound-mcp-bridge`.
+2. **Rebuild APK:**  
+   Run `apk_service/build_service_apk.sh` to package the updated `ControlBridge.java` and JNI C++ engine into the release APK.
+3. **Provision Coordinator Endpoint:**  
+   Ensure `ControlBridge.configure(coordinatorVpnIp, coordinatorPort)` is supplied with the WireGuard IP of the Oracle VPS coordinator (e.g. `10.42.0.1:9443`).
+4. **Provision Enrolment Secret:**  
+   Read the 32-byte enrolment secret generated by the Mi A3 from `filesDir/bridge_enrol.json` and configure it in the coordinator's authorized device registry. Do NOT transfer the MCP bearer token.
+5. **Start Bridge Service:**  
+   Invoke `ControlBridge.start()` from the Android foreground service.
+6. **Physical Verification:**  
+   With the Mi A3 connected to WireGuard, screen locked/off, send authenticated MCP requests to the coordinator's HTTP ingress (`POST /mcp`) and verify `get_homeguardian_status` returns live hardware telemetry.
