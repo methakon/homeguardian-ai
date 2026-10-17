@@ -499,6 +499,10 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/camera/RegistryAuthorizer.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteConnector.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_boundary.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/SiteProfile.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/ControlChannel.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/DirectMediaPlanner.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_site_connectors.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp

@@ -9,18 +9,68 @@ SiteConnector::SiteConnector(ICameraAdapter& adapter,
                              const IDeviceAuthorizer& authorizer,
                              std::string credential_id,
                              EventSink sink,
-                             ConnectorConfig config)
+                             ConnectorConfig config,
+                             const SiteProfile* profile,
+                             ControlChannel* control)
     : adapter_(adapter),
       authorizer_(authorizer),
       credential_(std::move(credential_id)),
       sink_(std::move(sink)),
-      cfg_(config) {
+      cfg_(config),
+      profile_(profile),
+      control_(control) {
     status_.adapter_class = adapter_.adapter_class();
     status_.id = adapter_.id();
 }
 
 AuthorizationOutcome SiteConnector::authorize(Capability capability) const {
     return authorizer_.authorize(adapter_.id(), credential_, capability);
+}
+
+ConnectOutcome SiteConnector::scope_check() const {
+    // No profile bound: a development setup, nothing to enforce.
+    if (profile_ == nullptr) return ConnectOutcome::ok;
+
+    // A profile that is itself unusable reaches nothing. Fail closed.
+    if (!profile_->valid()) return ConnectOutcome::out_of_site_scope;
+
+    const std::string ip = adapter_.observed_ip();
+    if (ip.empty()) {
+        // We cannot evaluate reach. That is not permission - an unevaluable rule must not
+        // silently become an allow.
+        return ConnectOutcome::out_of_site_scope;
+    }
+    uint32_t host_order = 0;
+    if (!SiteProfile::parse_ipv4(ip, &host_order)) return ConnectOutcome::out_of_site_scope;
+    return profile_->permits(host_order) ? ConnectOutcome::ok : ConnectOutcome::out_of_site_scope;
+}
+
+void SiteConnector::send_control(ControlKind kind, const std::string& detail, int64_t now_ms) {
+    if (control_ == nullptr) return;
+    ControlMessage message;
+    message.kind = kind;
+    message.device = adapter_.id();
+    message.seq = ++control_seq_;
+    message.at_ms = static_cast<uint64_t>(now_ms < 0 ? 0 : now_ms);
+    // Bound the detail here rather than letting the channel refuse the whole message: the
+    // detail is a short reason, never a payload.
+    message.detail = detail.size() > ControlMessage::kMaxDetailChars
+                         ? detail.substr(0, ControlMessage::kMaxDetailChars)
+                         : detail;
+
+    const std::string wire = control_->encode(message);
+    if (wire.empty()) {
+        ++status_.control_refused;
+    } else {
+        ++status_.control_sent;
+    }
+}
+
+void SiteConnector::end_session(const std::string& reason) {
+    adapter_.stop_stream();
+    status_.streaming = false;
+    status_.session_active = false;
+    status_.session_termination_reason = reason;
 }
 
 Provenance SiteConnector::provenance_for_adapter() const {
@@ -86,27 +136,61 @@ bool SiteConnector::emit(DetectorStatus detector_status, const std::string& note
 }
 
 AuthorizationOutcome SiteConnector::register_device() {
+    if (scope_check() != ConnectOutcome::ok) {
+        status_.registered = false;
+        status_.out_of_site_scope = true;
+        send_control(ControlKind::authorization_result,
+                     "registration refused: camera outside this site's reach allowlist", 0);
+        return AuthorizationOutcome::unknown_device;
+    }
+    status_.out_of_site_scope = false;
+
     const AuthorizationOutcome outcome = authorize(Capability::video);
     if (is_denied(outcome)) {
         status_.registered = false;
         status_.last_denial = outcome;
+        send_control(ControlKind::authorization_result,
+                     std::string("registration refused: ") +
+                         authorization_outcome_to_string(outcome),
+                     0);
         return outcome;
     }
     status_.registered = true;
+    send_control(ControlKind::connector_register,
+                 profile_ != nullptr ? ("site=" + profile_->site_id) : std::string("no-site-profile"),
+                 0);
     return outcome;
 }
 
 ConnectOutcome SiteConnector::start() {
+    // 0. Reach. Multi-site isolation is checked BEFORE permission: a camera outside this
+    //    site's allowlist is not a device we may even ask about.
+    if (scope_check() != ConnectOutcome::ok) {
+        status_.out_of_site_scope = true;
+        status_.registered = false;
+        status_.streaming = false;
+        status_.session_active = false;
+        end_session("out_of_site_scope");
+        status_.last_connect = ConnectOutcome::out_of_site_scope;
+        send_control(ControlKind::stream_control,
+                     "stream refused: out_of_site_scope", 0);
+        emit(DetectorStatus::unavailable, "camera is outside this site's reach allowlist",
+             adapter_.frames_accounted(), 0, 0);
+        return status_.last_connect;
+    }
+    status_.out_of_site_scope = false;
+
     // 1. Permission. Never inferred from a previous success: a revocation that landed
     //    since the last call must be honoured now.
     const AuthorizationOutcome auth = authorize(Capability::video);
     if (is_denied(auth)) {
         status_.registered = false;
-        status_.streaming = false;
         status_.last_denial = auth;
         status_.stopped_by_authorization = true;
-        adapter_.stop_stream();
+        end_session(std::string("authorization:") + authorization_outcome_to_string(auth));
         status_.last_connect = ConnectOutcome::refused_unsafe_interface;
+        send_control(ControlKind::authorization_result,
+                     std::string("stream refused: ") + authorization_outcome_to_string(auth), 0);
         // No observation is emitted for a device we may not use.
         return status_.last_connect;
     }
@@ -129,6 +213,10 @@ ConnectOutcome SiteConnector::start() {
     const ConnectOutcome outcome = adapter_.start_stream(req);
     status_.last_connect = outcome;
     status_.streaming = adapter_.streaming();
+    status_.session_active = status_.streaming;
+    if (status_.streaming) {
+        send_control(ControlKind::stream_control, "stream started", 0);
+    }
 
     if (outcome == ConnectOutcome::refused_unsafe_interface) {
         // Camera 1's shape: the interface exists and is not safe to use. Report it as
@@ -160,9 +248,20 @@ size_t SiteConnector::pull_once(int64_t now_ms) {
         if (is_denied(auth)) {
             status_.last_denial = auth;
             status_.stopped_by_authorization = true;
-            adapter_.stop_stream();
-            status_.streaming = false;
+            end_session(std::string("authorization:") + authorization_outcome_to_string(auth));
             ++status_.pulls_denied;
+            // The control plane is told the session ended, and WHY - consent withdrawal and
+            // revocation are different events, and the kind names which one happened.
+            const ControlKind kind = (auth == AuthorizationOutcome::revoked)
+                                         ? ControlKind::revocation
+                                         : (auth == AuthorizationOutcome::consent_missing ||
+                                            auth == AuthorizationOutcome::capture_disabled)
+                                               ? ControlKind::consent_change
+                                               : ControlKind::session_terminated;
+            send_control(kind,
+                         std::string("session terminated: ") +
+                             authorization_outcome_to_string(auth),
+                         now_ms);
             // Nothing is emitted: an unauthorized device must never look like a quiet one.
             return accounted;
         }
@@ -181,12 +280,25 @@ size_t SiteConnector::pull_once(int64_t now_ms) {
     status_.streaming = adapter_.streaming();
     ++status_.pulls_allowed;
 
+    ++pull_seq_;
+    if (accounted > 0 && cfg_.telemetry_every_n_pulls != 0 &&
+        (pull_seq_ % cfg_.telemetry_every_n_pulls) == 0) {
+        send_control(ControlKind::telemetry,
+                     "frames=" + std::to_string(accounted) + " bytes=" + std::to_string(bytes),
+                     now_ms);
+    }
+
     if (accounted > 0) {
         emit(DetectorStatus::detected, "stream active", accounted, bytes, now_ms);
     } else if (status_.streaming) {
         emit(DetectorStatus::not_detected, "stream running, no frames in this window",
              accounted, 0, now_ms);
     } else {
+        end_session(std::string("transport:") + connect_outcome_to_string(status_.last_connect));
+        send_control(ControlKind::session_terminated,
+                     std::string("session ended: ") +
+                         connect_outcome_to_string(status_.last_connect),
+                     now_ms);
         emit(DetectorStatus::unavailable,
              std::string("transport ended: ") + connect_outcome_to_string(status_.last_connect),
              adapter_.frames_accounted(), 0, now_ms);
@@ -204,8 +316,8 @@ ConnectOutcome SiteConnector::reconnect(int64_t now_ms) {
     }
     ++status_.reconnects;
 
-    adapter_.stop_stream();
-    status_.streaming = false;
+    end_session("reconnect");
+    send_control(ControlKind::heartbeat, "reconnect attempt", now_ms);
 
     // Re-authorize BEFORE restarting. A device revoked while it was offline must not
     // come back just because the network did.
@@ -232,8 +344,19 @@ ConnectOutcome SiteConnector::reconnect(int64_t now_ms) {
 }
 
 void SiteConnector::stop() noexcept {
+    const bool was_active = status_.session_active;
     adapter_.stop_stream();
     status_.streaming = false;
+    status_.session_active = false;
+    if (was_active) {
+        status_.session_termination_reason = "operator_stop";
+    }
+}
+
+void SiteConnector::terminate_session(const std::string& reason, int64_t now_ms) {
+    if (!status_.session_active && !status_.streaming) return;   // idempotent
+    end_session(reason);
+    send_control(ControlKind::session_terminated, "terminated: " + reason, now_ms);
 }
 
 }  // namespace homeguardian::camera

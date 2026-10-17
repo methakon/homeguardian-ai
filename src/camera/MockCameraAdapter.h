@@ -73,6 +73,7 @@ public:
     const LogicalDeviceId& id() const override { return id_; }
     AdapterClass adapter_class() const override { return AdapterClass::mock; }
     std::string attachment_summary() const override { return attachment_; }
+    std::string observed_ip() const override { return observed_ip_; }
     CapabilitySet declared_capabilities() const override { return script_.capabilities; }
 
     ConnectOutcome probe() override;
@@ -90,12 +91,14 @@ public:
     uint32_t reads_performed() const { return reads_performed_; }
     uint32_t control_calls() const { return control_calls_; }
     ControlCommand last_control() const { return last_control_; }
+    void set_observed_ip(std::string ip) { observed_ip_ = std::move(ip); }
     void set_forced_outcome(ConnectOutcome outcome) { forced_outcome_opt_ = outcome; }
     void clear_forced_outcome() { forced_outcome_opt_.reset(); }
 
 private:
     LogicalDeviceId id_;
     std::string attachment_;
+    std::string observed_ip_{};   // attachment only; never identity, never authorization
     MockScript script_;
     bool streaming_ = false;
     std::optional<ConnectOutcome> forced_outcome_opt_{};   // when set, overrides script_

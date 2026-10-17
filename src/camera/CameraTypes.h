@@ -169,7 +169,8 @@ enum class ConnectOutcome {
     stream_absent,             // connected, but no media is being offered
     capability_absent,         // asked for something this device does not declare
     transport_closed,          // closed mid-operation (normal for this family)
-    refused_unsafe_interface   // the interface exists but is not safe to use
+    refused_unsafe_interface,  // the interface exists but is not safe to use
+    out_of_site_scope          // outside this connector's configured reach allowlist
 };
 
 inline const char* connect_outcome_to_string(ConnectOutcome o) {
@@ -181,6 +182,7 @@ inline const char* connect_outcome_to_string(ConnectOutcome o) {
         case ConnectOutcome::capability_absent:       return "capability_absent";
         case ConnectOutcome::transport_closed:        return "transport_closed";
         case ConnectOutcome::refused_unsafe_interface: return "refused_unsafe_interface";
+        case ConnectOutcome::out_of_site_scope:        return "out_of_site_scope";
     }
     return "unknown";
 }

@@ -31,6 +31,9 @@
 #include "ICameraAdapter.h"
 #include "IDeviceAuthorizer.h"
 
+#include "ControlChannel.h"
+#include "SiteProfile.h"
+
 #include "core/Observation.h"
 
 #include <cstdint>
@@ -52,6 +55,10 @@ struct ConnectorConfig {
     // transition; higher values allow periodic refresh. Never unbounded: a device that
     // stays unreachable must not flood the pipeline.
     uint32_t reannounce_unavailable_every = 0;
+
+    // How often a successful pull also sends a telemetry control message. 0 = never.
+    // Bounded on purpose: the hub carries control, and control stays low-volume.
+    uint32_t telemetry_every_n_pulls = 10;
 };
 
 struct ConnectorStatus {
@@ -60,6 +67,8 @@ struct ConnectorStatus {
 
     bool registered = false;            // the authorization check succeeded at registration
     bool streaming = false;
+    bool session_active = false;        // a live session exists and may still be used
+    bool out_of_site_scope = false;     // the camera failed the site reach allowlist
 
     uint64_t frames_accounted = 0;
     uint32_t pulls_allowed = 0;
@@ -76,8 +85,14 @@ struct ConnectorStatus {
     // device went away" from "we withdrew permission", which are different incidents.
     bool stopped_by_authorization = false;
 
+    // Control-channel accounting. `control_refused` counts messages the channel itself
+    // refused (oversized or malformed) - a signal worth surfacing rather than hiding.
+    uint64_t control_sent = 0;
+    uint64_t control_refused = 0;
+
     AuthorizationOutcome last_denial = AuthorizationOutcome::allowed;
     ConnectOutcome last_connect = ConnectOutcome::ok;
+    std::string session_termination_reason{};
 };
 
 class SiteConnector {
@@ -86,17 +101,27 @@ public:
     // `[&](const homeguardian::Event& e) { pipeline.process(e); }`.
     using EventSink = std::function<void(const homeguardian::Event&)>;
 
+    // `profile` and `control` are BORROWED and optional; both may be null, in which case
+    // reach checking and hub messaging are simply not performed (a development setup).
     SiteConnector(ICameraAdapter& adapter,
                   const IDeviceAuthorizer& authorizer,
                   std::string credential_id,
                   EventSink sink,
-                  ConnectorConfig config = {});
+                  ConnectorConfig config = {},
+                  const SiteProfile* profile = nullptr,
+                  ControlChannel* control = nullptr);
 
     const LogicalDeviceId& id() const { return adapter_.id(); }
 
     // Ask the authorizer. Exposed so a caller can check before acting, and so a test
     // can assert the exact refusal reason.
     AuthorizationOutcome authorize(Capability capability) const;
+
+    // Check the camera's OBSERVED address against the bound site profile's reach
+    // allowlist. `ok` when no profile is bound; `out_of_site_scope` when one is bound and
+    // the address is outside it, or cannot be evaluated at all - an unevaluable reach rule
+    // must not become permission.
+    ConnectOutcome scope_check() const;
 
     // Register/report this device. Requires authorization for `video`; records the
     // outcome either way and never throws.
@@ -117,8 +142,14 @@ public:
     // resume: authorization is re-evaluated before the adapter is restarted.
     ConnectOutcome reconnect(int64_t now_ms);
 
+    // End the session deliberately (operator action, or a termination received from the
+    // control plane). Idempotent.
+    void terminate_session(const std::string& reason, int64_t now_ms);
+
     void stop() noexcept;
 
+    bool session_active() const { return status_.session_active; }
+    bool has_site_profile() const { return profile_ != nullptr; }
     const ConnectorStatus& status() const { return status_; }
 
 private:
@@ -127,6 +158,13 @@ private:
     bool emit(DetectorStatus detector_status, const std::string& note,
               uint64_t frames, uint32_t bytes, int64_t now_ms);
 
+    // Send one control message over the attached channel, if any. Counts what the channel
+    // refused. Never throws, never blocks. Media has no representation here.
+    void send_control(ControlKind kind, const std::string& detail, int64_t now_ms);
+
+    // Stop the adapter and mark the session dead, without emitting anything.
+    void end_session(const std::string& reason);
+
     Provenance provenance_for_adapter() const;
 
     ICameraAdapter& adapter_;
@@ -134,12 +172,16 @@ private:
     std::string credential_;
     EventSink sink_;
     ConnectorConfig cfg_;
+    const SiteProfile* profile_ = nullptr;
+    ControlChannel* control_ = nullptr;
     ConnectorStatus status_{};
 
     bool has_emitted_ = false;
     DetectorStatus last_emitted_status_ = DetectorStatus::unavailable;
     uint64_t observation_seq_ = 0;
     uint32_t consecutive_unavailable_ = 0;
+    uint64_t pull_seq_ = 0;
+    uint64_t control_seq_ = 0;
 };
 
 }  // namespace homeguardian::camera

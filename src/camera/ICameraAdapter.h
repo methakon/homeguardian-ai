@@ -48,6 +48,13 @@ public:
     // never use this for an authorization decision, and must not treat it as identity.
     virtual std::string attachment_summary() const = 0;
 
+    // The address this adapter actually reached, as an OBSERVATION. It is used for exactly
+    // one thing: checking the camera against the site profile's REACH allowlist (multi-site
+    // isolation). It is never an identity and never an authorization input. An adapter that
+    // cannot observe an address returns empty, and a connector with a site profile then
+    // refuses rather than assuming.
+    virtual std::string observed_ip() const { return {}; }
+
     // ---- what the adapter CLAIMS the device can do ----
     // A declaration is not a grant. The connector still consults the authorizer before
     // any frame or control command.
