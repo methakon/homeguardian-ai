@@ -1165,13 +1165,13 @@
               }
             } else {
               if (badge) {
-                badge.innerText = `○ FIXTURE: ${s.targetBadge || 'Local Fixture'} (${s.protocolVersion})`;
+                badge.innerText = `○ ${s.targetBadge || 'LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE'} (${s.protocolVersion})`;
               }
               if (bannerText) {
-                bannerText.innerHTML = `⚠️ <strong>SYNTHETIC DEMO FIXTURE:</strong> Mi A3 offline. Serving queries via local C++ synthetic fixture. Zero physical camera streaming.`;
+                bannerText.innerHTML = `⚠️ <strong>LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE:</strong> Mi A3 offline. Serving queries via local C++ synthetic fixture. Zero physical camera streaming.`;
               }
               if (bannerBadge) {
-                bannerBadge.innerText = 'LOCAL FIXTURE • MI A3 OFFLINE';
+                bannerBadge.innerText = 'LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE';
               }
             }
           }

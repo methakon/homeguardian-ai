@@ -32,7 +32,7 @@ let mcpServerLog = [];
 
 let activeRuntime = {
   mode: 'synthetic_fixture', // 'hardware' | 'synthetic_fixture'
-  target: 'Local Synthetic Fixture (Mi A3 Offline)',
+  target: 'LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE',
   verified: false,
   endpoint: `http://127.0.0.1:${MCP_PORT}/mcp`,
 };
@@ -952,7 +952,7 @@ async function main() {
       await startNativeMcpServer(repoRoot, binPath);
       activeRuntime = {
         mode: 'synthetic_fixture',
-        target: 'Local Synthetic Fixture (Mi A3 Offline)',
+        target: 'LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE',
         verified: false,
         endpoint: MCP_URL,
       };
@@ -961,7 +961,7 @@ async function main() {
     await startNativeMcpServer(repoRoot, binPath);
     activeRuntime = {
       mode: 'synthetic_fixture',
-      target: 'Local Synthetic Fixture (Mi A3 Offline)',
+      target: 'LOCAL SYNTHETIC FIXTURE — MI A3 OFFLINE',
       verified: false,
       endpoint: MCP_URL,
     };
