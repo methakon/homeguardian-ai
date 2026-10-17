@@ -588,7 +588,7 @@ existing D-03 mutual-TLS ingress) for anything beyond loopback, a server-initiat
 a client needs one, `resources/*` and `prompts/*` capabilities, per-token quotas, and session
 resumability.
 
-## HG-EDGE-01 / HG-EDGE-02 / HG-EDGE-03 — Mi A3 edge device (EXPERIMENTAL, unmerged)
+## HG-EDGE-01 / HG-EDGE-02 / HG-EDGE-03 / HG-EDGE-04 — Mi A3 edge device (EXPERIMENTAL, unmerged)
 
 **Status:** experimental work on `experiment/mi-a3-edge` (HG-EDGE-01),
 `experiment/mi-a3-edge-sec02` (the same work re-validated on the corrected SHA) and
@@ -648,3 +648,24 @@ coordinate printed, no hardware purchased. Thresholds and allowlists unchanged; 
 proposed interface additions are additive (accuracy, confidence, and a staleness
 bound) and **not implemented** — the measurement step in section 9.3 is the
 prerequisite.
+
+**HG-EDGE-04 (toolkit done and proven over USB; wireless pairing PENDING):** removing
+the permanently-attached USB cable via Android 11's native TLS Wireless Debugging. New
+manual `docs/EDGE_WIRELESS_DEVELOPMENT_MI_A3.md` and an isolated `scripts/edge_dev/`
+toolkit (connect, pair, deploy, status, test, logs, disconnect). Every script verifies
+the target against **multiple** identifiers and has no "use the only attached device"
+fallback — necessary because this phone's USB descriptor reports itself as a *Redmi Note
+3*, and a spoofing MT6580 clone shares the same port. 12/12 MCP checks pass over an
+`adb forward` on loopback, with the server's loopback-only binding asserted by the
+absence of an all-interfaces listener; sanitized log collection yields 0 redaction
+leaks. A correction was produced: the handling order in `McpHttpServer.cpp` is size
+(413) → encoding (501) → malformed (400) → **auth (401)** → method (405) / session
+(400), so an unauthenticated request can only ever return 401 for GET/DELETE — the
+`GET → 405` recorded for the earlier SHA does not hold for this one. Two honest limits:
+Wireless Debugging cannot be enabled or disabled from adb (the framework resets the
+global setting), so it needs one phone-screen action; and the production build's bearer
+token is unreadable without root by design, so full host-side authenticated MCP testing
+requires the debuggable test build the brief asks for. Bluetooth was assessed and
+rejected as a substitute (adbd has no Bluetooth transport; PAN is ~30–60× slower and
+would still need the forbidden `adb tcpip`). No root, ROM change, port forwarding,
+tunnelling or LAN exposure; MCP stays loopback-only; no sensitive permission requested.
