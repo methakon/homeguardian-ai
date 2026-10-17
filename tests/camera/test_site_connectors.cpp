@@ -139,35 +139,35 @@ TEST_CASE("Site profile: reach rules parse strictly and fail closed",
     Logger::initialize("error");
 
     Ipv4Cidr c{};
-    REQUIRE(Ipv4Cidr::parse("192.168.1.0/24", &c));
-    REQUIRE(c.contains(0xC0A80114u));       // 192.168.1.20
-    REQUIRE_FALSE(c.contains(0x0A140005u)); // 10.20.0.5
+    REQUIRE(Ipv4Cidr::parse("10.20.30.0/24", &c));
+    REQUIRE(c.contains(0x0A141E14u));       // 10.20.30.20
+    REQUIRE_FALSE(c.contains(0x0A142805u)); // 10.20.0.5
     REQUIRE(Ipv4Cidr::parse("10.0.0.0/8", &c));
-    REQUIRE(c.contains(0x0A140005u));
+    REQUIRE(c.contains(0x0A142805u));
 
     // A bare address is NOT a reach rule, and a bad prefix is refused rather than
     // defaulting to something permissive.
-    REQUIRE_FALSE(Ipv4Cidr::parse("192.168.1.0", &c));
-    REQUIRE_FALSE(Ipv4Cidr::parse("192.168.1.0/33", &c));
-    REQUIRE_FALSE(Ipv4Cidr::parse("192.168.1.0/x", &c));
+    REQUIRE_FALSE(Ipv4Cidr::parse("10.20.1.0", &c));
+    REQUIRE_FALSE(Ipv4Cidr::parse("10.20.1.0/33", &c));
+    REQUIRE_FALSE(Ipv4Cidr::parse("10.20.1.0/x", &c));
     REQUIRE_FALSE(Ipv4Cidr::parse("999.1.1.0/24", &c));
-    REQUIRE_FALSE(Ipv4Cidr::parse("192.168.1/24", &c));
+    REQUIRE_FALSE(Ipv4Cidr::parse("10.20.1/24", &c));
 
     // An empty allowlist reaches NOTHING (it does not mean "reach everything").
-    SiteProfile empty = profile_for(kSiteA, kConnA, "192.168.1.0/24");
+    SiteProfile empty = profile_for(kSiteA, kConnA, "10.20.30.0/24");
     empty.allowed_camera_subnets.clear();
     REQUIRE_FALSE(empty.valid());
-    REQUIRE_FALSE(empty.permits(0xC0A80114u));
+    REQUIRE_FALSE(empty.permits(0x0A141E14u));
 
     // A profile with no connector credential is unusable, so it reaches nothing.
-    SiteProfile no_cred = profile_for(kSiteA, kConnA, "192.168.1.0/24");
+    SiteProfile no_cred = profile_for(kSiteA, kConnA, "10.20.30.0/24");
     no_cred.connector_credential_id.clear();
     REQUIRE_FALSE(no_cred.valid());
-    REQUIRE_FALSE(no_cred.permits(0xC0A80114u));
+    REQUIRE_FALSE(no_cred.permits(0x0A141E14u));
 
     // The connector's own identity is a logical id and refuses an address.
-    SiteProfile bad_id = profile_for(kSiteA, kConnA, "192.168.1.0/24");
-    bad_id.connector_device_id = "192.168.1.3";
+    SiteProfile bad_id = profile_for(kSiteA, kConnA, "10.20.30.0/24");
+    bad_id.connector_device_id = "10.20.30.3";
     REQUIRE_FALSE(bad_id.valid());
 }
 
@@ -176,7 +176,7 @@ TEST_CASE("Site profile: reach rules parse strictly and fail closed",
 TEST_CASE("Multi-site isolation: a connector cannot reach another site's camera",
           "[sites][isolation]") {
     Fixture fx;
-    const SiteProfile site_a = profile_for(kSiteA, kConnA, "192.168.1.0/24");
+    const SiteProfile site_a = profile_for(kSiteA, kConnA, "10.20.30.0/24");
     const SiteProfile site_b = profile_for(kSiteB, kConnB, "10.20.0.0/16");
 
     // The camera is observed at 10.20.0.5 — site B's subnet.
@@ -207,7 +207,7 @@ TEST_CASE("Multi-site isolation: a connector cannot reach another site's camera"
 TEST_CASE("Site scope: an unevaluable reach rule is not permission",
           "[sites][isolation]") {
     Fixture fx;
-    const SiteProfile site_a = profile_for(kSiteA, kConnA, "192.168.1.0/24");
+    const SiteProfile site_a = profile_for(kSiteA, kConnA, "10.20.30.0/24");
 
     // The adapter cannot report where it reached. We therefore cannot show the camera is in
     // this site, so we refuse rather than assume.
@@ -231,18 +231,18 @@ TEST_CASE("Site scope: an unevaluable reach rule is not permission",
 TEST_CASE("An address is an attachment: the same logical device keeps its authorization when it moves",
           "[sites][identity][dynamic-ip]") {
     Fixture fx;
-    const SiteProfile site_a = profile_for(kSiteA, kConnA, "192.168.1.0/24");
+    const SiteProfile site_a = profile_for(kSiteA, kConnA, "10.20.30.0/24");
 
     // Observed endpoint record: it starts at the old development address and moves.
     ObservedEndpoint endpoint;
     endpoint.device = cam_id();
     endpoint.first_seen_ms = 1000;
-    endpoint.reobserve("192.168.1.20", "192.168.1.0/24", 2000);
-    REQUIRE(endpoint.observed_ip == "192.168.1.20");
+    endpoint.reobserve("10.20.30.20", "10.20.30.0/24", 2000);
+    REQUIRE(endpoint.observed_ip == "10.20.30.20");
     REQUIRE(endpoint.observation_count == 1);
 
     // The camera moves to a NAT'ed segment address that is still inside the site's allowlist.
-    endpoint.reobserve("192.168.0.164", "192.168.0.0/24", 3000);
+    endpoint.reobserve("10.20.40.164", "10.20.40.0/24", 3000);
     REQUIRE(endpoint.observation_count == 2);
     REQUIRE(endpoint.device.canonical() == cam_id().canonical());   // identity did NOT change
 
@@ -252,7 +252,7 @@ TEST_CASE("An address is an attachment: the same logical device keeps its author
 
     // And a move to an address OUTSIDE the allowlist is refused, without changing identity,
     // consent or the registry record.
-    SiteProfile narrow = profile_for(kSiteA, kConnA, "192.168.0.0/24");
+    SiteProfile narrow = profile_for(kSiteA, kConnA, "10.20.40.0/24");
     MockCameraAdapter moved = camera_at("10.20.0.5");
     SiteConnector connector(moved, fx.authorizer, kCamCred, fx.sink(), {}, &narrow, &fx.channel);
     REQUIRE(connector.scope_check() == ConnectOutcome::out_of_site_scope);
@@ -412,8 +412,8 @@ TEST_CASE("Direct media: the control hub is never a media path",
 TEST_CASE("Control plane: a connector registers and reports on the wire, control only",
           "[sites][control]") {
     Fixture fx;
-    const SiteProfile site_a = profile_for(kSiteA, kConnA, "192.168.1.0/24");
-    MockCameraAdapter adapter = camera_at("192.168.1.20");
+    const SiteProfile site_a = profile_for(kSiteA, kConnA, "10.20.30.0/24");
+    MockCameraAdapter adapter = camera_at("10.20.30.20");
     SiteConnector connector(adapter, fx.authorizer, kCamCred, fx.sink(), {}, &site_a, &fx.channel);
 
     REQUIRE(connector.register_device() == AuthorizationOutcome::allowed);
@@ -445,8 +445,8 @@ TEST_CASE("Control plane: a connector registers and reports on the wire, control
 TEST_CASE("Revocation and consent withdrawal terminate a live session, and say which happened",
           "[sites][control][revocation]") {
     Fixture fx;
-    const SiteProfile site_a = profile_for(kSiteA, kConnA, "192.168.1.0/24");
-    MockCameraAdapter adapter = camera_at("192.168.1.20");
+    const SiteProfile site_a = profile_for(kSiteA, kConnA, "10.20.30.0/24");
+    MockCameraAdapter adapter = camera_at("10.20.30.20");
     // One frame per pull, so "a frame is accounted for, then a denial stops everything" is
     // an explicit step rather than a consequence of the default batch size.
     ConnectorConfig cfg;
@@ -488,8 +488,8 @@ TEST_CASE("Revocation and consent withdrawal terminate a live session, and say w
 TEST_CASE("Telemetry on the control channel is bounded, not per-frame",
           "[sites][control][bounds]") {
     Fixture fx;
-    const SiteProfile site_a = profile_for(kSiteA, kConnA, "192.168.1.0/24");
-    MockCameraAdapter adapter = camera_at("192.168.1.20");
+    const SiteProfile site_a = profile_for(kSiteA, kConnA, "10.20.30.0/24");
+    MockCameraAdapter adapter = camera_at("10.20.30.20");
     ConnectorConfig cfg;
     cfg.max_frames_per_pull = 1;
     cfg.telemetry_every_n_pulls = 2;

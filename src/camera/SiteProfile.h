@@ -135,8 +135,8 @@ struct SiteProfile {
 // device's identity, consent or permissions.
 struct ObservedEndpoint {
     LogicalDeviceId device{};
-    std::string observed_ip{};        // e.g. "192.168.1.20"
-    std::string observed_subnet{};    // e.g. "192.168.1.0/24"
+    std::string observed_ip{};        // e.g. "10.0.0.20"
+    std::string observed_subnet{};    // e.g. "10.0.0.0/24"
     std::string observed_ssid{};      // may be empty; never logged by default
     NatClass nat_class = NatClass::unknown;
     uint64_t first_seen_ms = 0;

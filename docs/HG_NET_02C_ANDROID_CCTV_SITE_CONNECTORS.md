@@ -29,7 +29,7 @@ has no demonstrated sensor output of any kind.
 |---|---|---|---|
 | **V380 camera 1** (`cam.v380.ec39.01`) | **No.** Nothing has shown these embedded units can run WireGuard | Site connector inside its LAN. Its ONVIF/RTSP stays **OFF** (anonymous media, measured) | `HG_V380_04`, `HG_V380_06` |
 | **V380 camera 2** (`cam.v380.ec39.02`) | **No**, same reason | Site connector inside its LAN. No standard media/auth interface exists, so there is nothing for a connector to consume today | `HG_V380_08`, `HG_V380_09` |
-| **Android CCTV phone** (Panasonic ELUGA I7, `192.168.1.16`) | **Possibly** — non-root, via Android `VpnService`, and only with the on-device VPN consent prompt approved by the owner | As a peer; its camera/microphone acquisition already runs through the existing consent gates, and it uploads no media by default | `HG_V380_09` device notes; issue #15 governs the Mi A3 equivalent |
+| **Android CCTV phone** (Panasonic ELUGA I7, LAN address withheld) | **Possibly** — non-root, via Android `VpnService`, and only with the on-device VPN consent prompt approved by the owner | As a peer; its camera/microphone acquisition already runs through the existing consent gates, and it uploads no media by default | `HG_V380_09` device notes; issue #15 governs the Mi A3 equivalent |
 | **Mi A3** (production host) | Yes — but that is issue #15's deliverable, not this one | As the HomeGuardian host, and as a *candidate* connector host if it is co-located with a camera | issue #15 |
 | **Development workstation / Ubuntu Docker** | Test peer only | Optional; **not** required for 24/7 operation | owner architecture statement |
 
@@ -44,9 +44,9 @@ Legend: **IDENTITY** = the durable logical id · **REACH** = the configured allo
 
 | Site / device | IDENTITY (logical) | REACH (allowlist) | CONTROL path | MEDIA path | PREREQ status |
 |---|---|---|---|---|---|
-| **Site `site.home.dev`** (where both cameras actually are) | connector `site.home.dev/connector.edge.01`; cameras `…/cam.v380.ec39.01`, `…/cam.v380.ec39.02` | `192.168.1.0/24` (camera 2 also moved through `192.168.0.0/24`) | Site connector → hub: register, heartbeat, authorization, consent/revocation, stream control, bounded telemetry | Direct: `direct_same_site` (the usual case today) or `direct_ice`; `site_uplink` if the viewer is remote. **Never the hub** | **UNMET — no always-on host exists inside this LAN.** The workstation is not always-on, so nothing currently hosts the connector |
+| **Site `site.home.dev`** (where both cameras actually are) | connector `site.home.dev/connector.edge.01`; cameras `…/cam.v380.ec39.01`, `…/cam.v380.ec39.02` | `10.20.30.0/24` (camera 2 also moved through a different private subnet) | Site connector → hub: register, heartbeat, authorization, consent/revocation, stream control, bounded telemetry | Direct: `direct_same_site` (the usual case today) or `direct_ice`; `site_uplink` if the viewer is remote. **Never the hub** | **UNMET — no always-on host exists inside this LAN.** The workstation is not always-on, so nothing currently hosts the connector |
 | **Remote site (any future camera)** | `site.<name>/connector.<id>` | that site's own subnets only | same | same | **UNMET by definition** — no remote site, no host, no camera |
-| **Android CCTV phone** (potential peer) | a device peer identity, never `192.168.1.16` | n/a (it is a peer, not a connector) | via the overlay once #14/#15 land | n/a for CCTV; its own camera is a consented local sensor | **UNMET — needs on-device VPN consent (owner action) and an Android `VpnService` client (issue #15's workstream)** |
+| **Android CCTV phone** (potential peer) | a device peer identity, never a LAN address | n/a (it is a peer, not a connector) | via the overlay once #14/#15 land | n/a for CCTV; its own camera is a consented local sensor | **UNMET — needs on-device VPN consent (owner action) and an Android `VpnService` client (issue #15's workstream)** |
 | **Development workstation** | dev tester only | n/a | n/a | n/a | available, but must never be the 24/7 answer |
 
 **Hardware prerequisite, stated once and plainly:** every camera site needs one **always-on host**
@@ -66,7 +66,7 @@ against the real `net::DeviceRegistry`:
 | **Isolation** — a connector bound to site A cannot reach a camera observed in site B's subnets | **PASS.** `scope_check()` → `out_of_site_scope`; `register_device()` refused; `start()` refused; **zero frames accounted**; and the device is simultaneously *reachable* and *authorized in the registry* — neither of which is permission to collect from another site |
 | **Unevaluable reach is not permission** | **PASS.** With a profile bound and no observed address, the connector refuses instead of assuming |
 | **Reach failure changes nothing about the device record** | **PASS.** Paired, consented and capture-enabled all still hold after a scope refusal |
-| **Identity is not an address** | **PASS.** The same logical device moves from `192.168.1.20` to `192.168.0.164`, keeps its identity, and keeps its authorization; a move *outside* the allowlist is refused without altering identity, consent or the registry record |
+| **Identity is not an address** | **PASS.** The same logical device moves from one private address to another, keeps its identity, and keeps its authorization; a move *outside* the allowlist is refused without altering identity, consent or the registry record |
 | **Control vocabulary has no media member** | **PASS.** Every kind name is asserted free of `video`/`audio`/`frame`/`media`; a 32 KiB payload is **refused, not truncated**; a control message with an over-long detail is refused; malformed wire forms, unknown kinds and invalid identities are refused |
 | **Telemetry is bounded, not per-frame** | **PASS.** With `telemetry_every_n_pulls = 2`, six pulls produce exactly three telemetry messages, and no message on the wire is frame-sized |
 | **Control-only on the wire** | **PASS.** Every captured message is a well-formed control message within the ceiling |
@@ -111,7 +111,7 @@ peer-side transport from the other workstreams.
 | Consumer | What it needs from here |
 |---|---|
 | **#14 (Oracle hub, Hermes 1)** | The hub may carry exactly the kinds in `ControlChannel`: register, heartbeat, authorization, consent, revocation, ICE candidate, stream control, session terminated, telemetry. The client side now refuses anything else, including frame-sized payloads — so "measure VPS bytes to prove no media" has a client-side counterpart that makes media an encoding failure, not a bandwidth surprise |
-| **#15 (Mi A3, Hermes 2)** | If the Mi A3 is permanently co-located with the cameras it becomes the natural connector host; otherwise a separate always-on host is required per site. Its peer identity must be a device identity, never `192.168.1.x` |
+| **#15 (Mi A3, Hermes 2)** | If the Mi A3 is permanently co-located with the cameras it becomes the natural connector host; otherwise a separate always-on host is required per site. Its peer identity must be a device identity, never a LAN address |
 | **#17 (MCP ingress, Antigravity)** | Camera *control* over the hub is separate from MCP application authorization. VPN peer authentication does not authenticate an MCP caller, and nothing here weakens that |
 
 ## 7. Standing constraints, honoured

@@ -144,9 +144,9 @@ TEST_CASE("Camera boundary: logical identity is validated and an address can nev
 
     // An address in an identity field is refused: both real cameras have already
     // changed address once, so this is an identity bug waiting to happen.
-    REQUIRE_FALSE(LogicalDeviceId{kSite, "192.168.1.19"}.valid());
-    REQUIRE_FALSE(LogicalDeviceId{"192.168.1.20", kDev}.valid());
-    REQUIRE(LogicalDeviceId::is_ipv4_literal("192.168.0.164"));
+    REQUIRE_FALSE(LogicalDeviceId{kSite, "10.20.1.19"}.valid());
+    REQUIRE_FALSE(LogicalDeviceId{"10.20.1.20", kDev}.valid());
+    REQUIRE(LogicalDeviceId::is_ipv4_literal("10.20.0.164"));
     REQUIRE(LogicalDeviceId::is_ipv4_literal("10.0.0.1"));
 
     // Not every dotted string is an address, and a non-address must still be usable.

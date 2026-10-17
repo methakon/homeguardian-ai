@@ -18,7 +18,7 @@
 //   1. Identity is logical. A camera is identified by {site_id, device_id}; an IP
 //      address, MAC, SSID or subnet is an ATTRIBUTE that may change at any moment and
 //      is never an authorization input. (Both cameras already moved once: one from a
-//      NAT'ed 192.168.0.x segment to 192.168.1.20.)
+//      NAT'ed segment to a different subnet.)
 //   2. A mock can never be reported as a real camera. `AdapterClass` is carried
 //      through the whole path and the connector derives an Observation's provenance
 //      from it, so "the mock tests pass" can never be read as "V380 media works".
@@ -53,7 +53,7 @@ struct LogicalDeviceId {
 
     // True when the whole string is a dotted-quad IPv4 literal. Used to REFUSE an
     // address as an identity: both cameras have already changed address once (one
-    // moved from a NAT'ed 192.168.0.x segment to 192.168.1.20), so an address in an
+    // moved from one NAT'ed subnet to another), so an address in an
     // identity field is a latent identity bug, not a stylistic one.
     static bool is_ipv4_literal(const std::string& s) {
         int groups = 0;

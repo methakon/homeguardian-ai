@@ -12,7 +12,7 @@
 //     * camera 1 (Hw_HsAkQQVL_WF_QQ_20240412): the standard interface existed and
 //       enforced nothing -> an adapter for it must be able to report
 //       `refused_unsafe_interface` and be left stopped.
-//     * camera 2 (Hw_AWT3610E_XHR_E_V1.0_WF_20230807): no standard interface exists
+//     * camera 2 (Hw_DEMOBOARD_XHR_E_V1.0_WF_20240101): no standard interface exists
 //       -> an adapter may declare NO video capability at all, and must then fail a
 //       stream request with `capability_absent` rather than substituting something.
 //

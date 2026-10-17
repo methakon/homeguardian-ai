@@ -503,6 +503,9 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/camera/ControlChannel.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/DirectMediaPlanner.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_site_connectors.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/DeviceFingerprint.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/CameraInventory.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_inventory.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
