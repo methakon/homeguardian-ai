@@ -174,3 +174,55 @@ verified above.
 | Service independence from ADB | **PASS** |
 
 No Mi A3, Oracle VPS, Cloudflare, mail infrastructure or security release branch was modified.
+
+## 10. Final USB-free acceptance — ATTEMPTED, item 1 FAILS
+
+The owner reported the USB cable was physically disconnected. **The device disagrees.** Verified
+four independent ways, because this contradicts the report:
+
+| check | result |
+|---|---|
+| `adb devices -l` | `LRW86SC6RO8TZ99H  device  usb:2-3` — **USB transport present** |
+| `adb -s LRW86SC6RO8TZ99H get-state` | `device` — live, not a stale adb entry |
+| real command over the USB serial | returned `USB_TRANSPORT_ALIVE` and `ELUGA_I7_EE` |
+| `lsusb` | `Bus 002 Device 071: ID 0e8d:201c MediaTek Inc. ELUGA_I7_EE` |
+| `/sys/bus/usb/devices/2-3/serial` | `LRW86SC6RO8TZ99H`, manufacturer `PANASONIC` |
+
+So **"USB transport is absent" is FALSE on this run.** The USB device number moved from `067`
+(HG-CAM-07) to `071`, so something re-enumerated — consistent with a plug event, so the cable may
+have been unplugged and re-seated, or a different cable/end was pulled. USB-free acceptance is
+therefore **NOT CLAIMED**.
+
+What the run *did* establish, and it is still worth having:
+
+| item | result |
+|---|---|
+| 1. USB transport absent | **FAIL** — cable is in (evidence above) |
+| 2. Wi-Fi identity matches Panasonic | **PASS** — `ELUGA_I7_EE` / `k39tv1_64_a27` / `arm64-v8a` / API 28, MAC `8c:c5:e1:ee:18:f5` |
+| 3. Shell / bounded logcat | **PASS** — 14,006 logcat lines retrievable over Wi-Fi |
+| 3. APK deployment over Wi-Fi | **PASS** — `Success`, 4.1 s wall time |
+| 3. App launch + restart over Wi-Fi | **PASS** — `pid=4669`, `isForeground=true`, stop -> 0 service records |
+| 4. Mi A3 never selected | **PASS** — every command used `-s 192.168.1.16:5555`; Mi A3 read only to confirm it is a different device |
+| 5. No persistent insecure ADB config | **PASS** — see below |
+
+### Why the Wi-Fi results are still meaningful with USB attached
+
+`-s 192.168.1.16:5555` can only match the TCP transport: a TCP device's adb serial *is* the
+`host:port` string, while the USB device's serial is `LRW86SC6RO8TZ99H`. Those are different
+serials, so **no Wi-Fi command could silently fall back to USB.** Independence was also shown in
+the other direction: dropping the Wi-Fi endpoint left the USB transport working on its own.
+
+### Item 5 — no persistent insecure configuration was introduced
+
+    persist.adb.tcp.port   (would SURVIVE reboot)  -> ''      correct: not set
+    service.adb.tcp.port   (runtime only)          -> '5555'  cleared by reboot, as measured
+    adb_wifi_enabled       (Android 11+ setting)   -> null    not applicable on Android 9
+    router configuration changed                   -> NONE    (no router login available)
+
+So the TCP listener is a *transient runtime state*, not a persisted one, and it does not survive a
+reboot — re-confirmed earlier by a real reboot (`boot_count` 168->169, `service.adb.tcp.port`
+empty, 0 listeners on 5555, `Connection refused`). No root, firmware, or insecure persistent
+setting was used to change that.
+
+**To close item 1:** unplug the Panasonic's USB data cable, confirm `adb devices` no longer lists
+`LRW86SC6RO8TZ99H`, and re-run the four checks above. Only then is USB-free operation claimable.
