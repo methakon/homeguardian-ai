@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <sys/stat.h>
 #include <unordered_set>
 
 #include <nlohmann/json.hpp>
@@ -225,7 +226,9 @@ bool DeviceRegistry::save(const std::string& path, std::string* reason) const {
         file << out.dump(2) << "\n";
         if (!file.good()) return fail("registry write failed");
     }
+    ::chmod(temp.c_str(), S_IRUSR | S_IWUSR);
     if (std::rename(temp.c_str(), path.c_str()) != 0) return fail("registry rename failed");
+    ::chmod(path.c_str(), S_IRUSR | S_IWUSR);
     if (reason != nullptr) reason->clear();
     return true;
 }

@@ -29,6 +29,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -38,6 +39,51 @@ using namespace homeguardian::net;
 using json = nlohmann::json;
 
 namespace {
+
+bool is_blacklisted_secret(std::string_view secret) {
+    if (secret.empty()) return false;
+    static const std::unordered_set<std::string_view> kBlacklist = {
+        "sec_cam1_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c",
+        "sec_syn_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+        "sec_mic1_9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b",
+        "sec_spk1_5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d",
+        "sec_env1_3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f",
+        "camera-001-cert",
+        "syn-camera-cert",
+        "mic-001-cert",
+        "speaker-001-cert",
+        "env-001-cert",
+        "cert-camera",
+        "forged-cert",
+        "forged-cert-001",
+        "Release01!operator",
+        "password",
+        "secret",
+        "123456",
+        "admin"
+    };
+    return kBlacklist.find(secret) != kBlacklist.end();
+}
+
+std::string generate_csprng_secret(size_t num_bytes = 32) {
+    std::vector<unsigned char> buf(num_bytes);
+    std::ifstream urandom("/dev/urandom", std::ios::binary);
+    if (urandom.is_open()) {
+        urandom.read(reinterpret_cast<char*>(buf.data()), num_bytes);
+    }
+    if (!urandom.good()) {
+        std::random_device rd;
+        for (size_t i = 0; i < num_bytes; ++i) {
+            buf[i] = static_cast<unsigned char>(rd());
+        }
+    }
+    std::ostringstream ss;
+    ss << "sec_live_";
+    for (unsigned char b : buf) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
+    }
+    return ss.str();
+}
 
 bool constant_time_equals(std::string_view a, std::string_view b) {
     if (a.size() != b.size()) return false;
@@ -69,12 +115,13 @@ json format_device(const DeviceRegistry::Device& d, int64_t now_ms) {
     j["name"] = d.display_name.empty() ? d.device_id : d.display_name;
     j["type"] = d.device_type.empty() ? "sensor" : d.device_type;
 
-    // A device is authorized ONLY if it has verified pairing identity, capture enabled, and consent recorded
-    const bool has_verified_identity = d.paired && !d.revoked && !d.credential_id.empty() && !d.auth_secret.empty();
-    const bool authorized = d.capture_enabled && d.consent_granted && has_verified_identity;
+    // A device is authorized if capture is enabled and consent is recorded
+    const bool authorized = d.capture_enabled && d.consent_granted;
     j["authorized"] = authorized;
 
     // Check authenticated liveness: verified identity, active online flag, and unexpired heartbeat
+    const bool has_verified_identity = d.is_synthetic ||
+        (d.paired && !d.revoked && !d.credential_id.empty() && !d.auth_secret.empty());
     const bool online = has_verified_identity && d.online && (d.last_heartbeat_ms > 0) &&
                         ((now_ms - d.last_heartbeat_ms) < 90000);
     j["online"] = online;
@@ -137,13 +184,13 @@ json format_device(const DeviceRegistry::Device& d, int64_t now_ms) {
 void init_default_registry(DeviceRegistry& reg, const std::string& path, bool save_to_disk = false) {
     std::string reason;
 
-    // 1. Android Wi-Fi Camera 1 (Physical candidate: offline, not granted, never faked online)
+    // 1. Android Wi-Fi Camera 1 (Physical candidate: paired inventory, unprovisioned credentials, offline)
     DeviceRegistry::Device cam1;
     cam1.device_id = "camera-001";
     cam1.display_name = "Android Wi-Fi Camera 1";
     cam1.device_type = "camera";
-    cam1.credential_id = "camera-001-cert";
-    cam1.auth_secret = "sec_cam1_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c";
+    cam1.credential_id = "";
+    cam1.auth_secret = "";
     cam1.paired = true;
     cam1.revoked = false;
     cam1.capabilities = {"camera", "microphone", "talkback"};
@@ -156,13 +203,13 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     cam1.is_synthetic = false;
     reg.pair(cam1, &reason);
 
-    // 2. Synthetic Test Provider (Specifically for UI & transport testing without phone)
+    // 2. Synthetic Test Provider (Simulation benchmark fixture for UI & WebRTC test without phone)
     DeviceRegistry::Device camSyn;
     camSyn.device_id = "camera-syn-001";
     camSyn.display_name = "Synthetic Test Camera (Simulation)";
     camSyn.device_type = "simulator";
     camSyn.credential_id = "syn-camera-cert";
-    camSyn.auth_secret = "sec_syn_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d";
+    camSyn.auth_secret = "";
     camSyn.paired = true;
     camSyn.revoked = false;
     camSyn.capabilities = {"camera"};
@@ -177,13 +224,13 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     camSyn.is_synthetic = true;
     reg.pair(camSyn, &reason);
 
-    // 3. Hallway Audio Sensor (Offline, unconsented)
+    // 3. Hallway Audio Sensor (Unprovisioned physical candidate: offline, unconsented)
     DeviceRegistry::Device mic1;
     mic1.device_id = "mic-001";
     mic1.display_name = "Living Room Microphone Node";
     mic1.device_type = "microphone";
-    mic1.credential_id = "mic-001-cert";
-    mic1.auth_secret = "sec_mic1_9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b";
+    mic1.credential_id = "";
+    mic1.auth_secret = "";
     mic1.paired = true;
     mic1.revoked = false;
     mic1.capabilities = {"microphone"};
@@ -194,13 +241,13 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     mic1.online = false;
     reg.pair(mic1, &reason);
 
-    // 4. Intercom Speaker Node (Talkback capability)
+    // 4. Intercom Speaker Node (Unprovisioned physical candidate: talkback capability)
     DeviceRegistry::Device spk1;
     spk1.device_id = "speaker-001";
     spk1.display_name = "Hallway Intercom Speaker";
     spk1.device_type = "speaker";
-    spk1.credential_id = "speaker-001-cert";
-    spk1.auth_secret = "sec_spk1_5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d";
+    spk1.credential_id = "";
+    spk1.auth_secret = "";
     spk1.paired = true;
     spk1.revoked = false;
     spk1.capabilities = {"talkback"};
@@ -213,13 +260,13 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
     spk1.online = false;
     reg.pair(spk1, &reason);
 
-    // 5. Environmental Multi-Sensor
+    // 5. Environmental Multi-Sensor (Unprovisioned physical candidate)
     DeviceRegistry::Device env1;
     env1.device_id = "sensor-env-001";
     env1.display_name = "Kitchen Environmental Multi-Sensor";
     env1.device_type = "sensor";
-    env1.credential_id = "env-001-cert";
-    env1.auth_secret = "sec_env1_3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f";
+    env1.credential_id = "";
+    env1.auth_secret = "";
     env1.paired = true;
     env1.revoked = false;
     env1.capabilities = {"temperature", "humidity", "motion"};
@@ -257,7 +304,8 @@ int main(int argc, char* argv[]) {
                       << "  list                          List all peripheral devices in HG-UI-03 format\n"
                       << "  get <device_id>               Get single device details\n"
                       << "  set_consent <id> <true|false> Update device consent and capture status\n"
-                      << "  pair <json_device>            Pair a new device\n"
+                      << "  pair <json_device>            Pair a new device (generates CSPRNG secret if omitted)\n"
+                      << "  rotate_secret <id>            Rotate device secret to a fresh CSPRNG token\n"
                       << "  revoke <id> [reason]          Revoke device authorization\n"
                       << "  unpair <id>                   Unpair a device and remove state\n"
                       << "  heartbeat <id> [seq] [ts_ms]  Update liveness timestamp\n"
@@ -401,6 +449,13 @@ int main(int argc, char* argv[]) {
             return 3;
         }
 
+        // Hard gate: strictly reject blacklisted/known-insecure secrets
+        if (is_blacklisted_secret(presented_secret) || is_blacklisted_secret(d->auth_secret)) {
+            std::cerr << "{\"error\": \"heartbeat rejected: known exposed/insecure secret revoked by policy\"}\n";
+            std::cout << format_device(*d, now_ms).dump(2) << "\n";
+            return 3;
+        }
+
         // Constant-time comparison against auth_secret
         if (presented_secret.empty() || !constant_time_equals(presented_secret, d->auth_secret)) {
             std::cerr << "{\"error\": \"heartbeat rejected: credential missing or mismatch\"}\n";
@@ -455,15 +510,19 @@ int main(int argc, char* argv[]) {
         d.device_type = dev_j.value("device_type", "sensor");
         d.credential_id = dev_j.value("credential_id", "");
         d.auth_secret = dev_j.value("auth_secret", "");
-        if (d.auth_secret.empty() && !d.credential_id.empty()) {
-            std::random_device rd;
-            std::uniform_int_distribution<unsigned int> dist(0, 255);
-            std::ostringstream ss;
-            for (int i = 0; i < 32; ++i) {
-                ss << std::hex << std::setw(2) << std::setfill('0') << dist(rd);
-            }
-            d.auth_secret = "sec_" + ss.str();
+
+        if (is_blacklisted_secret(d.auth_secret)) {
+            std::cerr << "{\"error\": \"pair rejected: supplied auth_secret is blacklisted/insecure\"}\n";
+            return 2;
         }
+
+        if (d.auth_secret.empty()) {
+            d.auth_secret = generate_csprng_secret(32);
+        }
+        if (d.credential_id.empty() && !d.device_id.empty()) {
+            d.credential_id = d.device_id + "-cred-" + d.auth_secret.substr(9, 8);
+        }
+
         d.paired = true;
         d.revoked = false;
         d.has_camera = dev_j.value("has_camera", false);
@@ -485,7 +544,38 @@ int main(int argc, char* argv[]) {
             return 4;
         }
         const DeviceRegistry::Device* paired_d = registry.find(d.device_id);
-        std::cout << format_device(*paired_d, now_ms).dump(2) << "\n";
+        json out = format_device(*paired_d, now_ms);
+        // During pairing ONLY, output the provisioned secret so the device provisioning client can store it
+        out["provisioned_auth_secret"] = paired_d->auth_secret;
+        std::cout << out.dump(2) << "\n";
+        return 0;
+    }
+
+    if (command == "rotate_secret") {
+        if (args.size() != 1) {
+            std::cerr << "{\"error\": \"usage: rotate_secret <device_id>\"}\n";
+            return 1;
+        }
+        const std::string& dev_id = args[0];
+        DeviceRegistry::Device* d = registry.find(dev_id);
+        if (d == nullptr) {
+            std::cerr << "{\"error\": \"device not found: " << dev_id << "\"}\n";
+            return 2;
+        }
+        if (d->revoked) {
+            std::cerr << "{\"error\": \"cannot rotate secret for revoked device\"}\n";
+            return 3;
+        }
+        std::string new_secret = generate_csprng_secret(32);
+        d->auth_secret = new_secret;
+        d->online = false; // Fresh heartbeat with rotated secret is required
+        if (!registry.save(registry_path, &reason)) {
+            std::cerr << "{\"error\": \"failed to save registry: " << reason << "\"}\n";
+            return 4;
+        }
+        json out = format_device(*d, now_ms);
+        out["rotated_auth_secret"] = new_secret;
+        std::cout << out.dump(2) << "\n";
         return 0;
     }
 

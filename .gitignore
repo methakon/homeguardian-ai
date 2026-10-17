@@ -113,3 +113,6 @@ hg_d03_*
 
 # Node dependencies
 node_modules/
+
+# Distribution archives
+dist/

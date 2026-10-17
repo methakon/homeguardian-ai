@@ -273,7 +273,8 @@ async function runSuite() {
     assert(cam1.authorized === false, `Unauthorized state verified (capture withheld)`);
     assert(cam1.stream_state === 'inactive', `Initial stream_state is 'inactive'`);
     assert(cam1.last_seen === null, `Unseen physical device reports last_seen: null`);
-    assert(cam1.has_credential === true, `cam1 has_credential is true`);
+    assert(cam1.has_credential === false, `cam1 has_credential is false (unprovisioned physical candidate)`);
+    assert(cam1.paired === true, `cam1 paired is true (registered device candidate)`);
     assert(cam1.credential_id === undefined, `cam1 credential_id is NOT disclosed in public listing`);
     assert(cam1.auth_secret === undefined, `cam1 auth_secret is NOT disclosed in public listing`);
     for (const dev of devRes.body) {
@@ -335,8 +336,12 @@ async function runSuite() {
     });
     assert(micTokenRes.status === 400, `View token for audio-only microphone refused HTTP 400 (capability_missing)`);
 
-    // P0-2 & P0-3 Regressions: Device type restriction and credential separation
-    console.log('\n[P0-2 & P0-3] Simulator Type Restriction and Heartbeat Credential Separation');
+    // -----------------------------------------------------------------
+    // HG-SEC-06: Device Secrets, CSPRNG Generation, Rotation & Revocation
+    // -----------------------------------------------------------------
+    console.log('\n[HG-SEC-06] Device Secret Lifecycle & CSPRNG Credential Hardening');
+
+    // 1. Simulator restriction invariant
     let pairForgedSimFailed = false;
     try {
       execFileSync(cliPath, [
@@ -357,6 +362,7 @@ async function runSuite() {
     }
     assert(pairForgedSimFailed, `Pairing device_type simulator for non-authoritative id rejected`);
 
+    // 2. Non-allowlisted device type rejected
     let pairUnknownTypeFailed = false;
     try {
       execFileSync(cliPath, [
@@ -375,18 +381,146 @@ async function runSuite() {
     }
     assert(pairUnknownTypeFailed, `Pairing non-allowlisted device_type rejected`);
 
-    // Public credential replay rejection on heartbeat
+    // 3. Blacklisted exposed secret rejected on pairing
+    let pairBlacklistedFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'pair',
+        JSON.stringify({
+          device_id: 'cam-evil-001',
+          display_name: 'Evil Camera',
+          device_type: 'camera',
+          auth_secret: 'sec_cam1_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c', // Known exposed secret
+          has_camera: true,
+          capabilities: ['camera'],
+        }),
+      ]);
+    } catch (e) {
+      pairBlacklistedFailed = true;
+    }
+    assert(pairBlacklistedFailed, `Pairing with known published/blacklisted secret rejected`);
+
+    // 4. Secure physical device pairing with CSPRNG secret generation
+    const pairRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'pair',
+      JSON.stringify({
+        device_id: 'cam-live-001',
+        display_name: 'Android Live Physical Camera',
+        device_type: 'camera',
+        has_camera: true,
+        consent_granted: true,
+        capture_enabled: true,
+        capabilities: ['camera', 'microphone'],
+      }),
+    ]).toString('utf-8');
+    const pairResult = JSON.parse(pairRaw);
+    assert(pairResult.id === 'cam-live-001', `Explicit pairing created cam-live-001`);
+    assert(typeof pairResult.provisioned_auth_secret === 'string', `Pairing returned provisioned_auth_secret`);
+    assert(pairResult.provisioned_auth_secret.startsWith('sec_live_'), `Secret has sec_live_ prefix`);
+    assert(pairResult.provisioned_auth_secret.length === 73, `Secret is 256-bit CSPRNG hex (73 chars with prefix)`);
+    const liveSecret = pairResult.provisioned_auth_secret;
+
+    // 5. Query registry over public API: secret must NEVER be disclosed in get or list
+    const devListAfterPair = await request('GET', '/api/devices', { Cookie: sessionCookie });
+    const liveDev = devListAfterPair.body.find(d => d.id === 'cam-live-001');
+    assert(!!liveDev, `Found newly paired device cam-live-001 in registry`);
+    assert(liveDev.has_credential === true, `cam-live-001 has_credential is true`);
+    assert(liveDev.credential_id === undefined, `cam-live-001 credential_id is NOT disclosed in public API`);
+    assert(liveDev.auth_secret === undefined, `cam-live-001 auth_secret is NOT disclosed in public API`);
+    assert(liveDev.provisioned_auth_secret === undefined, `cam-live-001 provisioned_auth_secret is NOT disclosed in public API`);
+
+    // 6. Hard gate: Reject heartbeat presenting public credential_id
     let replayHbFailed = false;
     try {
       execFileSync(cliPath, [
-        '--registry', configPath, 'heartbeat', 'camera-001', '1', String(Date.now()),
+        '--registry', configPath, 'heartbeat', 'cam-live-001', '1', String(Date.now()),
       ], {
-        env: { ...process.env, HG_DEVICE_CREDENTIAL: 'camera-001-cert' },
+        env: { ...process.env, HG_DEVICE_CREDENTIAL: liveDev.id },
       });
     } catch (e) {
       replayHbFailed = true;
     }
     assert(replayHbFailed, `Heartbeat presenting public credential_id rejected`);
+
+    // 7. Hard gate: Reject heartbeat presenting blacklisted secret
+    let blacklistedHbFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'heartbeat', 'cam-live-001', '1', String(Date.now()),
+      ], {
+        env: { ...process.env, HG_DEVICE_SECRET: 'sec_cam1_7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c' },
+      });
+    } catch (e) {
+      blacklistedHbFailed = true;
+    }
+    assert(blacklistedHbFailed, `Heartbeat presenting known published/blacklisted secret rejected`);
+
+    // 8. Authenticated heartbeat with valid CSPRNG secret
+    const hbSuccessRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'heartbeat', 'cam-live-001', '1', String(Date.now()),
+    ], {
+      env: { ...process.env, HG_DEVICE_SECRET: liveSecret },
+    }).toString('utf-8');
+    const hbSuccess = JSON.parse(hbSuccessRaw);
+    assert(hbSuccess.online === true, `Heartbeat with valid CSPRNG secret sets online: true`);
+    assert(hbSuccess.last_seen !== null, `Heartbeat records ISO timestamp in last_seen`);
+
+    // 9. Secret rotation (CLI command: rotate_secret <id>)
+    const rotateRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'rotate_secret', 'cam-live-001',
+    ]).toString('utf-8');
+    const rotateResult = JSON.parse(rotateRaw);
+    assert(typeof rotateResult.rotated_auth_secret === 'string', `Secret rotation issued rotated_auth_secret`);
+    assert(rotateResult.rotated_auth_secret !== liveSecret, `Rotated secret differs from old secret`);
+    assert(rotateResult.online === false, `Device transitioned to offline pending heartbeat with new secret`);
+    const rotatedSecret = rotateResult.rotated_auth_secret;
+
+    // 10. Old secret is immediately revoked upon rotation
+    let oldSecretHbFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'heartbeat', 'cam-live-001', '2', String(Date.now()),
+      ], {
+        env: { ...process.env, HG_DEVICE_SECRET: liveSecret },
+      });
+    } catch (e) {
+      oldSecretHbFailed = true;
+    }
+    assert(oldSecretHbFailed, `Heartbeat presenting old pre-rotation secret rejected`);
+
+    // 11. Heartbeat with rotated secret succeeds
+    const hbRotatedRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'heartbeat', 'cam-live-001', '2', String(Date.now()),
+    ], {
+      env: { ...process.env, HG_DEVICE_SECRET: rotatedSecret },
+    }).toString('utf-8');
+    const hbRotated = JSON.parse(hbRotatedRaw);
+    assert(hbRotated.online === true, `Heartbeat with rotated secret successfully restores online: true`);
+
+    // 12. Revocation of paired device
+    const revokeRaw = execFileSync(cliPath, [
+      '--registry', configPath, 'revoke', 'cam-live-001', 'security audit revocation',
+    ]).toString('utf-8');
+    const revokeResult = JSON.parse(revokeRaw);
+    assert(revokeResult.revoked === true, `cam-live-001 revoked: true`);
+
+    // 13. Revoked device heartbeat is unconditionally rejected
+    let revokedHbFailed = false;
+    try {
+      execFileSync(cliPath, [
+        '--registry', configPath, 'heartbeat', 'cam-live-001', '3', String(Date.now()),
+      ], {
+        env: { ...process.env, HG_DEVICE_SECRET: rotatedSecret },
+      });
+    } catch (e) {
+      revokedHbFailed = true;
+    }
+    assert(revokedHbFailed, `Heartbeat for revoked device unconditionally rejected`);
+
+    // 14. Strict registry file permissions (0600)
+    const fileStat = fs.statSync(configPath);
+    const modeOctal = (fileStat.mode & 0o777).toString(8);
+    assert(modeOctal === '600', `Registry file permissions enforced at 0600 (owner-only read/write, got 0${modeOctal})`);
 
     // -----------------------------------------------------------------
     // TEST 8: WebRTC Signaling & Connection
