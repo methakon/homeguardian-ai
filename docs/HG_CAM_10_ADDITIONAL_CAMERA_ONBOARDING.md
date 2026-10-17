@@ -72,25 +72,41 @@ Discovery services: **no** mDNS answers for `_rtsp`, `_onvif`, `_http` or the ve
 **no** ONVIF WS-Discovery responder for `NetworkVideoTransmitter`. Consistent with camera 1's ONVIF
 being disabled and with cameras 2 and 3 offering no standard interface to advertise.
 
-## 3. Registry onboarding (issue step 3) — **BLOCKED on one owner input**
+## 3. Registry onboarding (issue step 3) — **PASS (privately verified)**
 
-Camera 3 is recorded as a **candidate**, which is the honest state: it is a distinct device that has
-been seen, and it is **not** a registered camera.
-
-The onboarding gate (in code, `CameraInventory::onboard`) requires all of:
+Camera 3 is now a registered device. The onboarding gate (in code, `CameraInventory::onboard`)
+requires all three of:
 
 1. a valid **durable** fingerprint (a randomized MAC is refused outright),
 2. a **stable owner-provided device identifier** that is not an IP address,
 3. an **explicit owner authorization** for that device.
 
-Gates 1 and 3 are satisfied. **Gate 2 is blocked:** the V380 app's own identifier can only be read
-from the owner's screenshots, and the Drive folder holding them requires a Google sign-in in this
-session's browser profile, with no Google Drive connector available to this Hermes profile. I did not
-attempt to work around an authentication wall.
+The owner supplied a V380 Pro screenshot of the camera's own **General** settings page, which
+carries the Device ID and the Equipment Model. It was read with **local OCR** (tesseract, on this
+machine); the configured vision backend rejected the request outright because its API key is
+invalid, so no image was processed by any remote service. The identifier is **not** in this
+repository — the record and the identifier are held in the owner-restricted evidence file, and the
+committed code and tests use synthetic fingerprints and identities throughout.
 
-**Owner action:** share the Drive folder by link, or paste the screenshots. The values needed are the
-app's device identifier, the app-reported firmware/system version, and the IP/MAC block it displays.
-Nothing else.
+The registration artifact was then verified against the real parser: it loads, it reports exactly
+one authorized camera record, and a later observation of the **same NIC at a new address** resolves
+as `known_moved` with the logical identity unchanged. That is the DHCP-churn guarantee, tested
+against the real registration rather than a fixture.
+
+**Finding worth keeping: the model string could not have done this job.** The screenshot's
+Equipment Model is the V380 platform model code, and it is **the same code as camera 1's**. Cameras
+1 and 3 are therefore the same hardware family — which means neither the model string nor the
+vendor product name can tell those two units apart. The per-unit Device ID is the only app-side
+identifier that distinguishes them, and that is precisely why the gate demands an owner-provided
+identity instead of accepting a model, a product name or an address. (The device in the screenshot
+is not shown to be camera 1, because camera 1 is independently accounted for on the LAN in the same
+pass in which the third unit appears.)
+
+**Still not verified for this unit:** firmware/software version, IP/MAC as the app reports them, and
+the retail model number with its specification table (chip, sensor, resolution, lens, PTZ range).
+Those need the "View device QR Code" screen, the firmware-information screen for this device, the
+"Reception" screen (Wi-Fi + IP), or the retail box. None of them are needed for registration; they
+are needed before any specification or media claim about camera 3 is written.
 
 ## 4. Reuse of the site-connector framework (issue step 4) — PASS (code) / BLOCKED (deployment)
 
@@ -173,9 +189,9 @@ New `[inventory]` suite: **8 cases, 257 assertions, all passing.** Full suite: *
 
 | Item | Status | Basis |
 |---|---|---|
-| Device identified | **PASS** | three distinct units from fingerprint + port signature + simultaneous presence; owner-app identity still missing |
+| Device identified | **PASS** | three distinct units from fingerprint + port signature + simultaneous presence, **and** the owner-supplied app identifier for the third unit |
 | LAN reachable | **PASS** | live, responding, documented ports measured; camera 2's old address confirmed absent |
-| Registry onboarding | **BLOCKED** | needs the owner-provided V380 identifier (Drive access) |
+| Registry onboarding | **PASS** | owner-supplied V380 identifier recorded privately; the record loads through the real parser and binds across an address change |
 | Authenticated camera connection | **FAIL** | no standard interface exists; proprietary path forbidden |
 | Video | **BLOCKED** | same blocker; no live feed exists and none is claimed |
 | Microphone audio | **BLOCKED** | not independently testable; no interface |
@@ -193,13 +209,19 @@ New `[inventory]` suite: **8 cases, 257 assertions, all passing.** Full suite: *
 | Private addresses, device IDs and credentials stay out of public GitHub | Honoured **in this document and this milestone's code/tests** (synthetic fingerprints throughout). See the exposure note below |
 | Do not claim a working live camera feed until demonstrated on the physical device | No such claim appears anywhere |
 
-## 11. Finding for the owner: pre-existing exposure in this public repository
+## 11. Owner-specific values in this public repository
 
-The repository is **public**, and the previously pushed `experiment/hg-v380-*` branches contain real
-LAN addresses and MAC addresses of the owner's cameras and handsets in their discovery evidence. They
-are **not** on `main`. This milestone's own files are sanitized.
+The repository is public. Earlier milestones' evidence documents carried real LAN addresses, MAC
+addresses, the Wi-Fi name and firmware version strings, and this milestone's own first commit briefly
+did the same in comments and tests. **All of it has now been redacted** (owner-approved): evidence
+documents use placeholders with a privacy notice, and documents, scripts and tests that merely needed
+an example address use a neutral range. A scan over every tracked file finds no remaining real MAC, no
+private host address, no Wi-Fi name, no firmware version string and no device identifier.
 
-Redacting those documents would not recall what has already been fetched or mirrored; it only reduces
-further exposure. Because that is a judgement call about already-published evidence — and because
-those documents are also hackathon audit material — it is left for an explicit owner decision rather
-than done unilaterally.
+Recorded plainly for the owner: redaction reduces **future** exposure. Values that were already
+cloned, fetched or mirrored cannot be recalled by these commits, and git history still contains them.
+Removing them from history would require a rewrite and force-push, which was not requested and is not
+done here.
+
+The camera-3 Device ID, its per-unit MAC and its LAN address live only in the owner-restricted
+evidence file outside every repository, together with the seed file the code consumes.
