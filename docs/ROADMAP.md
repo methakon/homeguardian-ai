@@ -175,7 +175,7 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| F-01 | HTTP server | C-03 | REST API for dashboard and alerts | DONE (in scope) — implemented as the native C++ loopback transport `hg_alexa_bridge --http` (GET-only subset, no external dependency). Boost.Beast deliberately NOT adopted (dependency-avoidance). Broader/production REST (auth, TLS, full HTTP) remains absent. |
+| F-01 | HTTP server | C-03 | REST API for dashboard and alerts | DONE (in scope) — implemented as the native C++ loopback transport `hg_alexa_bridge --http` (loopback read subset, no external dependency; state-changing endpoints require authenticated session & CSRF). Boost.Beast deliberately NOT adopted (dependency-avoidance). Broader/production REST (public TLS, OAuth provider) remains absent. |
 | F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | DEFERRED / SUPERSEDED — Route B selected (simulated Alexa+ experience); no MCP server is implemented or claimed. |
 | F-03 | Alexa+ integration | F-02 | Alexa+ can invoke HomeGuardian tools | DEFERRED — no live Alexa+ identity/device integration. The in-repo simulated Alexa+ web experience is NOT equivalent to production Alexa+ integration. |
 
@@ -271,7 +271,7 @@ criteria; the structured logger already emits a durable record.
 - **F-01 "HTTP server (Boost.Beast) — REST API for dashboard and alerts":**
   **superseded / satisfied in scope.** A loopback REST-ish API for the dashboard
   and alerts now exists as the **native `hg_alexa_bridge --http`** transport
-  (GET-only subset, no external dependency), rather than Boost.Beast. The
+  (read subset with authenticated state mutations, no external dependency), rather than Boost.Beast. The
   original dependency choice is deliberately NOT adopted (dependency-avoidance
   goal). Not a production HTTP server: no TLS, no real auth, handwritten subset.
 - **G-01 "Web dashboard (HTML/CSS/JS) — shows events and status":**

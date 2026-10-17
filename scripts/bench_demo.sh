@@ -20,7 +20,7 @@ BRIDGE="${HG_BRIDGE_PATH:-$REPO_ROOT/hg_build/hg_alexa_bridge}"
 CONFIG="$REPO_ROOT/config/homeguardian.demo.json"
 DEMO_SERVER="$REPO_ROOT/src/bridge/hg_demo_server.js"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"; kill %1 %2 2>/dev/null' EXIT
+trap 'rm -rf "$WORK"; pkill -f "hg_alexa_bridge.*8320" 2>/dev/null || true; pkill -f "hg_demo_server.*8321" 2>/dev/null || true; kill %1 %2 2>/dev/null || true' EXIT
 
 [[ -x "$BRIDGE" ]] || { echo "bridge not built at $BRIDGE"; exit 2; }
 cat > "$WORK/creds.json" <<'JSON'
@@ -83,8 +83,11 @@ measure_impl() {
     echo "  CPU% (sample): $(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d ' ')"
   fi
 
-  kill "$pid" 2>/dev/null
-  pkill -f "$label" 2>/dev/null
+  kill "$pid" 2>/dev/null || true
+  pkill -P "$pid" 2>/dev/null || true
+  pkill -f "hg_alexa_bridge.*$port" 2>/dev/null || true
+  pkill -f "hg_demo_server.*$port" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
   sleep 0.3
 }
 

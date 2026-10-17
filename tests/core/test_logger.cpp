@@ -25,14 +25,18 @@ TEST_CASE("Logger get throws when not initialized", "[logger]") {
 }
 
 TEST_CASE("Logger file output", "[logger]") {
-    // Since logger is initialized to homeguardian.log
+    const std::string test_log = "/tmp/hg_test_log_" + std::to_string(::getpid()) + ".log";
+    std::filesystem::remove(test_log);
+    Logger::reset();
+    Logger::initialize("info", test_log);
+
     auto logger = Logger::get();
     logger->info("Test log message");
     logger->flush();
-    
-    std::ifstream log_file("homeguardian.log");
+
+    std::ifstream log_file(test_log);
     REQUIRE(log_file.is_open());
-    
+
     std::string line;
     bool found = false;
     while (std::getline(log_file, line)) {
@@ -41,7 +45,9 @@ TEST_CASE("Logger file output", "[logger]") {
             break;
         }
     }
-    
+    log_file.close();
+    std::filesystem::remove(test_log);
+
     REQUIRE(found);
 }
 
@@ -63,18 +69,19 @@ TEST_CASE("Logger: an unwritable working directory does not abort initialization
     const std::string dir = "/tmp/hg_logger_v21_" + std::to_string(::getpid());
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir + "/homeguardian.log");
-    REQUIRE(::chdir(dir.c_str()) == 0);
+    const std::string unwritable_log = dir + "/homeguardian.log";
 
     bool threw = false;
     try {
-        Logger::initialize("error");
+        Logger::initialize("error", unwritable_log);
     } catch (...) {
         threw = true;
     }
     auto logger = Logger::get();
 
-    // Restore the working directory first so a later failure cannot strand it.
-    REQUIRE(::chdir(saved.c_str()) == 0);
+    // Verify process working directory remained uncorrupted
+    REQUIRE(::getcwd(cwd, sizeof(cwd)) != nullptr);
+    REQUIRE(std::string(cwd) == saved);
     std::filesystem::remove_all(dir);
 
     REQUIRE_FALSE(threw);

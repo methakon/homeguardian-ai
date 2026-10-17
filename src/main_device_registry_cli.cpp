@@ -225,15 +225,18 @@ void init_default_registry(DeviceRegistry& reg, const std::string& path, bool sa
 
 int main(int argc, char* argv[]) {
     std::string registry_path = "devices.json";
-    std::string command = "list";
+    std::string credential_file_flag;
+    std::string command;
     std::vector<std::string> args;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--registry" && i + 1 < argc) {
             registry_path = argv[++i];
+        } else if (a == "--credential-file" && i + 1 < argc) {
+            credential_file_flag = argv[++i];
         } else if (a == "--help" || a == "-h") {
-            std::cout << "Usage: hg_device_registry_cli [--registry <path>] <command> [args...]\n"
+            std::cout << "Usage: hg_device_registry_cli [--registry <path>] [--credential-file <path>] <command> [args...]\n"
                       << "Commands:\n"
                       << "  list                          List all peripheral devices in HG-UI-03 format\n"
                       << "  get <device_id>               Get single device details\n"
@@ -245,12 +248,15 @@ int main(int argc, char* argv[]) {
                       << "  init_defaults                 Create default inventory if not present\n";
             return 0;
         } else {
-            if (command == "list" && args.empty() && a != "list") {
+            if (command.empty()) {
                 command = a;
             } else {
                 args.push_back(a);
             }
         }
+    }
+    if (command.empty()) {
+        command = "list";
     }
 
     DeviceRegistry registry;
@@ -271,6 +277,10 @@ int main(int argc, char* argv[]) {
     registry.sweep_offline(now_ms);
 
     if (command == "list") {
+        if (!args.empty()) {
+            std::cerr << "{\"error\": \"usage: list (takes no arguments)\"}\n";
+            return 1;
+        }
         json list = json::array();
         for (const auto& d : registry.snapshot()) {
             list.push_back(format_device(d, now_ms));
@@ -280,8 +290,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "get") {
-        if (args.empty()) {
-            std::cerr << "{\"error\": \"device_id required\"}\n";
+        if (args.size() != 1) {
+            std::cerr << "{\"error\": \"usage: get <device_id>\"}\n";
             return 1;
         }
         const std::string& dev_id = args[0];
@@ -295,7 +305,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "set_consent") {
-        if (args.size() < 2) {
+        if (args.size() < 2 || args.size() > 4) {
             std::cerr << "{\"error\": \"usage: set_consent <device_id> <true|false> [subject] [purpose]\"}\n";
             return 1;
         }
@@ -322,8 +332,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "heartbeat") {
-        if (args.empty()) {
-            std::cerr << "{\"error\": \"device_id required\"}\n";
+        if (args.empty() || args.size() > 3) {
+            std::cerr << "{\"error\": \"usage: heartbeat <device_id> [seq] [ts_ms] (unexpected arguments rejected)\"}\n";
             return 1;
         }
         const std::string& dev_id = args[0];
@@ -337,6 +347,43 @@ int main(int argc, char* argv[]) {
             std::cout << format_device(*d, now_ms).dump(2) << "\n";
             return 3;
         }
+
+        // Authenticate against d->credential_id via HG_DEVICE_CREDENTIAL / HG_DEVICE_SECRET / HG_CREDENTIAL_FILE without placing secrets on CLI args
+        std::string presented_credential;
+        if (const char* c = std::getenv("HG_DEVICE_CREDENTIAL")) {
+            presented_credential = c;
+        } else if (const char* s = std::getenv("HG_DEVICE_SECRET")) {
+            presented_credential = s;
+        } else {
+            std::string cfile;
+            if (const char* f = std::getenv("HG_CREDENTIAL_FILE")) {
+                cfile = f;
+            } else if (!credential_file_flag.empty()) {
+                cfile = credential_file_flag;
+            }
+            if (!cfile.empty()) {
+                std::ifstream ifs(cfile);
+                if (ifs.good()) {
+                    std::string line;
+                    std::getline(ifs, line);
+                    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ' || line.back() == '\t')) {
+                        line.pop_back();
+                    }
+                    size_t start = 0;
+                    while (start < line.size() && (line[start] == ' ' || line[start] == '\t')) {
+                        start++;
+                    }
+                    presented_credential = line.substr(start);
+                }
+            }
+        }
+
+        if (presented_credential.empty() || presented_credential != d->credential_id) {
+            std::cerr << "{\"error\": \"heartbeat rejected: credential missing or mismatch\"}\n";
+            std::cout << format_device(*d, now_ms).dump(2) << "\n";
+            return 3;
+        }
+
         int64_t hb_ms = now_ms;
         if (args.size() > 1) {
             try {
@@ -367,7 +414,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "pair") {
-        if (args.empty()) {
+        if (args.size() != 1) {
             std::cerr << "{\"error\": \"usage: pair <json_device>\"}\n";
             return 1;
         }
@@ -389,7 +436,7 @@ int main(int argc, char* argv[]) {
         d.has_microphone = dev_j.value("has_microphone", false);
         d.consent_granted = dev_j.value("consent_granted", false);
         d.capture_enabled = dev_j.value("capture_enabled", false) && d.consent_granted;
-        d.is_synthetic = dev_j.value("is_synthetic", false) || (d.device_type == "simulator");
+        d.is_synthetic = (d.device_type == "simulator");
         if (dev_j.contains("capabilities") && dev_j["capabilities"].is_array()) {
             for (const auto& cap : dev_j["capabilities"]) {
                 if (cap.is_string()) d.capabilities.push_back(cap.get<std::string>());
@@ -409,7 +456,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "revoke") {
-        if (args.empty()) {
+        if (args.empty() || args.size() > 2) {
             std::cerr << "{\"error\": \"usage: revoke <device_id> [note]\"}\n";
             return 1;
         }
@@ -429,7 +476,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "unpair") {
-        if (args.empty()) {
+        if (args.size() != 1) {
             std::cerr << "{\"error\": \"usage: unpair <device_id>\"}\n";
             return 1;
         }
@@ -447,6 +494,10 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "init_defaults") {
+        if (!args.empty()) {
+            std::cerr << "{\"error\": \"usage: init_defaults (takes no arguments)\"}\n";
+            return 1;
+        }
         DeviceRegistry fresh_reg;
         init_default_registry(fresh_reg, registry_path, true);
         std::cout << "{\"status\": \"initialized\", \"path\": \"" << registry_path << "\"}\n";

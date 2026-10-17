@@ -114,9 +114,9 @@ poll-wakes on its 1 s listener timeout and exits, closing the socket. Verified:
 
 ## 7. Simulator-only vs production-ready (explicit)
 
-**Implemented here (simulator-only local demo):** loopback-only bind, GET-only,
+**Implemented here (simulator-only local demo):** loopback-only bind, authenticated state-changing endpoints with CSRF protection, unauthenticated read-only status subset,
 strict validation, bounded sizes/timeouts, Host/Origin enforcement, CSP, clean
-shutdown, read-only contract.
+shutdown, fail-closed contract.
 
 **NOT implemented / required before ANY non-local or production use:**
 - TLS termination and authenticated HTTPS (this is plain HTTP on loopback).

@@ -149,7 +149,8 @@ class WebRtcStreamer {
     }
 
     // 4. Verified pairing identity & authenticated liveness check
-    if (!device.is_synthetic) {
+    const isAuthoritativeSynthetic = device.is_synthetic === true && device.type === 'simulator';
+    if (!isAuthoritativeSynthetic) {
       if (!device.paired || device.revoked || !device.credential_id || !device.online) {
         throw new Error(`physical_camera_unverified: Physical camera '${deviceId}' has unverified pairing identity or liveness. Hardware streaming disabled in judge build.`);
       }

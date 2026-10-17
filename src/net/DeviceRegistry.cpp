@@ -141,7 +141,7 @@ bool DeviceRegistry::load(const std::string& path, std::string* reason) {
         d.last_sequence = entry.value("last_sequence", 0ULL);
         d.last_observation_at_ms = entry.value("last_observation_at_ms", 0LL);
         d.consent_updated_ms = entry.value("consent_updated_ms", 0LL);
-        d.is_synthetic = entry.value("is_synthetic", false) || (d.device_type == "simulator");
+        d.is_synthetic = (d.device_type == "simulator");
         // A device is online ONLY if persisted online=true, paired, unrevoked, and authenticated
         d.online = entry.value("online", false) && d.paired && !d.revoked && !d.credential_id.empty();
         // Capture is OFF unless the registry explicitly authorizes it AND the
@@ -235,6 +235,7 @@ bool DeviceRegistry::pair(const Device& device, std::string* reason) {
         const std::string subject = existing->consent_subject;
         const std::string purpose = existing->consent_purpose;
         *existing = device;
+        existing->is_synthetic = (existing->device_type == "simulator");
         existing->consent_granted = consent_granted;
         existing->consent_subject = subject;
         existing->consent_purpose = purpose;
@@ -249,7 +250,9 @@ bool DeviceRegistry::pair(const Device& device, std::string* reason) {
         if (reason != nullptr) *reason = "registry is full";
         return false;
     }
-    devices_.push_back(device);
+    Device to_insert = device;
+    to_insert.is_synthetic = (to_insert.device_type == "simulator");
+    devices_.push_back(to_insert);
     if (reason != nullptr) reason->clear();
     return true;
 }

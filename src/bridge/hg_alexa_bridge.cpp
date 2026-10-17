@@ -737,7 +737,7 @@ int main(int argc, char* argv[]) {
     //   hg_alexa_bridge <config.json> <credentials.json>
     //       NDJSON over stdin/stdout (existing contract path; used by tests).
     //   hg_alexa_bridge --http <config.json> <credentials.json>
-    //                    [--port N] [--token T]
+    //                    [--port N] [--token-file PATH]
     //       Native loopback HTTP demo (serves the embedded dashboard + JSON API).
     bool http_mode = false;
     int base = 1;

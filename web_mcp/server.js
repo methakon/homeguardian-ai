@@ -186,16 +186,21 @@ async function handleConversationalQuery(query) {
     const devices = deviceAdapter.listDevices();
     const cameras = devices.filter((d) => d.capabilities?.video);
     const audioNodes = devices.filter((d) => d.capabilities?.audio_in);
-    const synCamera = devices.find((d) => d.id === 'camera-syn-001');
+    const synCamera = devices.find((d) => d.id === 'camera-syn-001' || d.type === 'simulator');
     const isSynActive = !!(synCamera && synCamera.online && synCamera.stream_state === 'active');
+    const onlinePhysicalCameras = cameras.filter((c) => !c.is_synthetic && c.type !== 'simulator' && c.online);
+    const physicalOnline = onlinePhysicalCameras.length > 0;
+    const cameraStatusText = physicalOnline
+      ? `are ONLINE (${onlinePhysicalCameras.map((c) => c.name).join(', ')})`
+      : 'are OFFLINE';
 
-    const speech = `Peripheral inventory: ${devices.length} registered device(s). Physical cameras (${cameras.map(c => c.name).join(', ')}) have consent status "${cameras[0]?.consent || 'not_granted'}" and are OFFLINE. ${isSynActive ? 'The synthetic test provider is active for verification.' : 'The synthetic test provider is currently idle.'} Zero unconsented microphones or cameras are streaming.`;
+    const speech = `Peripheral inventory: ${devices.length} registered device(s). Physical cameras (${cameras.map((c) => c.name).join(', ')}) have consent status "${cameras[0]?.consent || 'not_granted'}" and ${cameraStatusText}. ${isSynActive ? 'The synthetic test provider is active for verification.' : 'The synthetic test provider is currently idle.'} Zero unconsented microphones or cameras are streaming.`;
 
     return {
       query,
       toolInvoked: 'get_homeguardian_status',
       toolArgs: {},
-      rawMcpResult: { devicesCount: devices.length, physicalOnline: false },
+      rawMcpResult: { devicesCount: devices.length, physicalOnline },
       latencyMs: 1.2,
       conversationalResponse: speech,
       syntheticNotice: 'Verified invariant: SimulatorRuntime delivers synthetic observations only. Physical capture fail-closed.',
@@ -455,15 +460,21 @@ function createHttpServer() {
         return;
       }
       const devId = deviceMatch[1];
-      const device = deviceAdapter.getDevice(devId);
-      if (!device) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'device_not_found' }));
+      try {
+        const device = deviceAdapter.getDevice(devId);
+        if (!device) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'device_not_found' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(device));
+        return;
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authoritative_registry_cli_unavailable', message: err.message }));
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(device));
-      return;
     }
 
     // POST /api/devices/:id/consent (Protected Mutation)
@@ -520,50 +531,58 @@ function createHttpServer() {
       }
 
       const devId = viewTokenMatch[1];
-      const device = deviceAdapter.getDevice(devId);
-      if (!device) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'device_not_found' }));
-        return;
-      }
+      try {
+        const device = deviceAdapter.getDevice(devId);
+        if (!device) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'device_not_found' }));
+          return;
+        }
 
-      if (!device.capabilities || !device.capabilities.video) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'capability_missing', message: 'Device has no camera video capability' }));
-        return;
-      }
-
-      if (device.consent !== 'granted' || !device.authorized) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          error: 'consent_withheld',
-          message: `Live camera viewing refused: Consent is not granted for device '${devId}' (Fail-Closed)`,
-        }));
-        return;
-      }
-
-      if (!device.is_synthetic) {
-        if (!device.paired || device.revoked || !device.credential_id || !device.online) {
+        if (!device.capabilities || !device.capabilities.video) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'capability_missing', message: 'Device has no camera video capability' }));
+          return;
+        }
+
+        if (device.consent !== 'granted' || !device.authorized) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
-            error: 'physical_camera_unverified',
-            message: `Physical camera '${devId}' has not completed verified cryptographic pairing or authenticated liveness. Hardware streaming disabled in judge build.`,
+            error: 'consent_withheld',
+            message: `Live camera viewing refused: Consent is not granted for device '${devId}' (Fail-Closed)`,
           }));
           return;
         }
-      }
 
-      const viewAuth = sessionManager.issueScopedViewToken(session, devId);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        ok: true,
-        ...viewAuth,
-        syntheticProvider: device.is_synthetic,
-        warning: device.is_synthetic
-          ? 'SYNTHETIC BENCHMARK STREAM ONLY. Hardware camera unactivated.'
-          : 'Physical camera connection authorized.',
-      }));
-      return;
+        // Authoritative synthetic check: ONLY simulator device type can bypass physical hardware requirements
+        const isAuthoritativeSynthetic = device.is_synthetic === true && device.type === 'simulator';
+        if (!isAuthoritativeSynthetic) {
+          if (!device.paired || device.revoked || !device.credential_id || !device.online) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              error: 'physical_camera_unverified',
+              message: `Physical camera '${devId}' has not completed verified cryptographic pairing or authenticated liveness. Hardware streaming disabled in judge build.`,
+            }));
+            return;
+          }
+        }
+
+        const viewAuth = sessionManager.issueScopedViewToken(session, devId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          ...viewAuth,
+          syntheticProvider: isAuthoritativeSynthetic,
+          warning: isAuthoritativeSynthetic
+            ? 'SYNTHETIC BENCHMARK STREAM ONLY. Hardware camera unactivated.'
+            : 'Physical camera connection authorized.',
+        }));
+        return;
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'authoritative_registry_cli_unavailable', message: err.message }));
+        return;
+      }
     }
 
     // POST /api/webrtc/signal (WebRTC SDP Offer / Answer Exchange)
@@ -641,8 +660,7 @@ function createHttpServer() {
         res.end(JSON.stringify({ error: 'authentication_required', message: 'Stream touch requires authentication' }));
         return;
       }
-      const csrf = req.headers['x-csrf-token'];
-      if (!sessionManager.validateCsrfToken(session, csrf)) {
+      if (!sessionManager.verifyCsrf(req, session)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'invalid_csrf', message: 'Valid CSRF token required' }));
         return;
@@ -656,11 +674,11 @@ function createHttpServer() {
         } else if (deviceId) {
           touched = webrtcStreamer.touchDeviceStream(deviceId, session.sessionToken);
         } else {
-          webrtcStreamer.touchSessionStreams(session.sessionToken);
-          touched = true;
+          const count = webrtcStreamer.touchSessionStreams(session.sessionToken);
+          touched = count > 0;
         }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, touched }));
+        res.writeHead(touched ? 200 : 404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: touched, touched, refreshedAt: Date.now() }));
       } catch (err) {
         const isForbidden = err.message && err.message.includes('forbidden');
         res.writeHead(isForbidden ? 403 : 400, { 'Content-Type': 'application/json' });

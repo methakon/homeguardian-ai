@@ -72,8 +72,11 @@ JSON
 chmod 600 "$CREDS"
 
 DEVICES_JSON="$REPO_ROOT/config/devices.json"
-"$DEV_CLI" --registry "$DEVICES_JSON" init_defaults >/dev/null
-log_ok "Initialized authoritative C++ Device Registry defaults"
+if "$DEV_CLI" --registry "$DEVICES_JSON" init_defaults >/dev/null; then
+  log_ok "Initialized authoritative C++ Device Registry defaults"
+else
+  log_fail "Failed to initialize authoritative C++ Device Registry defaults"
+fi
 
 MCP_PID=""
 GATEWAY_PID=""
@@ -98,8 +101,10 @@ echo -e "\n[Step 3] Launching Native C++ MCP Server..."
 HG_MCP_PORT="$MCP_PORT" "$MCP_SERVER" "$CONFIG_FILE" "$CREDS" > "$WORK/mcp.out" 2> "$WORK/mcp.err" &
 MCP_PID=$!
 
+MCP_READY=0
 for _ in $(seq 1 40); do
-  if grep -q "MCP_READY" "$WORK/mcp.out" 2>/dev/null; then
+  if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$MCP_PORT/mcp" 2>/dev/null || grep -q "listening on" "$WORK/mcp.err" 2>/dev/null; then
+    MCP_READY=1
     break
   fi
   if ! kill -0 "$MCP_PID" 2>/dev/null; then
@@ -109,7 +114,11 @@ for _ in $(seq 1 40); do
   fi
   sleep 0.1
 done
-log_ok "Native C++ MCP Server listening on 127.0.0.1:$MCP_PORT"
+if [[ "$MCP_READY" -eq 1 ]]; then
+  log_ok "Native C++ MCP Server listening on 127.0.0.1:$MCP_PORT"
+else
+  log_fail "Native C++ MCP Server failed to become ready on 127.0.0.1:$MCP_PORT"
+fi
 
 # 4. Run Automated Integration Verification Suites
 echo -e "\n[Step 4] Running Automated Integration Verification Suites..."
@@ -146,8 +155,10 @@ HG_OPERATOR_PASSWORD="$DEMO_OPERATOR_PASS" \
 node web_mcp/server.js > "$WORK/web.out" 2> "$WORK/web.err" &
 GATEWAY_PID=$!
 
+GW_READY=0
 for _ in $(seq 1 40); do
   if curl -s -f "http://127.0.0.1:$WEB_PORT/" >/dev/null 2>&1; then
+    GW_READY=1
     break
   fi
   if ! kill -0 "$GATEWAY_PID" 2>/dev/null; then
@@ -157,7 +168,11 @@ for _ in $(seq 1 40); do
   fi
   sleep 0.1
 done
-log_ok "Unified Gateway listening on http://127.0.0.1:$WEB_PORT"
+if [[ "$GW_READY" -eq 1 ]]; then
+  log_ok "Unified Gateway listening on http://127.0.0.1:$WEB_PORT"
+else
+  log_fail "Unified Gateway failed to respond on http://127.0.0.1:$WEB_PORT"
+fi
 
 # 6. Verify Live Demonstration Health & Endpoints
 DEMO_HEALTH=$(curl -s "http://127.0.0.1:$WEB_PORT/api/health")
@@ -179,7 +194,7 @@ LOGIN_RESP=$(curl -s -c "$WORK/cookies.txt" -X POST "http://127.0.0.1:$WEB_PORT/
 if [[ "$LOGIN_RESP" == *"\"ok\":true"* ]]; then
   log_ok "Demonstration operator session authenticated"
 else
-  log_fail "Demonstration operator session authentication failed: $LOGIN_RESP"
+  log_fail "Demonstration operator session authentication failed (status not ok)"
 fi
 
 DEV_JSON=$(curl -s -b "$WORK/cookies.txt" "http://127.0.0.1:$WEB_PORT/api/devices")

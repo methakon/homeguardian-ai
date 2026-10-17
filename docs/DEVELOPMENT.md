@@ -292,7 +292,7 @@ is ~25.8 MB and has different RSS, so compare like-for-like
 | `/api/run-scenario` | ~0.05–0.18 s | ~0.007–0.016 s | **node faster here — see below** |
 | Dashboard files at runtime | 0 (embedded) | 1 (served from disk) | |
 
-**Honest caveat:** for `GET /api/run-scenario` the native in-process server
+**Honest caveat:** for `/api/run-scenario` (originally `GET /api/run-scenario` in NativeHttp; state mutations in v21+ require authenticated POST/CSRF) the native in-process server
 measured **slower** than the legacy per-request child process in this
 environment. The cause was not isolated in this pass and is a documented
 follow-up. Native wins decisively on memory, CPU, process count, dependency

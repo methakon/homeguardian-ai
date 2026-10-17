@@ -99,6 +99,7 @@ Verified in a **real browser** (CDP) and over the API:
 | `/api/status` | GET | 200, or `{"error":"unavailable","ok":false}` when the audit DB is unusable (degraded) |
 | `/api/scenarios` | GET | 200, list of available simulation scenarios |
 | `/api/alerts` | GET | 200, per-alert non-sensitive detail from the durable store |
+| `/api/integrations` | GET | 200, system integrations status (`{"alexa":...,"ring":...,"mcp":...}`) |
 | `/api/session` | POST | 200 `{"ok":true,"csrf":"..."}` on valid `X-HG-Secret`; **401** on invalid/missing secret |
 | `/api/run-scenario?scenario=<id>[&cycles=N]` | POST | 200 on success (requires valid session & CSRF token); **400** for invalid scenario; **405** on GET |
 
@@ -298,7 +299,7 @@ weakened to improve any number.
   biometrics; H-01/H-02/G-02 not implemented.
 - The impact classifier is a deterministic synthetic pattern, not a safety
   detector; it says so in every message, payload and panel.
-- The native HTTP demo server is loopback-only, unauthenticated by design and is
+- The native HTTP demo server is loopback-only (reads are unauthenticated by design for local diagnostics; state mutations require authenticated session & CSRF token) and is
   **not** production-ready (no TLS, no identity provider, no rate limiting).
 - Alert dedup/cooldown state resets when the process restarts (history does not).
 - In degraded mode (unusable audit DB) alerts are decided in memory but not

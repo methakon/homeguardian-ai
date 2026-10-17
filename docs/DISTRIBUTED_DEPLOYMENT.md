@@ -125,8 +125,8 @@ hub's own shutdown path is the one verified in v21 (clean exit on SIGTERM).
 
 #### Why nothing is published
 
-The handwritten HTTP server in this project is deliberately loopback-only and
-unauthenticated by design; it is not a hardened network service. Publishing it
+The handwritten HTTP server in this project is deliberately loopback-only
+(reads are unauthenticated by design for local diagnostics; state-changing endpoints require authenticated session and CSRF token); it is not an open network service. Publishing it
 would expose it to the LAN, so D-01 does not. A genuinely network-facing
 boundary is milestone **D-03** (authenticated, encrypted transport with pairing,
 revocation and replay protection) and will be reviewed and measured on its own.

@@ -112,13 +112,7 @@ class HomeGuardianMcpClient {
 
             // Record wire traffic for judge inspection (strictly redact credentials/tokens)
             const safeReqHeaders = redactHeaders(headers);
-            const safeResHeaders = { ...res.headers };
-            for (const k of Object.keys(safeResHeaders)) {
-              const lk = k.toLowerCase();
-              if (lk === 'set-cookie') {
-                safeResHeaders[k] = '[REDACTED]';
-              }
-            }
+            const safeResHeaders = redactHeaders(res.headers);
 
             const entry = {
               timestamp: new Date().toISOString(),

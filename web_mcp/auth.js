@@ -151,13 +151,18 @@ class SessionManager {
       return true;
     }
     const csrfHeader = req.headers['x-csrf-token'];
-    if (!csrfHeader || !session || !session.csrfToken) {
+    return this.validateCsrfToken(session, csrfHeader);
+  }
+
+  // Validate CSRF token string directly against session
+  validateCsrfToken(session, csrfToken) {
+    if (!session || !session.csrfToken || !csrfToken) {
       return false;
     }
     try {
       return crypto.timingSafeEqual(
-        Buffer.from(csrfHeader),
-        Buffer.from(session.csrfToken)
+        Buffer.from(String(csrfToken)),
+        Buffer.from(String(session.csrfToken))
       );
     } catch (_) {
       return false;

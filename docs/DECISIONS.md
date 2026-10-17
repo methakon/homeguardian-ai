@@ -494,7 +494,7 @@ do not build on a newer glibc than the runtime provides.
 ### Context
 
 The hub's handwritten HTTP server was designed and security-reviewed for
-loopback use: it is unauthenticated by design, relies on `Host`/`Origin`
+loopback use: reads are unauthenticated by design for local diagnostics while state changes require authenticated session and CSRF token, relying on `Host`/`Origin`
 validation, and has no TLS. The container could publish a port in one line.
 
 ### Decision
