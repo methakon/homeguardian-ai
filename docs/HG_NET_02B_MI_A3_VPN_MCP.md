@@ -190,3 +190,127 @@ The MCP listener stays loopback-only and no port forward, tunnel or LAN exposure
 change to Oracle, mail services or certificates, Cloudflare records, V380 devices, or any
 release-security branch. No camera or microphone capture was started; `capture_enabled:false`
 throughout. No credential, token or fingerprint value is recorded in this document.
+
+---
+
+# Part 2 — HG-NET-02B execution: Phase 1 preparation and Phase 2 bridge
+
+## 10. Phase 1 — preparation
+
+**Production application preserved.** The signed, non-debuggable production APK was copied out of
+the build tree before any rebuild, because the build script `rm -rf`s that directory:
+
+    ~/.homeguardian-artifacts/edgeservice-1.0.0-production.apk
+    sha256 2d6018e0afa4c7250b621efcb4194dc3d964c4895e18cc043738644d03a47246
+
+That hash matches the value recorded in `EDGE_WIRELESS_DEVELOPMENT_MI_A3.md` §9 as the SHA installed
+on the device, so a restore is byte-identical. The APK on the always-on host was **not replaced**.
+
+**Unique WireGuard device key generated** (private key 0600 under `~/.homeguardian-vpn/`, never
+printed):
+
+    public key    IGk9g7lwAk2pWn8DwJpQuh+Mzgq3yUEqBW/I32cvIFY=
+    fingerprint   04fdac4b4c0c6614
+
+The public key is the device's overlay identity. A LAN address is never used as identity.
+
+**Android's supported VPN mechanism is the only path**: the official WireGuard client via
+`VpnService`, which prompts on-device and cannot be satisfied from adb. `com.android.vpndialogs` is
+present on the device, so that consent flow exists. No root, no kernel module, no bypass.
+
+## 11. Phase 2 — the outbound authenticated control bridge (implemented)
+
+`apk_service/src/org/homeguardian/edgeservice/ControlBridge.java`, wired into `EdgeService`.
+
+**Outbound only.** The bridge contains **zero** `ServerSocket`/`bind()` calls — verified by scanning
+the packaged artifact. It dials toward the authorized coordinator and never listens on any
+interface, so there is no public endpoint and nothing Wi-Fi-wide to scan.
+
+**Default OFF.** `ACTION_START` does not start it. It requires both an explicit
+`BRIDGE_START` action and a coordinator endpoint supplied by the operator. An unconfigured
+production install dials nowhere. The endpoint is passed in, never compiled in, so no development
+LAN address can become a fixed destination.
+
+**The production MCP bearer token is never exported.** The bridge reads it in-process through
+`Provisioner.readToken()` — the same legitimate same-uid access the app's own probe uses — and uses
+it only on the loopback hop. It is never logged and never sent to the coordinator. Authorized
+remote clients authenticate with a **separate** enrolment secret, so the issue's requirement not to
+extract or expose the production token is satisfied.
+
+**Supported provisioning mechanism for authorized remote clients.** A 32-byte enrolment secret is
+generated on-device with `SecureRandom` into a 0600 file, identified outward only by its SHA-256
+fingerprint. The operator reads it once through an explicit on-device action and configures the
+coordinator with it. It can be revoked (`revokeEnrolment`). This is a deliberate second credential
+with its own lifecycle, not a copy of the MCP token.
+
+**Peer identity and authorization, both directions.** The device presents
+`hg-android-<16 hex of SHA-256(device key)>`, derived from a locally generated key — durable, not an
+address. The coordinator must present the enrolment secret, compared in **constant time**.
+
+**Bounded relay.** Frame is `[4B big-endian length][payload]`; the length is **validated before any
+allocation** and refused above 64 KiB in both directions. One request in flight at a time, which
+gives natural backpressure and bounded memory with no queue to overflow. Handshake lines are capped
+at 256 bytes.
+
+**Method allowlist, not a blocklist.** Only `initialize`, `notifications/initialized`, `tools/list`,
+`tools/call` and `ping` are relayed. Anything else is answered with a JSON-RPC error and logged.
+
+**Cannot reach anything else.** Every relayed request is POSTed to one **fixed constant** loopback
+URL. The destination is never derived from the request, so the bridge cannot be turned into a
+generic proxy to other local services. Camera video and microphone audio do not traverse it at all.
+
+**Reconnect without duplicates.** A single session loop closes the previous socket before dialing
+again, with exponential backoff from 1 s to 60 s, reset on a clean session. A second `start()` while
+running is refused rather than opening a second session.
+
+**Build evidence**
+
+    APK      hg_service_apk_build/homeguardian-edge-service.apk
+    size     1,639,032 bytes
+    sha256   39ece8d41ffda9ba131b942f9e29657b2f8ccc239d1037ac5a09ee7e5b0503bf
+    ABI      arm64-v8a   minSdk 30   targetSdk 30
+    native   lib/arm64-v8a/libhg_edge_service.so 2,794,800 B (+ libc++_shared.so)
+    dex      ControlBridge / bridge_identity / bridge_enrol / BRIDGE_START / BRIDGE_STOP / HGB1
+    manifest debuggable attribute ABSENT (production posture kept)
+    perms    unchanged - INTERNET, FOREGROUND_SERVICE, RECEIVE_BOOT_COMPLETED only
+
+The bridge added **no new permission** and no new listener.
+
+## 12. Test harness for Phase 3 (ready, not yet run)
+
+`scripts/bridge_test_coordinator.py` stands in for the authorized coordinator so the bridge can be
+exercised without the Oracle hub. It is deliberately adversarial — beyond `initialize`,
+`tools/list` and `tools/call` it asserts that a **disallowed method is refused**, that **non-JSON-RPC
+input is refused**, and that an **oversized frame closes the connection**, because a bridge that
+relays whatever it is handed has not been tested. It needs only the bridge's enrolment secret; it
+never receives the MCP token.
+
+## 13. Blocked, and why
+
+- **Device unreachable.** The Mi A3 dropped off the network mid-session: 100% packet loss to its
+  LAN address, `No route to host` on all three previously documented adb ports, and no mDNS
+  advertisement. Its wireless ADB port rotates on reconnect (documented 41639 → 40815), but this is
+  not a port change — the host is not answering ARP. **No on-device test of the bridge could run.**
+  The Panasonic returned on USB at the same time; it is a different device and was not substituted.
+- **Oracle hub (#14) still open**, so there is no real coordinator and no VPN underlay.
+- **Android VPN consent** needs an on-device prompt; it cannot be satisfied from adb and must be
+  the owner's action.
+- **Installation onto the always-on host** is deliberately not done. The bridge is built and
+  packaged as an isolated artifact; replacing the production app needs the reviewed update and safe
+  installation plan the brief requires, and the restore path is ready (§10).
+
+## 14. What is verified vs not
+
+**Verified:** the production APK is preserved with a matching hash; the bridge compiles, packages
+and is present in the dex; it has no listening socket; no new permission; production
+non-debuggable posture retained; the device keypair exists and the public key is recorded.
+
+**Not verified (and not claimed):** the bridge has **never executed**. No handshake has occurred, no
+MCP request has crossed it, and no reconnect has been observed. Everything in §11 is a property of
+the code plus the packaged artifact — it is an implementation, not a tested bridge. 24/7 readiness
+is not claimed and cannot be until an adequate continuous run exists.
+
+**Next, in order:** Mi A3 back on the network → approve the installation path → device VPN consent
+→ run `bridge_test_coordinator.py` against the installed bridge → handshake, `initialize`,
+`tools/list`, `tools/call`, refusals → then the remote-peer run with the workstation disconnected.
+

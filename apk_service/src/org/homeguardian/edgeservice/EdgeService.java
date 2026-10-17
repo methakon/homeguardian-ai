@@ -39,6 +39,15 @@ public class EdgeService extends Service {
     public static final String ACTION_STOP = "org.homeguardian.edgeservice.STOP";
     public static final String ACTION_RESTART = "org.homeguardian.edgeservice.RESTART";
     public static final String ACTION_PROBE_NOW = "org.homeguardian.edgeservice.PROBE_NOW";
+    /**
+     * HG-NET-02B: the outbound control bridge. Deliberately NOT started by ACTION_START, so an
+     * unconfigured production install never dials anywhere. Both an explicit action and a
+     * coordinator endpoint are required.
+     */
+    public static final String ACTION_BRIDGE_START = "org.homeguardian.edgeservice.BRIDGE_START";
+    public static final String ACTION_BRIDGE_STOP = "org.homeguardian.edgeservice.BRIDGE_STOP";
+    public static final String EXTRA_BRIDGE_HOST = "bridge_host";
+    public static final String EXTRA_BRIDGE_PORT = "bridge_port";
 
     private static final String CHANNEL_ID = "hg_edge_service";
     private static final int NOTIFICATION_ID = 4711;
@@ -100,6 +109,18 @@ public class EdgeService extends Service {
             scheduleProbe(0);
             return START_STICKY;
         }
+        if (ACTION_BRIDGE_START.equals(action)) {
+            // Coordinator endpoint comes from the caller (operator), never from a compiled-in LAN
+            // address: a dev LAN address must never be a device identity or a fixed destination.
+            String host = (intent == null) ? null : intent.getStringExtra(EXTRA_BRIDGE_HOST);
+            int port = (intent == null) ? 0 : intent.getIntExtra(EXTRA_BRIDGE_PORT, 0);
+            startBridge(host, port);
+            return START_STICKY;
+        }
+        if (ACTION_BRIDGE_STOP.equals(action)) {
+            stopBridge();
+            return START_STICKY;
+        }
 
         // START (or a system restart with a null intent). Already foreground from
         // onCreate; re-asserting is idempotent and keeps the text current.
@@ -114,6 +135,7 @@ public class EdgeService extends Service {
 
     @Override
     public void onDestroy() {
+        stopBridge();
         Log.i(TAG, "onDestroy");
         scheduleStop("service destroyed");
         super.onDestroy();
@@ -325,7 +347,44 @@ public class EdgeService extends Service {
 
     // ------------------------------------------------------------- stop ------
 
+    // ---------------------------------------------------------------- outbound control bridge
+
+    /** The single bridge instance. Null until an operator explicitly starts it. */
+    private volatile ControlBridge bridge;
+
+    /**
+     * Start the outbound authenticated control bridge. Refuses without a coordinator endpoint, so
+     * the production default (nothing configured) dials nowhere.
+     */
+    private void startBridge(String host, int port) {
+        if (host == null || host.length() == 0 || port <= 0) {
+            Log.w(TAG, "bridge start refused: no coordinator endpoint supplied");
+            updateNotification("bridge: refused - no coordinator configured");
+            return;
+        }
+        if (bridge != null && bridge.isRunning()) {
+            Log.i(TAG, "bridge already running; not creating a second session");
+            return;
+        }
+        bridge = new ControlBridge(this);
+        bridge.configure(host, port);
+        String r = bridge.start();
+        Log.i(TAG, "bridge: " + r);
+        updateNotification("bridge: " + r);
+    }
+
+    /** Stop the bridge and close its session. Safe when it was never started. */
+    private void stopBridge() {
+        ControlBridge b = bridge;
+        bridge = null;
+        if (b != null) {
+            b.stop();
+            Log.i(TAG, "bridge stopped");
+        }
+    }
+
     private void stopEverything(String reason) {
+        stopBridge();          // never leave an outbound session open past a service stop
         scheduleStop(reason);
     }
 
