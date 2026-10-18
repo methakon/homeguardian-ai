@@ -188,3 +188,93 @@ own peak confidence, which its existing scale produces without modification.
 MCP visibility is unaffected and already covered: the read-only `get_alert_summary` tool is built from
 the same Application state, and the `[animal]` suite asserts that its answer is derived from the alerts
 the pipeline actually delivered.
+
+---
+
+## 10. Controlled calibration analysis (no thresholds changed)
+
+The two problems found in §9 were analysed rather than tuned away. Method: a deterministic **step
+input** (6 quiet windows, then a fixed-size large change) driven through the **real**
+`ActivityChangeDetector`, and the **real** `FusionEngine` fed the **real** vote mix. Nothing was
+modified — no threshold, no baseline rate, no window length, no confidence formula. Reproduce with
+`./build/homeguardian_tests '[camera][analysis]'` (2 cases, 45 assertions).
+
+### 10.1 EMA baseline adaptation
+
+| `slow_alpha` | strong windows | windows reported `detected` | windows at confidence ≥ 0.5 | peak confidence |
+|---|---|---|---|---|
+| 0.05 (default) | 8 | 6 | — | 1.0 |
+| 0.05 | 20 | 17 | 11 | 1.0 |
+| 0.05 | 40 | 17 | 11 | 1.0 |
+| 0.02 | 40 | 38 | — | 1.0 |
+| 0.01 | 20 | 18 | — | 1.0 |
+| 0.01 | 40 | 38 | **38** | 1.0 |
+
+Two facts, both measured:
+
+1. **The confidence REACHES 1.0 at the transition** in every configuration. So the scale is not
+   "too low" — the earlier 0.39 was a *late* sample of a decaying signal, not a weak detector.
+2. **A sustained change stops being reported at all once the baseline absorbs it**: at the default
+   `slow_alpha = 0.05`, only 17 of 40 strong windows were still `detected`; at 0.01, 38 of 40. The
+   time spent above the rule's 0.5 gate follows the same mechanism: **11 windows at 0.05 versus 38 at
+   0.01**, a factor of ~3.5.
+
+So the lever for sustained-change sensitivity is the **baseline adaptation rate**, and it is a design
+choice with a stated cost: a slower baseline stays sensitive longer and is slower to accept a new
+normal.
+
+### 10.2 Five-second window dilution (real engine, real vote mix)
+
+| detected votes (confidence 1.0) | quiet votes (confidence 0.0) | fused confidence | clears the 0.5 gate? |
+|---|---|---|---|
+| 1 | 0 | 0.00 | no — `unavailable`: fewer than 2 usable inputs |
+| 3 | 0 | 1.00 | **yes** |
+| 3 | 4 | 0.245 | no |
+| 5 | 4 | 0.309 | no |
+| 15 | 4 | **0.623** | **yes** |
+| 15 | 10 | 0.360 | no |
+| 30 | 4 | **0.779** | **yes** |
+| 30 | 60 | 0.160 | no |
+
+Dilution is monotone — adding quiet votes to the same evidence never raises the fused confidence
+(asserted in the test) — and it is vicious: **3 detected votes beside 4 quiet ones fall to 0.245**.
+
+### 10.3 The consequence, in the units that matter
+
+| Scenario (5 s window) | Votes | Fused | Verdict |
+|---|---|---|---|
+| a 1 s change, one observation per frame | 75 (15 detected + 60 quiet) | **0.16** | no alert |
+| a 1 s change, one observation per second | 5 (1 + 4) | 0.16 | no alert |
+| a 5 s change, one observation per frame | 75 (75 + 0) | **1.00** | alert |
+| a 5 s change, one observation per second | 5 (5 + 0) | 1.00 | alert |
+
+The observation-cadence code path is now a supported knob (`--cadence` in the bridge), because a
+per-frame observation stream puts ~75 votes in the window and dilutes any brief change.
+
+### 10.4 What this says, and what it does not do
+
+- The 0.5 gate is **reachable** by real camera evidence: at the moment of a change the detector
+  produces confidence 1.0, and §9 shows the rule firing on that evidence.
+- What decides an alert for a *sustained* change is the **vote mix**, governed by two design levers:
+  the baseline adaptation rate (§10.1) and the observation cadence plus how long the change persists
+  inside the window (§10.3).
+- **No threshold was changed.** These are measurements presented so the choice is made with numbers;
+  the choice itself (stricter sensitivity vs fewer false alarms) belongs to the owner.
+
+## 11. The prepared motion capture
+
+The bridge now supports a coordinated capture, so a person knows when to move:
+
+```
+./build/hg_camera_bridge --capture --confirm --frames 200 --hold 15 --cadence 5
+```
+
+- `--hold 15` counts down for fifteen seconds before any frame is captured, so the operator can step
+  into the field of view (the countdown is printed and flushed one line per second).
+- `--frames 200` bounds the run (~15-20 s of real capture at this camera's rate).
+- `--cadence 5` emits one observation every fifth frame, i.e. ~3 observations per second, so the
+  5-second fusion window holds ~15 votes rather than ~75 (§10.3).
+- Reports at the end: peak motion, peak ratio, **peak confidence**, windows by kind, and an explicit
+  `MOTION-VERDICT` line stating whether a sustained increase was observed — plus the observation JSON
+  with `provenance: "real"`.
+- Stores nothing: frames are reduced to scalars in place and no file, socket or stream is involved.

@@ -565,6 +565,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/CameraActivitySession.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/V4l2CameraDevice.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_camera_activity.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_camera_calibration.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp

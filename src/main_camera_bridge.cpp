@@ -46,7 +46,12 @@ void print_usage(const char* argv0) {
         "usage:\n"
         "  %s --probe [--device <node>]                     enumerate camera nodes (captures nothing)\n"
         "  %s --capture --confirm --frames <n> [--device <node>] [--width w] [--height h]\n"
+        "                        [--hold <seconds>] [--cadence <frames-per-observation>]\n"
         "                                                   capture n frames and reduce them to scalars\n"
+        "\n"
+        "--hold    waits N seconds (counting down) before capture starts, so a person can step\n"
+        "          into view. --cadence emits ONE observation every N frames, which is the control\n"
+        "          that matters for the fusion window: a per-frame stream floods a 5 s window.\n"
         "\n"
         "Capture REQUIRES --confirm. This program derives bounded scalars only: it writes no\n"
         "frame anywhere, opens no socket, and makes no claim about what is in view.\n",
@@ -119,6 +124,8 @@ int main(int argc, char** argv) {
     std::string device = "/dev/video0";
     uint32_t width = 640;
     uint32_t height = 480;
+    int hold_seconds = 0;
+    int cadence = 1;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -129,6 +136,8 @@ int main(int argc, char** argv) {
         else if (a == "--device" && i + 1 < argc) device = argv[++i];
         else if (a == "--width" && i + 1 < argc) width = static_cast<uint32_t>(std::atoi(argv[++i]));
         else if (a == "--height" && i + 1 < argc) height = static_cast<uint32_t>(std::atoi(argv[++i]));
+        else if (a == "--hold" && i + 1 < argc) hold_seconds = std::atoi(argv[++i]);
+        else if (a == "--cadence" && i + 1 < argc) cadence = std::atoi(argv[++i]);
         else if (a == "--help" || a == "-h") { print_usage(argv[0]); return 0; }
         else { std::printf("unknown argument: %s\n", a.c_str()); print_usage(argv[0]); return 2; }
     }
@@ -136,6 +145,10 @@ int main(int argc, char** argv) {
     if (!probe && !capture) { print_usage(argv[0]); return 2; }
     if (frames < 1) frames = 1;
     if (frames > 600) frames = 600;   // bounded: this is a spot check, not a surveillance run
+    if (cadence < 1) cadence = 1;
+    if (cadence > 120) cadence = 120;
+    if (hold_seconds < 0) hold_seconds = 0;
+    if (hold_seconds > 60) hold_seconds = 60;
 
     if (probe) {
         std::printf("=====================================================================\n");
@@ -165,6 +178,16 @@ int main(int argc, char** argv) {
     std::printf(" Nothing is written, streamed or transmitted. No image leaves this process.\n");
     std::printf("=====================================================================\n");
 
+    if (hold_seconds > 0) {
+        std::printf("\nSTEP INTO VIEW NOW. Capture starts in:\n");
+        for (int t = hold_seconds; t > 0; --t) {
+            std::printf("  %2d\n", t);
+            std::fflush(stdout);
+            sleep(1);
+        }
+        std::printf("  capturing...\n");
+    }
+
     V4l2CameraDevice::Config cfg;
     cfg.device = device;
     cfg.width = width;
@@ -187,8 +210,15 @@ int main(int argc, char** argv) {
     size_t captured = 0;
     size_t stalls = 0;
     size_t findings = 0;
+    size_t observations = 0;
     CameraFinding last_valid{};
     std::string last_reason;
+    double peak_motion = 0.0;
+    double peak_ratio = 0.0;
+    double peak_confidence = 0.0;
+    size_t increases = 0;
+    size_t decreases = 0;
+    size_t quiet = 0;
 
     for (int i = 0; i < frames; ++i) {
         LumaFrame frame;
@@ -202,8 +232,21 @@ int main(int argc, char** argv) {
             continue;
         }
         ++captured;
+        // Every frame is consumed (the stream must not stall); an OBSERVATION is only produced
+        // every `cadence` frames - the knob that controls how many votes land in the fusion window.
+        if (cadence > 1 && (i % cadence) != 0) continue;
+        ++observations;
         const CameraFinding f = session.ingest(frame.luma.data(), frame.luma.size(),
                                                Provenance::real);
+        peak_motion = std::max(peak_motion, f.motion_level);
+        peak_ratio = std::max(peak_ratio, f.ratio);
+        if (f.kind == CameraFindingKind::sustained_increase) ++increases;
+        if (f.kind == CameraFindingKind::sustained_decrease) ++decreases;
+        if (f.kind == CameraFindingKind::quiet_baseline) ++quiet;
+        {
+            const Observation o = session.observation_for("peak-probe", device);
+            peak_confidence = std::max(peak_confidence, o.confidence.value_or(0.0));
+        }
         if (f.kind != CameraFindingKind::warming_up || findings < 3) {
             std::printf("  [%3d] seq=%-6u motion=%.4f mean_delta=%.4f baseline=%.4f ratio=%.2f  %s\n",
                         i, frame.sequence, f.motion_level, f.mean_delta, f.baseline, f.ratio,
@@ -221,11 +264,21 @@ int main(int argc, char** argv) {
 
     std::printf("\n== RESULTS ==\n");
     std::printf("  frames captured      : %zu of %d requested\n", captured, frames);
+    std::printf("  observations built   : %zu (cadence %d frame(s) per observation)\n", observations,
+                cadence);
     std::printf("  capture stalls       : %zu\n", stalls);
     std::printf("  driver-dropped frames: %llu\n",
                 static_cast<unsigned long long>(cam.dropped_frames()));
     std::printf("  elapsed              : %lld ms\n", static_cast<long long>(elapsed_ms));
     std::printf("  pixels per frame     : %ux%u (luma plane reduced in place)\n", width, height);
+    std::printf("  peak motion / ratio  : %.4f / %.2f\n", peak_motion, peak_ratio);
+    std::printf("  peak confidence      : %.3f (the rule's current gate is 0.5)\n", peak_confidence);
+    std::printf("  windows by kind      : sustained_increase=%zu sustained_decrease=%zu quiet=%zu\n",
+                increases, decreases, quiet);
+    std::printf("  MOTION-VERDICT       : %s\n",
+                increases > 0 ? "a sustained increase WAS observed"
+                             : "NO sustained increase observed (nothing moved in view, or the "
+                               "change was too brief)");
     std::printf("  final finding        : %s\n", camera_finding_kind_to_string(last_valid.kind));
     std::printf("    sentence           : %s\n", last_valid.sentence.c_str());
     std::printf("    motion_level       : %.4f   mean_delta %.4f   baseline %.4f\n",
