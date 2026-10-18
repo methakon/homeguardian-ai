@@ -481,6 +481,9 @@ add_executable(hg_camera_bridge
     src/main_camera_bridge.cpp
     src/backend/linux/V4l2CameraDevice.cpp
     src/core/CameraActivitySession.cpp
+    src/core/DetectionFusionRule.cpp
+    src/core/FusionEngine.cpp
+    src/core/UUID.cpp
     src/core/ActivityDetectors.cpp
     src/core/BoundedFeatures.cpp
     src/core/Observation.cpp

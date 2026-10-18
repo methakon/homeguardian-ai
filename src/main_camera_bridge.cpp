@@ -22,6 +22,8 @@
 
 #include "backend/linux/V4l2CameraDevice.h"
 #include "core/CameraActivitySession.h"
+#include "core/DetectionFusionRule.h"
+#include "core/FusionEngine.h"
 #include "core/Observation.h"
 
 #include <algorithm>
@@ -213,6 +215,7 @@ int main(int argc, char** argv) {
     size_t observations = 0;
     CameraFinding last_valid{};
     std::string last_reason;
+    std::vector<Observation> captured_observations;   // bounded: the run's own evidence window
     double peak_motion = 0.0;
     double peak_ratio = 0.0;
     double peak_confidence = 0.0;
@@ -243,10 +246,10 @@ int main(int argc, char** argv) {
         if (f.kind == CameraFindingKind::sustained_increase) ++increases;
         if (f.kind == CameraFindingKind::sustained_decrease) ++decreases;
         if (f.kind == CameraFindingKind::quiet_baseline) ++quiet;
-        {
-            const Observation o = session.observation_for("peak-probe", device);
-            peak_confidence = std::max(peak_confidence, o.confidence.value_or(0.0));
-        }
+        const Observation o = session.observation_for("cam-obs-" + std::to_string(observations),
+                                                      device);
+        peak_confidence = std::max(peak_confidence, o.confidence.value_or(0.0));
+        if (captured_observations.size() < 256) captured_observations.push_back(o);
         if (f.kind != CameraFindingKind::warming_up || findings < 3) {
             std::printf("  [%3d] seq=%-6u motion=%.4f mean_delta=%.4f baseline=%.4f ratio=%.2f  %s\n",
                         i, frame.sequence, f.motion_level, f.mean_delta, f.baseline, f.ratio,
@@ -286,6 +289,39 @@ int main(int argc, char** argv) {
     std::printf("    provenance         : %s\n",
                 last_valid.real_source ? "real (a physical device frame)" : "synthetic");
     std::printf("    NOT claimed        : %s\n", last_valid.uncertainty.c_str());
+
+    // ---- the SAME rule the pipeline uses, over the observations THIS capture produced -------
+    // No parallel detector and no new event model: these are the real detector's observations,
+    // evaluated by the real fusion engine and the real detection/fusion rule.
+    if (!captured_observations.empty()) {
+        std::vector<Event> window;
+        window.reserve(captured_observations.size());
+        for (const auto& o : captured_observations) window.push_back(o.to_event());
+
+        FusionEngine engine;
+        const FusionResult fused = engine.fuse(captured_observations);
+
+        DetectionFusionRule rule("detection-fusion");
+        rule.set_evidence_detector_ids({"camera-motion-activity"});
+        const auto alert = rule.evaluate(window);
+
+        std::printf("\n== RULE EVALUATION over this capture's own observations ==\n");
+        std::printf("  observations in the window : %zu\n", window.size());
+        std::printf("  fusion verdict             : %s (confidence %.3f, %zu contributing)\n",
+                    fusion_verdict_to_string(fused.verdict), fused.confidence, fused.contributing);
+        std::printf("  detection-fusion rule      : %s\n",
+                    alert ? "ALERT RAISED" : "no alert");
+        if (alert) {
+            const char* sev = (alert->severity == Severity::critical)   ? "critical"
+                              : (alert->severity == Severity::warning)  ? "warning"
+                                                                        : "info";
+            std::printf("    severity                 : %s\n", sev);
+            std::printf("    confidence               : %.3f\n", alert->confidence);
+            std::printf("    rule                     : %s\n", alert->rule_name.c_str());
+        }
+        std::printf("  NOTE: this is the existing rule and the existing engine, fed the observations\n");
+        std::printf("        this capture produced. No threshold was changed and no detector was added.\n");
+    }
 
     if (last_valid.kind != CameraFindingKind::frames_stalled) {
         const std::string obs_id =

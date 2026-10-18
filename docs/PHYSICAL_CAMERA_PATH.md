@@ -125,8 +125,8 @@ Two further bounded captures were run with the operator present and approval gra
 | motion attempt A | 120 / 120 | 0 | 0 | 7806 ms | 0.0000 – 0.0103 | 3 `warming_up`, 115 `quiet_baseline` |
 | motion attempt B | 600 / 600 | 0 | 0 | — | 0.0000 – 0.0102 | 3 `warming_up`, 595 `quiet_baseline` |
 
-Every frame carried `provenance: real`. **No physical motion appeared in view during either attempt**, so
-"real motion produces an activity-change observation" is **still unverified** and is not claimed. What the
+Every frame carried `provenance: real`. **No physical motion appeared in view during either attempt**
+(see §12 for the consented capture that followed, in which it did). What the
 runs do establish:
 
 - the camera is **live**, not frozen: the driver's sequence number advances frame by frame and the
@@ -278,3 +278,80 @@ The bridge now supports a coordinated capture, so a person knows when to move:
   `MOTION-VERDICT` line stating whether a sustained increase was observed — plus the observation JSON
   with `provenance: "real"`.
 - Stores nothing: frames are reduced to scalars in place and no file, socket or stream is involved.
+
+---
+
+## 12. REAL MOTION VERIFIED (the consented capture)
+
+Capture run with the operator in frame under the schedule below. **600 frames, 120 observations,
+0 stalls, 0 driver drops, 42.6 s, every frame `provenance: real`, nothing stored.**
+
+### 12.1 The protocol, and why it had to change
+
+The first consented attempt (250 frames) was **mis-phased**: the operator stepped into view as the
+countdown ended, so the motion was present *while the baseline formed*, the baseline learned the
+movement as normal, and what followed was the operator settling. The detector reported
+`sustained_decrease=13, sustained_increase=0` — with a peak motion of **0.0384**, four times every
+quiet run. It was reading the scene correctly.
+
+The corrected schedule, which the two-phase capture implements:
+
+```
+0-10 s    countdown            get in front of the camera, stay still
+10-20 s   frames 1-150         STAY STILL - the baseline forms here
+20-50 s   frames 150-600       MOVE continuously (walk across, wave, sit/stand)
+```
+
+### 12.2 The measurement
+
+| Metric | Value |
+|---|---|
+| frames / observations | 600 / 120 (cadence 5) |
+| peak motion (`changed_fraction`) | **0.1252** — against a quiet-scene ceiling of 0.0103 from this session's still runs, i.e. **12x** |
+| peak ratio (recent/baseline) | **2.70** |
+| peak confidence | **0.849** — above the rule's 0.5 gate |
+| finding windows | `sustained_increase=6`, `sustained_decrease=41`, `quiet_baseline=68` |
+| the increase, window by window | `ratio 2.40, 2.59, 2.70, 2.50, 2.32, 1.85` over frames 255-281 |
+
+**So: real physical motion in view produces a sustained activity-change observation.** That is the
+claim this document previously withheld, and it is now supported by the numbers above — with the
+vocabulary unchanged: it is a *sustained increase in motion in view*, and nothing more.
+
+**The calibration analysis and the field measurement agree.** §10.1 predicted confidence
+`= |ratio - 1| / 2`; at the observed ratio of 2.70 that is 0.85, and the measured peak was **0.849**.
+The gate is therefore reachable by real camera evidence, and the reason it is not *always* reachable
+is the vote mix (§10.3), not the scale.
+
+### 12.3 A protocol finding worth keeping
+
+A baseline is a claim about what is *normal*, and whatever is happening while it forms becomes
+normal. This was measured twice from opposite directions: a still scene on a still baseline is
+quiet, and a moving scene on a moving baseline is quiet too — the *change* is what the detector
+reports, never the absolute level. Any field deployment must therefore form its baseline in the
+condition it plans to call normal.
+
+### 12.4 The rule over a real capture's own observations
+
+`hg_camera_bridge` now evaluates **the existing `DetectionFusionRule` and `FusionEngine`** over the
+observations the capture itself produced, and prints the verdict — no parallel detector, no new event
+model, no threshold change:
+
+```
+== RULE EVALUATION over this capture's own observations ==   (still scene, 60 frames)
+  observations in the window : 12
+  fusion verdict             : detected (confidence 0.081, 7 contributing)
+  detection-fusion rule      : no alert
+```
+
+That is the no-false-positive side of the ledger on real frames.
+
+### 12.5 Still NOT claimed
+
+- **No end-to-end alert from real motion yet.** The motion capture produced peak confidence 0.849 and
+  six sustained-increase windows, and the rule is proven to fire on such evidence (§9); but the fused
+  confidence *over that run's window* has not been measured, and §10.3 shows a window holding a brief
+  change beside many quiet votes can still fuse below 0.5. Re-running the same schedule now prints the
+  rule verdict directly, which closes it in one capture.
+- No person, animal, species, face, gesture, fall, intruder or emergency reading: the vocabulary
+  remains closed and asserted to be free of those words.
+- No recognition, identity, storage or transmission of any frame.
