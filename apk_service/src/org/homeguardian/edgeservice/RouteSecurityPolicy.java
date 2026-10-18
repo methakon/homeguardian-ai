@@ -78,6 +78,59 @@ public final class RouteSecurityPolicy {
     public static void setPlatformForTest(PlatformRouting p) { platform = p; }
     public static void setResolverForTest(HostResolver r) { resolver = r; }
 
+    /**
+     * Production wiring. Called once by EdgeService so the policy reads the real platform state and
+     * the bridge can pin its socket to the real VPN network.
+     *
+     * Deliberately an explicit call rather than a static initialiser: it keeps the decision logic
+     * constructible in tests, and it makes the production path visible at the one place it is set up.
+     */
+    public static void wireAndroidPlatform(android.content.Context ctx) {
+        platform = new AndroidPlatformRouting(ctx);
+        binder = new AndroidSocketBinder(ctx);
+    }
+
+    /**
+     * Binds an outbound socket to the VPN network, or reports why it could not.
+     *
+     * This is what makes the route checks binding rather than advisory. Evaluating routes proves
+     * where a packet SHOULD go; binding the socket proves where it CAN go, because the kernel then
+     * uses that network's routing table for this socket. If the VPN has gone away the bind fails or
+     * the subsequent connect fails - it does not silently fall back to Wi-Fi or cellular, which is
+     * the requirement. Without this, a routing change between the check and connect() would send the
+     * credential over whatever interface won the lookup.
+     */
+    public interface SocketBinder {
+        /**
+         * @return null on success, otherwise a human-readable refusal reason.
+         * @throws Exception permitted: a binder may fail with a checked exception (a lost network
+         *         surfaces as IOException). {@link #bindSocketToVpn} catches everything, so a
+         *         throwing binder becomes a refusal rather than an escape.
+         */
+        String bind(java.net.Socket s) throws Exception;
+    }
+
+    private static volatile SocketBinder binder = null;
+
+    /** Test hook. Production wiring supplies the Android implementation from EdgeService. */
+    public static void setBinderForTest(SocketBinder b) { binder = b; }
+
+    /**
+     * @return null when the socket is now pinned to the VPN, otherwise the reason it is not.
+     *         Absence of a binder is a refusal, not a pass: an unbound socket is an unproven path.
+     */
+    public static String bindSocketToVpn(java.net.Socket s) {
+        SocketBinder b = binder;
+        if (b == null) {
+            return "refused: no VPN socket binder configured - cannot guarantee the path is the tunnel";
+        }
+        try {
+            return b.bind(s);
+        } catch (Throwable t) {
+            return "refused: could not bind the socket to the VPN (" + t.getClass().getSimpleName() + ")";
+        }
+    }
+
     private RouteSecurityPolicy() {}
 
     // ------------------------------------------------------------------ the decision
@@ -327,6 +380,47 @@ public final class RouteSecurityPolicy {
                 }
             } catch (Throwable ignored) { }
             return null;
+        }
+    }
+
+    /**
+     * Real socket binder. Finds the active network with TRANSPORT_VPN and pins the socket to it via
+     * Network.bindSocket, so the kernel uses that network's table for this connection.
+     *
+     * Requires ACCESS_NETWORK_STATE, which is not in the manifest yet (operator decision). Until it
+     * is granted the lookup throws SecurityException and this returns a refusal - it never returns
+     * null on an exception, because an unbound socket would be an unpinned path.
+     */
+    public static final class AndroidSocketBinder implements SocketBinder {
+        private final android.content.Context ctx;
+        public AndroidSocketBinder(android.content.Context c) { this.ctx = c; }
+
+        public String bind(java.net.Socket s) {
+            try {
+                android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                        ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+                if (cm == null) return "refused: ConnectivityManager unavailable";
+
+                android.net.Network vpn = null;
+                for (android.net.Network n : cm.getAllNetworks()) {
+                    android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(n);
+                    if (nc != null && nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                        vpn = n;
+                        break;
+                    }
+                }
+                if (vpn == null) return "refused: no VPN network to bind the socket to";
+
+                vpn.bindSocket(s);      // kernel now uses this network's routing table for s
+                Log.i(TAG, "socket bound to the VPN network; kernel cannot route it elsewhere");
+                return null;
+            } catch (SecurityException se) {
+                return "refused: ACCESS_NETWORK_STATE not granted - cannot pin the socket to the VPN";
+            } catch (Throwable t) {
+                // Includes IOException when the network has gone away: the correct outcome is a
+                // refusal, never a retry on another interface.
+                return "refused: could not bind the socket to the VPN (" + t.getClass().getSimpleName() + ")";
+            }
         }
     }
 }

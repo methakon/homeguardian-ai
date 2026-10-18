@@ -176,7 +176,7 @@ public class OutboundMcpBridge {
         }
         // Enforced here and not only in the UI: this bridge hands over a device auth token, so a
         // caller reaching the service without going through the activity must hit the same gate.
-        String refusal = TransportPolicy.refusalReason(coordUrl);
+        String refusal = RouteSecurityPolicy.refusalReason(coordUrl);
         if (refusal != null) {
             lastStatus = "bridge: " + refusal;
             Log.w(TAG, lastStatus);
@@ -206,7 +206,7 @@ public class OutboundMcpBridge {
             // connect-time-only check would then happily offer the auth token on an unprotected
             // path. While the policy refuses, we wait rather than dial - so the bridge resumes by
             // itself once the tunnel is back, and never leaks in the meantime.
-            String refusal = TransportPolicy.refusalReason(coordUrl);
+            String refusal = RouteSecurityPolicy.refusalReason(coordUrl);
             if (refusal != null) {
                 lastStatus = "bridge: holding - " + refusal;
                 Log.w(TAG, lastStatus);
@@ -244,6 +244,19 @@ public class OutboundMcpBridge {
 
         Socket s = new Socket();
         socket = s;
+        // Pin the socket to the VPN network BEFORE connecting. Evaluating routes says where a
+        // packet should go; binding the socket is what makes the kernel use that network's table
+        // for this connection, so if the VPN is gone the bind or the connect fails here instead of
+        // silently egressing over Wi-Fi or cellular. Bound first, connected second, on purpose: a
+        // check performed before connect() cannot otherwise cover the window between the two.
+        String bindRefusal = RouteSecurityPolicy.bindSocketToVpn(s);
+        if (bindRefusal != null) {
+            Log.w(TAG, "not dialling: " + bindRefusal);
+            lastStatus = "bridge: " + bindRefusal;
+            try { s.close(); } catch (Exception ignored) { }
+            socket = null;
+            throw new Exception(bindRefusal);
+        }
         s.connect(new InetSocketAddress(host, port), 8000);
         s.setSoTimeout(INACTIVE_TIMEOUT_MS);
         InputStream in = s.getInputStream();
@@ -481,7 +494,7 @@ public class OutboundMcpBridge {
                         // Mid-session tunnel loss. If the transport is no longer acceptable the
                         // session must come down rather than keep running: the check at connect
                         // time proves nothing about the path five minutes later.
-                        String refusal = TransportPolicy.refusalReason(coordUrl);
+                        String refusal = RouteSecurityPolicy.refusalReason(coordUrl);
                         if (refusal != null) {
                             Log.w(TAG, "tunnel lost mid-session: " + refusal + " - closing the session");
                             closeSocket(1001, "transport no longer acceptable");

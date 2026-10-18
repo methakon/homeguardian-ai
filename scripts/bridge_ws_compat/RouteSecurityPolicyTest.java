@@ -180,6 +180,75 @@ public class RouteSecurityPolicyTest {
         truth("/31 covers both ends",             RouteSecurityPolicy.inPrefix(InetAddress.getByName("203.0.113.1"), InetAddress.getByName("203.0.113.0"), 31), true);
         truth("/30 excludes the far end",         RouteSecurityPolicy.inPrefix(InetAddress.getByName("203.0.113.4"), InetAddress.getByName("203.0.113.0"), 30), false);
 
+        System.out.println("\n=== G. SOCKET PINNING (the no-fallback guarantee) ===");
+        // The bridge consults this before every connect, so its contract is the guarantee:
+        // it must never return null for a socket that is not actually pinned.
+        RouteSecurityPolicy.setBinderForTest(null);
+        String r1 = RouteSecurityPolicy.bindSocketToVpn(new java.net.Socket());
+        truth("no binder configured -> refusal (not a pass)",
+              r1 != null && r1.contains("no VPN socket binder"), true);
+
+        RouteSecurityPolicy.setBinderForTest(new RouteSecurityPolicy.SocketBinder() {
+            public String bind(java.net.Socket s) { return "refused: no VPN network to bind the socket to"; }
+        });
+        String r2 = RouteSecurityPolicy.bindSocketToVpn(new java.net.Socket());
+        truth("binder refuses (no VPN) -> refusal", r2 != null && r2.contains("no VPN network"), true);
+
+        RouteSecurityPolicy.setBinderForTest(new RouteSecurityPolicy.SocketBinder() {
+            public String bind(java.net.Socket s) throws Exception { throw new java.io.IOException("network lost"); }
+        });
+        String r3 = RouteSecurityPolicy.bindSocketToVpn(new java.net.Socket());
+        truth("binder throws (VPN vanished mid-flight) -> refusal, not a retry",
+              r3 != null && r3.contains("could not bind"), true);
+
+        RouteSecurityPolicy.setBinderForTest(new RouteSecurityPolicy.SocketBinder() {
+            public String bind(java.net.Socket s) { return null; }
+        });
+        truth("binder succeeds -> allowed to dial",
+              RouteSecurityPolicy.bindSocketToVpn(new java.net.Socket()) == null, true);
+
+        RouteSecurityPolicy.setBinderForTest(null);
+
+        System.out.println("\n=== H. END-TO-END: a refused bind must produce NO connection ===");
+        // A real listener plus a real socket, so "no fallback" is measured rather than asserted.
+        java.net.ServerSocket srv = new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"));
+        final int port = srv.getLocalPort();
+        srv.setSoTimeout(1500);
+        final int[] accepted = { 0 };
+        Thread t = new Thread(new Runnable() {
+            public void run() {
+                try { java.net.Socket c = srv.accept(); accepted[0]++; c.close(); }
+                catch (Throwable ignored) { }
+            }
+        });
+        t.start();
+
+        // Case 1: binder pins successfully -> the connection is expected to reach the listener.
+        RouteSecurityPolicy.setBinderForTest(new RouteSecurityPolicy.SocketBinder() {
+            public String bind(java.net.Socket s) { return null; }
+        });
+        java.net.Socket ok = new java.net.Socket();
+        String allowed = RouteSecurityPolicy.bindSocketToVpn(ok);
+        if (allowed == null) ok.connect(new java.net.InetSocketAddress("127.0.0.1", port), 1500);
+        try { ok.close(); } catch (Throwable ignored) { }
+        Thread.sleep(400);
+        truth("pinned socket reaches the listener", accepted[0] == 1, true);
+
+        // Case 2: binder refuses -> the bridge must not connect at all, so nothing new arrives.
+        RouteSecurityPolicy.setBinderForTest(new RouteSecurityPolicy.SocketBinder() {
+            public String bind(java.net.Socket s) { return "refused: no VPN network"; }
+        });
+        int before = accepted[0];
+        java.net.Socket bad = new java.net.Socket();
+        String refused = RouteSecurityPolicy.bindSocketToVpn(bad);
+        if (refused == null) bad.connect(new java.net.InetSocketAddress("127.0.0.1", port), 1500);  // must NOT happen
+        try { bad.close(); } catch (Throwable ignored) { }
+        Thread.sleep(600);
+        truth("refused bind -> NO connection attempted (no fallback)", accepted[0] == before, true);
+
+        RouteSecurityPolicy.setBinderForTest(null);
+        srv.close();
+
         System.out.printf("%n=== route-security policy: %d passed, %d failed ===%n", pass, fail);
         System.exit(fail == 0 ? 0 : 1);
     }

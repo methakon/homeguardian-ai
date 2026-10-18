@@ -378,6 +378,10 @@ public class EdgeService extends Service {
             return;
         }
         EdgeState.bridgeEndpoint = url;
+        // Wire the real platform view and socket binder before any dial, so the bridge reads live
+        // routing state and can pin its socket. Without this the policy refuses (no binder), which
+        // is the correct fail-closed default rather than an unproven path.
+        RouteSecurityPolicy.wireAndroidPlatform(this);
         bridge = new OutboundMcpBridge(this);
         bridge.configure(url);
         String r = bridge.start();
