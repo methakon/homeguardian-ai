@@ -2,47 +2,152 @@ package org.homeguardian.edgeservice;
 
 import android.util.Log;
 
-import java.net.InetAddress;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * HG-NET-02B transport policy for the outbound control bridge.
  *
- * The rule this class exists to enforce: the bridge presents a device auth token, so it must never
- * present it over a path an attacker could be sitting on. Two properties are therefore required of
- * a coordinator endpoint before the bridge is allowed to dial it at all:
+ * WHY THIS IS STRUCTURAL RATHER THAN A FLAG CHECK
+ * An earlier version accepted a destination when it was "private" and any tunnel interface was up.
+ * HG-RELEASE-08 correctly identified that as insufficient: those two facts do not imply the traffic
+ * to that address travels through WireGuard. A coordinator at 192.168.1.50 is private, and a tun0
+ * belonging to some unrelated VPN can be up, yet the packet would leave over Wi-Fi - presenting the
+ * device auth token on an unprotected link. "The tunnel is up" is a statement about the device, not
+ * about this destination's path.
  *
- *   1. The destination resolves ONLY to private or VPN-scoped addresses. A public address is
- *      refused outright, because "the VPN is up" does not make a public destination private.
- *   2. A VPN tunnel interface is actually up - UNLESS the destination is loopback, in which case
- *      the traffic never leaves the device and there is nobody to sit in the middle.
+ * An app without root cannot prove the kernel's chosen route, and cannot bind a socket to an
+ * interface by name (SO_BINDTODEVICE needs CAP_NET_RAW). So the property is enforced by
+ * CONTAINMENT, which is checkable from the interface list alone:
  *
- * Both checks are implemented without adding an Android permission. In particular the VPN check
- * does NOT use ConnectivityManager (and so does not need ACCESS_NETWORK_STATE, which would change
- * the permission set the operator is asked to approve); it inspects the kernel interface list
- * directly, which the app can already see.
+ *   the destination must lie INSIDE a tunnel interface's own subnet   (it is on the overlay)
+ *   and must lie OUTSIDE every non-tunnel interface's subnet          (no LAN egress)
  *
- * This is enforced in OutboundMcpBridge.start() as well as in the UI. A UI-only check would be a
- * suggestion, not a policy: any future caller reaching the service directly would bypass it.
+ * A destination that is on the overlay and on no directly-attached network can only be reached
+ * through the tunnel. Neither rule hardcodes a subnet: the approved overlay is derived from
+ * whatever the tunnel interface is actually configured with at check time, so the real deployed
+ * instance is the source of truth rather than an example range compiled into the code.
+ *
+ * Loopback is exempt: it never leaves the device, so there is no link to protect.
+ *
+ * The interface view is injectable so the negative cases - LAN egress, off-overlay destinations,
+ * tunnel down, a tunnel that shares the LAN's subnet - can be tested against synthetic topologies
+ * instead of only whatever the test host happens to have.
+ *
+ * Enforced in OutboundMcpBridge on EVERY dial attempt (not just the first) and re-checked on each
+ * heartbeat, so tunnel loss ends the session and prevents redial rather than leaking.
  */
 public final class TransportPolicy {
 
     private static final String TAG = "HGBridgePolicy";
 
-    /** Names a VPN tunnel takes on Android: WireGuard uses tun*, some backends use wg*. */
-    private static final String[] VPN_IFACE_PREFIXES = { "tun", "wg", "ppp" };
+    /**
+     * Tunnel interface name prefixes. WireGuard uses tun; some backends use wg or ppp. Written
+     * without a closing star-slash sequence inside the text, which would end this comment early.
+     */
+    private static final String[] TUNNEL_PREFIXES = { "tun", "wg", "ppp" };
+
+    // ---------------------------------------------------------------- network view (testable)
+
+    /** One interface address with its prefix length. */
+    public static final class IfaceAddr {
+        public final InetAddress address;
+        public final int prefixLength;      // CIDR bits, e.g. 24 for 10.42.0.1/24
+        public IfaceAddr(InetAddress a, int p) { this.address = a; this.prefixLength = p; }
+    }
+
+    /** One interface and its addresses. */
+    public static final class Iface {
+        public final String name;
+        public final boolean up;
+        public final List<IfaceAddr> addrs;
+        public Iface(String name, boolean up, List<IfaceAddr> addrs) {
+            this.name = name; this.up = up; this.addrs = addrs;
+        }
+    }
+
+    /** Read-only view of the device's interfaces. Real on device, synthetic in tests. */
+    public interface NetworkView {
+        List<Iface> interfaces();
+    }
+
+    private static final class SystemNetworkView implements NetworkView {
+        public List<Iface> interfaces() {
+            List<Iface> out = new ArrayList<Iface>();
+            try {
+                Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
+                if (ifs == null) return out;
+                for (NetworkInterface ni : Collections.list(ifs)) {
+                    List<IfaceAddr> addrs = new ArrayList<IfaceAddr>();
+                    for (InterfaceAddress ia : ni.getInterfaceAddresses()) {
+                        if (ia == null || ia.getAddress() == null) continue;
+                        addrs.add(new IfaceAddr(ia.getAddress(), ia.getNetworkPrefixLength()));
+                    }
+                    out.add(new Iface(ni.getName(), ni.isUp(), addrs));
+                }
+            } catch (Throwable t) {
+                // Returning what we have is safer than throwing: an empty list fails closed below,
+                // because then no tunnel interface contains the destination.
+                Log.w(TAG, "could not enumerate interfaces: " + t);
+            }
+            return out;
+        }
+    }
+
+    private static volatile NetworkView view = new SystemNetworkView();
+
+    /** Test hook. Production never calls this. */
+    public static void setViewForTest(NetworkView v) {
+        view = (v == null ? new SystemNetworkView() : v);
+    }
+
+    /**
+     * Hostname resolution, injectable so the DNS-change case can be tested for real instead of
+     * asserted: a name that re-points from an overlay address to a LAN or public address must be
+     * re-evaluated. Resolution happens on EVERY refusalReason() call, with no caching, so the
+     * reconnect loop's repeated checks cannot be satisfied by a stale answer.
+     */
+    public interface HostResolver {
+        List<InetAddress> resolve(String host) throws Exception;
+    }
+
+    private static final class SystemResolver implements HostResolver {
+        public List<InetAddress> resolve(String host) throws Exception {
+            return new ArrayList<InetAddress>(
+                    java.util.Arrays.asList(InetAddress.getAllByName(host)));
+        }
+    }
+
+    private static volatile HostResolver resolver = new SystemResolver();
+
+    /** Test hook. Production never calls this. */
+    public static void setResolverForTest(HostResolver r) {
+        resolver = (r == null ? new SystemResolver() : r);
+    }
 
     private TransportPolicy() {}
 
+    // ---------------------------------------------------------------- the policy
+
+    /** True when at least one tunnel interface is up. Used for display and for early refusal. */
+    public static boolean vpnTunnelUp() {
+        for (Iface i : view.interfaces()) {
+            if (i.up && isTunnelName(i.name)) return true;
+        }
+        return false;
+    }
+
     /**
      * @return null when the endpoint may be dialled, otherwise a human-readable refusal reason.
-     *         Returning the reason (rather than a boolean) means the operator sees WHY, which is
-     *         the difference between a fixable misconfiguration and an unexplained refusal.
+     *         A reason rather than a boolean: the operator must be able to see why.
      */
     public static String refusalReason(String url) {
         if (url == null || url.trim().length() == 0) {
@@ -51,8 +156,7 @@ public final class TransportPolicy {
         String u = url.trim();
 
         if (u.startsWith("wss://")) {
-            // Not a policy choice: this build has no TLS trust store, so wss:// cannot actually be
-            // established. Refusing is honest; claiming it is merely "not preferred" would not be.
+            // Not a preference: this build has no TLS trust store, so wss:// cannot be established.
             return "wss:// is not available in this build (no TLS trust store configured)";
         }
         if (!u.startsWith("ws://")) {
@@ -79,82 +183,94 @@ public final class TransportPolicy {
         }
         if (host.length() == 0) return "refused: endpoint has an empty host";
 
-        List<InetAddress> addrs;
+        List<InetAddress> resolved;
         try {
-            addrs = new java.util.ArrayList<InetAddress>(
-                    java.util.Arrays.asList(java.net.InetAddress.getAllByName(host)));
+            resolved = resolver.resolve(host);
         } catch (Throwable t) {
             return "refused: cannot resolve '" + host + "' (" + t.getClass().getSimpleName() + ")";
         }
-        if (addrs.isEmpty()) return "refused: '" + host + "' resolved to no addresses";
+        if (resolved == null || resolved.isEmpty()) return "refused: '" + host + "' resolved to no addresses";
 
-        boolean allLoopback = true;
-        for (InetAddress a : addrs) {
-            if (!isPrivateOrVpn(a)) {
-                return "refused: '" + host + "' resolves to a PUBLIC address " + a.getHostAddress()
-                        + " - the bridge would offer its credentials on an unprotected path";
+        List<Iface> ifaces = view.interfaces();
+        boolean tunUp = false;
+        for (Iface i : ifaces) if (i.up && isTunnelName(i.name)) tunUp = true;
+
+        for (InetAddress a : resolved) {
+            if (a.isLoopbackAddress()) continue;             // never leaves the device
+
+            // Resolved fresh on every call, so a DNS change that re-points a name at a different
+            // address is re-evaluated here rather than trusted from an earlier check.
+            if (!tunUp) {
+                return "refused: no VPN tunnel interface is up, and " + host
+                        + " is not loopback - start WireGuard first";
             }
-            if (!a.isLoopbackAddress()) allLoopback = false;
+            // 1) No LAN egress: the address must not be directly reachable on a non-tunnel link.
+            for (Iface i : ifaces) {
+                if (!i.up || isTunnelName(i.name)) continue;
+                if (contains(i, a)) {
+                    return "refused: " + a.getHostAddress() + " is inside " + i.name
+                            + "'s subnet (" + describe(i)
+                            + ") - it would egress over that link instead of the tunnel";
+                }
+            }
+            // 2) Must actually be on an overlay: inside a tunnel interface's own subnet. This is
+            //    the property "a tunnel is up" failed to establish, and it derives the approved
+            //    overlay from the live interface config rather than any hardcoded range.
+            boolean onOverlay = false;
+            for (Iface i : ifaces) {
+                if (!i.up || !isTunnelName(i.name)) continue;
+                if (contains(i, a)) { onOverlay = true; break; }
+            }
+            if (!onOverlay) {
+                return "refused: " + a.getHostAddress() + " is not inside any tunnel interface's"
+                        + " subnet, so it is not reachable over the VPN overlay";
+            }
         }
 
-        // Loopback never leaves the device, so no tunnel is required for it. Anything else must
-        // actually be travelling inside a tunnel before we hand over a credential.
-        if (!allLoopback && !vpnTunnelUp()) {
-            return "refused: no VPN tunnel interface is up (destination " + host
-                    + " is not loopback) - start WireGuard first";
-        }
-
-        Log.i(TAG, "endpoint accepted: " + host + " (loopbackOnly=" + allLoopback
-                + ", vpnUp=" + vpnTunnelUp() + ")");
+        List<String> tunNames = new ArrayList<String>();
+        for (Iface i : ifaces) if (i.up && isTunnelName(i.name)) tunNames.add(i.name);
+        Log.i(TAG, "endpoint accepted: " + host + " via " + tunNames);
         return null;
     }
 
-    /** True when a tunnel interface is present and up, by kernel interface list. No permission needed. */
-    public static boolean vpnTunnelUp() {
-        try {
-            Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
-            if (ifs == null) return false;
-            for (NetworkInterface ni : Collections.list(ifs)) {
-                if (!ni.isUp()) continue;
-                String name = ni.getName();
-                if (name == null) continue;
-                String lower = name.toLowerCase(java.util.Locale.US);
-                for (String p : VPN_IFACE_PREFIXES) {
-                    if (lower.startsWith(p)) return true;
-                }
-            }
-        } catch (Throwable t) {
-            Log.w(TAG, "could not enumerate network interfaces: " + t);
-            return false;   // fail closed: unknown means "not proven up"
+    // ---------------------------------------------------------------- helpers
+
+    private static boolean isTunnelName(String name) {
+        if (name == null) return false;
+        String n = name.toLowerCase(Locale.US);
+        for (String p : TUNNEL_PREFIXES) if (n.startsWith(p)) return true;
+        return false;
+    }
+
+    /** True when addr falls inside the subnet of one of the interface's addresses. */
+    private static boolean contains(Iface i, InetAddress addr) {
+        for (IfaceAddr ia : i.addrs) {
+            if (inSubnet(addr, ia.address, ia.prefixLength)) return true;
         }
         return false;
     }
 
     /**
-     * Private, loopback, link-local, CGNAT (100.64/10) or IPv6 ULA (fc00::/7).
-     *
-     * Site-local and loopback come from the JDK. CGNAT and ULA are checked explicitly because
-     * InetAddress has no predicate for them, and both are ranges WireGuard deployments commonly
-     * use - treating them as public would refuse a legitimate peer.
+     * True when both addresses are the same family and share the first prefixLength bits.
+     * A negative prefixLength (the JDK's "unknown") is treated as a host route, which is the
+     * conservative reading: it can only ever match the exact address, never a wider range.
      */
-    public static boolean isPrivateOrVpn(InetAddress a) {
-        if (a == null) return false;
-        if (a.isLoopbackAddress()) return true;
-        if (a.isSiteLocalAddress()) return true;     // 10/8, 172.16/12, 192.168/16, fec0::/10
-        if (a.isLinkLocalAddress()) return true;     // 169.254/16, fe80::/10
+    public static boolean inSubnet(InetAddress candidate, InetAddress network, int prefixLength) {
+        byte[] c = candidate.getAddress();
+        byte[] n = network.getAddress();
+        if (c.length != n.length) return false;
+        int bits = prefixLength < 0 ? c.length * 8 : Math.min(prefixLength, c.length * 8);
+        for (int i = 0; i < bits; i++) {
+            int mask = 1 << (7 - (i % 8));
+            if ((c[i / 8] & mask) != (n[i / 8] & mask)) return false;
+        }
+        return true;
+    }
 
-        byte[] b = a.getAddress();
-        if (a instanceof Inet4Address && b.length == 4) {
-            int o0 = b[0] & 0xFF, o1 = b[1] & 0xFF;
-            if (o0 == 100 && o1 >= 64 && o1 <= 127) return true;   // 100.64.0.0/10 CGNAT
-            return false;
-        }
-        if (a instanceof Inet6Address && b.length == 16) {
-            int top = ((b[0] & 0xFF) << 8) | (b[1] & 0xFF);
-            if ((top & 0xFE00) == 0xFC00) return true;              // fc00::/7 unique local
-            return false;
-        }
-        return false;
+    private static String describe(Iface i) {
+        if (i.addrs.isEmpty()) return "no address";
+        IfaceAddr a = i.addrs.get(0);
+        return a.address.getHostAddress() + "/" + a.prefixLength;
     }
 
     private static String schemeOf(String u) {

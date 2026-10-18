@@ -201,6 +201,18 @@ public class OutboundMcpBridge {
     private void loop() {
         long backoff = RECONNECT_MIN_MS;
         while (running && !revoked) {
+            // Re-validate on EVERY attempt, not just at start(). The tunnel can drop (or the route
+            // to a private address can change to leave over Wi-Fi) while the bridge is running; a
+            // connect-time-only check would then happily offer the auth token on an unprotected
+            // path. While the policy refuses, we wait rather than dial - so the bridge resumes by
+            // itself once the tunnel is back, and never leaks in the meantime.
+            String refusal = TransportPolicy.refusalReason(coordUrl);
+            if (refusal != null) {
+                lastStatus = "bridge: holding - " + refusal;
+                Log.w(TAG, lastStatus);
+                try { Thread.sleep(RECONNECT_MIN_MS * 2); } catch (InterruptedException ignored) { break; }
+                continue;
+            }
             try {
                 session();
                 backoff = RECONNECT_MIN_MS;
@@ -466,6 +478,15 @@ public class OutboundMcpBridge {
                 while (running && socket != null && !socket.isClosed()) {
                     try { Thread.sleep(HEARTBEAT_MS); } catch (InterruptedException e) { return; }
                     try {
+                        // Mid-session tunnel loss. If the transport is no longer acceptable the
+                        // session must come down rather than keep running: the check at connect
+                        // time proves nothing about the path five minutes later.
+                        String refusal = TransportPolicy.refusalReason(coordUrl);
+                        if (refusal != null) {
+                            Log.w(TAG, "tunnel lost mid-session: " + refusal + " - closing the session");
+                            closeSocket(1001, "transport no longer acceptable");
+                            return;
+                        }
                         JSONObject o = new JSONObject();
                         o.put("type", "heartbeat_ping");
                         o.put("timestamp", System.currentTimeMillis());
