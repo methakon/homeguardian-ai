@@ -116,6 +116,31 @@ public final class RouteSecurityPolicy {
     public static void setBinderForTest(SocketBinder b) { binder = b; }
 
     /**
+     * As {@link #bindSocketToVpn(java.net.Socket)}, but aware of the destination.
+     *
+     * A loopback destination is skipped: it never traverses a network interface, so there is no
+     * tunnel to pin it to and demanding a binder for 127.0.0.1 would break local use for no
+     * security gain. Everything else must be pinned.
+     */
+    public static String bindSocketToVpn(java.net.Socket s, String host) {
+        if (isLoopbackLiteral(host)) return null;
+        return bindSocketToVpn(s);
+    }
+
+    /** True for 127.0.0.0/8, ::1, and the usual textual forms. */
+    public static boolean isLoopbackLiteral(String host) {
+        if (host == null) return false;
+        String h = host.trim();
+        if (h.startsWith("[") && h.endsWith("]")) h = h.substring(1, h.length() - 1);
+        if (h.equals("localhost")) return true;
+        try {
+            return InetAddress.getByName(h).isLoopbackAddress();
+        } catch (Throwable t) {
+            return false;   // unparseable: treat as a real destination and require pinning
+        }
+    }
+
+    /**
      * @return null when the socket is now pinned to the VPN, otherwise the reason it is not.
      *         Absence of a binder is a refusal, not a pass: an unbound socket is an unproven path.
      */

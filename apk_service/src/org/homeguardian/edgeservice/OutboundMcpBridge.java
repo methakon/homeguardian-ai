@@ -249,7 +249,7 @@ public class OutboundMcpBridge {
         // for this connection, so if the VPN is gone the bind or the connect fails here instead of
         // silently egressing over Wi-Fi or cellular. Bound first, connected second, on purpose: a
         // check performed before connect() cannot otherwise cover the window between the two.
-        String bindRefusal = RouteSecurityPolicy.bindSocketToVpn(s);
+        String bindRefusal = RouteSecurityPolicy.bindSocketToVpn(s, host);
         if (bindRefusal != null) {
             Log.w(TAG, "not dialling: " + bindRefusal);
             lastStatus = "bridge: " + bindRefusal;
