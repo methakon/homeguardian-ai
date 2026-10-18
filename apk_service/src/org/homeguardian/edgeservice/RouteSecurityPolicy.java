@@ -1,0 +1,332 @@
+package org.homeguardian.edgeservice;
+
+import android.util.Log;
+
+import java.net.Inet4Address;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * HG-NET-02B route-security policy — platform routing information, not interface inference.
+ *
+ * WHY THIS REPLACES TransportPolicy
+ * TransportPolicy tried to prove "this destination travels over the tunnel" by subnet containment
+ * over NetworkInterface. That fails against the deployed overlay, which addresses each peer with a
+ * /32 host route: a tunnel interface's own address then contains only itself, so containment can
+ * never reach the peer. It also could not see per-peer routes at all, since Android's VpnService
+ * installs them in the VPN's own routing table rather than on the interface.
+ *
+ * This class instead asks the platform, which knows the actual answer: it works from per-network
+ * routes as Android reports them via LinkProperties. That representation carries thin-prefix routes
+ * natively, which is the case that broke.
+ *
+ * The decision is a pure function over an injected {@link PlatformRouting} view, so every branch is
+ * testable off-device against synthetic network states - including the /32 shape, and including
+ * states a test host cannot produce (no network, VPN down, overlapping routes).
+ *
+ * FAIL-CLOSED ON ABSENT PERMISSION
+ * Reading ConnectivityManager requires ACCESS_NETWORK_STATE. That permission is NOT yet in the
+ * manifest: it takes the operator-approved set from three to four, and adding it is an operator
+ * decision. Until it is granted, {@link AndroidPlatformRouting} reports the platform as unavailable
+ * and this policy REFUSES every non-loopback destination. That is deliberate - it refuses rather
+ * than silently falling back to the containment logic that is known to be wrong.
+ */
+public final class RouteSecurityPolicy {
+
+    private static final String TAG = "HGRoutePolicy";
+
+    // ------------------------------------------------------------------ platform view
+
+    /** One route: a network address and its prefix length. */
+    public static final class Route {
+        public final InetAddress network;
+        public final int prefixLength;
+        public Route(InetAddress n, int p) { this.network = n; this.prefixLength = p; }
+    }
+
+    /** One network as the platform describes it. */
+    public static final class NetInfo {
+        public final String label;
+        public final boolean vpn;
+        public final List<Route> routes;
+        public NetInfo(String label, boolean vpn, List<Route> routes) {
+            this.label = label; this.vpn = vpn; this.routes = routes;
+        }
+    }
+
+    /** Read-only view of the platform's routing state. Real on device, synthetic in tests. */
+    public interface PlatformRouting {
+        /** All known networks and their routes. */
+        List<NetInfo> networks();
+        /** False when the platform cannot be read (e.g. required permission absent). */
+        boolean available();
+        /** Human-readable reason for unavailability, for the refusal message. */
+        String unavailableReason();
+    }
+
+    /** Hostname resolution, injectable so DNS-change cases are tested rather than asserted. */
+    public interface HostResolver {
+        List<InetAddress> resolve(String host) throws Exception;
+    }
+
+    private static volatile PlatformRouting platform = null;
+    private static volatile HostResolver resolver = null;
+
+    /** Test hooks. Production wiring supplies the Android implementation from EdgeService. */
+    public static void setPlatformForTest(PlatformRouting p) { platform = p; }
+    public static void setResolverForTest(HostResolver r) { resolver = r; }
+
+    private RouteSecurityPolicy() {}
+
+    // ------------------------------------------------------------------ the decision
+
+    /**
+     * @return null when the endpoint may be dialled, otherwise a human-readable refusal reason.
+     */
+    public static String refusalReason(String url) {
+        if (url == null || url.trim().length() == 0) return "no coordinator endpoint configured";
+        String u = url.trim();
+
+        if (u.startsWith("wss://")) {
+            return "wss:// is not available in this build (no TLS trust store configured)";
+        }
+        if (!u.startsWith("ws://")) {
+            return "refused: only ws:// is supported (got '" + schemeOf(u) + "')";
+        }
+
+        String authority = u.substring(5);
+        int slash = authority.indexOf('/');
+        if (slash >= 0) authority = authority.substring(0, slash);
+        if (authority.length() == 0) return "refused: endpoint has no host";
+        int at = authority.lastIndexOf('@');
+        if (at >= 0) authority = authority.substring(at + 1);
+
+        String host;
+        if (authority.startsWith("[")) {
+            int close = authority.indexOf(']');
+            if (close < 0) return "refused: malformed IPv6 endpoint (unclosed '[')";
+            host = authority.substring(1, close);
+        } else {
+            int colon = authority.lastIndexOf(':');
+            host = colon > 0 ? authority.substring(0, colon) : authority;
+        }
+        if (host.length() == 0) return "refused: endpoint has an empty host";
+
+        List<InetAddress> resolved;
+        try {
+            resolved = (resolver != null)
+                    ? resolver.resolve(host)
+                    : new ArrayList<InetAddress>(java.util.Arrays.asList(InetAddress.getAllByName(host)));
+        } catch (Throwable t) {
+            return "refused: cannot resolve '" + host + "' (" + t.getClass().getSimpleName() + ")";
+        }
+        if (resolved == null || resolved.isEmpty()) {
+            return "refused: '" + host + "' resolved to no addresses";
+        }
+
+        // Loopback is exempt from every platform check, including availability. It never leaves the
+        // device, so it cannot egress unprotected whatever the routing state is - and requiring
+        // routing metadata for 127.0.0.1 would refuse local development for no security gain.
+        boolean allLoopback = true;
+        for (InetAddress a : resolved) {
+            if (!a.isLoopbackAddress()) { allLoopback = false; break; }
+        }
+        if (allLoopback) return null;
+
+        PlatformRouting pr = platform;
+        if (pr == null || !pr.available()) {
+            // Fail closed. Not a fallback to the wrong mechanism: refusing is the only safe answer
+            // when we cannot establish where the traffic would go.
+            String why = (pr == null) ? "platform routing view not wired" : pr.unavailableReason();
+            return "refused: cannot verify routing (" + why + ")";
+        }
+
+        List<NetInfo> nets = pr.networks();
+        if (nets == null) nets = new ArrayList<NetInfo>();
+
+        for (InetAddress a : resolved) {
+            if (a.isLoopbackAddress()) continue;      // never leaves the device
+
+            // P1: does any VPN network exist to carry this?
+            boolean anyVpn = false;
+            for (NetInfo n : nets) if (n.vpn) anyVpn = true;
+            if (!anyVpn) {
+                return "refused: no VPN network is active, and " + host + " is not loopback";
+            }
+
+            // P3 first: no non-VPN network may cover the destination. Checked before P2 so an
+            // overlap is refused rather than trusted - the destination must not be reachable on
+            // an unprotected link, whatever the VPN also says.
+            for (NetInfo n : nets) {
+                if (n.vpn) continue;
+                if (covers(n, a)) {
+                    return "refused: " + a.getHostAddress() + " is routed by non-VPN network '"
+                            + n.label + "' - it would egress unprotected";
+                }
+            }
+
+            // P2: the platform must say a VPN network routes this destination. This is the clause
+            // that accepts a thin-prefix route, which interface-subnet containment could not.
+            boolean vpnCovers = false;
+            for (NetInfo n : nets) {
+                if (!n.vpn) continue;
+                if (covers(n, a)) { vpnCovers = true; break; }
+            }
+            if (!vpnCovers) {
+                return "refused: no VPN network routes " + a.getHostAddress()
+                        + " - it is not reachable over the approved tunnel";
+            }
+        }
+
+        Log.i(TAG, "endpoint accepted: " + host + " (routes verified against platform state)");
+        return null;
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    private static boolean covers(NetInfo n, InetAddress addr) {
+        if (n.routes == null) return false;
+        for (Route r : n.routes) {
+            if (inPrefix(addr, r.network, r.prefixLength)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True when both addresses are the same family and share the first prefixLength bits.
+     * prefixLength of 0 matches any address of the same family, which is how a default route is
+     * represented - correct, and the reason a VPN carrying a default route covers everything.
+     */
+    public static boolean inPrefix(InetAddress candidate, InetAddress network, int prefixLength) {
+        if (candidate == null || network == null) return false;
+        byte[] c = candidate.getAddress();
+        byte[] n = network.getAddress();
+        if (c.length != n.length) return false;
+        int bits = prefixLength < 0 ? 0 : Math.min(prefixLength, c.length * 8);
+        for (int i = 0; i < bits; i++) {
+            int mask = 1 << (7 - (i % 8));
+            if ((c[i / 8] & mask) != (n[i / 8] & mask)) return false;
+        }
+        return true;
+    }
+
+    private static String schemeOf(String u) {
+        int i = u.indexOf("://");
+        return i > 0 ? u.substring(0, i) : "(none)";
+    }
+
+    // ------------------------------------------------------------------ Android wiring
+
+    /**
+     * Real platform view. Reads ConnectivityManager, which requires ACCESS_NETWORK_STATE.
+     *
+     * The permission is deliberately NOT in the manifest yet: it widens the operator-approved set
+     * from three to four and that is an operator decision. Until it is granted this reports
+     * unavailable and the policy refuses - fail-closed, never a silent downgrade to the unreliable
+     * containment path.
+     */
+    public static final class AndroidPlatformRouting implements PlatformRouting {
+        private final android.content.Context ctx;
+        public AndroidPlatformRouting(android.content.Context c) { this.ctx = c; }
+
+        public boolean available() { return unavailableReason() == null; }
+
+        public String unavailableReason() {
+            try {
+                Object svc = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+                if (svc == null) return "ConnectivityManager unavailable";
+                android.net.ConnectivityManager cm = (android.net.ConnectivityManager) svc;
+                // Throws SecurityException when ACCESS_NETWORK_STATE is not granted.
+                android.net.Network active = cm.getActiveNetwork();
+                if (active == null) return null;      // no network: policy refuses on its own terms
+                android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(active);
+                if (nc == null) return null;
+                return null;
+            } catch (SecurityException se) {
+                return "ACCESS_NETWORK_STATE not granted to this app";
+            } catch (Throwable t) {
+                return "platform routing unreadable (" + t.getClass().getSimpleName() + ")";
+            }
+        }
+
+        public List<NetInfo> networks() {
+            List<NetInfo> out = new ArrayList<NetInfo>();
+            try {
+                android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                        ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+                if (cm == null) return out;
+                for (android.net.Network n : cm.getAllNetworks()) {
+                    android.net.NetworkCapabilities nc = cm.getNetworkCapabilities(n);
+                    android.net.LinkProperties lp = cm.getLinkProperties(n);
+                    if (nc == null || lp == null) continue;
+
+                    boolean vpn = nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN);
+                    List<Route> routes = new ArrayList<Route>();
+                    for (android.net.RouteInfo ri : lp.getRoutes()) {
+                        Route parsed = routeOf(ri);
+                        if (parsed != null) routes.add(parsed);
+                    }
+                    String label = String.valueOf(n) + (vpn ? " (vpn)" : "");
+                    out.add(new NetInfo(label, vpn, routes));
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "could not enumerate networks: " + t);
+            }
+            return out;
+        }
+
+        /**
+         * Extracts (destination, prefix) from a RouteInfo reflectively.
+         *
+         * The accessor set is not stable across API levels: getDestination() returns InetAddress on
+         * API 30 (the target device) but IpPrefix on newer builds, and getDestinationPrefix()
+         * (IpPrefix) only exists later still. Calling either directly would bind the app to one
+         * platform version, so both shapes are handled at runtime and an unrecognised one is
+         * skipped - a route we cannot read is a route we must not claim, and the policy fails
+         * closed on a destination no readable route covers.
+         */
+        private static Route routeOf(android.net.RouteInfo ri) {
+            try {
+                java.lang.reflect.Method gp = android.net.RouteInfo.class.getMethod("getDestinationPrefix");
+                Object p = gp.invoke(ri);
+                Route fromPrefix = fromIpPrefix(p);
+                if (fromPrefix != null) return fromPrefix;
+            } catch (Throwable ignored) { }
+            try {
+                java.lang.reflect.Method gd = android.net.RouteInfo.class.getMethod("getDestination");
+                Object d = gd.invoke(ri);
+                if (d instanceof InetAddress) {
+                    int plen = 32;
+                    try {
+                        java.lang.reflect.Method pl = android.net.RouteInfo.class.getMethod("getDestinationPrefixLength");
+                        Object v = pl.invoke(ri);
+                        if (v instanceof Integer) plen = (Integer) v;
+                    } catch (Throwable ignored) { }
+                    return new Route((InetAddress) d, plen);
+                }
+                Route fromPrefix = fromIpPrefix(d);
+                if (fromPrefix != null) return fromPrefix;
+            } catch (Throwable ignored) { }
+            return null;   // unreadable: skip rather than guess a destination
+        }
+
+        /** Builds a Route from an android.net.IpPrefix, by reflection (absent on older APIs). */
+        private static Route fromIpPrefix(Object maybePrefix) {
+            if (maybePrefix == null) return null;
+            try {
+                Class<?> c = maybePrefix.getClass();
+                if (!"android.net.IpPrefix".equals(c.getName())) return null;
+                java.lang.reflect.Method ga = c.getMethod("getAddress");
+                java.lang.reflect.Method gl = c.getMethod("getPrefixLength");
+                Object addr = ga.invoke(maybePrefix);
+                Object plen = gl.invoke(maybePrefix);
+                if (addr instanceof InetAddress && plen instanceof Integer) {
+                    return new Route((InetAddress) addr, (Integer) plen);
+                }
+            } catch (Throwable ignored) { }
+            return null;
+        }
+    }
+}
