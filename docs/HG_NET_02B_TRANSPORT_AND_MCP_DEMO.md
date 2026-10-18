@@ -143,6 +143,22 @@ rejects later calls on a fresh connection with "initialize must be called first"
 is not carried. Both were found by testing against this real binary; a stub MCP cannot falsify
 either assumption because it answers regardless of headers and session state.
 
+### Server-side corroboration
+
+The engine's own accounting at shutdown, independent of anything the client reported:
+
+```
+[info]    hg_mcp_server listening on 127.0.0.1:8790 (loopback=true, auth=required, tools=2)
+[warning] mcp: rejected an unauthenticated request
+[info]    mcp: server stopped
+[info]    mcp: requests=7 rejected_origin=0 rejected_auth=1 oversize=0 shed=0 errors=0
+```
+
+Seven requests matches the transcript exactly (initialize, tools/list, two tools/call, three
+negative probes); exactly one auth rejection matches the wrong-token probe; zero oversize, zero
+shed and zero errors means no request was dropped or malformed. This is the server counting its own
+traffic, so it is evidence rather than a restatement of the client's claims.
+
 ---
 
 ## Part 4 — Synthetic versus physical-device inputs
