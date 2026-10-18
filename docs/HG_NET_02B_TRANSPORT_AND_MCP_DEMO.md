@@ -188,7 +188,7 @@ English, screen-recorded, no household media.
 
 | # | Item | Status | Evidence |
 |---|---|---|---|
-| 1 | Native C++ MCP builds from clean checkout | PASS | `hg_mcp_server` 3,380,904 B, CMake target on `feature/hg-net-02f-common-mcp-bridge` |
+| 1 | Native C++ MCP builds from clean checkout | PASS | `hg_mcp_server` 3,380,904 B, sha256 `1656fd2b182e56097536cee6f4acc5ba54eba4d0dd213431dff707b160e6b989`; built from `feature/hg-net-02f-common-mcp-bridge` @ `dd9ee00fc7a6294ca7d5d21b3f9d416038df0968` (working tree 0 files dirty); cmake 3.28.3 / g++ 13.3.0 |
 | 2 | `initialize` | PASS | `serverInfo` + protocolVersion + session id in transcript above |
 | 3 | `tools/list` | PASS | 2 genuine tool definitions |
 | 4 | `tools/call` read-only status | PASS | `{"capture_enabled":true,"read_only":true,"state":"Running"}` |
