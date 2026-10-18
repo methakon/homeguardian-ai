@@ -467,6 +467,30 @@ target_link_libraries(hg_site_connector_rehearsal PRIVATE
     nlohmann_json::nlohmann_json
 )
 
+# ---------------------------------------------------------------------------
+# hg_camera_bridge: the REAL camera path on Ubuntu, with an operator gate.
+#
+# V4L2 is the kernel UAPI, so this needs NO extra library: not OpenCV, not libv4l, not
+# PipeWire. Capture requires --confirm; without it the program refuses before opening
+# anything. Frames are reduced to bounded luma/motion scalars in place - nothing is written,
+# streamed or transmitted - and the finding vocabulary is closed and boring.
+#
+# Kept out of hg_mcp_server and the web demo on purpose: a real sensor path must not change
+# the demonstration surface.
+add_executable(hg_camera_bridge
+    src/main_camera_bridge.cpp
+    src/backend/linux/V4l2CameraDevice.cpp
+    src/core/CameraActivitySession.cpp
+    src/core/ActivityDetectors.cpp
+    src/core/BoundedFeatures.cpp
+    src/core/Observation.cpp
+)
+target_include_directories(hg_camera_bridge PRIVATE src)
+target_link_libraries(hg_camera_bridge PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+)
+
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
         ${CMAKE_SOURCE_DIR}/tests/core/test_config.cpp
@@ -538,6 +562,9 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_inventory.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AnimalActivityScenarios.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_animal_activity_scenarios.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/CameraActivitySession.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/V4l2CameraDevice.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_camera_activity.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp

@@ -97,6 +97,8 @@ private:
 
     Config cfg_;
     std::vector<double> history_{};  // bounded ring, oldest first
+    Result last_result_{};           // what snapshot() reports, so it cannot contradict a verdict
+    bool have_result_ = false;
     double baseline_ = 0.0;
     double last_value_ = 0.0;
     size_t samples_ = 0;
