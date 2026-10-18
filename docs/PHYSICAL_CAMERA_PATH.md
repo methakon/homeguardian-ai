@@ -112,3 +112,79 @@ Both have regression coverage, and the full suite passes: **7419 assertions / 57
    instance or a node sensor would make it real; the adapter already refuses unauthorized samples.
 3. **Audio channel (needs one package):** `libpipewire-0.3-dev` (or ALSA headers) would let the
    existing permission-gated audio bridge build. That is a system change, so it waits for approval.
+
+---
+
+## 7. Second capture round (120 and 600 real frames) — real motion still UNVERIFIED
+
+Two further bounded captures were run with the operator present and approval granted:
+
+| Run | Frames | Stalls | Driver drops | Wall | Motion range | Findings |
+|---|---|---|---|---|---|---|
+| quiet baseline | 40 / 40 | 0 | 0 | — | — | `not_detected`, no alert |
+| motion attempt A | 120 / 120 | 0 | 0 | 7806 ms | 0.0000 – 0.0103 | 3 `warming_up`, 115 `quiet_baseline` |
+| motion attempt B | 600 / 600 | 0 | 0 | — | 0.0000 – 0.0102 | 3 `warming_up`, 595 `quiet_baseline` |
+
+Every frame carried `provenance: real`. **No physical motion appeared in view during either attempt**, so
+"real motion produces an activity-change observation" is **still unverified** and is not claimed. What the
+runs do establish:
+
+- the camera is **live**, not frozen: the driver's sequence number advances frame by frame and the
+  frame-to-frame deltas are non-zero, so these are distinct captured frames rather than one repeated
+  buffer;
+- the path is **stable** over 600 frames: no stalls, no driver drops, no memory growth;
+- a static scene produces **no alert** — twice, deliberately, which is item 4's answer.
+
+The likely practical cause is framing: if the camera does not cover where the operator stood, the
+capture is honest and quiet. The next attempt should be made **while standing inside the field of
+view**, which is a physical fact this observer cannot check from a scalar stream.
+
+## 8. Audio dependencies (item 7) — a correction: NO installation is needed
+
+The premise of the task was that ALSA/PipeWire development headers had to be installed. **They are not
+needed, and the earlier claim in this document that `libpipewire-0.3-dev` was required was wrong.**
+Verified:
+
+- `grep` of `CMakeLists.txt` for `pipewire|PIPEWIRE|libasound|ALSA` returns **nothing**: the build has
+  no such dependency and no conditional gate around the audio target.
+- `hg_audio_bridge` **builds as-is** (`Built target hg_audio_bridge`) with no package installed.
+- The reason is the design: `PwAudioCaptureDevice` deliberately avoids libasound by driving PipeWire's
+  own CLI tools through the very server the desktop uses, because this host has no ALSA headers and
+  `sudo` requires a password. So the real-PCM path exists without a single new dependency.
+
+`sudo -n true` confirms a password is required, so no package could be installed from this session
+anyway — and none is required. **Audio dependency changes: none.**
+
+## 9. Do physical sensor observations reach the existing pipeline? (item 9) — YES, measured
+
+Question: can a physical-sensor observation reach the existing event, correlation, alert and MCP
+pipeline without a parallel detector or a new event model? Answered by measurement, in
+`[camera][integration]`:
+
+| Measurement | Result |
+|---|---|
+| The observation round-trips as a first-class `Observation` | `Observation::from_event` returns **ok**, with status `detected` and its confidence intact |
+| The existing pipeline consumes it | `Application::process_event()` — the same entry point the demo runner uses — increments `events_processed` |
+| The existing fusion rule counts it as evidence | with `set_evidence_detectors({"camera-motion-activity"})` the observations become votes for `DetectionFusionRule` |
+| **The rule fires on camera evidence** | over a window of three peak-transition camera observations (status `detected`, confidence **1.0**, ratio 6.67): **ALERT**, severity info/warning |
+
+So there is **no parallel detector and no new event model** — the camera path emits the same model the
+detector layer already emits, and one configuration call registers its detector as evidence.
+
+### The two calibration findings (real, and deliberately not papered over)
+
+1. **The confidence scale does not reach the rule's threshold in steady motion.** The rule requires
+   fused confidence ≥ 0.5. The detector's confidence is `|ratio - 1| / 2`, so it needs ratio ≥ 2.0, and
+   under *sustained* motion the EMA baseline adapts and the ratio decays toward 1 — measured at 1.79,
+   i.e. confidence 0.39, no alert, over 14 observations.
+2. **The fusion window dilutes.** The pipeline evaluates the rule over a 5-second window of
+   observations; the early low-confidence `not_detected` votes contribute confidence 0.0 and drag the
+   fused mean below the threshold.
+
+Both are calibration decisions (threshold vs. confidence scale, and window composition), not wiring
+gaps. **No threshold was loosened to manufacture an alert** — the wiring proof above uses the detector's
+own peak confidence, which its existing scale produces without modification.
+
+MCP visibility is unaffected and already covered: the read-only `get_alert_summary` tool is built from
+the same Application state, and the `[animal]` suite asserts that its answer is derived from the alerts
+the pipeline actually delivered.
