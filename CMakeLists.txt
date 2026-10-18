@@ -437,6 +437,36 @@ target_link_libraries(hg_alexa_bridge PRIVATE
         nlohmann_json::nlohmann_json
     )
 
+# ---------------------------------------------------------------------------
+# hg_site_connector_rehearsal: the site-connector HOST SHAPE, without a deployment.
+#
+# Mock adapters only: it opens no socket, speaks no camera protocol, carries no media, and
+# every observation it produces is labelled synthetic. It exists so the connector chain
+# (identity -> reach allowlist -> registry authorization -> per-frame consent -> session
+# termination -> control-channel wire -> media-path decision) can be run, measured and
+# regression-checked as one executable, and so the resource envelope of a future always-on
+# host is a measurement rather than a guess.
+#
+# Deliberately NOT linked into hg_mcp_server, the web demo or the bridge: camera-connector
+# work stays isolated from the MCP demonstration surface.
+add_executable(hg_site_connector_rehearsal
+    src/main_site_connector_rehearsal.cpp
+    src/core/Observation.cpp
+    src/net/DeviceRegistry.cpp
+    src/camera/CameraInventory.cpp
+    src/camera/ControlChannel.cpp
+    src/camera/DeviceFingerprint.cpp
+    src/camera/DirectMediaPlanner.cpp
+    src/camera/MockCameraAdapter.cpp
+    src/camera/RegistryAuthorizer.cpp
+    src/camera/SiteConnector.cpp
+    src/camera/SiteProfile.cpp
+)
+target_include_directories(hg_site_connector_rehearsal PRIVATE src)
+target_link_libraries(hg_site_connector_rehearsal PRIVATE
+    nlohmann_json::nlohmann_json
+)
+
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
         ${CMAKE_SOURCE_DIR}/tests/core/test_config.cpp
@@ -506,6 +536,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/camera/DeviceFingerprint.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/CameraInventory.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_inventory.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnimalActivityScenarios.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_animal_activity_scenarios.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
