@@ -912,6 +912,33 @@
         "experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "network-contract-handoff",
+      "path": "docs/NETWORK_CONTRACT_V1_HANDOFF.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "NETWORK_CONTRACT_V1_HANDOFF.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "network-contract-audit-suite",
+      "path": "tests/net/test_network_contract_audit.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_network_contract_audit.cpp",
+      "content_markers": [
+        "Fixture"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }
