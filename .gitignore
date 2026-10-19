@@ -142,3 +142,6 @@ build_envcontext/
 
 # Compiled Java artifacts must never be committed.
 *.class
+
+# Owner private backups: user files must never be committed or published.
+user-backups/
