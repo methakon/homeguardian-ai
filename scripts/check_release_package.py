@@ -1350,10 +1350,16 @@ def scan_packaged_values(candidates: Sequence[tuple[Path, str]], root: Path,
     stream: list[tuple[str, int, str]] = []
     skipped_binary = 0
     skipped_large = 0
+    #: A packaged file that cannot be read cannot be certified.  It is recorded
+    #: here (label + the OSError class) and turned into an explicit FAIL finding
+    #: by the caller: a silent ``continue`` let an unreadable file drop every
+    #: finding it might have carried while the audit still reported a clean pass.
+    unreadable: list[tuple[str, str]] = []
     for path, label in sorted(candidates, key=lambda item: str(item[0])):
         try:
             raw = path.read_bytes()
-        except OSError:
+        except OSError as exc:
+            unreadable.append((label, type(exc).__name__))
             continue
         if len(raw) > max_bytes:
             skipped_large += 1
@@ -1378,6 +1384,8 @@ def scan_packaged_values(candidates: Sequence[tuple[Path, str]], root: Path,
         "lines_scanned": len(stream),
         "binary_skipped": skipped_binary,
         "large_skipped": skipped_large,
+        "unreadable_skipped": len(unreadable),
+        "unreadable_files": unreadable,
         "topology_matches_not_reported": excluded,
     }
 
@@ -1518,6 +1526,19 @@ def check_packaging_hygiene(pkg: Package, rules: PackagingRules,
             value_sha256_8=f.value_sha256_8,
         ))
     findings.extend(relabelled)
+    # Fail closed: an unreadable packaged file is an explicit FAIL, not a silent
+    # skip.  It is counted in ``stats["packaging"]["unreadable_skipped"]`` so the
+    # report says how many there were even when the finding list is filtered.
+    for label, why in scan_stats.get("unreadable_files", []):
+        findings.append(_finding(
+            "HG-PKG-LEAK-008", SEV_FAIL, label, 0,
+            "packaged file '{}' could not be read ({}), so its contents were "
+            "never scanned; the audit cannot certify a file it cannot "
+            "read".format(label, why),
+            label,
+            "Make the packaged file readable, or remove it from the package, and "
+            "re-run the audit. An unscanned file must never pass as clean.",
+        ))
     stats.update(scan_stats)
     stats["leak_counts"] = counts
     stats["credential_value_shapes"] = dict(
