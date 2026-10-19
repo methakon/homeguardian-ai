@@ -30,7 +30,7 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 # 0. Environment & Metadata Initialization
 # ------------------------------------------------------------------------------
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="${HG_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 COMMIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "UNKNOWN")"
 BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "UNKNOWN")"
 TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -44,6 +44,21 @@ COORDINATOR_SCRIPT="$REPO_ROOT/deploy/coordinator/service.js"
 PASS_COUNT=0
 FAIL_COUNT=0
 
+# Release gate status tracking (dynamic verification, no hardcoded PASS)
+GATE_BUILD_PREREQ="NOT_RUN"
+GATE_NATIVE_MCP_PROTOCOL="NOT_RUN"
+GATE_MCP_HANDSHAKE="NOT_RUN"
+GATE_READ_ONLY_TOOLS="NOT_RUN"
+GATE_MUTATING_TOOLS_EXCLUDED="NOT_RUN"
+GATE_SECURITY_BOUNDS="NOT_RUN"
+GATE_OUTBOUND_COORDINATOR="NOT_RUN"
+GATE_CAMERA_SAFETY_BOUNDARY="NOT_RUN"
+GATE_CLEAN_PROCESS_SHUTDOWN="NOT_RUN"
+SUMMARY_PRINTED=0
+TMP_DIR=""
+MCP_PID=""
+COORD_PID=""
+
 # Colors for terminal output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -56,6 +71,100 @@ log_info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
 log_ok()    { PASS_COUNT=$((PASS_COUNT + 1)); echo -e "  ${GREEN}✓ PASS${NC}  $*"; }
 log_fail()  { FAIL_COUNT=$((FAIL_COUNT + 1)); echo -e "  ${RED}✗ FAIL${NC}  $*" >&2; }
 log_warn()  { echo -e "  ${YELLOW}! WARN${NC}  $*"; }
+
+print_summary() {
+  if [[ ${SUMMARY_PRINTED:-0} -eq 1 ]]; then
+    return 0
+  fi
+  SUMMARY_PRINTED=1
+
+  local end_time
+  end_time="$(date +%s)"
+  local duration=$(( end_time - START_TIME ))
+
+  local all_gates_passed=1
+  if [[ ${FAIL_COUNT:-0} -gt 0 || ${PASS_COUNT:-0} -eq 0 ]]; then
+    all_gates_passed=0
+  fi
+  for g in "$GATE_BUILD_PREREQ" "$GATE_NATIVE_MCP_PROTOCOL" "$GATE_MCP_HANDSHAKE" \
+           "$GATE_READ_ONLY_TOOLS" "$GATE_MUTATING_TOOLS_EXCLUDED" "$GATE_SECURITY_BOUNDS" \
+           "$GATE_OUTBOUND_COORDINATOR" "$GATE_CAMERA_SAFETY_BOUNDARY" "$GATE_CLEAN_PROCESS_SHUTDOWN"; do
+    if [[ "$g" != "PASS" ]]; then
+      all_gates_passed=0
+    fi
+  done
+
+  echo -e "\n${BOLD}================================================================================${NC}"
+  echo -e "${BOLD}HOMEGUARDIAN AI — JUDGE RELEASE VERIFICATION SUMMARY${NC}"
+  echo -e "${BOLD}================================================================================${NC}"
+  if [[ $all_gates_passed -eq 1 ]]; then
+    echo -e "VERDICT:                ${GREEN}${BOLD}PASS${NC}"
+  else
+    echo -e "VERDICT:                ${RED}${BOLD}FAIL${NC}"
+  fi
+  echo -e "COMMIT_SHA:             ${COMMIT_SHA}"
+  echo -e "BRANCH:                 ${BRANCH}"
+  echo -e "DURATION_SECONDS:       ${duration}"
+  echo -e "BUILD_PREREQUISITES:    ${GATE_BUILD_PREREQ} (C++20, CMake, Node.js, npm packages)"
+  echo -e "NATIVE_MCP_PROTOCOL:    ${GATE_NATIVE_MCP_PROTOCOL} (73/73 checks passed via verify_mcp.sh)"
+  echo -e "MCP_HANDSHAKE:          ${GATE_MCP_HANDSHAKE} (Protocol 2025-11-25, 256-bit CSPRNG token)"
+  echo -e "READ_ONLY_TOOLS:        ${GATE_READ_ONLY_TOOLS} (get_homeguardian_status, get_alert_summary)"
+  echo -e "MUTATING_TOOLS_EXCLUDED:${GATE_MUTATING_TOOLS_EXCLUDED} (Zero mutating tools, zero camera frame tools)"
+  echo -e "SECURITY_BOUNDS:        ${GATE_SECURITY_BOUNDS} (401 Auth, 403 Session Hijack/Origin, 413 Payload)"
+  echo -e "OUTBOUND_COORDINATOR:   ${GATE_OUTBOUND_COORDINATOR} (Loopback binding, auth token, 503 fail-closed offline)"
+  echo -e "CAMERA_SAFETY_BOUNDARY: ${GATE_CAMERA_SAFETY_BOUNDARY} (media_capture_enabled=false, 0 physical video streams)"
+  echo -e "CLEAN_PROCESS_SHUTDOWN: ${GATE_CLEAN_PROCESS_SHUTDOWN} (All child processes exited cleanly, 0 leaks)"
+  echo -e "TOTAL_CHECKS_PASSED:    ${PASS_COUNT}"
+  echo -e "TOTAL_CHECKS_FAILED:    ${FAIL_COUNT}"
+  echo -e "${BOLD}================================================================================${NC}"
+
+  if [[ $all_gates_passed -eq 1 ]]; then
+    echo -e "Judge evaluation ready. To reproduce, run: ${BOLD}bash scripts/verify_judge_release.sh${NC}\n"
+    return 0
+  else
+    echo -e "${RED}Judge evaluation FAILED. One or more release gates did not pass.${NC}\n"
+    return 1
+  fi
+}
+
+cleanup() {
+  local exit_code=$?
+  if [[ -n "${MCP_PID:-}" ]] && kill -0 "$MCP_PID" 2>/dev/null; then
+    kill -TERM "$MCP_PID" 2>/dev/null || true
+    for _ in $(seq 1 20); do kill -0 "$MCP_PID" 2>/dev/null || break; sleep 0.1; done
+    kill -9 "$MCP_PID" 2>/dev/null || true
+  fi
+  if [[ -n "${COORD_PID:-}" ]] && kill -0 "$COORD_PID" 2>/dev/null; then
+    kill -TERM "$COORD_PID" 2>/dev/null || true
+    for _ in $(seq 1 20); do kill -0 "$COORD_PID" 2>/dev/null || break; sleep 0.1; done
+    kill -9 "$COORD_PID" 2>/dev/null || true
+  fi
+  if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]]; then
+    rm -rf "${TMP_DIR}"
+  fi
+
+  # If any check failed or was logged as fail, force non-zero exit code
+  if [[ $exit_code -eq 0 && ${FAIL_COUNT:-0} -gt 0 ]]; then
+    exit_code=1
+  fi
+
+  # If summary was not printed yet (e.g. exit on failure), print it now
+  if [[ ${SUMMARY_PRINTED:-0} -eq 0 ]]; then
+    print_summary || true
+  fi
+
+  if [[ $exit_code -ne 0 ]]; then
+    echo -e "${RED}================================================================================${NC}"
+    echo -e "${RED}[VERIFICATION FAILED]${NC} One or more release gates did not pass."
+    echo -e "Commit: ${COMMIT_SHA}"
+    echo -e "Passed Checks: ${PASS_COUNT:-0}"
+    echo -e "Failed Checks: ${FAIL_COUNT:-0}"
+    echo -e "Troubleshooting: See docs/DEVPOST_DEMONSTRATION_GUIDE.md for clean-clone instructions."
+    echo -e "${RED}================================================================================${NC}\n"
+  fi
+  exit "$exit_code"
+}
+trap cleanup EXIT INT TERM
 
 echo -e "${BOLD}================================================================================${NC}"
 echo -e "${BOLD}HomeGuardian AI — Automated Judge-Release Verification Harness${NC}"
@@ -74,6 +183,7 @@ check_cmd() {
   local cmd="$1"
   local help="$2"
   if ! command -v "$cmd" >/dev/null 2>&1; then
+    GATE_BUILD_PREREQ="FAIL"
     log_fail "Missing required prerequisite: $cmd. ($help)"
     exit 1
   fi
@@ -91,6 +201,7 @@ if command -v g++ >/dev/null 2>&1; then
 elif command -v clang++ >/dev/null 2>&1; then
   CXX_COMPILER="clang++"
 else
+  GATE_BUILD_PREREQ="FAIL"
   log_fail "No C++20 compiler found (g++ or clang++ required)."
   exit 1
 fi
@@ -106,6 +217,7 @@ fi
 if [[ -x "$MCP_BIN" ]]; then
   log_ok "Native C++ binary verified executable: $MCP_BIN"
 else
+  GATE_BUILD_PREREQ="FAIL"
   log_fail "Failed to find or compile $MCP_BIN"
   exit 1
 fi
@@ -118,43 +230,19 @@ fi
 
 if [[ -d "$REPO_ROOT/node_modules/ws" ]]; then
   log_ok "Node.js dependencies verified (ws, werift)"
+  GATE_BUILD_PREREQ="PASS"
 else
+  GATE_BUILD_PREREQ="FAIL"
   log_fail "Node.js dependencies missing in $REPO_ROOT/node_modules"
   exit 1
 fi
 
 # ------------------------------------------------------------------------------
-# 2. Temporary Isolated Sandbox Setup & Cleanup Traps
+# 2. Temporary Isolated Sandbox Setup
 # ------------------------------------------------------------------------------
 log_info "\nStep 2: Provisioning Isolated Local Loopback Sandbox..."
 
 TMP_DIR="$(mktemp -d /tmp/hg_judge_verify.XXXXXX)"
-MCP_PID=""
-COORD_PID=""
-
-cleanup() {
-  local exit_code=$?
-  if [[ -n "${MCP_PID:-}" ]] && kill -0 "$MCP_PID" 2>/dev/null; then
-    kill -TERM "$MCP_PID" 2>/dev/null || true
-    for _ in $(seq 1 20); do kill -0 "$MCP_PID" 2>/dev/null || break; sleep 0.1; done
-    kill -9 "$MCP_PID" 2>/dev/null || true
-  fi
-  if [[ -n "${COORD_PID:-}" ]] && kill -0 "$COORD_PID" 2>/dev/null; then
-    kill -TERM "$COORD_PID" 2>/dev/null || true
-    for _ in $(seq 1 20); do kill -0 "$COORD_PID" 2>/dev/null || break; sleep 0.1; done
-    kill -9 "$COORD_PID" 2>/dev/null || true
-  fi
-  rm -rf "$TMP_DIR"
-  if [[ $exit_code -ne 0 ]]; then
-    echo -e "\n${RED}================================================================================${NC}"
-    echo -e "${RED}[VERIFICATION FAILED]${NC} One or more release gates did not pass."
-    echo -e "Commit: ${COMMIT_SHA}"
-    echo -e "Troubleshooting: See docs/DEVPOST_DEMONSTRATION_GUIDE.md for clean-clone instructions."
-    echo -e "${RED}================================================================================${NC}"
-  fi
-  exit "$exit_code"
-}
-trap cleanup EXIT INT TERM
 
 # Dynamic unprivileged test ports
 MCP_PORT=$(( 18800 + RANDOM % 300 ))
@@ -177,7 +265,9 @@ set -e
 
 if [[ $MCP_SUITE_RC -eq 0 ]] && grep -q "73 passed, 0 failed" "$MCP_SUITE_LOG"; then
   log_ok "MCP Protocol Suite passed (73/73 checks: 2025-11-25 handshake, tools, 401/403/413, session lifecycle)"
+  GATE_NATIVE_MCP_PROTOCOL="PASS"
 else
+  GATE_NATIVE_MCP_PROTOCOL="FAIL"
   log_fail "MCP Protocol Suite failed (return code: $MCP_SUITE_RC)"
   tail -n 25 "$MCP_SUITE_LOG" >&2
   exit 1
@@ -222,6 +312,7 @@ done
 if [[ $SERVER_ONLINE -eq 1 ]]; then
   log_ok "Native C++ MCP Server listening on 127.0.0.1:$MCP_TEST_PORT"
 else
+  GATE_MCP_HANDSHAKE="FAIL"
   log_fail "Native C++ MCP Server failed to start on 127.0.0.1:$MCP_TEST_PORT"
   cat "$TMP_DIR/cxx_mcp.err" >&2
   exit 1
@@ -242,6 +333,7 @@ INIT_BODY="$(echo "$INIT_RESP" | sed -e '1,/^\r*$/d')"
 if [[ "$HTTP_STATUS" == "200" ]]; then
   log_ok "MCP initialize returned HTTP 200"
 else
+  GATE_MCP_HANDSHAKE="FAIL"
   log_fail "MCP initialize returned unexpected HTTP status: $HTTP_STATUS"
   exit 1
 fi
@@ -252,6 +344,7 @@ SERVER_NAME="$(echo "$INIT_BODY" | jq -r '.result.serverInfo.name // empty')"
 if [[ "$NEGOTIATED_VER" == "2025-11-25" ]]; then
   log_ok "Negotiated MCP protocol version is 2025-11-25"
 else
+  GATE_MCP_HANDSHAKE="FAIL"
   log_fail "Expected protocolVersion 2025-11-25, got: $NEGOTIATED_VER"
   exit 1
 fi
@@ -259,13 +352,16 @@ fi
 if [[ "$SERVER_NAME" == "homeguardian-mcp" ]]; then
   log_ok "Server reports authentic identity: homeguardian-mcp"
 else
+  GATE_MCP_HANDSHAKE="FAIL"
   log_fail "Server reports unexpected name: $SERVER_NAME"
   exit 1
 fi
 
 if [[ ${#SESSION_ID} -eq 64 ]]; then
   log_ok "Mcp-Session-Id minted with 256-bit CSPRNG entropy (${#SESSION_ID} hex chars)"
+  GATE_MCP_HANDSHAKE="PASS"
 else
+  GATE_MCP_HANDSHAKE="FAIL"
   log_fail "Invalid Mcp-Session-Id header: expected 64 hex characters, got: '$SESSION_ID'"
   exit 1
 fi
@@ -287,13 +383,16 @@ MUTATING_TOOLS="$(echo "$TOOLS_RESP" | jq -r '.result.tools[] | select(.name | t
 if [[ "$TOOL_COUNT" -eq 2 ]] && [[ -n "$HAS_STATUS" ]] && [[ -n "$HAS_ALERTS" ]]; then
   log_ok "tools/list exposes strictly two read-only tools: get_homeguardian_status, get_alert_summary"
 else
+  GATE_READ_ONLY_TOOLS="FAIL"
   log_fail "tools/list tool count mismatch: expected 2, got $TOOL_COUNT"
   exit 1
 fi
 
 if [[ -z "$MUTATING_TOOLS" ]]; then
   log_ok "Zero mutating tools, zero camera/video streaming tools exposed"
+  GATE_MUTATING_TOOLS_EXCLUDED="PASS"
 else
+  GATE_MUTATING_TOOLS_EXCLUDED="FAIL"
   log_fail "Unauthorized mutating or camera tools detected: $MUTATING_TOOLS"
   exit 1
 fi
@@ -311,6 +410,7 @@ READ_ONLY_STATUS="$(echo "$STATUS_RESP" | jq -r '.result.content[0].text' | jq -
 if [[ "$READ_ONLY_STATUS" == "true" ]]; then
   log_ok "tools/call get_homeguardian_status succeeded with read_only: true"
 else
+  GATE_READ_ONLY_TOOLS="FAIL"
   log_fail "get_homeguardian_status did not confirm read_only invariant: $STATUS_RESP"
   exit 1
 fi
@@ -326,7 +426,9 @@ ALERTS_RESP="$(curl -s -X POST "http://127.0.0.1:$MCP_TEST_PORT/mcp" \
 ALERT_COUNT_VAL="$(echo "$ALERTS_RESP" | jq -r '.result.content[0].text' | jq -r '.alert_count')"
 if [[ "$ALERT_COUNT_VAL" =~ ^[0-9]+$ ]]; then
   log_ok "tools/call get_alert_summary succeeded (alert_count: $ALERT_COUNT_VAL)"
+  GATE_READ_ONLY_TOOLS="PASS"
 else
+  GATE_READ_ONLY_TOOLS="FAIL"
   log_fail "get_alert_summary returned invalid alert_count: $ALERTS_RESP"
   exit 1
 fi
@@ -340,6 +442,7 @@ UNAUTH_STATUS="$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.
 if [[ "$UNAUTH_STATUS" == "401" ]]; then
   log_ok "Security boundary: unauthenticated request refused with HTTP 401"
 else
+  GATE_SECURITY_BOUNDS="FAIL"
   log_fail "Unauthenticated request expected 401, got $UNAUTH_STATUS"
   exit 1
 fi
@@ -353,6 +456,7 @@ BAD_TOKEN_STATUS="$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0
 if [[ "$BAD_TOKEN_STATUS" == "401" ]]; then
   log_ok "Security boundary: invalid bearer token refused with HTTP 401"
 else
+  GATE_SECURITY_BOUNDS="FAIL"
   log_fail "Invalid bearer token expected 401, got $BAD_TOKEN_STATUS"
   exit 1
 fi
@@ -368,7 +472,9 @@ UNKNOWN_RESP="$(curl -s -X POST "http://127.0.0.1:$MCP_TEST_PORT/mcp" \
 RPC_ERR_CODE="$(echo "$UNKNOWN_RESP" | jq -r '.error.code // empty')"
 if [[ "$RPC_ERR_CODE" == "-32602" ]]; then
   log_ok "Security boundary: call to unregistered tool refused with error -32602"
+  GATE_SECURITY_BOUNDS="PASS"
 else
+  GATE_SECURITY_BOUNDS="FAIL"
   log_fail "Expected JSON-RPC error -32602 for unknown tool, got: $UNKNOWN_RESP"
   exit 1
 fi
@@ -411,6 +517,7 @@ done
 if [[ "$COORD_ONLINE" -eq 1 ]]; then
   log_ok "Outbound MCP Coordinator listening on 127.0.0.1:$COORD_HTTP (HTTP) & :$COORD_WS (WS)"
 else
+  GATE_OUTBOUND_COORDINATOR="FAIL"
   log_fail "Coordinator failed to become ready on 127.0.0.1:$COORD_HTTP"
   cat "$TMP_DIR/coord.err" >&2
   exit 1
@@ -422,6 +529,7 @@ HEALTH_EDGE="$(echo "$HEALTH_RESP" | jq -r '.edge_online')"
 if [[ "$HEALTH_EDGE" == "false" ]]; then
   log_ok "Coordinator public health confirms fail-closed state (edge_online: false)"
 else
+  GATE_OUTBOUND_COORDINATOR="FAIL"
   log_fail "Unexpected edge_online state in health report: $HEALTH_RESP"
   exit 1
 fi
@@ -433,6 +541,7 @@ COORD_UNAUTH_CODE="$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.
 if [[ "$COORD_UNAUTH_CODE" == "401" ]]; then
   log_ok "Coordinator /mcp enforces Bearer authentication (refused unauthenticated client with 401)"
 else
+  GATE_OUTBOUND_COORDINATOR="FAIL"
   log_fail "Coordinator /mcp expected 401 for unauthenticated client, got: $COORD_UNAUTH_CODE"
   exit 1
 fi
@@ -444,7 +553,9 @@ COORD_OFFLINE_STATUS="$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://1
   -d "$INIT_PAYLOAD")"
 if [[ "$COORD_OFFLINE_STATUS" == "503" ]]; then
   log_ok "Coordinator fail-closed boundary: edge offline returns HTTP 503 Service Unavailable"
+  GATE_OUTBOUND_COORDINATOR="PASS"
 else
+  GATE_OUTBOUND_COORDINATOR="FAIL"
   log_fail "Expected HTTP 503 when edge is offline, got: $COORD_OFFLINE_STATUS"
   exit 1
 fi
@@ -460,6 +571,7 @@ CONFIG_CLOUD_ENABLED="$(jq -r '.cloud_processing_enabled' "$REPO_ROOT/config/hom
 if [[ "$CONFIG_CAPTURE_ENABLED" == "false" ]]; then
   log_ok "Committed config enforces media_capture_enabled: false"
 else
+  GATE_CAMERA_SAFETY_BOUNDARY="FAIL"
   log_fail "Privacy violation: media_capture_enabled is not false in config/homeguardian.json"
   exit 1
 fi
@@ -467,6 +579,7 @@ fi
 if [[ "$CONFIG_CLOUD_ENABLED" == "false" ]]; then
   log_ok "Committed config enforces cloud_processing_enabled: false"
 else
+  GATE_CAMERA_SAFETY_BOUNDARY="FAIL"
   log_fail "Privacy violation: cloud_processing_enabled is not false in config/homeguardian.json"
   exit 1
 fi
@@ -475,7 +588,9 @@ fi
 ACTIVE_CAM_PROCS="$(lsof /dev/video* 2>/dev/null | grep -E "homeguardian|hg_" || true)"
 if [[ -z "$ACTIVE_CAM_PROCS" ]]; then
   log_ok "Zero physical camera streams or V4L2 device descriptors opened"
+  GATE_CAMERA_SAFETY_BOUNDARY="PASS"
 else
+  GATE_CAMERA_SAFETY_BOUNDARY="FAIL"
   log_fail "Active physical camera descriptors detected: $ACTIVE_CAM_PROCS"
   exit 1
 fi
@@ -492,6 +607,7 @@ if [[ -n "$MCP_PID" ]] && kill -0 "$MCP_PID" 2>/dev/null; then
   if ! kill -0 "$MCP_PID" 2>/dev/null; then
     log_ok "Native C++ MCP server shut down cleanly on SIGTERM"
   else
+    GATE_CLEAN_PROCESS_SHUTDOWN="FAIL"
     log_fail "Native C++ MCP server failed to terminate on SIGTERM"
     exit 1
   fi
@@ -503,37 +619,17 @@ if [[ -n "$COORD_PID" ]] && kill -0 "$COORD_PID" 2>/dev/null; then
   for _ in $(seq 1 30); do kill -0 "$COORD_PID" 2>/dev/null || break; sleep 0.1; done
   if ! kill -0 "$COORD_PID" 2>/dev/null; then
     log_ok "Outbound MCP coordinator shut down cleanly on SIGTERM"
+    GATE_CLEAN_PROCESS_SHUTDOWN="PASS"
   else
+    GATE_CLEAN_PROCESS_SHUTDOWN="FAIL"
     log_fail "Outbound MCP coordinator failed to terminate on SIGTERM"
     exit 1
   fi
 fi
 
-END_TIME="$(date +%s)"
-DURATION=$(( END_TIME - START_TIME ))
-
 # ------------------------------------------------------------------------------
 # 8. Final Machine-Readable Verdict Summary
 # ------------------------------------------------------------------------------
-echo -e "\n${BOLD}================================================================================${NC}"
-echo -e "${BOLD}HOMEGUARDIAN AI — JUDGE RELEASE VERIFICATION SUMMARY${NC}"
-echo -e "${BOLD}================================================================================${NC}"
-echo -e "VERDICT:                ${GREEN}${BOLD}PASS${NC}"
-echo -e "COMMIT_SHA:             ${COMMIT_SHA}"
-echo -e "BRANCH:                 ${BRANCH}"
-echo -e "DURATION_SECONDS:       ${DURATION}"
-echo -e "BUILD_PREREQUISITES:    PASS (C++20, CMake, Node.js, npm packages)"
-echo -e "NATIVE_MCP_PROTOCOL:    PASS (73/73 checks passed via verify_mcp.sh)"
-echo -e "MCP_HANDSHAKE:          PASS (Protocol 2025-11-25, 256-bit CSPRNG token)"
-echo -e "READ_ONLY_TOOLS:        PASS (get_homeguardian_status, get_alert_summary)"
-echo -e "MUTATING_TOOLS_EXCLUDED:PASS (Zero mutating tools, zero camera frame tools)"
-echo -e "SECURITY_BOUNDS:        PASS (401 Auth, 403 Session Hijack/Origin, 413 Payload)"
-echo -e "OUTBOUND_COORDINATOR:   PASS (Loopback binding, auth token, 503 fail-closed offline)"
-echo -e "CAMERA_SAFETY_BOUNDARY: PASS (media_capture_enabled=false, 0 physical video streams)"
-echo -e "CLEAN_PROCESS_SHUTDOWN: PASS (All child processes exited cleanly, 0 leaks)"
-echo -e "TOTAL_CHECKS_PASSED:    ${PASS_COUNT}"
-echo -e "TOTAL_CHECKS_FAILED:    ${FAIL_COUNT}"
-echo -e "${BOLD}================================================================================${NC}"
-echo -e "Judge evaluation ready. To reproduce, run: ${BOLD}bash scripts/verify_judge_release.sh${NC}\n"
-
-exit 0
+print_summary
+FINAL_RC=$?
+exit "$FINAL_RC"
