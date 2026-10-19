@@ -319,7 +319,10 @@ int main(int argc, char** argv) {
 
     // Records as JSON: the annotation travels with the numbers, so a later reader cannot lose it.
     std::ostringstream json;
-    json << "{\n  \"scenarios\": [\n";
+    json << "{\n  \"provenance\": \"derived-from-real-capture\",\n"
+            "  \"provenance_note\": \"counts derived from the capture log of a real run; the capture "
+            "itself retained no frame and no audio\",\n"
+            "  \"scenarios\": [\n";
     for (size_t i = 0; i < records.size(); ++i) {
         const auto& r = records[i];
         json << "    {\"scenario_id\": \"" << r.scenario_id << "\", \"class\": \""
