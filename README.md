@@ -198,9 +198,9 @@ MCP server and MCP client verification (requires `hg_mcp_server` to be built and
 the commands behind the MCP numbers quoted elsewhere in the submission:
 
 ```bash
-bash scripts/verify_mcp.sh              # native protocol suite: 71 checks, 0 failures
+bash scripts/verify_mcp.sh              # native protocol suite: 73 checks, 0 failures
 node web_mcp/test_client.js             # MCP client suite: 26 checks, 0 failures
-node web_mcp/test_devices_dashboard.js   # dashboard/WebRTC/secrets: 158 checks, 0 failures
+node web_mcp/test_devices_dashboard.js   # dashboard/WebRTC/secrets: 161 checks, 0 failures
 node tests/test_java_ws_bridge_cxx_e2e.js # Java bridge <-> Coordinator <-> C++ engine: 21 checks, 0 failures
 node tests/test_outbound_mcp_bridge.js  # Authenticated outbound MCP bridge: 46 checks, 0 failures
 ```
