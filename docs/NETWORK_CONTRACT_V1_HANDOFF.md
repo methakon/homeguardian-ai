@@ -144,3 +144,121 @@ producer side has been exercised with fixtures and a device client, not with a r
 raw video or audio crosses this contract in either direction. Nothing here changes Hermes 2's work, and the
 Mi A3 hub needs **no camera or microphone driver of its own** under this architecture — which is the point
 of the contract.
+
+---
+
+# Alert semantics (R2) — what a producer can and cannot expect
+
+This section is the measured behaviour of the released engine, not a design intention. Every claim below
+is backed by an executable check in `tests/integration/test_network_sensor_to_mcp.cpp` (`[e2e]`), run with
+the real `Application`, the real fusion rule, the real alert policy and the real MCP dispatcher.
+
+## The path an observation takes
+
+```
+producer message -> authenticated receive (ObservationIngest) -> SecurityObservation
+   -> ingest detectors (IngestDetectors) -> normalized Observation(s) with a detector id
+   -> Application::process_event -> Pipeline (correlation window) -> DetectionFusionRule::evaluate
+   -> Alert -> AlertPolicy (dedup + cooldown) -> delivered -> read by the status provider
+   -> MCP tools/call get_homeguardian_status | get_alert_summary
+```
+
+## How distinct detector identities corroborate
+
+A producer's evidence is judged by **how many independent detector identities agree**, not by how loud one
+of them is. Enroll nodes with **different `observation_type` values** (for example `motion-changed-fraction`
+from a camera node and `audio-rms` from a microphone node): they derive *different* detector ids
+(`motion-activity`, `audio-activity`) and their votes corroborate each other. Two producers sharing one
+device identity are not corroboration — one identity is one sequence stream, and the second writer's
+messages are refused as replays.
+
+## The fusion confidence formula, as implemented
+
+```
+agreement = max(positive, negative) / total
+mean_conf = conf_sum / total          // a NEGATIVE vote contributes 0 to the sum and still counts in total
+penalty   = contributing / (contributing + unusable)
+confidence = min(mean_conf, mean_conf * agreement * penalty)      // FusionEngine.cpp
+```
+
+Two consequences a producer must design for:
+
+1. **A negative member is not free.** It adds nothing to the sum while still counting in the total, so a
+   window that is fraction *p* positive with positives of mean confidence *c* can reach at most **c·p²**.
+   Clearing the release gate (`DetectionFusionRule::min_confidence = 0.5`) therefore needs roughly
+   **p ≥ 0.85 with c = 0.7**.
+2. **Sustained input is not a detection.** A scalar detector fires on the *transition* where the input moves
+   faster than its own EMA baseline; a flat plateau is reported `not_detected` once the baseline catches up.
+   At a 1 s cadence a rising disturbance is detected and stays detected; at 120 ms spacing the baseline
+   tracks the input within a sample or two and nothing is detected. Measured: single-class windows produced
+   fused confidence 0.10–0.33 and **no alert**; two corroborating classes produced **alerts at 0.663 and
+   0.687**.
+
+## Positive versus negative evidence, executably
+
+```sh
+cmake --build build -j"$(nproc)" --target homeguardian_tests
+./build/homeguardian_tests '[e2e]'          # trace, positive case, negative case, refusals
+```
+
+Expected, from the positive case (two enrolled nodes: motion + audio, the engine's own local acquisition
+**off**, so every observation in its window came from the authorized nodes):
+
+```
+corroboration: alert id=alert-...  rule=detection-fusion  severity=info  confidence=0.663
+corroboration: alert id=alert-...  rule=detection-fusion  severity=info  confidence=0.687
+corroboration MCP get_alert_summary: {"alert_count":2,"alert_ids":[...],"highest_severity":"info",
+                                      "read_only":true}
+```
+
+Expected, from the negative case (one detector class): no alert, and the fusion engine explains itself —
+`"detectors conflict: 15 detected vs 17 not_detected (agreement 0.53125 < threshold 0.6)"`.
+
+## Correlation windows and wall-clock requirements
+
+- The pipeline's correlation window defaults to **5 s** and is measured against the **wall clock**, not
+  against your newest event. The fusion engine keeps its own 60 s window.
+- **Therefore your timestamps must be approximately now.** An event stamped far in the past — which is what
+  a fixture clock does — is silently outside the window and contributes nothing. This cost two rounds of
+  debugging to find; see "Event-time versus processing-time" below.
+- The hub independently refuses timestamps more than the future-skew allowance ahead, older than 24 h, or
+  behind your device's own out-of-order window.
+
+## Event-time versus processing-time limitations
+
+- `acquired_at_ms` is **event time** (when the sensor observed the value); the hub records `ingested_at`
+  separately. Alerts are raised on **processing time** as events arrive, not on a schedule.
+- A late but not-yet-stale packet is accepted and keeps its event time — so a burst of old packets can
+  arrive inside the window and vote as if simultaneous. Producers should not rely on the hub to reorder.
+- The window is evaluated per event, which is why one transition can produce more than one alert.
+
+## One-or-more alerts per transition
+
+`AlertPolicy` deduplicates on `rule_name` (+ severity) with a **60 s cooldown** by default, re-arming after
+it elapses, and caps retained dedup state at 256 keys. So a single sustained transition typically yields
+one delivered alert, while a transition with a distinct rise can yield **two** (measured: two alerts, ~20 ms
+apart, same rule). Treat an alert count as "at least one per qualifying transition", never as a precise
+event count, and use `alert_ids` for identity.
+
+## Confidence and severity
+
+The alert carries the fused confidence and a severity derived from the rule's bands (info < warning <
+critical). Measured with synthetic magnitudes: **info** at fused confidence 0.66–0.69; a warning needs the
+rule's higher band. A producer cannot set severity, and no producer can bypass the gate by asserting one.
+
+## Consent, replay and reconnection guarantees
+
+- **Consent is checked per observation**; a withdrawal mid-stream is refused as `consent_withdrawn`
+  (a device with no consent subject is `consent_missing`), and the registry — not the peer's own claim — is
+  authoritative.
+- **Replay is refused across reconnects**: the watermark is durable state, and `welcome.resume_after_sequence`
+  tells a restarted producer where to resume. Duplicate ids and non-monotonic timestamps are refused.
+- **A disconnect yields no evidence of normalcy**: exactly one `device_availability` / `"offline"`
+  transition and **zero** sensed observations, so a gap can never be read downstream as "nothing happened".
+
+## Real engine execution versus synthetic source inputs
+
+The alerts above are produced by the **real** engine, rule, policy, alert store and MCP dispatcher. The
+*inputs* are synthetic nodes. That distinction is deliberate and must survive into any report: this is an
+integration result, **not** physical camera validation, and no claim about a real camera, a real V380, or
+the Mi A3 is made or implied here.

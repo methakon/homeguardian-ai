@@ -1017,6 +1017,93 @@
         "experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "bounded-media-buffer-header",
+      "path": "src/core/BoundedMediaBuffer.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "BoundedMediaBuffer",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "bounded-media-buffer-source",
+      "path": "src/core/BoundedMediaBuffer.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "BoundedMediaBuffer",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "media-backpressure-suite",
+      "path": "tests/core/test_media_backpressure.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_media_backpressure.cpp",
+      "content_markers": [
+        "MediaBufferConfig"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "linux-hub-integration-doc",
+      "path": "docs/integration/LINUX_HUB_INTEGRATION.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "LINUX_HUB_INTEGRATION.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "hub-integration-check-script",
+      "path": "scripts/linux_hub_integration_check.sh",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "linux_hub_integration_check",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "physical-camera-procedure",
+      "path": "docs/PHYSICAL_NETWORK_CAMERA_PROCEDURE.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "PHYSICAL_NETWORK_CAMERA_PROCEDURE.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "alert-interface-r2",
+      "path": "docs/ALERT_INTERFACE_R2.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "ALERT_INTERFACE_R2.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }
