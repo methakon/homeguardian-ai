@@ -1,5 +1,8 @@
 // test_scenario_record: what makes a staged physical run usable as evidence, and what does not.
 //
+// SYNTHETIC fixtures only: no hardware, no capture, no microphone. Every case below is constructed in
+// code from a fabricated CaptureFacts, so the suite is deterministic and runs anywhere.
+//
 // These tests exist because the failure mode they guard against is silent: a run whose scene nobody
 // annotated looks exactly like a run whose scene was known empty, and the numbers from it would be read
 // as a false-positive rate. Every case below is a way that could happen.

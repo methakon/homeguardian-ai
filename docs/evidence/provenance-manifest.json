@@ -791,7 +791,7 @@
       "evidence_type": "synthetic",
       "reference_token": "test_scenario_record.cpp",
       "content_markers": [
-        "ScenarioPolicy"
+        "SYNTHETIC fixtures only"
       ],
       "external_notice_markers": [
         "experiment branch",
@@ -877,11 +877,37 @@
     },
     {
       "id": "scenario-records-json",
-      "path": "docs/evidence/scenario-records-20261019T154225Z.json",
+      "path": "docs/evidence/scenario-records-20261019T154658Z.json",
       "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
-      "evidence_type": "transcribed",
-      "reference_token": "scenario-records-20261019T154225Z.json",
+      "evidence_type": "real",
+      "reference_token": "scenario-records-20261019T154658Z.json",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ],
+      "content_markers": [
+        "provenance"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "note": "derived from a real capture log; the capture retained no frame and no audio"
+    },
+    {
+      "id": "scenario-ambient-log-3",
+      "path": "docs/evidence/scenario-ambient_baseline-20261019T154622Z.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "scenario-ambient_baseline-20261019T154622Z.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
       "external_notice_markers": [
         "experiment branch",
         "not deployed into"

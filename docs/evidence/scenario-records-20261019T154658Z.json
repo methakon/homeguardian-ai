@@ -1,0 +1,7 @@
+{
+  "provenance": "derived-from-real-capture",
+  "provenance_note": "counts derived from the capture log of a real run; the capture itself retained no frame and no audio",
+  "scenarios": [
+    {"scenario_id": "ambient_baseline", "class": "ambient_none", "occupancy": "unknown", "annotation_confirmed": true, "deliberate_change": "fourth ambient sample; no deliberate stimulus; occupancy not controlled or observed", "frames_captured": 600, "frames_requested": 600, "driver_dropped": 0, "observations": 120, "motion_labelled": 12, "alert_raised": false, "alert_rule": "", "attributable": true, "blockers": ["the scene was confirmed as UNKNOWN: the run is reported, and it is not used to attribute movement"]}
+  ]
+}
