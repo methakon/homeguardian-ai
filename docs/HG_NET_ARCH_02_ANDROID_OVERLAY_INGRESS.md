@@ -112,19 +112,19 @@ const remoteEndpoint = process.env.HG_MI_A3_MCP_ENDPOINT || process.env.HG_MCP_E
 if (remoteEndpoint) {
   const probe = await probeMcpEndpoint(remoteEndpoint, targetToken);
   if (probe.ok) {
-    // Verified real edge hardware
+    // Authenticated edge hardware response
     activeRuntime = {
       mode: 'hardware',
-      target: 'Xiaomi Mi A3 (Android 11 / ARM64)',
-      verified: true,
+      target: 'Edge Device (Android 11 / ARM64)',
+      hardware_active: true,
       endpoint: remoteEndpoint,
     };
   } else {
-    // Graceful fallback to verified local native C++ fixture
+    // Graceful fallback to local native C++ fixture
     activeRuntime = {
       mode: 'synthetic_fixture',
-      target: 'Local Synthetic Fixture (Mi A3 Offline)',
-      verified: false,
+      target: 'Local Synthetic Fixture (Device Offline)',
+      hardware_active: false,
       endpoint: MCP_URL,
     };
   }

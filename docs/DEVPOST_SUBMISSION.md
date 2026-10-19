@@ -30,7 +30,7 @@ Key features include:
 2. **Explainable Anomaly Detection & Fusion:** Sensor observations are evaluated on-device against learned statistical baselines (mean, standard deviation, warm-up intervals). Bounded numerical features from multiple sensor modalities are fused into actionable insights. Raw observations alone never trigger alarms; an alert is generated only when fused, multi-sensor mathematical evidence qualifies.
 3. **Native Model Context Protocol (MCP) Server:** Fully implements the official Model Context Protocol (spec 2025-11-25) in native C++ over Streamable HTTP. Autonomous AI agents can query home status and alert histories through strictly read-only tools (`get_homeguardian_status`, `get_alert_summary`). Sessions are secured by OS-backed CSPRNG 256-bit tokens with strict credential binding.
 4. **Peripheral Device Registry & WebRTC Viewer:** An authoritative C++ device registry manages paired peripherals. A built-in WebRTC streaming engine enables real-time, low-latency browser monitoring. In accordance with safe testing principles, physical cameras default to an unverified state (refusing viewing requests), while synthetic test streams allow comprehensive verification without privacy risk.
-5. **Alexa-Style Conversational Assistant:** Built on a hardened, read-only integration contract, the dashboard provides a voice- and text-driven Alexa-style demonstration client. Operators can query household status (*"Is everything okay?"*, *"Are there any alerts?"*) and inspect live consent states.
+5. **Alexa-Style Conversational Assistant (Simulated Client):** Using a hardened, read-only simulation contract, the dashboard provides a voice- and text-driven demonstration client for Alexa-style interactions. Operators can query household status (*"Is everything okay?"*, *"Are there any alerts?"*) and inspect live consent states.
 6. **Encrypted Local Persistence & Retention:** All alert metadata (timestamps, rule IDs, mathematical evidence) is stored in a local SQLite database with automated age-based retention and schema migration.
 
 ---
@@ -95,7 +95,7 @@ In keeping with the rules of the Amazon Developer Hackathon (AmazonAppDev 2026),
 
 We believe absolute transparency is the cornerstone of responsible engineering. We state the exact operational limitations of physical devices and infrastructure:
 
-- **Xiaomi Mi A3 (Android Node):** Android camera streaming integration has been verified in lab adb/Wi-Fi test harnesses; in the judge release, physical camera streaming is locked fail-closed (`physical_camera_unverified`) to prevent unauthorized live capture during evaluation.
+- **Xiaomi Mi A3 (Android Node):** Android node transport is evaluated using synthetic test observations; physical camera streaming on physical hardware is unverified in this candidate and locked fail-closed (`physical_camera_unverified`) to prevent unauthorized live capture during evaluation.
 - **Panasonic Eluga:** Tested as an auxiliary edge sensor device in staging; not provisioned with live cryptographic credentials in the default judge inventory.
 - **V380 Wi-Fi IP Camera:** RTSP ingestion pipeline designed for local LAN; intentionally held offline in the judge distribution pending user-authorized pairing.
 - **Alexa Echo Hardware:** No production Alexa Echo physical hardware or Amazon cloud skill store publication is claimed; the project provides a local-first Alexa-style demonstration client and ASK v2-compatible native C++ bridge.

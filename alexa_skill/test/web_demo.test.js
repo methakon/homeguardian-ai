@@ -24,7 +24,10 @@ const os = require('node:os');
 const path = require('node:path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const BRIDGE = path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge');
+const BRIDGE = process.env.HG_BRIDGE_PATH ||
+  (fs.existsSync(path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge'))
+    ? path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge')
+    : path.join(REPO_ROOT, 'build', 'hg_alexa_bridge'));
 const DEMO_SERVER = path.join(REPO_ROOT, 'src', 'bridge', 'hg_demo_server.js');
 const CONFIG_ON = path.join(REPO_ROOT, 'config', 'homeguardian.demo.json');
 const CONFIG_OFF = path.join(REPO_ROOT, 'config', 'homeguardian.json');

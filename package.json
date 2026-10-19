@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "HomeGuardian AI MCP Web Gateway & Live Camera Dashboard",
   "private": true,
+  "license": "Apache-2.0",
   "dependencies": {
     "werift": "^0.25.0",
     "ws": "^8.22.0"

@@ -264,9 +264,9 @@ prove real hardware enforcement.
   Available since **API level 26** (newer AAudio calls 28–32 are avoided).
 - Both are within the confirmed API 27 floor.
 
-### Confirmed device (live, via ADB)
+### Lab test device audit (historical, via ADB)
 
-A physical device is attached and verified. The model string is **not trusted**
+A test device was audited via ADB. The model string is **not trusted**
 and was **not** corroborated:
 
 - `ro.product.model=S25_Ultra` is cosmetic. Corroborating properties disagree:

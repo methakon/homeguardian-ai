@@ -236,7 +236,7 @@ All security boundaries are continuously asserted by automated test suites:
 
 Absolute transparency is foundational to our submission. The exact status of hardware and deployment environments is documented below:
 
-- **Xiaomi Mi A3 (Android Node):** Android camera streaming integration has been verified in lab adb/Wi-Fi test harnesses; in the judge release, physical camera streaming is locked fail-closed (`physical_camera_unverified`) to prevent unauthorized live capture during evaluation.
+- **Xiaomi Mi A3 (Android Node):** Android node transport is evaluated using synthetic test observations; physical camera streaming on physical hardware is unverified in this candidate and locked fail-closed (`physical_camera_unverified`) to prevent unauthorized live capture during evaluation.
 - **Panasonic Eluga:** Tested as an auxiliary edge sensor device in staging; not provisioned with live cryptographic credentials in the default judge inventory.
 - **V380 Wi-Fi IP Camera:** RTSP ingestion pipeline designed for local LAN; intentionally held offline in the judge distribution pending user-authorized pairing.
 - **Alexa Echo Hardware:** No production Alexa Echo physical hardware or Amazon cloud skill store publication is claimed; the project provides a local-first Alexa-style demonstration client and ASK v2-compatible native C++ bridge.

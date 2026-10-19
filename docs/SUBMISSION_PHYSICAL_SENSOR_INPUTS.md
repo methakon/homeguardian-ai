@@ -54,25 +54,27 @@ exist to prove the *logic* (bounds, refusals, the confirmation rule, uncertainty
 logs are the *measurements*. This split is enforced in the code by the provenance label, not by editorial
 care.
 
-## 5. Evidence paths and exact SHAs
+## 5. Evidence paths and exact SHAs (External Experiment Branch)
 
-| Item | Path / SHA |
+> **Important Boundary Note:** No physical camera integration and no V380 camera integration are included in PR #20. The USB camera driver (`V4l2CameraDevice`), bridge tool (`main_camera_bridge`), and capture evidence logs listed below reside on external experiment branch **`experiment/hg-v380-09-secure-camera-integration`** (HEAD commit `b48254121474cb6eee69a63e9c39a73e90c96d35`). They are unmerged and not deployed into `release/hackathon-2026-mcp-candidate` (PR #20). The clean judge candidate runtime runs strictly fail-closed (`media_capture_enabled: false`, `physical_camera_unverified`) using synthetic observation fixtures.
+
+| Item | Path / SHA (on `experiment/hg-v380-09-secure-camera-integration`) |
 |---|---|
 | Judge-facing evidence note | `docs/JUDGE_EVIDENCE_PHYSICAL_SENSOR.md` |
 | Implementation notes, calibration analysis, capture procedure | `docs/PHYSICAL_CAMERA_PATH.md` |
 | Capture log (run-by-run measurements) | `docs/evidence/PHYSICAL_CAMERA_CAPTURE_LOG.md` |
 | Raw, unedited capture transcript | `docs/evidence/PHYSICAL_CAMERA_STILL_SCENE.log` |
-| Capture device | `src/backend/linux/V4l2CameraDevice.{h,cpp}` |
-| Finding vocabulary + session | `src/core/CameraActivitySession.{h,cpp}` |
-| Operator-gated tool | `src/main_camera_bridge.cpp` |
-| Tests | `tests/core/test_camera_activity.cpp`, `tests/core/test_camera_calibration.cpp` |
+| Capture device (external branch) | `src/backend/linux/V4l2CameraDevice.{h,cpp}` |
+| Finding vocabulary + session (external branch) | `src/core/CameraActivitySession.{h,cpp}` |
+| Operator-gated tool (external branch) | `src/main_camera_bridge.cpp` |
+| Tests (external branch) | `tests/core/test_camera_activity.cpp`, `tests/core/test_camera_calibration.cpp` |
 | Docs / evidence commit | **`b48254121474cb6eee69a63e9c39a73e90c96d35`** |
 | Durable-log + evidence commit | `f6afdcf4bdf27d713302faba002d4d38fea200b6` |
 | Motion-verified commit | `70a994e63d29ce1274b44ddb6406c640005f924d` |
 | Calibration-analysis commit | `7388ae3570f2029ac982a2148102453fefb66c76` |
 | First physical path commit | `b21b70a2334dc6c2c7fba95ed0e1798cf57841e5` |
 
-Full suite at the source commit: **7483 assertions / 574 cases, all passing.**
+Full suite at the source commit on experiment branch: **7483 assertions / 574 cases, all passing.**
 
 ## 6. Provenance honesty (must survive into any published wording)
 

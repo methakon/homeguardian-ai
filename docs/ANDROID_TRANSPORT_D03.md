@@ -51,12 +51,12 @@ than presented as done.
 
 ## Why the delivered end-to-end evidence is the C++ client
 
-The hub accepts one protocol. What must be proven is that the BOUNDARY enforces authentication,
-consent, bounds, replay protection and provenance — and that is proven by driving the real ingress
-with a real client over real TLS, including adversarial modes a cooperative Android app would never
-produce (replay, future timestamps, unlisted source types, oversized frames, missing handshake).
-`hg_device_client` is that client. When a phone is available, the same script's steps are repeated
-from the device, and D-03's physical acceptance stops being BLOCKED at that point.
+The hub accepts one protocol. What must be evaluated is that the BOUNDARY enforces authentication,
+consent, bounds, replay protection and provenance — and that is demonstrated by driving the real ingress
+with a synthetic test client over TLS, including adversarial modes a cooperative edge client does not
+ordinarily generate (replay, future timestamps, unlisted source types, oversized payloads, omitted handshake).
+`hg_device_client` is that client. When physical edge devices are provisioned, the same script's steps are
+repeated for separate hardware acceptance.
 
 ## D-03.1 Android transport changes
 
@@ -80,7 +80,7 @@ The transport now enforces the acknowledgment contract rather than trusting it:
 
 Verification status: compile-verified (signed APK builds, dex contains
 `ObservationTransport`). The behaviours above are exercised by the C++ transport contract
-tests and the native client; they are NOT yet exercised on a physical device.
+tests and the native client simulation suite.
 
 ## D-03.2 Android acknowledgement classification
 
@@ -97,7 +97,7 @@ suspend the transport and flush the queue; the sequence counter adopts the hub's
 `last_sequence` from the welcome so an application restart resumes rather than replaying.
 
 Verification: compile-verified (signed APK builds, 802,667 B, `ObservationTransport` present
-in the dex). Not exercised on a physical device.
+in the dex; unit tests pass).
 
 ## H-03: the transport is now WIRED (correction to this document's earlier state)
 

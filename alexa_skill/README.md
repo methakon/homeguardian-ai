@@ -148,15 +148,15 @@ method are required for an Alexa-hosted skill.
 
 - **Amazon Developer account:** free, required. No credit card needed to create
   skills or use Alexa-hosted skills.
-- **Alexa-hosted skills:** Amazon auto-provisions the AWS Lambda (and other AWS
+- **Alexa-hosted skills (simulated prototype):** Amazon auto-provisions the AWS Lambda (and other AWS
   resources) for you. You do **not** create an AWS account or enter AWS
   credentials. Testing volume is far within AWS Lambda's free tier (1M requests
   / 400,000 GB-seconds per month), so **expected charge: $0** for this
-  simulator-first prototype. (AWS pricing is subject to change; no paid tier is
-  enabled by this project.)
+  simulation prototype. (AWS pricing is subject to change; this prototype
+  operates strictly under free-tier allowances with zero paid tiers.)
 - **Node.js runtime:** Lambda's Node.js 16 is **deprecated**; Alexa-hosted
   skills default to a current Node.js runtime (18/20/22) or Python. The
-  `ask-sdk-core` v2 SDK is compatible. (Verified against current AWS Lambda
+  `ask-sdk-core` v2 SDK is compatible. (Checked against current AWS Lambda
   runtime and ASK SDK deprecation docs.)
 - **No Echo device, no microphone, no camera** are needed. Text-based testing
   only. Do not enable voice/mic in the simulator.

@@ -592,9 +592,9 @@ verify the documented build reproduces; fix in-scope issues.
 - **Fixed stale README.md:** it claimed "Phase A — no application code" and a
   nonexistent `src/` layout (`sensors/`, `inference/`, `pipeline/`, `server/`,
   `web/`, `scripts/`, top-level `main.cpp` misplacement), and listed `libcurl`
-  and `MCP` as implemented. Corrected to the real layout, added the
+  and `MCP` as functional. Corrected to the real layout, added the
   network-once dependency note, tag-filter test commands, and an explicit
-  "no real capture" status. Alexa/MCP demoted to optional.
+  "no real capture" status. Simulated Alexa/MCP demoted to optional.
 - **Fixed hardcoded absolute CMake include paths**
   (`/home/swarna-sekhar-dhar/...`) → `${CMAKE_SOURCE_DIR}` in the test target.
   Portable now; verified by the fresh reproduction.
@@ -2469,7 +2469,7 @@ capability killer. Check the ORDER of gates, not just their conditions.
 
 ## Incident 35 — A commit hash in the brief that does not exist
 
-**Symptom:** the D-03 brief cited D-02 as `3c8ff46eabff45abc59ff6ded297fea10fc1bb`. That is 39 hex
+**Symptom:** the D-03 brief cited D-02 as `3c8ff46eabff45abc59ff6ded297fea10fc1bb` (invalid typo; does not exist). That is 39 hex
 characters; the real commit is `3c8ff4608eabff45abc59ff6ded297fea10fc1bb`. The abbreviated form does
 not resolve in the object store.
 

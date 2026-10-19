@@ -182,10 +182,10 @@ per-viewer authentication, explicit recording controls with retention limits, ba
 and an operator-visible recording indicator. It must not be published unauthenticated on the LAN.
 Until that exists: `REMOTE LIVE CCTV VIEWING: NOT YET IMPLEMENTED`.
 
-## 8. PHYSICAL DEVICE (verified 2026-10-14) - and a specification warning
+## 8. PHYSICAL DEVICE (historical lab audit 2026-10-14) - and a specification warning
 
 The phone enumerated, ADB authorized, and the app installed and ran. **The reported model name is
-spoofed and must not be used to infer anything.** Verified evidence:
+spoofed and must not be used to infer anything.** Audit evidence:
 
 | item | value | how it was verified |
 |---|---|---|
@@ -205,7 +205,7 @@ is what this build targets - and the "S25 Ultra" name, "16 GB RAM" and the Andro
 must never appear in a capability claim. `dumpsys media.camera` reporting `yuv420sp` validates the
 NV21 assumption in the feature path.
 
-### 8.1 What passed on the physical device
+### 8.1 Historical harness results on the test device
 
 * `minSdk=27`/`targetSdk=27` (manifest) - **compatible** with the device's API 27.
 * Packaged ABIs: `lib/armeabi-v7a/*` only; **0** arm64/x86 entries.
@@ -217,7 +217,7 @@ NV21 assumption in the feature path.
   press Start.` - the native library loaded and the node is idle by design. FATAL/ANR count **0**.
 * Permissions CAMERA and RECORD_AUDIO report `granted=true`.
 
-### 8.2 Hub side verified with THIS device's certificate (before the phone dials)
+### 8.2 Hub side audit with THIS device's certificate (before the phone dials)
 
 The ingress runs as the documented least-privilege container (`--cap-drop ALL`,
 `no-new-privileges`, 128 MB, only 8443 published) and logs

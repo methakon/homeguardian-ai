@@ -86,7 +86,7 @@
   - Demonstrate instant consent revocation: Open the device settings, toggle Consent from GRANTED to REVOKED.
   - Instantly switch back to the camera view: the video track immediately cuts off, displaying "STREAM TERMINATED: Consent Revoked".
 - **Voiceover (1:55 – 2:25):**
-  > "For the Amazon Developer Hackathon, we present our Alexa-style demonstration client, connected directly to our native C++ bridge and MCP tools. Built on our read-only integration contract, you can speak or chat with your home safety engine.
+  > "For the Amazon Developer Hackathon, we present our simulated Alexa-style demonstration client, connected directly to our native C++ bridge and MCP tools. Powered by our read-only simulation contract, you can speak or chat with your home safety engine.
   >
   > But privacy is not just a policy — it is an active gate. Watch what happens when I withdraw sensor consent:
   >
