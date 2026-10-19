@@ -32,7 +32,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         },
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
@@ -60,7 +60,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         },
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
@@ -83,7 +83,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         },
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
@@ -105,7 +105,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         },
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
@@ -127,7 +127,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         }
       ],
       "external_notice_markers": [
@@ -153,7 +153,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         }
       ],
       "external_notice_markers": [
@@ -179,7 +179,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         }
       ],
       "external_notice_markers": [
@@ -200,7 +200,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         }
       ],
       "note": "Wiring, bounds and pipeline-integration tests. Hardware-free by construction: every injected frame is Provenance::synthetic.",
@@ -222,7 +222,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
         }
       ],
       "note": "EMA decay and fusion-window dilution, driven by a deterministic step. Never a physical measurement.",
@@ -234,7 +234,7 @@
     {
       "id": "release-video-script",
       "path": "docs/SUBMISSION_VIDEO_SCRIPT.md",
-      "revision": "release/hackathon-2026-mcp-candidate",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
       "scope": "release",
       "evidence_type": "documentation",
       "reference_token": "SUBMISSION_VIDEO_SCRIPT.md",
@@ -246,7 +246,7 @@
     {
       "id": "release-dempster-shafer",
       "path": "src/core/DempsterShafer.h",
-      "revision": "release/hackathon-2026-mcp-candidate",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
       "scope": "release",
       "evidence_type": "implementation",
       "reference_token": "DempsterShafer",
@@ -304,7 +304,7 @@
     {
       "id": "provenance-validator",
       "path": "scripts/verify_evidence_provenance.py",
-      "revision": "release/hackathon-2026-mcp-candidate",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
       "scope": "release",
       "evidence_type": "implementation",
       "reference_token": "verify_evidence_provenance",
@@ -313,7 +313,7 @@
     {
       "id": "provenance-validator-tests",
       "path": "tests/scripts/test_evidence_provenance.py",
-      "revision": "release/hackathon-2026-mcp-candidate",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
       "scope": "release",
       "evidence_type": "implementation",
       "reference_token": "test_evidence_provenance.py",
@@ -323,7 +323,7 @@
     {
       "id": "provenance-handoff",
       "path": "docs/EVIDENCE_PROVENANCE_HANDOFF.md",
-      "revision": "release/hackathon-2026-mcp-candidate",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
       "scope": "release",
       "evidence_type": "documentation",
       "reference_token": "EVIDENCE_PROVENANCE_HANDOFF.md",
