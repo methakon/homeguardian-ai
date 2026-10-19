@@ -581,6 +581,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_event_consumer.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_audio_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_activity_pattern.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_scenario_record.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -596,6 +598,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/AudioObservation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SensorEventConsumer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ActivityPattern.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ScenarioRecord.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/AlsaCommandAudioSource.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ImpactClassifier.cpp
@@ -715,3 +718,10 @@ target_link_libraries(hg_audio_probe PRIVATE
     nlohmann_json::nlohmann_json
     spdlog::spdlog
 )
+
+add_executable(hg_scenario_runner
+    src/main_scenario_runner.cpp
+    src/core/ScenarioRecord.cpp
+)
+target_include_directories(hg_scenario_runner PRIVATE src)
+target_link_libraries(hg_scenario_runner PRIVATE)

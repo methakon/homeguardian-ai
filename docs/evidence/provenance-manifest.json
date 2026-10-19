@@ -746,6 +746,146 @@
         "experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "scenario-record-header",
+      "path": "src/core/ScenarioRecord.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ScenarioRecord",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-record-source",
+      "path": "src/core/ScenarioRecord.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ScenarioRecord",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-runner-tool",
+      "path": "src/main_scenario_runner.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "hg_scenario_runner",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-record-suite",
+      "path": "tests/core/test_scenario_record.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_scenario_record.cpp",
+      "content_markers": [
+        "ScenarioPolicy"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-audit-suite",
+      "path": "tests/core/test_sensor_audit.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_sensor_audit.cpp",
+      "content_markers": [
+        "IngestCode"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "staged-scenario-doc",
+      "path": "docs/STAGED_SCENARIO_HARNESS.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "STAGED_SCENARIO_HARNESS.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "hermes2-coordination-doc",
+      "path": "docs/HERMES2_CONTRACT_COORDINATION.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "HERMES2_CONTRACT_COORDINATION.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-ambient-log-1",
+      "path": "docs/evidence/scenario-ambient_baseline.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "scenario-ambient_baseline.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-ambient-log-2",
+      "path": "docs/evidence/scenario-ambient_baseline-20261019T154155Z.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "scenario-ambient_baseline-20261019T154155Z.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-records-json",
+      "path": "docs/evidence/scenario-records-20261019T154225Z.json",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "transcribed",
+      "reference_token": "scenario-records-20261019T154225Z.json",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }
