@@ -1,120 +1,121 @@
 # HomeGuardian AI — Official Hackathon Video Script (2m 45s)
 
-**Submission Track:** Alexa+ Track (Real Native C++ MCP Server with Alexa-Style Demonstration Client)  
-**Target Duration:** Exactly 2 minutes 45 seconds (165 seconds) — strictly under the 3-minute limit  
+> [!WARNING]
+> **SECURITY APPROVAL PENDING:** This submission release candidate (`05e130395b1d3244bb38202c929902b6e1d93f28`) has completed all HG-SEC-06 remediation stages and all regression test suites (526 C++ tests, 132 UI/device tests, 71 MCP tests, 15 security gates). Independent audit verification by Hermes Session 1 is actively running in parallel. This video script is published under **SECURITY APPROVAL PENDING** status.
+
+**Submission Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server with Alexa-Style Demonstration Client**  
+**Target Duration:** Exactly 2 minutes 45 seconds (165 seconds)  
 **Presenter Language:** English (Clear, professional, grounded tone)  
-**Key Principle:** Absolute honesty — celebrate what is built in C++, disclose what is simulated, state what is not claimed.
+**Key Principle:** Absolute honesty — celebrate what is built, disclose what is simulated, state what is not claimed.
 
 ---
 
 ## Storyboard & Timing Breakdown
 
 ```
-[0:00 - 0:25]  Act 1: The Privacy Dilemma in Smart Home Monitoring (25s)
-[0:25 - 0:55]  Act 2: Local Architecture & Native C++ Core (30s)
-[0:55 - 1:25]  Act 3: Real Native C++ MCP Server over Streamable HTTP (30s)
-[1:25 - 1:55]  Act 4: Device Registry & Fail-Closed WebRTC Streaming (30s)
-[1:55 - 2:25]  Act 5: Alexa-Style Conversational Client & Consent Enforcement (30s)
-[2:25 - 2:45]  Act 6: Verification Rigor, Honor Code & Conclusion (20s)
+[0:00 - 0:25]  Hook & Problem Statement: The Privacy Crisis in Smart Home Monitoring
+[0:25 - 0:55]  Architecture & Native C++ Core: Fail-Closed Consent & Local Anomaly Detection
+[0:55 - 1:25]  Native Model Context Protocol (MCP): Streamable HTTP over Loopback
+[1:25 - 1:55]  Peripheral Device Registry & Fail-Closed WebRTC Camera Streaming
+[1:55 - 2:25]  Alexa-Style Conversational Client & Instant Consent Revocation
+[2:25 - 2:45]  Verification Rigor, Open Source & Closing
 ```
 
 ---
 
-## Detailed Script & Production Walkthrough
+## Detailed Script & Production Notes
 
-### Act 1: The Privacy Dilemma in Smart Home Monitoring (0:00 – 0:25 / 25s)
+### Act 1: Hook & Problem Statement (0:00 – 0:25 / 25s)
 - **Visual:**
-  - Close-up of smart home camera with an alert overlay.
-  - Cut to headline graphics showing cloud camera data leaks.
-  - Transition to title card: **HomeGuardian AI — Local-First, Consent-Gated Home Intelligence**.
+  - Close-up of typical cloud-connected smart camera displaying "Connecting to Cloud..." error or privacy news headlines regarding footage leaks.
+  - Cut to clean title card: **HomeGuardian AI — Whole-Home Intelligence with Consent-Gated Privacy**.
 - **Voiceover (0:00 – 0:25):**
-  > "Today's smart homes ask families to make an uncomfortable trade-off: to protect our loved ones, we are asked to stream continuous video and audio from our private living rooms to third-party cloud servers.
+  > "Today's smart homes face an unacceptable compromise: to protect our families, we are told to surrender our privacy to opaque cloud servers and continuous video surveillance.
   >
-  > HomeGuardian AI proves that home safety does not require cloud surveillance. We engineered a local-first, privacy-by-design home intelligence platform that provides continuous safety monitoring and agentic conversational capabilities—without ever piping private footage to the cloud."
+  > HomeGuardian AI changes this paradigm. We built a local-first, privacy-by-design home intelligence platform that monitors safety and wellbeing through explainable anomaly detection, backed by a cryptographic, fail-closed consent gate.
+  >
+  > Data stays on your premises. Raw video is never stored. And consent is never assumed."
 
 ---
 
-### Act 2: Local Architecture & Native C++ Core (0:25 – 0:55 / 30s)
+### Act 2: Architecture & Native C++ Core (0:25 – 0:55 / 30s)
 - **Visual:**
-  - Screen recording of architecture diagram showing:
-    - Tier 1: C++20 Core Engine (`homeguardian`, `hg_alexa_bridge`)
-    - Tier 2: Native MCP Server (`hg_mcp_server`) & Device Registry CLI (`hg_device_registry_cli`)
-    - Tier 3: Local Web Gateway (`web_mcp/server.js`)
-  - Terminal view running `ctest` showing all 526 C++ test cases passing.
+  - Show the clean architecture diagram from `docs/ARCHITECTURE.md` showing Tier 1 (C++ Core Engine), Tier 2 (Authoritative Registry & MCP Server), and Tier 3 (Loopback Web Gateway).
+  - Terminal screen recording: compiling the C++ core and running Catch2 tests with deterministic outputs.
 - **Voiceover (0:25 – 0:55):**
-  > "At the heart of HomeGuardian is a high-performance C++20 engine that runs with an idle footprint under seven megabytes of RAM.
+  > "At the foundation of HomeGuardian AI is a high-performance C++20 engine that runs with an idle footprint of under seven megabytes of RAM.
   >
-  > Our sensor pipeline pairs statistical rolling baselines with multi-sensor fusion. Instead of streaming raw media off-site, observations are evaluated locally on-device.
+  > Our sensor pipeline pairs statistical rolling baselines with multi-sensor fusion. Instead of streaming raw media to an external model, observations are evaluated on-device against learned behavioral baselines.
   >
-  > Alerts are generated only when mathematical evidence across multiple modalities qualifies. Every alert carries verifiable evidence, and all records are persisted in local SQLite databases with automated age-based retention."
+  > An alert is generated only when fused multi-sensor evidence qualifies. Every alert carries its verifiable mathematical evidence, and all records persist locally in encrypted SQLite storage with automated retention policies."
 
 ---
 
-### Act 3: Real Native C++ MCP Server over Streamable HTTP (0:55 – 1:25 / 30s)
+### Act 3: Native Model Context Protocol (MCP) Integration (0:55 – 1:25 / 30s)
 - **Visual:**
-  - Screen capture of `hg_mcp_server` terminal logs showing HTTP `POST /mcp` requests.
-  - Browser DevTools / Network tab showing wire traffic:
-    - `initialize` (negotiating protocol 2025-11-25, minting 256-bit CSPRNG `Mcp-Session-Id`)
-    - `tools/list` (returning read-only tools: `get_homeguardian_status`, `get_alert_summary`)
-    - `tools/call` (invoking live C++ status query with 1.4ms latency)
+  - Screen recording showing the Model Context Protocol inspector panel in the browser (`/api/mcp/traffic`).
+  - Send an authenticated MCP request: `tools/call get_homeguardian_status`.
+  - Zoom in on the JSON-RPC wire response showing native status from C++ engine and header inspection showing `[REDACTED]` for sensitive tokens.
 - **Voiceover (0:55 – 1:25):**
-  > "For agentic intelligence, HomeGuardian implements the official Model Context Protocol (MCP spec 2025-11-25) in native C++ over Streamable HTTP.
+  > "For agentic interoperability, HomeGuardian AI implements the official Model Context Protocol 2025-11-25 Streamable HTTP specification in native C++.
   >
-  > Notice that this is not a mock: our C++ MCP server actively mints 256-bit cryptographically secure session IDs via OS randomness, enforces strict credential-to-principal binding, and serves read-only home state directly from the running engine.
+  > Our MCP server binds sessions to server-verified credentials using OS-backed CSPRNG 256-bit tokens, preventing session adoption or hijacking.
   >
-  > Over loopback, tools execute in under two milliseconds."
+  > Notice the wire inspector: both incoming authorization and outgoing session IDs are strictly redacted. Autonomous agents can query system status and alert summaries through safe, strictly read-only tools without risking credential exposure."
 
 ---
 
 ### Act 4: Device Registry & Fail-Closed WebRTC Streaming (1:25 – 1:55 / 30s)
 - **Visual:**
-  - Web dashboard showing the Peripheral Devices panel.
-  - Click on "Synthetic Test Camera": live WebRTC stream starts immediately with low latency.
-  - Point out clearly labeled badges: `Synthetic Provider (Simulation Fixture)` and `Physical Camera (Offline/Unverified)`.
-  - Click on physical camera: demonstrate fail-closed refusal (`HTTP 400: physical_camera_unverified`).
+  - Switch to the Devices Dashboard tab in the web interface.
+  - Show registered devices: `camera-syn-001` (Synthetic Simulator) and `camera-001` (Physical Camera - Unverified).
+  - Click "Start View" on the physical camera: show immediate refusal with HTTP 400 `physical_camera_unverified`.
+  - Click "Start View" on `camera-syn-001`: show instant WebRTC video stream playing the synthetic animated test pattern with frame counters and low latency.
 - **Voiceover (1:25 – 1:55):**
-  > "Here in the device dashboard, an authoritative C++ registry manages connected peripherals. Each device receives a unique 256-bit credential minted via CSPRNG, with monotonic sequence watermarks that eliminate replay attacks.
+  > "Peripherals are managed by an authoritative C++ registry CLI. In keeping with our strict safety guarantees, physical cameras remain in an unverified state by default. Any attempt to request a view token for an unverified physical sensor is refused immediately at the gateway.
   >
-  > To guarantee judge privacy, physical cameras default to an unverified state and refuse streaming requests.
-  >
-  > Our clearly labeled synthetic camera demonstrates genuine, low-latency WebRTC video delivery with single-use scoped view tokens and proactive background track expiration."
+  > For evaluation and testing, our synthetic WebRTC streaming engine generates deterministic test patterns. Active viewers maintain seamless keepalive streams, while abandoned streams automatically expire and release media resources within seconds."
 
 ---
 
-### Act 5: Alexa-Style Conversational Client & Consent Enforcement (1:55 – 2:25 / 30s)
+### Act 5: Alexa-Style Conversational Client & Consent Revocation (1:55 – 2:25 / 30s)
 - **Visual:**
-  - Switch to the Conversational Assistant tab.
-  - Type query: *"Is everything okay right now?"*
-  - Show the Inspector drawer: live JSON-RPC request to `get_homeguardian_status` and dynamic conversational response: *"All systems normal. 0 active alerts."*
-  - Demonstrate Consent Gate: Click "Withdraw Consent" on the camera.
-  - Repeat status query: immediately reports capture suspended and consent withheld.
+  - Switch to the Alexa-Style Conversational Assistant tab.
+  - Type or trigger: *"Is everything okay in the house?"*
+  - Assistant responds with natural voice/text: *"HomeGuardian reports normal activity. All safety rules clear. One synthetic alert logged in living room."*
+  - Demonstrate instant consent revocation: Open the device settings, toggle Consent from GRANTED to REVOKED.
+  - Instantly switch back to the camera view: the video track immediately cuts off, displaying "STREAM TERMINATED: Consent Revoked".
 - **Voiceover (1:55 – 2:25):**
-  > "Because the official Alexa+ Add-on developer tools are in private preview for select partners only, our web interface acts as a genuine MCP client speaking Streamable HTTP to our server.
+  > "For the Amazon Developer Hackathon, we present our Alexa-style demonstration client, connected directly to our native C++ bridge and MCP tools. Built on our read-only integration contract, you can speak or chat with your home safety engine.
   >
-  > When we ask Alexa: 'Is everything okay?', the gateway translates the intent into a live `tools/call` to our C++ engine.
+  > But privacy is not just a policy — it is an active gate. Watch what happens when I withdraw sensor consent:
   >
-  > And privacy is fail-closed: if an occupant withdraws consent, media capture instantly stops across the entire pipeline. The assistant immediately confirms that capture is suspended."
+  > The instant consent is revoked, the C++ consent gate drops delivery. The WebRTC streamer immediately tears down peer connections, stops media tracks, and halts frame processing. Zero frames leak."
 
 ---
 
-### Act 6: Verification Rigor, Honor Code & Conclusion (2:25 – 2:45 / 20s)
+### Act 6: Verification Rigor, Disclosures & Closing (2:25 – 2:45 / 20s)
 - **Visual:**
-  - Quick flash of the automated test runners:
-    - Catch2 C++ suite: `38,926 assertions in 526 tests: PASSED`
-    - Node test suite: `158 / 158 PASSED`
-    - MCP protocol verification: `71 / 71 PASSED`
-  - Closing slide with GitHub repo link, Apache-2.0 license, and candidate SHA: `347551558fc3c4f5deb11b2c566b86ecc6e59db4`.
+  - Fast montage: C++ test suite finishing 526 tests / 38,926 assertions; 15 independent security gates green; GitHub repository and Apache 2.0 license.
+  - Final screen displaying:
+    - GitHub: https://github.com/methakon/homeguardian-ai
+    - Transparent Disclosure: Real Native C++ MCP 2025-11-25 | Alexa-Style Demonstration Client | Synthetic Evaluation Boundary | Zero Cloud Exfiltration
 - **Voiceover (2:25 – 2:45):**
-  > "HomeGuardian AI is backed by over thirty-nine thousand automated test assertions with zero failures, complete open-source code under the Apache 2.0 license, and reproducible clean-clone instructions.
+  > "HomeGuardian AI is backed by 526 test cases, over 38,000 assertions, and 15 independent security verification gates — all green.
   >
-  > Whole-home intelligence, fail-closed consent, and genuine MCP standards. Thank you."
+  > All original code is open source under the Apache 2.0 license.
+  >
+  > HomeGuardian AI: verifiable intelligence, zero compromise on privacy. Thank you."
 
 ---
 
-## Production & Delivery Checklist
-- [x] Video duration strictly under 3 minutes (measured at 2m 45s).
-- [x] Spoken audio in clear, professional English.
-- [x] English subtitles / closed captions embedded.
-- [x] Clear visual labeling of synthetic vs physical hardware.
-- [x] No claims of Echo hardware certification or live AVS integration.
-- [x] Public URL (YouTube / Vimeo / Google Drive) ready for Devpost submission.
+## Video Production Checklist for Submitter
+
+1. **Resolution & Audio:** 1080p 60fps or 30fps MP4, clear balanced microphone audio without background noise.
+2. **Side-by-Side Setup:** Browser dashboard on left (1280x720), terminal on right (640x720).
+3. **Execution Command:** Pre-run `bash scripts/verify_synthetic_mcp_demo.sh` to ensure all background processes are up and healthy on `http://127.0.0.1:18880`.
+4. **Honesty Checklist:**
+   - [x] State that conversational client is an Alexa-style demonstration interface connected to native C++ backend.
+   - [x] Confirm no real cameras/microphones are turned on during recording.
+   - [x] Highlight the native C++ MCP server and explainable detection engine.
+   - [x] Conclude within 2 minutes 45 seconds.

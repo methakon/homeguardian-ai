@@ -42,7 +42,7 @@ processing.
 
 ## What is implemented vs simulated vs planned
 
-**Implemented and tested (C++ core):**
+**Implemented and tested (C++ core, Native MCP & Network Bridge):**
 - Event model, schema validation, and a fail-closed **consent gate**.
 - **Consent-guarded delivery boundary** — media is delivered only while capture
   is enabled *and* consent is granted; withdrawal or capture-off blocks all
@@ -64,25 +64,43 @@ processing.
   `status` and `alert_summary`.
 - A hardened **credential store** (bearer tokens, 0600 secure file, fail-closed).
 - A **local NDJSON stdio bridge** and a **loopback-only HTTP adapter**.
+- **Native C++ MCP 2025-11-25 Server (`hg_mcp_server`)** — implements JSON-RPC 2.0
+  over Streamable HTTP, session lifecycle, and strictly two read-only tools:
+  `get_homeguardian_status` and `get_alert_summary`. Zero mutating or camera tools.
+- **Outbound Authenticated MCP Coordinator (`deploy/coordinator/service.js`)** —
+  Streamable HTTP ingress combined with an authenticated RFC6455 WebSocket edge control bridge.
+- **Hardened Security & Peripheral Lifecycle** — CSPRNG pairing, operator-authorized
+  recovery, 0600 secret files, loopback Origin/Host enforcement, and CSRF token binding (HG-SEC-01 through HG-SEC-06D).
+- **Android Edge Service Candidate** — v1.0.3 package (`apk_service/`), byte-reproducible
+  normalization (`scripts/normalize_apk_zip.py`, whole-file SHA-256 `e3116ac18d70...`),
+  VPN route validation and socket pinning (`RouteSecurityPolicy.java`), and off-device synthetic
+  platform route test suite (**44/44 PASS**).
 
 **Simulated (this is a simulation, not real hardware or real Alexa):**
 - The **Alexa+ conversational web experience** (`src/web/` +
-  `src/bridge/hg_demo_server.js`) — a project-built simulation for
-  demonstration. No Alexa device and no live Amazon identity; the local MCP
-  server is a separate executable over the same read-only contract.
+  `web_mcp/server.js`) — a project-built simulation for demonstration.
+  Acts as an actual MCP client (sending initialize, tools/list, tools/call) and
+  renders simulated sensor test patterns. No Alexa device and no live Amazon identity.
 - All household observations are **synthetic**; no physical sensor is activated.
 
+**Physical Hardware & Sensor Status (Fail-Closed Boundary):**
+- **V380 Wi-Fi IP Cameras:** Camera 1's unauthenticated RTSP/ONVIF port exposure was
+  discovered and closed; Camera 2 has vendor-only proprietary ports and remains unintegrated.
+  Hardware capture backend (`V4L2`/PipeWire) is disabled by default (`media_capture_enabled: false`)
+  and blocked pending physical authorization.
+- **Xiaomi Mi A3 Physical Device:** Marked offline and detached by default (`adb devices` empty).
+  Physical installation is strictly gated on operator attachment and trigger.
+
 **Planned (not implemented):**
-- OpenCV / ONNX Runtime for real local ML inference.
+- Real on-device ML inference (OpenCV / ONNX Runtime).
 - Real camera/microphone capture backends (V4L2/ALSA/PipeWire) — **blocked
   pending explicit approval**.
-- An **MCP server** (spec 2025-11-25, Streamable HTTP, two read-only tools) —
-  **implemented and verified locally** (docs/MCP_SERVER.md). It is deliberately
-  **not** an Alexa+ runtime: no Amazon identity, no account linking, no AWS.
-- Amazon **Login with Amazon** account linking — not built.
-- Fall detection (H-01) and the emergency/escalation workflow (H-02) —
-  **not implemented** (no pose inference, no emergency calling).
+- Amazon **Login with Amazon (LWA)** account linking — not built.
+- Fall detection pose inference (H-01) and emergency calling workflow (H-02) —
+  **not implemented**.
 - Ring integration — **not implemented**.
+- Remote Oracle VPS peer-to-peer forwarding (GAP-02) — **deferred**; default demo
+  runs 100% locally on workstation loopback with zero external cloud or VPN dependencies.
 
 ## Technology Stack
 
@@ -183,6 +201,8 @@ the commands behind the MCP numbers quoted elsewhere in the submission:
 bash scripts/verify_mcp.sh              # native protocol suite: 71 checks, 0 failures
 node web_mcp/test_client.js             # MCP client suite: 26 checks, 0 failures
 node web_mcp/test_devices_dashboard.js   # dashboard/WebRTC/secrets: 158 checks, 0 failures
+node tests/test_java_ws_bridge_cxx_e2e.js # Java bridge <-> Coordinator <-> C++ engine: 21 checks, 0 failures
+node tests/test_outbound_mcp_bridge.js  # Authenticated outbound MCP bridge: 46 checks, 0 failures
 ```
 
 `scripts/verify_mcp.sh` provisions its own 0600 credential file in a temporary

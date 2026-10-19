@@ -1,15 +1,17 @@
 # MCP server (HG-MCP-01)
 
-**Status:** implemented and verified locally on candidate `347551558fc3c4f5deb11b2c566b86ecc6e59db4`.
+**Status:** implemented and verified locally on candidate `release/hackathon-2026-mcp-candidate`.
 **Specification:** MCP 2025-11-25 (Streamable HTTP). The server also accepts 2025-06-18 and
 2025-03-26 clients; anything else is answered with `2025-11-25` so the client can decide for
 itself rather than being silently downgraded.
-**Integrated in:** the release candidate route — branch `fix/hg-sec-06c-lifecycle-auth`
-@ `347551558fc3c4f5deb11b2c566b86ecc6e59db4` (code candidate `3475515`, parent `2eb05bb`);
-originally developed on `feature/mcp-streamable-http`.
-**Verified on 2026-10-17:** `bash scripts/verify_mcp.sh` → **71 passed / 0 failed**,
-`node web_mcp/test_client.js` → **26 / 0**, `node web_mcp/test_devices_dashboard.js` → **158 / 0**.
-The two Node suites need `npm install` from the repository root first — see the README's
+**Integrated in:** the release candidate route — branch `release/hackathon-2026-mcp-candidate`
+(includes HG-SEC-01 through HG-SEC-06D security remediation, HG-NET-02D/E/F outbound bridge coordinator,
+and verified reproducible Android APK tooling).
+**Verified on 2026-10-19:** `bash scripts/verify_mcp.sh` → **71 passed / 0 failed**,
+`node web_mcp/test_client.js` → **26 / 0**, `node web_mcp/test_devices_dashboard.js` → **158 / 0**,
+`node tests/test_java_ws_bridge_cxx_e2e.js` → **21 / 0**,
+`node tests/test_outbound_mcp_bridge.js` → **46 / 0**.
+The Node suites need `npm install` from the repository root first — see the README's
 Node prerequisite note.
 
 ## 1. What it is, and what it is not

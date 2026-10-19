@@ -26,14 +26,22 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.homeguardian.edgeservice"
-    android:versionCode="1"
-    android:versionName="1.0.0">
+    android:versionCode="4"
+    android:versionName="1.0.3">
 
     <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="30" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+        Operator-approved. Needed to read ConnectivityManager/LinkProperties so the bridge can
+        verify that a destination is routed by the VPN network and pin its socket to it. Normal
+        permission: no runtime prompt, read-only over network topology, and the operation is
+        reversible by removing this line (the bridge then refuses rather than degrading).
+        This takes the approved set from three to four.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:label="HomeGuardian Edge"

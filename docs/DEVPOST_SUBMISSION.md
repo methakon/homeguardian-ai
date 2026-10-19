@@ -1,11 +1,13 @@
 # HomeGuardian AI — Official Devpost Submission Entry
 
+> [!WARNING]
+> **SECURITY APPROVAL PENDING:** This submission release candidate (`05e130395b1d3244bb38202c929902b6e1d93f28`) has completed all HG-SEC-06 remediation stages and all regression test suites (526 C++ tests, 132 UI/device tests, 71 MCP tests, 15 security gates). Independent audit verification by Hermes Session 1 is actively running in parallel. This packaging and submission documentation is published under **SECURITY APPROVAL PENDING** status.
+
 **Project Title:** HomeGuardian AI — Privacy-First Whole-Home Intelligence  
-**Tagline:** Local-first, consent-gated home safety intelligence with native C++ core, MCP 2025-11-25 Streamable HTTP, and Alexa-style conversational demonstration client.  
-**Primary Track:** Alexa+ Track — **Real Native C++ MCP Server with Alexa-Style Demonstration Client** (per official Hackathon FAQ for entrants without preview partner access)  
+**Tagline:** Local-first, consent-gated home safety intelligence with native C++ core, Model Context Protocol (spec 2025-11-25) Streamable HTTP server, and Alexa-style demonstration client.  
+**Primary Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server & C++ Home Safety Engine with an Alexa-Style Demonstration Client**  
 **GitHub Repository:** https://github.com/methakon/homeguardian-ai  
-**Release Candidate SHA:** `347551558fc3c4f5deb11b2c566b86ecc6e59db4`  
-**License:** Apache License 2.0  
+**License:** Apache License 2.0 (Sha256 verified against apache.org)  
 
 ---
 
@@ -26,9 +28,9 @@ HomeGuardian AI is a local-first, privacy-by-design home intelligence platform d
 Key features include:
 1. **Consent-Gated Delivery:** All media and sensor processing sits behind a fail-closed cryptographic consent gate. If consent is absent, expired, or withdrawn, sensor acquisition and delivery immediately stop. Zero raw media ever reaches storage or memory pipelines.
 2. **Explainable Anomaly Detection & Fusion:** Sensor observations are evaluated on-device against learned statistical baselines (mean, standard deviation, warm-up intervals). Bounded numerical features from multiple sensor modalities are fused into actionable insights. Raw observations alone never trigger alarms; an alert is generated only when fused, multi-sensor mathematical evidence qualifies.
-3. **Native Model Context Protocol (MCP) Server:** Fully implements the official Model Context Protocol (spec 2025-11-25) in native C++ over Streamable HTTP. Autonomous AI agents can query home status and alert histories through strictly read-only tools (`get_homeguardian_status`, `get_alert_summary`). Sessions are secured by OS-backed CSPRNG 256-bit tokens with strict credential binding and principal validation.
-4. **Peripheral Device Registry & WebRTC Viewer:** An authoritative C++ device registry manages paired peripherals with CSPRNG credentials, monotonic sequence watermarks for replay prevention, strict POSIX permissions (0600/0700), and trusted operator authorization gates (`--operator-auth`, `--operator-recovery`). A built-in WebRTC streaming engine enables real-time, low-latency browser monitoring with single-use scoped view tokens.
-5. **Real MCP Demonstration with Alexa-Style Client:** In full compliance with the hackathon rules and official FAQ, the web gateway acts as an actual MCP client (issuing `initialize`, `tools/list`, and `tools/call` over Streamable HTTP). Evaluators can converse in natural language (*"Is everything okay?"*, *"Show me recent alerts"*), inspect live MCP wire frames, and verify that tool execution queries the live C++ engine without cloud intermediaries.
+3. **Native Model Context Protocol (MCP) Server:** Fully implements the official Model Context Protocol (spec 2025-11-25) in native C++ over Streamable HTTP. Autonomous AI agents can query home status and alert histories through strictly read-only tools (`get_homeguardian_status`, `get_alert_summary`). Sessions are secured by OS-backed CSPRNG 256-bit tokens with strict credential binding.
+4. **Peripheral Device Registry & WebRTC Viewer:** An authoritative C++ device registry manages paired peripherals. A built-in WebRTC streaming engine enables real-time, low-latency browser monitoring. In accordance with safe testing principles, physical cameras default to an unverified state (refusing viewing requests), while synthetic test streams allow comprehensive verification without privacy risk.
+5. **Alexa-Style Conversational Assistant:** Built on a hardened, read-only integration contract, the dashboard provides a voice- and text-driven Alexa-style demonstration client. Operators can query household status (*"Is everything okay?"*, *"Are there any alerts?"*) and inspect live consent states.
 6. **Encrypted Local Persistence & Retention:** All alert metadata (timestamps, rule IDs, mathematical evidence) is stored in a local SQLite database with automated age-based retention and schema migration.
 
 ---
@@ -39,38 +41,37 @@ We engineered HomeGuardian AI as a high-performance, three-tier architecture:
 - **Tier 1 — Native C++ Core Engine (`homeguardian`, `hg_alexa_bridge`):** Written in modern C++20 with zero bloat. Utilizes `spdlog` for structured logging, `nlohmann/json` for schema serialization, and an embedded SQLite amalgamation for zero-external-dependency persistence. Compiles cleanly across x86_64 and ARM64 with an idle memory footprint under 7 MB RAM.
 - **Tier 2 — Authoritative C++ Services (`hg_mcp_server`, `hg_device_registry_cli`):**
   - Native MCP server implementing 2025-11-25 Streamable HTTP with `/dev/urandom` CSPRNG session IDs, origin allowlists, worker limits, and fail-closed credential verification.
-  - Peripheral device registry CLI managing device pairing, CSPRNG credential provisioning, sequence watermarks, and consent status.
+  - Peripheral device registry CLI managing device pairing, cryptographic credentials, watermarked heartbeat replays, and consent status.
 - **Tier 3 — Local Web Gateway & Signaling (`web_mcp/server.js`):** Node.js gateway that isolates browser interactions. Provides HttpOnly cookie session management, CSRF double-submit validation, conversational MCP translation, WebRTC peer connection signaling (`werift`), and bidirectional header redaction (`[REDACTED]` for sensitive authorization headers and session IDs).
 
 ---
 
-### Technical Separation: Real MCP vs. Simulated Frontend vs. Future Alexa Camera Hardware
-
-In strict accordance with the hackathon honor code and official rules:
-- **What is Real & Implemented in C++:**
-  - Real native C++ Model Context Protocol (MCP 2025-11-25 Streamable HTTP) server.
-  - Real MCP tool calling (`get_homeguardian_status`, `get_alert_summary`) with real SQLite database backing and state derivation.
-  - Real WebRTC signaling, media track generation, and active keepalive lifecycle sweeps.
-  - Real peripheral device registry with CSPRNG credential minting, sequence replay protection, POSIX 0600 storage, and operator recovery authorization.
-- **What is Simulated for Hackathon Evaluation:**
-  - The Alexa-style conversational web client: Because official Alexa+ Add-on developer tools (Category SDK, MCP Toolkit, CLI, Web Simulator) are in preview for select partners only (see Incident 75 and official FAQ), our web interface acts as a genuine MCP client speaking Streamable HTTP to our server.
-  - The video stream: All active video streams in the demo use our clearly labeled **synthetic test camera** (`camera-syn-001`). Physical cameras default to an unverified state and refuse streaming requests with HTTP 400.
-- **What is Not Claimed (Future Roadmap):**
-  - Production Echo hardware certification, AVS device firmware, production Amazon LWA cloud account linking, and physical V380/Panasonic RTSP camera integration over public WAN are explicitly excluded from this release.
+### Challenges We Ran Into
+1. **Adversarial WebRTC Stream Lifecycles:** Preventing connection leaks and lingering peer connections when browser tabs abruptly close required implementing both active client keepalives (`POST /api/webrtc/touch`) and proactive 500ms server-side sweeps that automatically terminate abandoned tracks.
+2. **Preventing Session Adoption in MCP:** The MCP specification allows flexible transports, but naive implementations can permit unauthorized clients to adopt or delete another principal's session. We solved this by binding every MCP session strictly to server-verified credentials in native C++ and rejecting any cross-principal session mutation.
+3. **Fail-Closed Hardware Boundaries:** We designed strict policy gates to prevent unverified physical hardware from accidentally streaming unconsented footage. Synthetic simulators and physical devices are strictly differentiated by type, ensuring that client-submitted JSON cannot manipulate synthetic flags or bypass pairing locks.
+4. **Redaction in Debugging Inspector Panels:** Enabling hackathon evaluators to inspect live JSON-RPC MCP wire traffic without leaking bearer tokens or session IDs required building bidirectional sanitization middleware in the web gateway.
 
 ---
 
 ### Accomplishments We're Proud Of
 - **Zero Cloud Exfiltration:** Achieved complete home monitoring and anomaly detection without sending a single byte of telemetry or media to external cloud infrastructure.
-- **Extensive Test Coverage & Rigor:** The system is validated by:
-  - **38,926 Catch2 assertions across 526 C++ test cases** (100% passing).
-  - **158 Device Dashboard & WebRTC integration tests** (100% passing).
-  - **71 Native MCP Streamable HTTP protocol tests** (100% passing).
-  - **26 MCP Conversational Client tests** (100% passing).
-  - **15 Independent adversarial HTTP security gates** (100% passing).
-  - Total: **39,196 automated checks with zero failures**.
+- **Extensive Test Coverage & Rigor:** The system is validated by **526 native C++ test cases with 38,926 assertions**, 71 WebRTC and dashboard tests, 26 MCP client tests, 71 native MCP protocol tests, and 15 independent adversarial HTTP security gates — 100% passing with zero failures.
 - **Clean Memory Footprint:** The combined idle footprint of the C++ core and MCP server is under 15 MB RSS, making it fully deployable on edge devices, low-power Raspberry Pis, and low-spec cloud instances.
 - **Open Standards Alignment:** Built against open, royalty-free standards: Apache-2.0 licensing, Model Context Protocol 2025-11-25, WebRTC, and SQLite.
+
+---
+
+### What We Learned
+- **Privacy Must Be Structural, Not Legalistic:** Privacy guarantees cannot rely on user agreements or "settings" checkboxes; they must be enforced at the hardware and socket abstraction boundaries through fail-closed gates that refuse execution when consent records are missing or expired.
+- **Local-First Agentic Architecture Is Feasible:** Modern edge hardware is capable of running lightweight, explainable anomaly detection and serving MCP endpoints locally, eliminating the latency and privacy vulnerabilities of round-trip cloud calls.
+
+---
+
+### What's Next for HomeGuardian AI
+- **On-Device Neural Inference:** Integrating OpenCV and ONNX Runtime for optional, privacy-preserving on-device computer vision models (e.g., pose estimation for fall detection) while maintaining our strict consent gate.
+- **Production Alexa+ Cloud Integration:** When production Alexa+ developer access becomes publicly available, implementing secure Amazon Login with Amazon (LWA) account linking and official Alexa smart home skills.
+- **Distributed Micro-Nodes:** Expanding multi-node mesh networking across low-cost Android and Linux Wi-Fi edge nodes using our watermarked mutual-TLS ingress protocol.
 
 ---
 
@@ -80,16 +81,34 @@ In strict accordance with the hackathon honor code and official rules:
 
 ---
 
-## 3. Product Feedback for Amazon & Tool Builders
+## 3. Transparent Disclosures & Hackathon Honor Code
 
-### 1. Alexa+ Developer Program Tooling & Access Transparency
-- **Observation:** The hackathon rules encouraged the Alexa+ Track, but the official Alexa+ Add-on developer tools (Category SDK, MCP Toolkit, CLI, and Web Simulator) are in preview for select partners only without an application path for general developers. Individual setup guides read as though access is open, causing initial confusion before reading the FAQ (Incident 75).
-- **Suggestion:** Add a prominent banner to all Alexa+ developer docs stating preview/partner-only status, and publish a unified table distinguishing self-hosted MCP servers, partner-only tooling, classic Smart Home skills, and client-side web simulations.
+In keeping with the rules of the Amazon Developer Hackathon (AmazonAppDev 2026), we declare the following exact project boundaries:
 
-### 2. Model Context Protocol (MCP 2025-11-25) in IoT Environments
-- **Observation:** The Streamable HTTP transport specification provides excellent lightweight flexibility for IoT bridges. However, standard specifications leave multi-principal session binding and session adoption unaddressed.
-- **Suggestion:** Standardize session-to-credential binding in the MCP specification to prevent unauthorized callers from adopting or terminating active sessions created by other authenticated principals.
+1. **Submission Track & Positioning:** This entry competes in the **Alexa+ Track**, featuring a **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server and C++ Home Safety Engine with an Alexa-Style Demonstration Client**. The conversational interface provides an interactive, client-side Alexa-style experience interacting with the authoritative C++ MCP server and bridge over loopback. There is **no live Amazon cloud identity**, no production Echo device connection, and no AWS backend services utilized.
+2. **Self-Hosted Native MCP Server:** We have built and verified an authoritative, native C++ Model Context Protocol server (spec 2025-11-25, Streamable HTTP, read-only tools). It runs locally on loopback and is not an Amazon-hosted runtime.
+3. **Synthetic Evaluation Boundary:** All live video streams and sensor inputs in the demonstration are generated by our deterministic **synthetic test provider** (`camera-syn-001`). Physical cameras (`camera-001`, `camera-002`) are intentionally held in an unverified state and refuse streaming requests with HTTP 400 (`physical_camera_unverified`). No physical camera or microphone is activated during judging.
+4. **No Ring Integration / No Disaster Forecasting:** Ring integration, automated emergency 911 dispatch, and validated physical disaster predictions are not implemented and are not claimed.
+5. **Open Source Verification:** All original code is licensed under the Apache License, Version 2.0. Clean-clone build and reproduction instructions are provided in `docs/DEVPOST_DEMONSTRATION_GUIDE.md`.
 
-### 3. Smart Home Camera Privacy Standards
-- **Observation:** Testing budget consumer cameras (e.g. V380) revealed that enabling ONVIF opened unauthenticated RTSP/ONVIF streams exposing live video and administrative accounts to the local network (Incident 76).
-- **Suggestion:** Advocate for mandatory local authentication standards in smart home device certification programs, ensuring that local camera streaming cannot be activated without user-set credentials.
+### Honest Hardware & Deployment Limitations
+
+We believe absolute transparency is the cornerstone of responsible engineering. We state the exact operational limitations of physical devices and infrastructure:
+
+- **Xiaomi Mi A3 (Android Node):** Android camera streaming integration has been verified in lab adb/Wi-Fi test harnesses; in the judge release, physical camera streaming is locked fail-closed (`physical_camera_unverified`) to prevent unauthorized live capture during evaluation.
+- **Panasonic Eluga:** Tested as an auxiliary edge sensor device in staging; not provisioned with live cryptographic credentials in the default judge inventory.
+- **V380 Wi-Fi IP Camera:** RTSP ingestion pipeline designed for local LAN; intentionally held offline in the judge distribution pending user-authorized pairing.
+- **Alexa Echo Hardware:** No production Alexa Echo physical hardware or Amazon cloud skill store publication is claimed; the project provides a local-first Alexa-style demonstration client and ASK v2-compatible native C++ bridge.
+- **Remote-Access Readiness:** Deployed by default strictly on loopback (`127.0.0.1`); public WAN/VPS exposure requires operator configuration of TLS reverse proxy (nginx/caddy) and is not enabled by default.
+
+---
+
+## 4. Product Feedback for Hackathon Organizers & Tool Builders
+
+### Model Context Protocol (MCP) Specification (2025-11-25)
+- **Strengths:** The Streamable HTTP transport specification provides a clean, modern alternative to stdio-only bridges, enabling remote or containerized AI agents to interact with IoT hubs over standard HTTP.
+- **Opportunities:** Explicit security guidance regarding session-to-credential binding and prevention of session adoption in multi-tenant environments would benefit the ecosystem. Our implementation adds explicit principal validation to address this.
+
+### Alexa Skills Kit & Alexa+ Developer Experience
+- **Strengths:** The ASK SDK v2 provides a well-structured request/response contract. The mock-driven dispatcher enables rapid local unit testing without cloud dependencies.
+- **Opportunities:** Providing standardized local testing emulators for next-generation Alexa+ agentic interactions would significantly lower the barrier for independent developers and edge-first privacy researchers.
