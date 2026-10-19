@@ -22,6 +22,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -521,16 +522,78 @@ class TestRevisionRules(FixtureCase):
         self.assertIn(fake, finding["message"])
         self.assertEqual(result["exit"], csc.EXIT_FAIL)
 
-    def test_rev002_sha_outside_published_history_is_a_review(self) -> None:
-        repo = self.git_repo({"docs/DEVPOST_SUBMISSION.md": "# Notes\n\nSee below.\n"})
-        head = self.git(repo, "rev-parse", "HEAD")
-        # A commit on a side branch: it exists, but is not an ancestor of HEAD.
+    def repo_with_side_branch(self) -> tuple[Path, str, str]:
+        """A repo whose HEAD is the main line, plus an unmerged side branch."""
+        repo = self.git_repo({"README.md": "# Fixture\n"})
+        main_tip = self.git(repo, "rev-parse", "HEAD")
         self.git(repo, "checkout", "-q", "-b", "side")
         (repo / "side.txt").write_text("side\n", encoding="utf-8")
         self.git(repo, "add", "-A")
         self.git(repo, "commit", "-q", "-m", "side work", date="2026-02-02T00:00:00")
-        side = self.git(repo, "rev-parse", "HEAD")
+        side_tip = self.git(repo, "rev-parse", "HEAD")
         self.git(repo, "checkout", "-q", "-")
+        return repo, main_tip, side_tip
+
+    # --- regression fixture for the exact real defect -------------------
+    def test_cross_branch_commit_in_historical_note_is_not_flagged(self) -> None:
+        """The real case: a side-branch SHA cited in an engineering log.
+
+        The commit exists locally, so the citation is VALID.  It was previously
+        flagged because the rule demanded ancestry from HEAD.
+        """
+        repo, _main, side = self.repo_with_side_branch()
+        (repo / "docs").mkdir()
+        (repo / "docs/ENGINEERING_LOG.md").write_text(
+            "# Engineering log\n\n"
+            "2026-02-02 - the camera listener experiment lived on a side branch "
+            "(commit {}); it was never merged and is no longer part of the release "
+            "line.\n".format(side),
+            encoding="utf-8",
+        )
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-q", "-m", "log", date="2026-02-03T00:00:00")
+
+        report = scan_json(repo)["report"]
+        revisions = [f for f in report["findings"] if f["rule"].startswith("HG-REV")]
+        self.assertEqual(revisions, [], revisions)
+        self.assertEqual(report["stats"]["revision"]["cross_branch_ok"], 1)
+
+    def test_cross_branch_commit_in_release_doc_history_section_is_not_flagged(self) -> None:
+        """Historical framing inside a release-facing doc is still history."""
+        repo, _main, side = self.repo_with_side_branch()
+        (repo / "README.md").write_text(
+            "# Fixture\n\n## History\n\nAn earlier attempt lived on a side branch "
+            "(commit {}); it was never merged.\n".format(side),
+            encoding="utf-8",
+        )
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-q", "-m", "history", date="2026-02-03T00:00:00")
+
+        report = scan_json(repo)["report"]
+        revisions = [f for f in report["findings"] if f["rule"].startswith("HG-REV")]
+        self.assertEqual(revisions, [], revisions)
+
+    def test_rev002_release_revision_claim_off_the_release_ref_is_a_fail(self) -> None:
+        """"The release commit is <side sha>" must be on the release line."""
+        repo, _main, side = self.repo_with_side_branch()
+        (repo / "README.md").write_text(
+            "# Fixture\n\nThe release commit is {}.\n".format(side), encoding="utf-8"
+        )
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-q", "-m", "release claim", date="2026-02-03T00:00:00")
+
+        result = scan_json(repo)
+        findings = self.findings_for(result["report"], "HG-REV-002")
+        self.assertEqual(len(findings), 1, result["report"]["findings"])
+        self.assertEqual(findings[0]["severity"], "FAIL")
+        self.assertIn("release/tip revision", findings[0]["message"])
+        self.assertIn(side, findings[0]["message"])
+        self.assertEqual(result["exit"], csc.EXIT_FAIL)
+
+    def test_rev004_release_facing_ambiguity_is_a_review(self) -> None:
+        """A bare cross-branch citation in a release-facing doc, no history."""
+        repo, head, side = self.repo_with_side_branch()
+        (repo / "docs").mkdir()
         (repo / "docs/DEVPOST_SUBMISSION.md").write_text(
             "# Notes\n\nAncestor commit {} and side commit {}.\n".format(head, side),
             encoding="utf-8",
@@ -539,12 +602,56 @@ class TestRevisionRules(FixtureCase):
         self.git(repo, "commit", "-q", "-m", "cite both", date="2026-02-03T00:00:00")
 
         result = scan_json(repo)
-        reviews = self.findings_for(result["report"], "HG-REV-002")
+        reviews = self.findings_for(result["report"], "HG-REV-004")
         self.assertEqual(len(reviews), 1, result["report"]["findings"])
-        self.assertIn(side, reviews[0]["message"])
         self.assertEqual(reviews[0]["severity"], "REVIEW")
-        # The ancestor reference stays silent.
+        self.assertIn(side, reviews[0]["message"])
+        # The ancestor reference stays silent, and nothing is a FAIL.
         self.assertNotIn(head, reviews[0]["message"])
+        self.assertEqual(self.findings_for(result["report"], "HG-REV-002"), [])
+        revision_findings = [
+            f for f in result["report"]["findings"] if f["rule"].startswith("HG-REV")
+        ]
+        self.assertEqual({f["severity"] for f in revision_findings}, {"REVIEW"})
+
+    def test_release_ref_flag_changes_the_verdict(self) -> None:
+        """The strict test applies to the declared release ref, not to HEAD."""
+        repo, _main, side = self.repo_with_side_branch()
+        (repo / "README.md").write_text(
+            "# Fixture\n\nThe release commit is {}.\n".format(side), encoding="utf-8"
+        )
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-q", "-m", "release claim", date="2026-02-03T00:00:00")
+
+        # Judged against the side branch, the citation IS on the release line.
+        relaxed = scan_json(repo, "--release-ref", "side")["report"]
+        self.assertEqual(
+            [f for f in relaxed["findings"] if f["rule"].startswith("HG-REV")], []
+        )
+        self.assertTrue(relaxed["stats"]["revision"]["release_resolved"])
+
+        # Judged against HEAD (the main line) it is off the release revision.
+        strict = scan_json(repo, "--release-ref", "HEAD")["report"]
+        self.assertEqual(len(self.findings_for(strict, "HG-REV-002")), 1)
+
+    def test_release_ref_configuration_default_via_environment(self) -> None:
+        repo, _main, side = self.repo_with_side_branch()
+        (repo / "README.md").write_text(
+            "# Fixture\n\nThe release commit is {}.\n".format(side), encoding="utf-8"
+        )
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-q", "-m", "release claim", date="2026-02-03T00:00:00")
+
+        with mock.patch.dict(os.environ, {csc.ENV_RELEASE_REF: "side"}):
+            via_env = scan_json(repo)["report"]
+        self.assertEqual(via_env["stats"]["release_ref"], "side")
+        self.assertEqual(
+            [f for f in via_env["findings"] if f["rule"].startswith("HG-REV")], []
+        )
+        # The CLI flag wins over the environment variable.
+        with mock.patch.dict(os.environ, {csc.ENV_RELEASE_REF: "side"}):
+            via_flag = scan_json(repo, "--release-ref", "HEAD")["report"]
+        self.assertEqual(len(self.findings_for(via_flag, "HG-REV-002")), 1)
 
     def test_rev003_bare_hex_token_is_a_review(self) -> None:
         token = "abcdef0123456789abcdef0123456789abcdef01"
@@ -577,6 +684,25 @@ class TestRevisionRules(FixtureCase):
             [f for f in result["report"]["findings"] if f["rule"].startswith("HG-REV")],
             [],
         )
+
+    def test_self_documented_bad_sha_is_review_not_fail(self) -> None:
+        """A doc that flags its own bad SHA keeps it, but is REVIEW not FAIL."""
+        bad = "3c8ff46eabff45abc59ff6ded297fea10fc1bb"  # 39 hex: one digit short
+        repo = self.git_repo(
+            {
+                "docs/FRICTION_LOG.md": (
+                    "# Friction log\n\n**Symptom:** the D-03 brief cited D-02 as "
+                    "`{}`. That is 39 hex characters, one digit short of a full "
+                    "commit SHA.\n".format(bad)
+                )
+            }
+        )
+        result = scan_json(repo)
+        self.assertEqual(self.findings_for(result["report"], "HG-REV-001"), [])
+        reviews = self.findings_for(result["report"], "HG-REV-003")
+        self.assertEqual(len(reviews), 1, result["report"]["findings"])
+        self.assertEqual(reviews[0]["severity"], "REVIEW")
+        self.assertIn("records that it is wrong", reviews[0]["message"])
 
     def test_rev010_version_disagreement_with_manifest_is_a_review(self) -> None:
         root = self.tree(
@@ -823,6 +949,538 @@ class TestCliBehaviour(FixtureCase):
         source = (Path(csc.__file__)).read_text(encoding="utf-8")
         for banned in ("socket", "urllib.request", "http.client", "requests"):
             self.assertNotIn(banned, source)
+
+
+# ---------------------------------------------------------------------------
+# Rule 1 - configurable expected licence (Task 1 regression fixtures)
+# ---------------------------------------------------------------------------
+
+MIT_LICENSE = (
+    "MIT License\n"
+    "\n"
+    "Copyright (c) 2026 Fixture Author\n"
+    "\n"
+    "Permission is hereby granted, free of charge, to any person obtaining a copy\n"
+    'of this software and associated documentation files (the "Software"), to deal\n'
+    "in the Software without restriction, including without limitation the rights\n"
+    "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n"
+    "copies of the Software.\n"
+)
+
+#: The clean fixture, re-expressed under MIT: every licence artefact agrees.
+MIT_FILES = dict(CLEAN_FILES)
+MIT_FILES.update(
+    {
+        "LICENSE": MIT_LICENSE,
+        "NOTICE": (
+            "Fixture Project\nCopyright 2026 Fixture Author\n\n"
+            "This product is licensed under the MIT License (see the LICENSE file).\n\n"
+            "Third-party components:\n"
+            "  - fixture-json \u2014 Apache License 2.0. https://example.invalid/fixture-json\n"
+        ),
+        "package.json": json.dumps(
+            {
+                "name": "fixture-project",
+                "version": "1.2.3",
+                "license": "MIT",
+                "dependencies": {},
+            },
+            indent=2,
+        ),
+        "README.md": CLEAN_FILES["README.md"].replace(
+            "Apache License, Version 2.0", "MIT License"
+        ),
+        "docs/SUBMISSION_PACKAGE.md": CLEAN_FILES["docs/SUBMISSION_PACKAGE.md"].replace(
+            "Apache License 2.0", "MIT License"
+        ),
+    }
+)
+
+
+class TestConfigurableLicence(FixtureCase):
+    """The expected licence is selected, not assumed."""
+
+    def test_mit_expected_with_mit_tree_is_clean(self) -> None:
+        root = self.tree(MIT_FILES)
+        result = scan_json(root, "--expected-license", "MIT")
+        self.assertEqual(result["report"]["findings"], [])
+        self.assertEqual(result["report"]["counts"], {"FAIL": 0, "REVIEW": 0})
+        self.assertEqual(result["exit"], csc.EXIT_OK)
+        self.assertEqual(result["report"]["stats"]["expected_licence"], "MIT")
+
+    def test_mit_expected_with_apache_tree_fails_licence_and_manifest(self) -> None:
+        root = self.tree(CLEAN_FILES)  # Apache LICENSE + Apache-2.0 manifest
+        result = scan_json(root, "--expected-license", "MIT")
+
+        licence = self.findings_for(result["report"], "HG-LIC-001")
+        self.assertEqual(len(licence), 1, result["report"]["findings"])
+        self.assertEqual(licence[0]["severity"], "FAIL")
+        self.assertIn("MIT", licence[0]["message"])
+        self.assertIn("Apache-2.0", licence[0]["message"])
+
+        manifest = self.findings_for(result["report"], "HG-LIC-011")
+        self.assertEqual(len(manifest), 1, result["report"]["findings"])
+        self.assertEqual(manifest[0]["severity"], "FAIL")
+        self.assertEqual(result["exit"], csc.EXIT_FAIL)
+
+    def test_apache_expected_with_mit_tree_fails(self) -> None:
+        root = self.tree(MIT_FILES)
+        result = scan_json(root)  # documented default expected licence
+        self.assertEqual(result["report"]["stats"]["expected_licence"], "Apache-2.0")
+
+        licence = self.findings_for(result["report"], "HG-LIC-001")
+        self.assertEqual(len(licence), 1, result["report"]["findings"])
+        self.assertEqual(licence[0]["severity"], "FAIL")
+        self.assertIn("MIT", licence[0]["message"])
+
+        manifest = self.findings_for(result["report"], "HG-LIC-011")[0]
+        self.assertEqual(manifest["severity"], "FAIL")
+        self.assertIn("MIT", manifest["message"])
+        self.assertEqual(result["exit"], csc.EXIT_FAIL)
+
+    def test_manifest_without_licence_field_is_a_review_under_mit(self) -> None:
+        files = dict(MIT_FILES)
+        files["package.json"] = json.dumps(
+            {"name": "fixture-project", "version": "1.2.3"}
+        )
+        root = self.tree(files)
+        result = scan_json(root, "--expected-license", "MIT")
+        finding = self.findings_for(result["report"], "HG-LIC-010")[0]
+        self.assertEqual(finding["severity"], "REVIEW")
+        self.assertNotIn("HG-LIC-011", self.rules(result["report"]))
+        self.assertEqual(result["exit"], csc.EXIT_REVIEW)
+
+    def test_conflicting_manifest_value_is_a_fail(self) -> None:
+        files = dict(MIT_FILES)
+        files["package.json"] = json.dumps(
+            {"name": "fixture-project", "version": "1.2.3", "license": "Apache-2.0"}
+        )
+        root = self.tree(files)
+        result = scan_json(root, "--expected-license", "MIT")
+        finding = self.findings_for(result["report"], "HG-LIC-011")[0]
+        self.assertEqual(finding["severity"], "FAIL")
+        self.assertIn("Apache-2.0", finding["message"])
+        # The LICENSE itself is MIT and still matches.
+        self.assertEqual(self.findings_for(result["report"], "HG-LIC-001"), [])
+        self.assertEqual(result["exit"], csc.EXIT_FAIL)
+
+    def test_consistent_manifest_is_silent(self) -> None:
+        root = self.tree(MIT_FILES)
+        report = scan_json(root, "--expected-license", "MIT")["report"]
+        self.assertEqual(self.findings_for(report, "HG-LIC-010"), [])
+        self.assertEqual(self.findings_for(report, "HG-LIC-011"), [])
+        self.assertEqual(self.findings_for(report, "HG-LIC-001"), [])
+
+    def test_notice_consistency_is_still_checked_under_mit(self) -> None:
+        files = dict(MIT_FILES)
+        files["NOTICE"] = (
+            "Fixture Project\n\nThird-party components:\n"
+            "  - fixture-json (https://example.invalid/fixture-json)\n"
+        )
+        root = self.tree(files)
+        result = scan_json(root, "--expected-license", "MIT")
+        finding = self.findings_for(result["report"], "HG-LIC-003")[0]
+        self.assertEqual(finding["severity"], "REVIEW")
+        self.assertIn("MIT", finding["message"])
+
+    def test_expected_licence_configuration_default_via_environment(self) -> None:
+        root = self.tree(MIT_FILES)
+        with mock.patch.dict(os.environ, {csc.ENV_EXPECTED_LICENCE: "MIT"}):
+            via_env = scan_json(root)
+        self.assertEqual(via_env["report"]["stats"]["expected_licence"], "MIT")
+        self.assertEqual(via_env["report"]["findings"], [])
+
+        # The CLI flag wins over the environment variable.
+        with mock.patch.dict(os.environ, {csc.ENV_EXPECTED_LICENCE: "MIT"}):
+            via_flag = scan_json(root, "--expected-license", "Apache-2.0")
+        self.assertIn("HG-LIC-001", self.rules(via_flag["report"]))
+
+    def test_scanner_never_rewrites_a_licence_file(self) -> None:
+        root = self.tree(MIT_FILES)
+        before = (root / "LICENSE").read_text(encoding="utf-8")
+        scan_json(root, "--expected-license", "Apache-2.0")
+        self.assertEqual((root / "LICENSE").read_text(encoding="utf-8"), before)
+
+
+# ---------------------------------------------------------------------------
+# Rule 2 - claim false-positive reduction (Task 3 regression fixtures)
+# ---------------------------------------------------------------------------
+
+
+class TestClaimFalsePositiveReduction(FixtureCase):
+    """Downgrade rather than assert; ambiguity defaults to REVIEW."""
+
+    BASE = {
+        "LICENSE": APACHE_HEADER,
+        "NOTICE": (
+            "Fixture Project\n\nThis product is licensed under the Apache License, "
+            "Version 2.0 (see LICENSE).\n"
+        ),
+    }
+
+    def claim_findings(self, docs: dict) -> tuple[dict, list[dict]]:
+        root = self.tree({**self.BASE, **docs})
+        report = scan_json(root)["report"]
+        return report, [
+            f for f in report["findings"] if f["rule"].startswith("HG-CLAIM")
+        ]
+
+    # (i) historical / incident / dated statements are records, not claims
+    def test_historical_dated_statement_is_not_a_current_claim(self) -> None:
+        _report, claims = self.claim_findings(
+            {
+                "docs/ENGINEERING_LOG.md": (
+                    "# Log\n\n"
+                    "2026-01-02 - the remote MCP endpoint was verified on the staging "
+                    "bridge and the work was later withdrawn.\n"
+                )
+            }
+        )
+        self.assertEqual(claims, [], claims)
+
+    def test_historical_negation_does_not_contradict_a_current_assertion(self) -> None:
+        report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Claims\n\nRemote MCP reachability is implemented and verified.\n"
+                ),
+                "docs/ENGINEERING_LOG.md": (
+                    "# Log\n\n2026-01-02 - remote MCP reachability was not verified.\n"
+                ),
+            }
+        )
+        self.assertEqual(len(claims), 1, claims)
+        self.assertEqual(claims[0]["rule"], "HG-CLAIM-002")
+        self.assertEqual(claims[0]["severity"], "REVIEW")
+        self.assertIn("historical statement", claims[0]["message"])
+        self.assertEqual(self.findings_for(report, "HG-CLAIM-001"), [])
+
+    # (ii) a negated statement is never itself a positive assertion
+    def test_negated_statements_are_never_positives(self) -> None:
+        _report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Notes\n\n"
+                    "Remote MCP reachability is not verified.\n\n"
+                    "V380 camera integration is not implemented and not tested.\n\n"
+                    "The VPN tunnel is not installed on the submission host.\n"
+                )
+            }
+        )
+        self.assertEqual(claims, [], claims)
+
+    # (iii) similar terminology on different subjects must not be merged
+    def test_distant_subject_is_not_merged_with_the_predicate(self) -> None:
+        tail = (
+            "and then a long stretch of unrelated packaging notes follows this clause "
+            "and keeps going with several more words of background material that "
+            "mention remote MCP reachability only as an out-of-scope topic for a later "
+            "phase of the project"
+        )
+        statement = "The VPN tunnel is implemented and verified, " + tail
+        # Sanity: the MCP token really is outside the binding window, so this test
+        # would be vacuous if the window or the fixture drifted.
+        predicate = csc.POSITIVE_TESTED.search(statement)
+        mcp_match = csc.SUBJECTS["remote_mcp"].patterns[0].search(statement)
+        self.assertIsNotNone(predicate)
+        self.assertIsNotNone(mcp_match)
+        if predicate is None or mcp_match is None:  # pragma: no cover
+            self.fail("fixture drifted: predicate or subject token not found")
+        self.assertGreater(
+            csc._span_gap(predicate.span(), mcp_match.span()),
+            csc.SUBJECT_PREDICATE_WINDOW_CHARS,
+        )
+
+        _report, claims = self.claim_findings(
+            {"docs/DEVPOST_SUBMISSION.md": "# Notes\n\n" + statement + "\n"}
+        )
+        self.assertEqual(len(claims), 1, claims)
+        self.assertIn("VPN/WireGuard", claims[0]["message"])
+        self.assertNotIn("remote MCP", claims[0]["message"])
+
+    def test_nearby_subject_is_still_bound_to_the_predicate(self) -> None:
+        _report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Notes\n\nRemote MCP reachability is implemented and verified.\n"
+                )
+            }
+        )
+        self.assertEqual(len(claims), 1, claims)
+        self.assertIn("remote MCP", claims[0]["message"])
+
+    def test_subjects_stay_distinct(self) -> None:
+        _report, inbox_claims = self.claim_findings(
+            {"docs/DEVPOST_SUBMISSION.md": "# Notes\n\nThe remote dashboard is deployed.\n"}
+        )
+        self.assertEqual(len(inbox_claims), 1, inbox_claims)
+        self.assertIn("remote access", inbox_claims[0]["message"])
+        self.assertNotIn("VPN", inbox_claims[0]["message"])
+
+        _report, phone_claims = self.claim_findings(
+            {
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Notes\n\nThe Mi A3 phone-hosted service is deployed for the demo.\n"
+                )
+            }
+        )
+        self.assertEqual(len(phone_claims), 1, phone_claims)
+        self.assertIn("Mi A3", phone_claims[0]["message"])
+        self.assertNotIn("remote MCP", phone_claims[0]["message"])
+
+    # (iv) planned capabilities classify as PLANNED, not IMPLEMENTED
+    def test_planned_capabilities_are_not_current_claims(self) -> None:
+        _report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Roadmap\n\n"
+                    "Remote MCP reachability will be implemented in a future release.\n\n"
+                    "The V380 camera integration is planned for the next phase.\n\n"
+                    "We intend to verify the VPN tunnel after the hackathon.\n"
+                )
+            }
+        )
+        self.assertEqual(claims, [], claims)
+
+    # a hedged contradiction is REVIEW, never FAIL
+    def test_hedged_contradiction_is_downgraded_to_review(self) -> None:
+        report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Claims\n\n"
+                    "Remote MCP reachability is implemented and partially verified.\n"
+                ),
+                "docs/SUBMISSION_PACKAGE.md": (
+                    "# Package\n\nRemote MCP reachability is not verified.\n"
+                ),
+            }
+        )
+        self.assertEqual(len(claims), 1, claims)
+        self.assertEqual(claims[0]["rule"], "HG-CLAIM-004")
+        self.assertEqual(claims[0]["severity"], "REVIEW")
+        self.assertIn("downgraded to REVIEW", claims[0]["message"])
+        self.assertEqual(self.findings_for(report, "HG-CLAIM-001"), [])
+
+    # real-case fixtures for the four residual false positives on the release branch
+    def test_heading_is_not_a_claim(self) -> None:
+        """Real case: '### 8.1 What passed on the physical device' was paired with
+        the D-03 transport note "NOT yet exercised on a physical device"."""
+        _report, claims = self.claim_findings(
+            {
+                "docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md": (
+                    "# H-03 acceptance\n\n### 8.1 What passed on the physical device\n\n"
+                    "See the evidence table in section 9.\n"
+                ),
+                "docs/ANDROID_TRANSPORT_D03.md": (
+                    "# D-03\n\nVerification status: compile-verified (signed APK "
+                    "builds). They are NOT yet exercised on a physical device.\n"
+                ),
+            }
+        )
+        self.assertEqual(claims, [], claims)
+
+    def test_present_perfect_lab_verification_does_not_contradict_the_release(self) -> None:
+        """Real case: 'has been verified in lab harnesses' vs 'no physical camera'."""
+        _report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_DEMONSTRATION_GUIDE.md": (
+                    "# Guide\n\n"
+                    "- **Xiaomi Mi A3 (Android Node):** Android camera streaming "
+                    "integration has been verified in lab adb/Wi-Fi test harnesses; in "
+                    "the judge release, physical camera streaming is locked "
+                    "fail-closed to prevent unauthorized live capture.\n"
+                ),
+                "README.md": (
+                    "# Fixture\n\n> observations remain synthetic; no physical camera "
+                    "is active in the judge release.\n"
+                ),
+            }
+        )
+        self.assertEqual(claims, [], claims)
+
+    def test_scoped_limitation_is_not_a_negation(self) -> None:
+        """Real case: the ASK simulator 'can test ... without a physical Echo'."""
+        self.assertEqual(
+            csc.classify_claim(
+                "The Alexa Developer Console simulator can test skill request/response "
+                "flows without a physical Echo device."
+            ),
+            csc.CLAIM_UNCLASSIFIED,
+        )
+        # ... and such a sentence is a scoped limitation, never a FAIL against a
+        # documentation-verification note in another file.
+        report, claims = self.claim_findings(
+            {
+                "alexa_skill/README.md": (
+                    "# Skill notes\n\nAlexa integration notes: the ask-sdk-core v2 SDK "
+                    "is compatible. (Verified against current AWS Lambda runtime and "
+                    "ASK SDK deprecation docs.)\n"
+                ),
+                "docs/ARCHITECTURE.md": (
+                    "# Architecture\n\nThe Alexa Developer Console simulator can test "
+                    "skill request/response flows without a physical Echo device.\n"
+                ),
+            }
+        )
+        self.assertEqual(self.findings_for(report, "HG-CLAIM-001"), [])
+        self.assertTrue(all(f["severity"] == "REVIEW" for f in claims), claims)
+
+    def test_alexa_style_client_does_not_contradict_real_alexa(self) -> None:
+        """Real case: the Devpost 'Alexa-Style ... client' vs 'not real Alexa'."""
+        _report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Submission\n\n"
+                    "5. **Alexa-Style Conversational Assistant:** Built on a hardened, "
+                    "read-only integration contract, the dashboard provides a voice- "
+                    "and text-driven Alexa-style demonstration client.\n"
+                ),
+                "README.md": (
+                    "# Fixture\n\n**Simulated (this is a simulation, not real hardware "
+                    "or real Alexa):**\n"
+                ),
+            }
+        )
+        self.assertEqual(claims, [], claims)
+
+    # more real-case fixtures: code, requirement negations, platform capabilities
+    def test_fenced_code_block_is_not_a_prose_claim(self) -> None:
+        """Real case: '// Verified real edge hardware' inside a JS fence."""
+        code = (
+            "```javascript\n"
+            "// web_mcp/server.js adaptive resolution logic\n"
+            "const remoteEndpoint = process.env.HG_MI_A3_MCP_ENDPOINT;\n"
+            "\n"
+            "if (remoteEndpoint) {\n"
+            "  // Verified real edge hardware\n"
+            "  activeRuntime = { mode: 'hardware' };\n"
+            "  const probe = await probeMcpEndpoint(remoteEndpoint);\n"
+            "}\n"
+            "```\n"
+        )
+        _report, claims = self.claim_findings(
+            {
+                "docs/ARCH.md": "# Architecture\n\n" + code,
+                "deploy/coordinator/README.md": (
+                    "# Coordinator\n\n1. **Outbound-Only Ingress:** no inbound "
+                    "listener is exposed; the phone-hosted service is not reachable.\n"
+                ),
+            }
+        )
+        self.assertEqual(claims, [], claims)
+
+    def test_requirement_negation_is_not_an_existence_denial(self) -> None:
+        """Real case: 'no internet access or VPN connection is needed'."""
+        text = (
+            "5. **No Cloud or Network Required:** All checks execute strictly over "
+            "`127.0.0.1` loopback; no internet access or VPN connection is needed "
+            "during verification."
+        )
+        self.assertNotEqual(csc.classify_claim(text), csc.CLAIM_NEGATED)
+        report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_DEMONSTRATION_GUIDE.md": "# Guide\n\n" + text + "\n",
+                "docs/ORACLE_RELAY_H04_PLAN.md": (
+                    "# Plan\n\n* **Always-on VPN** exists from API 24 (`Always-on "
+                    "VPN` + `Block connections without VPN`): good for an "
+                    "unattended node.\n"
+                ),
+            }
+        )
+        self.assertEqual(self.findings_for(report, "HG-CLAIM-001"), [])
+        self.assertEqual(claims, [], claims)
+
+    def test_platform_capability_statement_is_not_a_project_claim(self) -> None:
+        self.assertEqual(
+            csc.classify_claim(
+                "* **Always-on VPN** exists from API 24 (`Always-on VPN` + `Block "
+                "connections without VPN`): good for an unattended node."
+            ),
+            csc.CLAIM_UNCLASSIFIED,
+        )
+        self.assertEqual(
+            csc.classify_claim(
+                "- **Audio:** AAudio, core capture API `__INTRODUCED_IN(26)`. "
+                "Available since **API level 26**."
+            ),
+            csc.CLAIM_UNCLASSIFIED,
+        )
+
+    def test_untrusted_identifier_negation_is_not_a_positive(self) -> None:
+        """Real case: docs/PRIVACY.md device section, model string not trusted."""
+        text = (
+            "A physical device is attached and verified. The model string is **not "
+            "trusted** and was **not** corroborated:"
+        )
+        self.assertEqual(csc.classify_claim(text), csc.CLAIM_NEGATED)
+        _report, claims = self.claim_findings(
+            {
+                "docs/PRIVACY.md": "# Privacy\n\n### Confirmed device\n\n" + text + "\n",
+                "docs/ANDROID_TRANSPORT_D03.md": (
+                    "# D-03\n\nVerification status: compile-verified. The behaviours "
+                    "are NOT yet exercised on a physical device.\n"
+                ),
+            }
+        )
+        self.assertEqual(claims, [], claims)
+
+    # the strict FAIL case must survive the hardening
+    def test_present_tense_contradiction_on_one_subject_is_still_a_fail(self) -> None:
+        report, claims = self.claim_findings(
+            {
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Claims\n\nRemote MCP reachability is implemented and verified.\n"
+                ),
+                "docs/SUBMISSION_PACKAGE.md": (
+                    "# Package\n\nRemote MCP reachability is not verified.\n"
+                ),
+            }
+        )
+        self.assertEqual(len(claims), 1, claims)
+        self.assertEqual(claims[0]["rule"], "HG-CLAIM-001")
+        self.assertEqual(claims[0]["severity"], "FAIL")
+        self.assertIn("present-tense, non-negated, non-hedged", claims[0]["message"])
+
+
+# ---------------------------------------------------------------------------
+# Rule 4 - secret redaction still holds on the hardened paths (Task 4)
+# ---------------------------------------------------------------------------
+
+
+class TestSecretRedactionWithHardenedRules(FixtureCase):
+    def test_secret_still_redacted_while_new_rules_fire(self) -> None:
+        secret = TestCredentialRedaction.SECRET
+        fake_commit = "0f1e2d3c4b5a69788796a5b4c3d2e1f00918a7b6"
+        root = self.tree(
+            {
+                "README.md": "# Fixture\n\nSee the notes.\n",
+                "docs/DEVPOST_SUBMISSION.md": (
+                    "# Notes\n\n"
+                    "The release commit is {}.\n\n"
+                    "Remote MCP reachability is implemented and verified.\n\n"
+                    "PrivateKey = {}\n".format(fake_commit, secret)
+                ),
+            }
+        )
+        code_text, out_text, err_text = run_cli(str(root))
+        code_json, out_json, err_json = run_cli(str(root), "--json")
+
+        for blob in (out_text, err_text, out_json, err_json):
+            self.assertNotIn(secret, blob)
+            self.assertNotIn(secret[:-1], blob)
+        self.assertEqual(err_text, "")
+
+        report = json.loads(out_json)
+        creds = self.findings_for(report, "HG-CRED-001")
+        self.assertEqual(len(creds), 1, report["findings"])
+        self.assertEqual(creds[0]["value_length"], len(secret))
+        self.assertEqual(creds[0]["value_sha256_8"], csc._sha256_8(secret))
+        self.assertIn("[redacted:", creds[0]["evidence"])
+        # the hardened rule paths fired alongside, and none of them leaked it
+        self.assertIn("HG-CLAIM-002", self.rules(report))
+        self.assertIn("HG-LIC-001", self.rules(report))
+        self.assertEqual(code_json, csc.EXIT_FAIL)
+        self.assertEqual(code_text, csc.EXIT_FAIL)
 
 
 if __name__ == "__main__":
