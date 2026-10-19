@@ -31,7 +31,7 @@ Key features include:
 3. **Native Model Context Protocol (MCP) Server:** Fully implements the official Model Context Protocol (spec 2025-11-25) in native C++ over Streamable HTTP. Autonomous AI agents can query home status and alert histories through strictly read-only tools (`get_homeguardian_status`, `get_alert_summary`). Sessions are secured by OS-backed CSPRNG 256-bit tokens with strict credential binding.
 4. **Peripheral Device Registry & WebRTC Viewer:** An authoritative C++ device registry manages paired peripherals. A built-in WebRTC streaming engine enables real-time, low-latency browser monitoring. In accordance with safe testing principles, physical cameras default to an unverified state (refusing viewing requests), while synthetic test streams allow comprehensive verification without privacy risk.
 5. **Alexa-Style Conversational Assistant (Simulated Client):** Using a hardened, read-only simulation contract, the dashboard provides a voice- and text-driven demonstration client for Alexa-style interactions. Operators can query household status (*"Is everything okay?"*, *"Are there any alerts?"*) and inspect live consent states.
-6. **Encrypted Local Persistence & Retention:** All alert metadata (timestamps, rule IDs, mathematical evidence) is stored in a local SQLite database with automated age-based retention and schema migration.
+6. **Local Persistence & Retention:** All alert metadata (timestamps, rule IDs, mathematical evidence) is stored in a local SQLite database with automated age-based retention and schema migration. Raw sensor media is never persisted.
 
 ---
 

@@ -47,7 +47,7 @@
   >
   > Our sensor pipeline pairs statistical rolling baselines with multi-sensor fusion. Instead of streaming raw media to an external model, observations are evaluated on-device against learned behavioral baselines.
   >
-  > An alert is generated only when fused multi-sensor evidence qualifies. Every alert carries its verifiable mathematical evidence, and all records persist locally in encrypted SQLite storage with automated retention policies."
+  > An alert is generated only when fused multi-sensor evidence qualifies. Every alert carries its verifiable mathematical evidence, and all records persist locally in SQLite storage with automated retention policies."
 
 ---
 
@@ -83,8 +83,8 @@
   - Switch to the Alexa-Style Conversational Assistant tab.
   - Type or trigger: *"Is everything okay in the house?"*
   - Assistant responds with natural voice/text: *"HomeGuardian reports normal activity. All safety rules clear. One synthetic alert logged in living room."*
-  - Demonstrate instant consent revocation: Open the device settings, toggle Consent from GRANTED to REVOKED.
-  - Instantly switch back to the camera view: the video track immediately cuts off, displaying "STREAM TERMINATED: Consent Revoked".
+  - Demonstrate instant consent revocation: Open the device card, click "Withdraw Consent" (button updates to "Grant Consent").
+  - Instantly observe the camera viewer: the active WebRTC stream tears down, the status pill switches to `Stream: Inactive`, and the viewer reverts to the placeholder (`Select an authorized camera and click "Start Live View"`).
 - **Voiceover (1:55 – 2:25):**
   > "For the Amazon Developer Hackathon, we present our simulated Alexa-style demonstration client, connected directly to our native C++ bridge and MCP tools. Powered by our read-only simulation contract, you can speak or chat with your home safety engine.
   >

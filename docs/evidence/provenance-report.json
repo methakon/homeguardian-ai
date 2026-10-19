@@ -1,12 +1,12 @@
 {
   "schema": "hg-evidence-report/1",
   "manifest_schema": "hg-evidence-manifest/1",
-  "repo_root": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/antigravity-sec-06c",
+  "repo_root": ".",
   "refs": {
-    "release_ref": "release/hackathon-2026-mcp-candidate",
-    "release_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf",
+    "release_ref": "HEAD",
+    "release_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88",
     "external_ref": "origin/experiment/hg-v380-09-secure-camera-integration",
-    "external_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4"
+    "external_commit": "737832af82902128cccac405ae2f4de8834fb76b"
   },
   "summary": {
     "artifacts": 13,
@@ -26,7 +26,7 @@
       "id": "still-scene-capture-log",
       "path": "docs/evidence/PHYSICAL_CAMERA_STILL_SCENE.log",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "8f0a2d5f72c1bf9a49ddad708d3d04a63f37a7be4168c19ebae8a260ed27ce21",
       "bytes": 4266,
@@ -41,14 +41,14 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         },
         {
           "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "experiment/hg-v380-09-secure-camera-integration",
           "reference_confirmed": true,
           "artifact_present_there": true,
-          "doc_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4"
+          "doc_commit": "737832af82902128cccac405ae2f4de8834fb76b"
         }
       ],
       "markers_required": [
@@ -63,7 +63,7 @@
       "id": "capture-log-transcribed",
       "path": "docs/evidence/PHYSICAL_CAMERA_CAPTURE_LOG.md",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "483394b7eb73782fd8840391f782c247836fe85da56fb1040a1ea4ec86f086b3",
       "bytes": 6527,
@@ -78,14 +78,14 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         },
         {
           "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "experiment/hg-v380-09-secure-camera-integration",
           "reference_confirmed": true,
           "artifact_present_there": true,
-          "doc_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4"
+          "doc_commit": "737832af82902128cccac405ae2f4de8834fb76b"
         }
       ],
       "markers_required": [
@@ -100,7 +100,7 @@
       "id": "judge-evidence-note",
       "path": "docs/JUDGE_EVIDENCE_PHYSICAL_SENSOR.md",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "7437e68cf4f198d2b023300299da38d8f4d3512c7258cd629ac410674fb50382",
       "bytes": 8455,
@@ -115,14 +115,14 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         },
         {
           "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "experiment/hg-v380-09-secure-camera-integration",
           "reference_confirmed": true,
           "artifact_present_there": true,
-          "doc_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4"
+          "doc_commit": "737832af82902128cccac405ae2f4de8834fb76b"
         }
       ],
       "markers_required": [],
@@ -133,7 +133,7 @@
       "id": "physical-camera-path",
       "path": "docs/PHYSICAL_CAMERA_PATH.md",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "404239895ce06dae81352ed8263dd30e79b33cecafab707827da9400b2c9c1e4",
       "bytes": 21376,
@@ -148,14 +148,14 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         },
         {
           "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "experiment/hg-v380-09-secure-camera-integration",
           "reference_confirmed": true,
           "artifact_present_there": true,
-          "doc_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4"
+          "doc_commit": "737832af82902128cccac405ae2f4de8834fb76b"
         }
       ],
       "markers_required": [],
@@ -166,7 +166,7 @@
       "id": "v4l2-device-header",
       "path": "src/backend/linux/V4l2CameraDevice.h",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "5f3239e4c805e732a0ed67b8dbc1e5631451f720d379e563dbe23edde654a415",
       "bytes": 5853,
@@ -181,7 +181,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         }
       ],
       "markers_required": [],
@@ -192,7 +192,7 @@
       "id": "v4l2-device-source",
       "path": "src/backend/linux/V4l2CameraDevice.cpp",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "60ad429b4496cdff0aa5434d1843d5355dbaefd88587066437f0aad29d1446aa",
       "bytes": 14433,
@@ -210,7 +210,7 @@
       "id": "camera-activity-session-header",
       "path": "src/core/CameraActivitySession.h",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "b792de05142e72f30a98d21ad43fc78631a9f645d255686baf2cfbcfdf4d5e14",
       "bytes": 9704,
@@ -225,7 +225,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         }
       ],
       "markers_required": [],
@@ -236,7 +236,7 @@
       "id": "camera-activity-session-source",
       "path": "src/core/CameraActivitySession.cpp",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "1fc5a035d36a8bfe0ce0447710b1b1e8223a82123ffc57722621147b483c2beb",
       "bytes": 13013,
@@ -254,7 +254,7 @@
       "id": "camera-bridge-tool",
       "path": "src/main_camera_bridge.cpp",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "497ee421067f7a9a5f42945951161eaa030bf9d9bd63cc1f259d2b5c6679c74f",
       "bytes": 17297,
@@ -269,7 +269,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         }
       ],
       "markers_required": [],
@@ -280,7 +280,7 @@
       "id": "camera-suite-physical",
       "path": "tests/core/test_camera_activity.cpp",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "ed47c8c58bf0bb284a03ee65993aec35d02426252c7920a3780d1a4b700f4036",
       "bytes": 21424,
@@ -295,7 +295,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         }
       ],
       "markers_required": [
@@ -308,7 +308,7 @@
       "id": "camera-suite-calibration",
       "path": "tests/core/test_camera_calibration.cpp",
       "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
-      "resolved_commit": "b5bb71c531a4790d404182cc68211de3df0bfec4",
+      "resolved_commit": "737832af82902128cccac405ae2f4de8834fb76b",
       "exists": true,
       "sha256": "ab33d3dbcad184f7a7874cb0bf2e156eaaddbe77ed1c14b0678d9613df987d70",
       "bytes": 10208,
@@ -323,7 +323,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf"
+          "doc_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88"
         }
       ],
       "markers_required": [
@@ -336,9 +336,9 @@
       "id": "release-video-script",
       "path": "docs/SUBMISSION_VIDEO_SCRIPT.md",
       "declared_revision": "release/hackathon-2026-mcp-candidate",
-      "resolved_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf",
+      "resolved_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88",
       "exists": true,
-      "sha256": "dc500cc4df6ac475aaaf73fc63b739976badf69e40e0b0065b99fc9cb0bb74bc",
+      "sha256": "6e515faeba95a5450280c4eb1b4fd60164bed78e29dec324f01d561babe35a1c",
       "bytes": 8198,
       "lines": 121,
       "evidence_type": "documentation",
@@ -356,7 +356,7 @@
       "id": "release-dempster-shafer",
       "path": "src/core/DempsterShafer.h",
       "declared_revision": "release/hackathon-2026-mcp-candidate",
-      "resolved_commit": "2841e4719f742cedfd1fcafae76b9c619a5337bf",
+      "resolved_commit": "42ddaae0686b6bd118b89a55a7f82afab67baf88",
       "exists": true,
       "sha256": "41e92add52e7d68342881ea72b50e3d9b21627fc5041e60d4b7b23817675c28c",
       "bytes": 5598,

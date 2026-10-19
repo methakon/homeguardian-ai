@@ -263,7 +263,7 @@ def build_report(root: str, manifest: dict, findings: list[Finding], refs: dict)
     return {
         "schema": REPORT_SCHEMA,
         "manifest_schema": manifest.get("schema"),
-        "repo_root": os.path.abspath(root),
+        "repo_root": "." if root in (".", "") or os.path.abspath(root) == os.path.abspath(".") else os.path.basename(os.path.abspath(root)),
         "refs": {
             "release_ref": refs.get("release_ref"),
             "release_commit": refs.get("release_commit"),

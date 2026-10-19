@@ -16,7 +16,7 @@ microphone capture remains BLOCKED pending explicit operator approval.
 
 | Task | Evidence | Date |
 |------|----------|------|
-| Repository initialized | `/home/swarna-sekhar-dhar/projects/homeguardian-ai` on `main` branch | 2026-10-09 |
+| Repository initialized | `homeguardian-ai` on `main` branch | 2026-10-09 |
 | Initial documentation | README, ARCHITECTURE, ROADMAP, DEVELOPMENT, TESTING, DECISIONS, STATUS | 2026-10-09 |
 | Skill inventory | `docs/SKILL_INVENTORY.md` — 24 relevant skills documented | 2026-10-09 |
 | Three-tier architecture | `docs/ARCHITECTURE.md` updated with Tier 1/2/3 | 2026-10-09 |
@@ -190,8 +190,8 @@ default and none is implemented.
 
 ## Session Info
 
-- **Remote:** `origin` → `https://github.com/methakon/homeguardian-ai.git` (private)
-- **Repository:** `/home/swarna-sekhar-dhar/projects/homeguardian-ai`
+- **Remote:** `origin` → `https://github.com/methakon/homeguardian-ai.git`
+- **Repository:** `homeguardian-ai`
 - **Branch:** `main`
 - **Phase A commit:** `312cb75`
 - **Phase B commit:** `058c692`

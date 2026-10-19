@@ -43,7 +43,7 @@ this report comes from those binaries, executed after the last source change.
 ## 3. Scenario catalogue — all 10 scenarios verified
 
 Every scenario was exercised against the running bridge and its **full**
-integration fields recorded (`/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg_v21/scenarios.json`).
+integration fields recorded (`<CACHE_DIR>/scratch/hg_v21/scenarios.json`).
 Expectations are asserted programmatically: `10/10 pass`.
 
 | # | Identifier | Consent/capture prerequisites | Auth obs | Events | Detection | Anomaly | Alerts gen/deliv/supp | Severity (delivered) | Persisted | Audit |

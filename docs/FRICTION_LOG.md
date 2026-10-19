@@ -596,7 +596,7 @@ verify the documented build reproduces; fix in-scope issues.
   network-once dependency note, tag-filter test commands, and an explicit
   "no real capture" status. Simulated Alexa/MCP demoted to optional.
 - **Fixed hardcoded absolute CMake include paths**
-  (`/home/swarna-sekhar-dhar/...`) → `${CMAKE_SOURCE_DIR}` in the test target.
+  (`<DEVELOPER_HOME>/...`) → `${CMAKE_SOURCE_DIR}` in the test target.
   Portable now; verified by the fresh reproduction.
 - **Hardened `.gitignore`:** added `hg_*_build/` and `*.db`, `*.db-wal`,
   `*.db-shm`, `test_*.db` (no tracked `.db` files exist; verified).
