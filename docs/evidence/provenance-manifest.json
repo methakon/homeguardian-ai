@@ -1002,6 +1002,21 @@
         "experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "e2e-mcp-sensor-suite",
+      "path": "tests/integration/test_network_sensor_to_mcp.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_network_sensor_to_mcp.cpp",
+      "content_markers": [
+        "SensorHub"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }

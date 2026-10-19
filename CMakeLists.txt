@@ -555,6 +555,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/net/test_device_transport.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_network_contract_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_producer_and_reliability.cpp
+        ${CMAKE_SOURCE_DIR}/tests/integration/test_network_sensor_to_mcp.cpp
         # HG-V380-09 camera adapter boundary: deterministic mock adapters plus the
         # registry/consent authorization seam. Registered in the TEST target only —
         # no shipped binary references them, so their footprints are unchanged.
