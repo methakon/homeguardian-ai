@@ -579,6 +579,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_change_character.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_audio_observation.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_event_consumer.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_audio_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -593,6 +594,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/ChangeCharacter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AudioObservation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SensorEventConsumer.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/AlsaCommandAudioSource.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ImpactClassifier.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SyntheticImpactRule.cpp
@@ -697,3 +699,17 @@ if(HOMEGUARDIAN_BUILD_TESTS)
                              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     endif()
 endif()
+
+add_executable(hg_audio_probe
+    src/main_audio_probe.cpp
+    src/backend/linux/AlsaCommandAudioSource.cpp
+    src/core/AudioObservation.cpp
+    src/core/BoundedFeatures.cpp
+    src/core/Observation.cpp
+    src/core/UUID.cpp
+)
+target_include_directories(hg_audio_probe PRIVATE src)
+target_link_libraries(hg_audio_probe PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+)

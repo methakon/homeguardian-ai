@@ -106,3 +106,40 @@ Three behaviours are worth stating plainly because they are the ones a system us
 What the consumer accepts reaches the fusion engine as a normalized `Observation`, and the engine's
 verdict provenance is derived from the members: two real observations produce a real verdict, two
 synthetic ones a synthetic verdict, and an empty window produces no verdict at all rather than a default.
+
+## The Linux microphone adapter, as implemented and measured
+
+`AlsaCommandAudioSource` (`src/backend/linux/`) implements `IAudioObservationSource` for Linux. It drives
+the distribution's own ALSA front end (`arecord`) and reads PCM from a PIPE: `-t raw -` is the last two
+arguments of the command it builds, so there is no file argument anywhere and no audio is stored. The
+window is the unit - one bounded capture process per `read_window()` - so a device that disappears is
+contained to one window rather than wedging a session, and a device that appears is picked up without a
+restart. The cost is process startup per window, which is measured rather than hidden.
+
+The command is injected, so every refusal is reachable in a test without a microphone: the tool missing
+(exit 127), no capture hardware listed, an unbounded window, a window longer than the extractor accepts, an
+odd byte count, an empty capture, a stream that hit the byte bound, a failed capture process, and reading
+before open.
+
+**A real bug this caught.** The first version defaulted to a 2-second window and produced 96000 frames,
+which `extract_audio_features` refuses: its bound is `FeatureBounds::kMaxAudioFrames` = 48000 per call. The
+adapter now validates the window at `open()` and names the bound ("use repeated windows"), and a test pins
+both the refusal and the accepted 1-second window. A longer measurement is repeated windows, which keeps
+memory per window bounded and makes the window length an explicit choice.
+
+**Measured on this machine** (`hg_audio_probe --seconds 1 --check-refusal`, workstation HDA ALC897):
+
+```
+window  : 48000 frames, 1 ch, 48000 Hz, 1158 ms wall for 1.00 s of audio
+features: rms=0.1311  peak=0.2203  zcr=0.0051        provenance: real
+refusal : device hw:99,99 -> open=ok read=NO WINDOW  PASS: a nonexistent device produced no window
+```
+
+Note what the refusal test shows: `open` succeeds, because the tool and the hardware exist; the *capture*
+is what fails, and it fails as "no window" rather than as a plausible quiet room. That is the behaviour the
+contract requires of a disconnected source.
+
+**Still not done, and not claimed:** the physical consent-revocation, silence-versus-known-sound, and
+noise-floor-calibration checks are exercised by fixtures and by the bounded manual capture recorded in the
+evidence log, not yet by an automated hardware test. There is no speech recognition, no speaker
+identification and no species inference in this path, and no raw audio is retained anywhere.

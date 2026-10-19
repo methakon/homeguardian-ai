@@ -656,6 +656,57 @@
         "external experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "alsa-audio-adapter-header",
+      "path": "src/backend/linux/AlsaCommandAudioSource.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AlsaCommandAudioSource",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "alsa-audio-adapter-source",
+      "path": "src/backend/linux/AlsaCommandAudioSource.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AlsaCommandAudioSource",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-probe-tool",
+      "path": "src/main_audio_probe.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "hg_audio_probe",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-adapter-suite",
+      "path": "tests/core/test_audio_adapter.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_audio_adapter.cpp",
+      "content_markers": [
+        "Provenance::real"
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }
