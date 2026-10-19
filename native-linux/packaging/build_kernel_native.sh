@@ -114,9 +114,21 @@ echo "kernel release: $(cat include/config/kernel.release)"
 echo "module count  : $(find /work/modules-root -name "*.ko*" | wc -l)"
 
 echo "=== the P0 modules that must exist ==="
-for m in ath10k_snoc ath10k_core mac80211 cfg80211 qcom_spmi_adc5 qcom_spmi_temp_alarm qcom_q6v5_wcss; do
-  f=$(find /work/modules-root -name "$m.ko*" 2>/dev/null | head -1)
+# Match BOTH naming conventions deliberately. Driver FILE names use hyphens
+# (qcom-spmi-adc5.ko) while the CONFIG symbol uses underscores (CONFIG_QCOM_SPMI_ADC5), and
+# grepping only for the config symbol's spelling produced a FALSE "ABSENT" for the entire
+# thermal stack. Check the config symbol AND the hyphenated module name.
+for m in ath10k_snoc ath10k_core mac80211 cfg80211 qcom_q6v5_wcss \
+         qcom-spmi-adc-tm5 qcom-spmi-adc5 qcom-spmi-temp-alarm qcom-vadc-common; do
+  f=$(find /work/modules-root \( -name "$m.ko*" -o -name "$(echo "$m" | tr '-' '_').ko*" \) 2>/dev/null | head -1)
   if [ -n "$f" ]; then echo "  PRESENT  $m"; else echo "  ABSENT   $m  <-- investigate"; fi
+done
+echo
+echo "=== cross-check against the live .config so a wrong name cannot hide a gap ==="
+for sym in CONFIG_ATH10K_SNOC CONFIG_CFG80211 CONFIG_MAC80211 CONFIG_QCOM_Q6V5_WCSS \
+           CONFIG_QCOM_SPMI_ADC_TM5 CONFIG_QCOM_SPMI_ADC5 CONFIG_QCOM_SPMI_TEMP_ALARM; do
+  val=$(grep -E "^$sym=" .config 2>/dev/null | cut -d= -f2)
+  printf '  %-32s %s\n' "$sym" "${val:-<not set>}"
 done
 ' 2>&1 | tee -a "$LOG"
 
