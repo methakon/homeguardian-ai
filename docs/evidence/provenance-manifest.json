@@ -707,6 +707,45 @@
         "external experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "activity-pattern-header",
+      "path": "src/core/ActivityPattern.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ActivityPattern",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "activity-pattern-source",
+      "path": "src/core/ActivityPattern.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ActivityPattern",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "activity-pattern-suite",
+      "path": "tests/core/test_activity_pattern.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_activity_pattern.cpp",
+      "content_markers": [
+        "ActivityPatternConfig"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }

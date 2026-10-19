@@ -580,6 +580,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_audio_observation.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_event_consumer.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_audio_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_activity_pattern.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -594,6 +595,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/ChangeCharacter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AudioObservation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SensorEventConsumer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ActivityPattern.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/AlsaCommandAudioSource.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ImpactClassifier.cpp
