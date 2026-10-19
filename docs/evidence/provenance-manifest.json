@@ -439,6 +439,73 @@
       "forbid_markers": [
         "\"provenance\": \"synthetic\""
       ]
+    },
+    {
+      "id": "character-run-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_CHARACTER_RUN.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_CHARACTER_RUN.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "character-run-2-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_CHARACTER_RUN2.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_CHARACTER_RUN2.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "change-character-header",
+      "path": "src/core/ChangeCharacter.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ChangeCharacter"
+    },
+    {
+      "id": "change-character-source",
+      "path": "src/core/ChangeCharacter.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ChangeCharacter"
+    },
+    {
+      "id": "change-character-suite",
+      "path": "tests/core/test_change_character.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_change_character.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "change-separation-doc",
+      "path": "docs/CHANGE_CHARACTER_SEPARATION.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "CHANGE_CHARACTER_SEPARATION.md"
     }
   ]
 }

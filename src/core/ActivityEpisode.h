@@ -68,6 +68,13 @@ public:
         double min_mean_confidence = 0.5;
         // An activity claim must come from activity starting, not from it ceasing.
         bool require_rising = true;
+        // OPT-IN (default false): an episode must additionally be MADE OF motion-character evidence.
+        // A run whose members are at least half illumination-character is refused, because a lighting
+        // change is not movement - it is the distinction this project lacked, measured in
+        // docs/CHANGE_CHARACTER_SEPARATION.md. Members without a character feature (any detector that
+        // does not compute one) are not counted against the run, so this gate cannot silently disable
+        // the episode path for evidence it cannot see.
+        bool require_motion_character = false;
         // Bound on the work done per call.
         size_t max_observations = 4096;
         Config() = default;

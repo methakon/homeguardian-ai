@@ -34,6 +34,7 @@
 
 #include "core/ActivityDetectors.h"
 #include "core/BoundedFeatures.h"
+#include "core/ChangeCharacter.h"
 #include "core/Observation.h"
 
 #include <cstddef>
@@ -74,6 +75,11 @@ struct CameraFinding {
 
     double motion_level = 0.0;       // latest window's changed_fraction [0,1]
     double mean_delta = 0.0;         // mean |luma delta| / 255
+    // Where the change was, not only how much. Empty/false when the geometry was not supplied.
+    bool character_valid = false;
+    std::string change_character;    // see ChangeCharacter.h for the closed vocabulary
+    double spread_radius = 0.0;      // RMS spread of the changed mass / frame diagonal
+    double bipolar_balance = 0.0;    // 0 unipolar (a light), 1 balanced (a body)
     double baseline = 0.0;           // the detector's learned baseline
     double ratio = 1.0;
     size_t windows_observed = 0;
@@ -92,6 +98,10 @@ public:
         size_t confirm_samples = 3;
         uint8_t delta_threshold = FeatureBounds::kDefaultPixelDelta;
         std::string source = "camera-activity";
+        // Frame geometry. Region analysis needs width*height == pixels; with either left at 0 the
+        // session simply reports no change character, which is honest rather than guessing.
+        uint32_t width = 0;
+        uint32_t height = 0;
         Config() = default;
     };
 

@@ -211,6 +211,11 @@ int main(int argc, char** argv) {
     cfg.height = height;
     V4l2CameraDevice cam(cfg);
     CameraActivitySession::Config scfg;
+    // The negotiated geometry is what lets the session report WHERE a change was, not only how much:
+    // without it the change character stays `unknown` and no separation of illumination from motion is
+    // possible. The format is read from the device at open time, so this is the real geometry.
+    scfg.width = width;
+    scfg.height = height;
     CameraActivitySession session(scfg);
 
     try {
@@ -266,8 +271,10 @@ int main(int argc, char** argv) {
         peak_confidence = std::max(peak_confidence, o.confidence.value_or(0.0));
         if (captured_observations.size() < 256) captured_observations.push_back(o);
         if (f.kind != CameraFindingKind::warming_up || findings < 3) {
-            std::printf("  [%3d] seq=%-6u motion=%.4f mean_delta=%.4f baseline=%.4f ratio=%.2f  %s\n",
+            std::printf("  [%3d] seq=%-6u motion=%.4f mean_delta=%.4f baseline=%.4f ratio=%.2f  "
+                        "%-18s %s\n",
                         i, frame.sequence, f.motion_level, f.mean_delta, f.baseline, f.ratio,
+                        f.character_valid ? f.change_character.c_str() : "n/a",
                         camera_finding_kind_to_string(f.kind));
         }
         ++findings;

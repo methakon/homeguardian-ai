@@ -77,10 +77,23 @@ std::optional<ActivityEpisode> ActivityEpisodeSelector::best(
         }
         if (direction.empty() && direction_unknown) direction = "unknown";
 
+        size_t illumination_members = 0;
+        size_t characterised_members = 0;
+        for (size_t idx : run) {
+            const auto& features = observations[idx].features;
+            if (!features.is_object() || !features.contains("change_character")) continue;
+            const std::string c = features.value("change_character", std::string());
+            if (c.empty()) continue;
+            ++characterised_members;
+            if (c == "global_illumination") ++illumination_members;
+        }
+        const bool character_ok = !cfg_.require_motion_character || characterised_members == 0 ||
+                                  (illumination_members * 2 < characterised_members);
+
         const double mean = sum / static_cast<double>(run.size());
         const bool direction_ok =
             !cfg_.require_rising || (direction != "falling" && direction != "mixed");
-        if (!direction_ok || mean < cfg_.min_mean_confidence) {
+        if (!direction_ok || !character_ok || mean < cfg_.min_mean_confidence) {
             run.clear();
             return;
         }
@@ -123,6 +136,9 @@ std::optional<ActivityEpisode> ActivityEpisodeSelector::best(
 
     if (best) {
         std::ostringstream os;
+        if (cfg_.require_motion_character) {
+            os << "motion-character gate on; ";
+        }
         os << "activity episode: " << best->length << " consecutive confirmed "
            << (best->direction == "unknown" ? "change" : best->direction) << " observation(s), mean "
            << "confidence " << std::fixed << std::setprecision(3) << best->mean_confidence

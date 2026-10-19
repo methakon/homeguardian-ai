@@ -95,6 +95,19 @@ CameraFinding CameraActivitySession::ingest(const uint8_t* luma, size_t pixels,
 
     const MotionFrameFeatures motion =
         extract_motion_features(previous_luma_.data(), luma, pixels, cfg_.delta_threshold);
+
+    // Region analysis, in the same window as the motion descriptor (before the reference frame is
+    // overwritten). Only when the caller supplied a geometry that describes this plane: without it the
+    // character stays unknown, and unknown is never treated as either illumination or motion.
+    RegionChangeFeatures region;
+    ChangeCharacter character = ChangeCharacter::unknown;
+    if (cfg_.width != 0 && cfg_.height != 0 &&
+        static_cast<size_t>(cfg_.width) * cfg_.height == pixels) {
+        region = extract_region_change_features(previous_luma_.data(), luma, pixels, cfg_.width,
+                                                cfg_.height, cfg_.delta_threshold);
+        if (region.valid) character = classify_change(region);
+    }
+
     previous_luma_.assign(luma, luma + pixels);
     ++windows_observed_;
 
@@ -109,15 +122,25 @@ CameraFinding CameraActivitySession::ingest(const uint8_t* luma, size_t pixels,
 
     // The ONE number this whole path produces, fed to the SAME detector the audio path uses.
     const auto result = change_.observe(motion.changed_fraction, now);
-    last_.motion_level = motion.changed_fraction;
-    last_.mean_delta = motion.mean_delta;
+
+    // `build()` constructs a fresh finding, so every field that is not part of the verdict has to be
+    // applied AFTER it - once, in one place, or a later build silently wipes it. (It did: the change
+    // character was assigned before the verdict and lost on the way back, which is why the first
+    // version of this reported an empty character for every frame.)
+    const auto apply_extras = [&]() {
+        last_.motion_level = motion.changed_fraction;
+        last_.mean_delta = motion.mean_delta;
+        last_.character_valid = region.valid;
+        last_.change_character = change_character_to_string(character);
+        last_.spread_radius = region.spread_radius;
+        last_.bipolar_balance = region.bipolar_balance;
+    };
 
     if (!result.baseline_ready) {
         last_ = build(CameraFindingKind::warming_up,
                       "still establishing a baseline for motion in view",
                       "a baseline that is not ready cannot report a change", real_source, &result);
-        last_.motion_level = motion.changed_fraction;
-        last_.mean_delta = motion.mean_delta;
+        apply_extras();
         return last_;
     }
     if (result.confirmed && result.direction == ActivityChangeDetector::Direction::rising) {
@@ -130,8 +153,7 @@ CameraFinding CameraActivitySession::ingest(const uint8_t* luma, size_t pixels,
         last_ = build(CameraFindingKind::quiet_baseline,
                       "motion within the established baseline", kUncertainty, real_source, &result);
     }
-    last_.motion_level = motion.changed_fraction;
-    last_.mean_delta = motion.mean_delta;
+    apply_extras();
     return last_;
 }
 
@@ -154,6 +176,13 @@ Observation CameraActivitySession::observation_for(const std::string& observatio
     Provenance provenance = last_.real_source ? Provenance::real : Provenance::synthetic;
     Observation o = change_.to_observation(change_.snapshot(), observation_id,
                                            source.empty() ? cfg_.source : source, provenance);
+    // Added here, not in the detector: the detector classifies a level over time and has no idea about
+    // pixels. These keys are additive, so nothing that reads the feature set breaks.
+    if (last_.character_valid) {
+        o.features["change_character"] = last_.change_character;
+        o.features["spread_radius"] = last_.spread_radius;
+        o.features["bipolar_balance"] = last_.bipolar_balance;
+    }
     return o;
 }
 
