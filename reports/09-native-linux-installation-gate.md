@@ -17,13 +17,21 @@ Measured after the change:
 device on bus .... 2-1  (vendor 2717, product Mi A3, serial edd53dbd04de)
 speed ............ 480 Mbps (USB 2.0)
 adb state ........ device (authorised, not unauthorized/offline)
-window ........... 61 s, 30 samples
-state=device ..... 30/30
-disconnects ...... 0
-state changes .... 0
 kernel USB errors  none
 error -71 ........ none observed
 ```
+
+Two independent observations, both clean:
+
+| Run | Window | Samples | Churn | State changes | Final |
+|---|---|---|---|---|---|
+| short poll | 61 s | 30 | 0 | 0 | device |
+| **full preflight** | **300 s** | **29** | **0** | **0** | **device** |
+
+The 300-second run used `scripts/adb_stability_preflight.sh`, which also confirmed identity
+and platform on the live device: port `2-1` vendor 2717 "Mi A3" as the target and port `2-2`
+MediaTek "ELUGA_I7_EE" correctly excluded as NOT the target; `model=Mi A3`,
+`device=laurel_sprout`, Android 11, API 30. Enumeration failures: 0. Disconnects: 0.
 
 Root cause: **USB link instability, not key or authorisation failure.** The earlier
 re-enumeration storm — 334 enumerations / 185 disconnects with `can't set config #1,
@@ -35,10 +43,11 @@ not the cause.
 `/home/swarna-sekhar-dhar/Android/Sdk/platform-tools/fastboot`, **version 37.0.1**. Flashing
 would have failed at the first command without this.
 
-**Caveat — this is a 61-second window, not a soak.** It is enough to say the port change
-fixed the fault that was observed, but a flashing operation runs for many minutes. A longer
-soak should be completed immediately before any flash, and the flash itself must be treated
-as interruptible-at-any-point (see the recovery section).
+**Remaining caveat, narrowed but not gone.** Five clean minutes is strong evidence that the
+port change fixed the fault, and it comfortably exceeds the length of a typical fastboot
+operation. It is still not a guarantee: the flash rewrites bootloader partitions, so the
+recommended precondition remains a soak immediately before the write, and the flash must be
+treated as interruptible-at-any-point (see the recovery section).
 
 **Wireless ADB is not a substitute** and was not used. Fastboot is a USB-only protocol; it
 cannot run over wireless debugging.
@@ -152,7 +161,7 @@ speaker, cameras.
 
 ## TASK D — installation gate
 
-**USB/fastboot reliability: PASS** (61-second window; longer soak still wanted)
+**USB/fastboot reliability: PASS** (61-second poll and 300-second preflight both clean)
 **Stock recovery package: VERIFIED** (size + MD5 exact match, provenance from Xiaomi's CDN)
 **Proposed Linux image:** postmarketOS, kernel `linux-nura-qcom-sm61x5` 7.2.3, systemd,
 headless, with our MCP package. **Image not yet built** — `pmbootstrap` has not been run, so
@@ -167,8 +176,9 @@ config-verified, not artifact-verified.
    unavoidable for this plan.
 2. **Interrupted flash is unrecoverable** — the scripts rewrite `xbl`/`abl`/`tz`. A drop
    mid-flash is a hard brick, not a retry.
-3. **Soak duration.** 61 seconds proves the fault is gone; it does not prove eight minutes of
-   uninterrupted flashing. A 15–30 minute soak should precede any write.
+3. **Soak duration.** The 300-second preflight passed cleanly, and that exceeds a typical
+   fastboot run. It is still short of a guarantee for a write that rewrites bootloader
+   partitions, so a fresh soak immediately before the write remains the precondition.
 4. **Wi-Fi firmware depends on preserved `vendor`/`persist`.** A partition layout that
    overwrites those loses Wi-Fi.
 5. **No Linux image hashes yet** — the artifact does not exist until `pmbootstrap` runs.
