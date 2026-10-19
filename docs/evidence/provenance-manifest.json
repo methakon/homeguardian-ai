@@ -3,7 +3,7 @@
   "description": "Every camera-evidence artifact referenced by HomeGuardian AI submission documentation, with the revision that is supposed to contain it, its evidence type, and its scope relative to the judge release. Verified by scripts/verify_evidence_provenance.py.",
   "generated_by": "scripts/verify_evidence_provenance.py",
   "refs": {
-    "release": "origin/release/hackathon-2026-mcp-candidate",
+    "release": "release/hackathon-2026-mcp-candidate",
     "external": "origin/experiment/hg-v380-09-secure-camera-integration"
   },
   "evidence_types": {
