@@ -99,11 +99,16 @@ struct Measured {
     double episode_alert_confidence = 0.0;
 };
 
-std::vector<Observation> observe_stream(const Scenario& s) {
+ActivityChangeDetector::Config camera_detector_config() {
     ActivityChangeDetector::Config cfg;
     cfg.detector_id = kDetectorId;
     cfg.feature = "motion-changed-fraction";
     cfg.model_id = kModelId;   // every other value stays at the detector's own default
+    return cfg;
+}
+
+std::vector<Observation> observe_stream_with(const Scenario& s,
+                                             const ActivityChangeDetector::Config& cfg) {
     ActivityChangeDetector detector(cfg);
 
     std::vector<Observation> obs;
@@ -117,6 +122,10 @@ std::vector<Observation> observe_stream(const Scenario& s) {
                                               Provenance::synthetic));
     }
     return obs;
+}
+
+std::vector<Observation> observe_stream(const Scenario& s) {
+    return observe_stream_with(s, camera_detector_config());
 }
 
 std::vector<Event> as_events(const std::vector<Observation>& obs) {
@@ -456,66 +465,93 @@ TEST_CASE("scenario matrix: the two lighting false positives, and why they must 
     REQUIRE(m.longest_run >= 10);
 }
 
-TEST_CASE("scenario matrix: the RECORDED ambient run, replayed exactly", "[camera][scenarios][recorded]") {
-    // The real physical counterpart, from docs/evidence/PHYSICAL_CAMERA_AMBIENT_RUN.log: 600 frames,
-    // 120 observations, ~43 s, a room with nobody knowingly in it. The detector confirmed THREE
-    // consecutive sustained increases at ratios 2.42, 2.42 and 1.80 (so confidences 0.710, 0.710 and
-    // 0.400 - the detector's own |ratio-1|/2) among 112 quiet and 5 unusable observations.
+TEST_CASE("scenario matrix: the three RECORDED ambient runs, replayed exactly",
+          "[camera][scenarios][recorded]") {
+    // Three real captures, 600 frames and 120 observations each, ~43 s / ~25 s / ~25 s, 0 driver
+    // drops, nobody deliberately doing anything, frames never stored
+    // (docs/evidence/PHYSICAL_CAMERA_AMBIENT_RUN{,_2,_3}.log). The confirmed observations and their
+    // confidences are the ones those logs printed; the run STRUCTURE (where the rising runs sit) is
+    // taken from the sequence numbers in each log, and the settling falls carry a modelled confidence
+    // because the logs record only their count.
     //
-    // Replayed here from those recorded scalars, labelled synthetic because a replay is not a
-    // measurement. What the replay shows is what the pipeline WOULD do with that evidence - not that a
-    // physical alert was delivered.
-    const double recorded_rise[3] = {0.710, 0.710, 0.400};
-    std::vector<Observation> obs;
-    const auto base = std::chrono::system_clock::now() - std::chrono::seconds(43);
-    int i = 0;
-    auto add = [&](DetectorStatus status, double confidence, int offset_ms) {
-        Observation o;
-        o.observation_id = "amb-" + std::to_string(i);
-        o.source = kSource;
-        o.provenance = Provenance::synthetic;   // replay
-        o.detector_id = kDetectorId;
-        o.model_id = kModelId;
-        o.status = status;
-        o.confidence = confidence;
-        o.observation_timestamp = base + std::chrono::milliseconds(offset_ms);
-        o.features = nlohmann::json::object();
-        o.features["direction"] = "rising";
-        obs.push_back(o);
-        ++i;
+    // Replayed scalars, labelled synthetic: this shows what the pipeline WOULD do, not that a physical
+    // alert was delivered. What each run's own tool output printed for the classic path is kept beside
+    // the replay for comparison.
+    enum Kind { kQuiet, kRise, kFall, kUnusable };
+    struct Segment { Kind kind; int count; double confidence; };
+    struct Run {
+        std::string name;
+        std::vector<Segment> segments;
+        bool expect_episode;
+        double expect_confidence;
+        std::string tool_classic;   // what the capture tool printed for this run's own window
     };
-    // 60 quiet observations, the three confirmed increases at observation ~65 (frame 195-205 of 600,
-    // cadence 5 -> observation 39-41; placed at the recorded proportion), then the rest quiet.
-    for (int k = 0; k < 60; ++k) add(DetectorStatus::not_detected, 0.0, 356 * k);
-    for (int k = 0; k < 3; ++k) add(DetectorStatus::detected, recorded_rise[k], 356 * (60 + k));
-    for (int k = 0; k < 52; ++k) add(DetectorStatus::not_detected, 0.0, 356 * (63 + k));
-    for (int k = 0; k < 5; ++k) add(DetectorStatus::inconclusive, 0.0, 356 * (115 + k));
-    REQUIRE(obs.size() == 120);
 
-    const auto events = as_events(obs);
-    const FusionEngine engine;
-    const auto fused = engine.fuse(obs);
-    std::printf("RECORDED AMBIENT classic: verdict=%s conf=%.4f contributing=%zu alert=%s\n",
-                fusion_verdict_to_string(fused.verdict), fused.confidence, fused.contributing,
-                rule(false).evaluate(events).has_value() ? "YES" : "no");
-    std::printf("RECORDED AMBIENT episode: %s\n",
-                rule(true).evaluate(events).has_value() ? "ALERT" : "no alert");
-    std::fflush(stdout);
+    const std::vector<Run> runs = {
+        {"run 1 (43 s): 3 confirmed rises, contiguous",
+         {{kQuiet, 60, 0.0}, {kRise, 1, 0.710}, {kRise, 1, 0.710}, {kRise, 1, 0.400},
+          {kQuiet, 52, 0.0}, {kUnusable, 5, 0.0}},
+         true, 0.6067, "not_detected 0.015 -> no alert"},
+        {"run 2 (25 s): rises at obs 9-10 and 17-19, then 41 settling falls",
+         {{kQuiet, 9, 0.0}, {kRise, 1, 0.625}, {kRise, 1, 0.520}, {kQuiet, 6, 0.0},
+          {kRise, 1, 0.715}, {kRise, 1, 0.630}, {kRise, 1, 0.435}, {kFall, 41, 0.10},
+          {kQuiet, 54, 0.0}, {kUnusable, 5, 0.0}},
+         true, 0.5933, "inconclusive 0.080 -> no alert"},
+        {"run 3 (25 s): 3 confirmed rises that are individually weak",
+         {{kQuiet, 31, 0.0}, {kRise, 1, 0.545}, {kRise, 1, 0.545}, {kRise, 1, 0.345},
+          {kQuiet, 25, 0.0}, {kFall, 8, 0.10}, {kQuiet, 48, 0.0}, {kUnusable, 5, 0.0}},
+         false, 0.0, "not_detected 0.025 -> no alert"},
+    };
 
-    // The replay reproduces the tool's own printed verdict for that run (the tool rounds to 0.015;
-    // this computation gives 0.01477) - two independent implementations of the same pipeline agreeing
-    // on the same recorded scalars.
-    REQUIRE(fused.verdict == FusionVerdict::not_detected);
-    REQUIRE(fused.confidence == Approx(0.01477).margin(0.0005));
-    REQUIRE_FALSE(rule(false).evaluate(events).has_value());
+    for (const auto& run : runs) {
+        std::vector<Observation> obs;
+        const auto base = std::chrono::system_clock::now() - std::chrono::seconds(50);
+        int i = 0;
+        for (const auto& seg : run.segments) {
+            for (int k = 0; k < seg.count; ++k) {
+                Observation o;
+                o.observation_id = "amb-" + std::to_string(i);
+                o.source = kSource;
+                o.provenance = Provenance::synthetic;   // replay
+                o.detector_id = kDetectorId;
+                o.model_id = kModelId;
+                o.status = seg.kind == kUnusable ? DetectorStatus::inconclusive
+                          : seg.kind == kQuiet    ? DetectorStatus::not_detected
+                                                  : DetectorStatus::detected;
+                o.confidence = seg.kind == kUnusable ? 0.0 : seg.confidence;
+                o.observation_timestamp = base + std::chrono::milliseconds(205 * i);
+                o.features = nlohmann::json::object();
+                o.features["direction"] = seg.kind == kFall ? "falling" : "rising";
+                obs.push_back(o);
+                ++i;
+            }
+        }
+        INFO("run " << run.name);
+        REQUIRE(obs.size() == 120);
 
-    // And the opt-in episode path DOES report it: three consecutive confirmed increases at a mean
-    // confidence of 0.607, in a window where only three of 115 votes are evidence. On real hardware
-    // data, from a room nobody knowingly entered, this is the false-positive risk of the episode path
-    // measured rather than argued - the cause of that movement is unknown to the tool.
-    const auto alert = rule(true).evaluate(events);
-    REQUIRE(alert.has_value());
-    REQUIRE(alert->confidence == Approx(0.6067).margin(0.002));
-    REQUIRE(alert->details["evidence_mode"] == "episode");
-    REQUIRE(alert->details["provenance"] == "synthetic");   // the replay's own label, honestly
+        const auto events = as_events(obs);
+        const auto alert = rule(true).evaluate(events);
+        const auto episode = ActivityEpisodeSelector().best(obs);
+        std::printf("RECORDED %-58s episode=%s len=%zu conf=%.4f | tool classic: %s\n",
+                    run.name.c_str(), alert.has_value() ? "ALERT" : "no alert",
+                    episode ? episode->length : 0, alert ? alert->confidence : 0.0,
+                    run.tool_classic.c_str());
+        std::fflush(stdout);
+
+        // The classic path refuses all three, which every run's own tool output confirms (printed
+        // above): a home's ordinary ambience dilutes three to eight evidence votes into 115.
+        REQUIRE_FALSE(rule(false).evaluate(events).has_value());
+
+        if (run.expect_episode) {
+            REQUIRE(alert.has_value());
+            REQUIRE(alert->confidence == Approx(run.expect_confidence).margin(0.002));
+            REQUIRE(alert->details["evidence_mode"] == "episode");
+            REQUIRE(alert->details["provenance"] == "synthetic");   // the replay's label, honestly
+        } else {
+            // Run 3 is the useful negative: three contiguous confirmed rises, and the episode path
+            // still refuses them because their mean confidence (0.478) is below the unchanged gate.
+            REQUIRE_FALSE(alert.has_value());
+            REQUIRE_FALSE(episode.has_value());
+        }
+    }
 }

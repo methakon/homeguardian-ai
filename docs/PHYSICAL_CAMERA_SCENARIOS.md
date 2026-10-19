@@ -237,34 +237,140 @@ identification" and still pass.
 Tests: `tests/core/test_animal_activity.cpp`, **10 cases** (17 when run with the pre-existing `[animal]`
 tagged precursor tests), all passing.
 
-## 9. Known limitations
+## 9. Three real ambient runs (added this stage)
 
-1. **Nominated species:** the layer names no species, at any confidence, and cannot be extended to
-   without replacing `ConfirmedSpeciesIdentity` and bringing an approved annotated dataset plus a
-   measured false-positive rate.
+Two further captures were taken under the same authorization (600 frames, 120 observations, cadence 5,
+0 driver drops, nothing stored): `PHYSICAL_CAMERA_AMBIENT_RUN_2.log` and `_3.log`. Together with run 1
+they are the real evidence, and they are less flattering than one sample suggested.
+
+| run | elapsed | peak motion | confirmed increases | confirmed decreases | classic verdict (tool's own) | episode path (replay) |
+|---|---|---|---|---|---|---|
+| 1 | 42.5 s | 0.0745 | 3 (one contiguous run) | 0 | not_detected 0.015 -> no alert | **ALERT** 0.607 |
+| 2 | 24.6 s | **0.4227** | 8 (runs of 2 and 3) | 41 | inconclusive 0.080 -> no alert | **ALERT** 0.593 |
+| 3 | 24.6 s | 0.1163 | 3 (contiguous) | 8 | not_detected 0.025 -> no alert | no alert (mean 0.478) |
+
+**All three runs produced confirmed sustained increases in a room nobody was deliberately using.** Run
+2 peaked at motion 0.4227 — 41× the still-scene ceiling — with 41 settling falls afterwards, which is
+the shape of something crossing the field. The classic path refused all three, and the opt-in episode
+path would have alerted on two of three.
+
+That inverts the framing of §5. The episode path's exposure is not mainly "a lighting change looks like
+motion"; it is that **a home's ordinary ambience contains sustained increases**, because people move
+through their own rooms. An alert source keyed on "a sustained increase in motion in view" would fire
+during normal life, which is the strongest argument available for leaving it disabled and treating the
+signal as *reporting* rather than as an alarm.
+
+Run 3 is the useful negative and shows the machinery working: three contiguous confirmed rises whose
+mean confidence (0.478) sits below the unchanged 0.5 gate, so the episode path refuses them too.
+
+**A configuration finding from comparing the runs.** Runs 2 and 3 captured the same 600 frames in
+24.6 s where run 1 took 42.5 s — the sensor's frame rate is not fixed, so "cadence 5" means 0.205 s per
+observation in one run and 0.356 s in another. **The observation rate depends on the camera's
+throughput, not on a wall-clock cadence**, which means the evidence count inside a five- or sixty-second
+fusion window varies run to run. A wall-clock observation cadence would make the window's behaviour
+predictable; that is a design change to propose, not a threshold to tune.
+
+## 10. Task 1 — the const-correctness question, answered
+
+The report was that `test_camera_scenarios.cpp` calls `DetectionFusionRule::evaluate()` on a const
+object. That was true of an intermediate revision of this stage's own work and was fixed before the
+commit; the committed file constructs the rule non-const (`DetectionFusionRule classic("detection-fusion", cfg);`),
+which is why the suite compiles. The analysis behind the choice:
+
+* `ICorrelationRule::evaluate` is declared **non-const** (`virtual std::optional<Alert> evaluate(const std::vector<Event>&) = 0;`),
+  so every rule in the project must have a non-const `evaluate`.
+* `DetectionFusionRule` holds `name_`, `cfg_` and `fusion_`; nothing is `mutable`, `evaluate` calls the
+  const `FusionEngine::fuse`, and `build_alert` is declared const. **The method does not mutate state**:
+  its constness is inherited from the interface, not earned by the body.
+* Therefore the correct fix is the test's object, and the production signature was left alone — which is
+  what the instruction required. Making `evaluate` const would have changed the interface for every
+  rule in order to satisfy one test.
+
+## 11. Task 3 — candidate comparison (what each knob buys, and what it costs)
+
+Ten candidates measured on the same sixteen scenarios, with the human verdicts as ground truth (6
+positive-class, 10 negative-class). **Every row keeps the rule's 0.5 gate and the engine's 0.6
+agreement threshold fixed** — nothing here relaxes a gate, so a better row is better use of evidence.
+
+| candidate | detector confirmed (of 16) | classic tp/tn/fp/fn | episode tp/tn/fp/fn |
+|---|---|---|---|
+| shipped (recent=4, alpha=0.05, confirm=3, span=3, rising required) | 10 | 0/10/0/6 | 1/8/2/5 |
+| recent_window=2 | 11 | 0/10/0/6 | 1/9/**1**/5 |
+| recent_window=6 | 9 | 0/10/0/6 | 0/8/2/6 |
+| slow_alpha=0.02 (baseline follows more slowly) | 12 | 0/10/0/6 | **4**/6/**4**/2 |
+| slow_alpha=0.10 (baseline absorbs faster) | 6 | 0/10/0/6 | 0/9/1/6 |
+| confirm_samples=2 | 10 | 0/10/0/6 | 3/8/2/3 |
+| recent_window=2 + slow_alpha=0.02 | 13 | 0/10/0/6 | 3/7/3/3 |
+| episode min_span=2 | 10 | — | 3/8/2/3 |
+| episode **min_span=4** | 10 | — | 1/9/**1**/5 |
+| direction rule off | 10 | — | 1/8/2/5 |
+
+What the table says:
+
+1. **The classic path alerts on nothing in this matrix** (0 tp / 6 fn, no false positives). At this
+   cadence it is a floor, not a competitor: every positive scenario is diluted below its gate.
+2. **Two candidates halve the observed false positives at no measured true-positive cost**, and both do
+   it by *tightening*, not loosening: `recent_window=2` (a faster recent mean stops a lighting step
+   from staying above the confirm ratio) and `episode min_span=4` (a three-observation lighting
+   transient is not a four-observation episode). Neither is a threshold relaxation.
+3. **Every candidate that recovers more true positives pays in false positives**: `slow_alpha=0.02`
+   buys 3 more detections and takes 2 more false alerts; `confirm_samples=2` and `min_span=2` buy 2
+   more each at the same false-positive count. The trade is real and monotone in this matrix.
+4. **The direction guard is cheap insurance, not the active mechanism**: turning it off changes no row
+   here, because the only falling run in the matrix (the occlusion) is too weak to qualify anyway. It
+   stays because its cost is zero and it prevents "activity stopped" from ever being reported as
+   "activity started".
+5. **No knob fixes the real problem.** The false positives come from a feature that cannot separate
+   light from motion; the false negatives come from a confirmation rule that rewards contrast over
+   time rather than amplitude. Both are feature/rule design questions, not threshold questions.
+
+## 12. Known limitations
+
+1. **Nominated species:** the layer names no species at any confidence, and cannot be extended without
+   replacing `ConfirmedSpeciesIdentity` and bringing an approved annotated dataset plus a measured
+   false-positive rate.
 2. **The pixel proxy is not a motion detector in the human sense.** Light, shadow, curtain, reflection
-   and a small animal all produce the same signal. The matrix measures this rather than mitigating it.
-3. **Smooth or short events are missed** (mechanism 1 in §5): the detector rewards contrast over time,
-   so a clean 2.1× step is unconfirmed while a noisier rise of the same size is confirmed six times.
-4. **The episode path's false positives are real**: a lighting transient and a sustained lighting shift
-   both alert, and the real ambient run would alert through it. It stays off by default.
-5. **The staged phenomena are unmeasured on hardware**: vibration, occlusion, repetitive movement,
-   shadow and curtain scenarios are synthetic streams. §10 is the procedure to close that.
-6. **One 43-second ambient run is one sample.** It is not a false-positive *rate*; a rate needs
-   repeated runs at different times of day, with the illumination system in known states.
-7. **No audio work was performed.** The microphone is authorised but was not activated; the audio
-   evidence kind is a reserved type with no producer.
-8. **No latency budget has been agreed.** 1.1–2.1 s is what the current confirmation policy costs; it
-   has not been compared against a requirement.
+   and a small animal produce the same signal; §4 measures this rather than mitigating it.
+3. **Smooth or short events are missed:** a clean 2.1× step is confirmed once where a noisier rise of
+   the same size is confirmed six times, and any event shorter than ~6 observations is unreportable.
+4. **The episode path's false positives are real and were observed on hardware**, not only in synthesis:
+   two of three ambient runs would have alerted through it.
+5. **Ambient runs are samples, not rates.** Three runs, at two times of day, with the illumination
+   system in unknown states, and with no record of whether anyone walked past the lens.
+6. **The staged phenomena remain synthetic**: vibration, occlusion, repetitive movement, shadows and
+   curtains have not been induced physically.
+7. **The observation rate is not wall-clock controlled** (§9): the same cadence setting yields 0.205 s
+   or 0.356 s per observation depending on the sensor's throughput, so window contents vary run to run.
+8. **No microphone work was performed.** The microphone is authorized but was not activated; the audio
+   evidence kind has no producer.
+9. **No latency budget has been agreed**, and no candidate in §11 was evaluated for its effect on
+   latency beyond the shipped configuration (first confirmation 1.1-1.4 s after onset).
 
-## 10. Recommendation for future real-camera validation
+## 13. Recommendation
 
-Run the staged session below when an operator is available (about three minutes), then compare each run
-against its synthetic counterpart in §4. Each phase uses the existing operator-gated tool and stores no
-frames; the log goes to `docs/evidence/` with `--log`.
+**Keep the episode path disabled by default, and treat this stage's two tightening candidates as the
+only change worth carrying forward — after real validation, not before.**
+
+* The provenance fix is unaffected and should travel with the camera path: correctness, no behaviour
+  change.
+* **Do not enable `use_episode_evidence`.** Two of three real ambient runs would have alerted through
+  it, in a room nobody was deliberately using. Ordinary domestic ambience is a sustained-increase
+  generator, so this signal belongs in reporting/analytics, not in an alarm path.
+* If it is ever enabled, the measured starting point is `min_span = 4` and/or `recent_window = 2`: both
+  halve the observed false-positive count in this matrix with no measured true-positive cost, and both
+  tighten rather than relax. That claim rests on 16 synthetic scenarios and three real runs, which is a
+  hypothesis to validate, not a result.
+* The productive next step is not a knob: separate **illumination change from motion** (the "one long
+  run whose level never returns" signature measured in §5.1, or an illumination-normalised feature),
+  and give the observation stream a **wall-clock cadence** so a fusion window contains a predictable
+  amount of evidence.
+* Validation to run first, in this order: the six-phase staged procedure below (§14), then a day of
+  timed ambient runs to turn a sample into a rate, then the same matrix with real observations in place
+  of the synthetic streams.
+
+## 14. Staged validation procedure (unchanged, still pending an operator)
 
 ```bash
-# phase 1 - still reference (60 s, nobody in view)
 ./build/hg_camera_bridge --capture --confirm --frames 600 --cadence 5 --log docs/evidence/STAGED_01_STILL.log
 # phase 2 - the room light switched on and left on during the run (sustained lighting shift)
 # phase 3 - a hand waved slowly across the lens for ~1 s (short, brief event)
@@ -273,18 +379,6 @@ frames; the log goes to `docs/evidence/` with `--log`.
 # phase 6 - the camera mount tapped repeatedly for ~5 s (vibration)
 ```
 
-What each phase settles:
-
-* **phase 1** gives the real false-positive floor for this room and illumination.
-* **phase 2** is the one that matters most: it tests whether a real lighting change alerts the episode
-  path as the synthetic stream predicts, and whether the "one long run, level never returns" signal
-  separates it from motion. If it does, the mitigation in §5.1 is implementable from measured data.
-* **phase 3** establishes the real minimum reportable event duration (synthetic says ≈6 observations).
-* **phase 4** is the true-positive control: it must alert in episode mode.
-* **phase 5** verifies that the occlusion restoration does not alert while the blockage itself is
-  direction-refused.
-* **phase 6** tests whether real mechanical vibration reaches confirmation.
-
-Until those runs exist, the honest status is: **the classic path's behaviour is measured on real data;
-the episode path's behaviour is measured on real data for one accidental case and synthetic streams for
-everything else, and it should stay disabled.**
+Phase 2 remains the one that matters most, and §9 raises its stakes: if a real lighting change produces
+the same evidence as a person crossing the room, then no alert source built on this feature can be
+trusted in a home with windows.

@@ -407,6 +407,38 @@
       "scope": "external",
       "evidence_type": "documentation",
       "reference_token": "PHYSICAL_CAMERA_SCENARIOS.md"
+    },
+    {
+      "id": "ambient-run-2-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_AMBIENT_RUN_2.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_AMBIENT_RUN_2.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "ambient-run-3-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_AMBIENT_RUN_3.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_AMBIENT_RUN_3.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
     }
   ]
 }
