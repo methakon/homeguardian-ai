@@ -345,6 +345,68 @@
       "scope": "external",
       "evidence_type": "documentation",
       "reference_token": "PR20_DOC_ACCURACY_REVIEW.md"
+    },
+    {
+      "id": "ambient-run-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_AMBIENT_RUN.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_AMBIENT_RUN.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "animal-activity-header",
+      "path": "src/core/AnimalActivity.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AnimalActivity"
+    },
+    {
+      "id": "animal-activity-source",
+      "path": "src/core/AnimalActivity.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AnimalActivity"
+    },
+    {
+      "id": "animal-activity-suite",
+      "path": "tests/core/test_animal_activity.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_animal_activity.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "scenario-suite",
+      "path": "tests/core/test_camera_scenarios.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_camera_scenarios.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "scenario-matrix-doc",
+      "path": "docs/PHYSICAL_CAMERA_SCENARIOS.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "PHYSICAL_CAMERA_SCENARIOS.md"
     }
   ]
 }
