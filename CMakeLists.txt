@@ -563,6 +563,13 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/mcp/McpProtocol.cpp
         ${CMAKE_SOURCE_DIR}/src/mcp/McpTools.cpp
         ${CMAKE_SOURCE_DIR}/src/mcp/McpHttpServer.cpp
+        # Authorized Action Orchestration (Roadmap R1)
+        ${CMAKE_SOURCE_DIR}/tests/action/test_action_orchestrator.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/ActionAuditLog.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/ActionPolicyEngine.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/LocalActionProviders.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/AlexaIntegrationBoundary.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/ActionOrchestrator.cpp
     )
 
     target_include_directories(homeguardian_tests PRIVATE
@@ -578,11 +585,38 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         sqlite3_static
     )
 
+    # Standalone test executable for Authorized Action Orchestration
+    add_executable(test_action_orchestrator
+        ${CMAKE_SOURCE_DIR}/tests/action/test_action_orchestrator.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/ActionAuditLog.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/ActionPolicyEngine.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/LocalActionProviders.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/AlexaIntegrationBoundary.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/ActionOrchestrator.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Logger.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ConsentGate.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AlertPolicy.cpp
+    )
+    target_include_directories(test_action_orchestrator PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/third_party/sqlite
+        ${CMAKE_SOURCE_DIR}/third_party/catch2/single_include
+        ${CMAKE_SOURCE_DIR}/third_party/catch2/single_include/catch2
+    )
+    target_link_libraries(test_action_orchestrator PRIVATE
+        catch2_main
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        sqlite3_static
+    )
+
     include(CTest)
     add_test(NAME homeguardian_tests COMMAND homeguardian_tests)
+    add_test(NAME test_action_orchestrator COMMAND test_action_orchestrator)
     # Run from the project root so tests that read repo-relative files
     # (e.g. config/homeguardian.json) resolve correctly under ctest.
     set_tests_properties(homeguardian_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(test_action_orchestrator PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     # Also expose the source dir so tests that read repo-relative files work
     # when the binary is run directly from an out-of-source build directory.
     set_tests_properties(homeguardian_tests PROPERTIES ENVIRONMENT "HG_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
