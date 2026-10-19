@@ -586,4 +586,23 @@ if(HOMEGUARDIAN_BUILD_TESTS)
     # Also expose the source dir so tests that read repo-relative files work
     # when the binary is run directly from an out-of-source build directory.
     set_tests_properties(homeguardian_tests PROPERTIES ENVIRONMENT "HG_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+
+    # Evidence provenance: every camera-evidence artifact that a submission document references must
+    # resolve at the revision that is supposed to contain it, and the artifact's own content must
+    # support the evidence type the manifest declares. Python 3 + the standard library only, so this
+    # is skipped rather than failed when no interpreter is present.
+    find_program(HG_PYTHON3_EXECUTABLE NAMES python3 python)
+    if(HG_PYTHON3_EXECUTABLE)
+        add_test(NAME evidence_provenance_validator
+                 COMMAND ${HG_PYTHON3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/verify_evidence_provenance.py
+                         --root ${CMAKE_SOURCE_DIR}
+                         --json-out ${CMAKE_BINARY_DIR}/evidence/provenance-report.json
+                         --allow-external-references)
+        set_tests_properties(evidence_provenance_validator PROPERTIES
+                             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        add_test(NAME evidence_provenance_tests
+                 COMMAND ${HG_PYTHON3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/tests/scripts)
+        set_tests_properties(evidence_provenance_tests PROPERTIES
+                             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endif()
 endif()

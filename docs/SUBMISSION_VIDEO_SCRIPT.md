@@ -1,7 +1,7 @@
 # HomeGuardian AI — Official Hackathon Video Script (2m 45s)
 
 > [!NOTE]
-> **HACKATHON CANDIDATE CERTIFIED (HG-NET-02 / HG-SEC-06D):** Release candidate `release/hackathon-2026-mcp-candidate` ([PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has passed all C++ core, MCP protocol, and outbound bridge test suites. All claims reflect implemented capabilities and verified physical USB sensor evidence.
+> **HACKATHON CANDIDATE CERTIFIED (HG-NET-02 / HG-SEC-06D):** Release candidate `release/hackathon-2026-mcp-candidate` ([PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has passed all C++ core, MCP protocol, and outbound bridge test suites. Every claim in this script refers to what this build contains.
 
 **Submission Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server with Alexa-Style Demonstration Client**  
 **Target Duration:** Exactly 2 minutes 45 seconds (165 seconds)  

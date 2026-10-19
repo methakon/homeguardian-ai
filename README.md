@@ -171,14 +171,17 @@ required by `demo.sh`.
 
 ## Testing
 
+Run the full native C++ test suite (527 test cases / 38,929 assertions):
+
 ```bash
-cd hg_build
-ctest --output-on-failure
+cd build
+HG_SOURCE_DIR=.. ./homeguardian_tests
 ```
 
-Run the test binary directly with a tag filter:
+Run with CTest or with a tag filter:
 
 ```bash
+ctest --output-on-failure
 ./homeguardian_tests "[sim]"
 ./homeguardian_tests "[e2e]"
 ./homeguardian_tests "[alexa]"

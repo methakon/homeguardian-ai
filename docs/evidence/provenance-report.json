@@ -1,0 +1,375 @@
+{
+  "schema": "hg-evidence-report/1",
+  "manifest_schema": "hg-evidence-manifest/1",
+  "repo_root": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/antigravity-sec-06c",
+  "refs": {
+    "release_ref": "origin/release/hackathon-2026-mcp-candidate",
+    "release_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65",
+    "external_ref": "origin/experiment/hg-v380-09-secure-camera-integration",
+    "external_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5"
+  },
+  "summary": {
+    "artifacts": 13,
+    "verified": true,
+    "failures": 0,
+    "real": 1,
+    "synthetic": 2,
+    "transcribed": 1,
+    "release_contained": 2,
+    "external": 11,
+    "external_cited_by_release": 9,
+    "references_unchecked": 0
+  },
+  "findings": [],
+  "artifacts": [
+    {
+      "id": "still-scene-capture-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_STILL_SCENE.log",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "8f0a2d5f72c1bf9a49ddad708d3d04a63f37a7be4168c19ebae8a260ed27ce21",
+      "bytes": 4266,
+      "lines": 80,
+      "evidence_type": "real",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        },
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "experiment/hg-v380-09-secure-camera-integration",
+          "reference_confirmed": true,
+          "artifact_present_there": true,
+          "doc_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5"
+        }
+      ],
+      "markers_required": [
+        "REAL camera capture -> bounded scalars",
+        "provenance         : real (a physical device frame)",
+        "MOTION-VERDICT"
+      ],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "capture-log-transcribed",
+      "path": "docs/evidence/PHYSICAL_CAMERA_CAPTURE_LOG.md",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "483394b7eb73782fd8840391f782c247836fe85da56fb1040a1ea4ec86f086b3",
+      "bytes": 6527,
+      "lines": 129,
+      "evidence_type": "transcribed",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        },
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "experiment/hg-v380-09-secure-camera-integration",
+          "reference_confirmed": true,
+          "artifact_present_there": true,
+          "doc_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5"
+        }
+      ],
+      "markers_required": [
+        "transcription, not the original stream",
+        "MOTION-VERDICT",
+        "peak motion"
+      ],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "judge-evidence-note",
+      "path": "docs/JUDGE_EVIDENCE_PHYSICAL_SENSOR.md",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "7437e68cf4f198d2b023300299da38d8f4d3512c7258cd629ac410674fb50382",
+      "bytes": 8455,
+      "lines": 91,
+      "evidence_type": "documentation",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        },
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "experiment/hg-v380-09-secure-camera-integration",
+          "reference_confirmed": true,
+          "artifact_present_there": true,
+          "doc_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5"
+        }
+      ],
+      "markers_required": [],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "physical-camera-path",
+      "path": "docs/PHYSICAL_CAMERA_PATH.md",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "404239895ce06dae81352ed8263dd30e79b33cecafab707827da9400b2c9c1e4",
+      "bytes": 21376,
+      "lines": 368,
+      "evidence_type": "documentation",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        },
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "experiment/hg-v380-09-secure-camera-integration",
+          "reference_confirmed": true,
+          "artifact_present_there": true,
+          "doc_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5"
+        }
+      ],
+      "markers_required": [],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "v4l2-device-header",
+      "path": "src/backend/linux/V4l2CameraDevice.h",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "5f3239e4c805e732a0ed67b8dbc1e5631451f720d379e563dbe23edde654a415",
+      "bytes": 5853,
+      "lines": 134,
+      "evidence_type": "implementation",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        }
+      ],
+      "markers_required": [],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "v4l2-device-source",
+      "path": "src/backend/linux/V4l2CameraDevice.cpp",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "60ad429b4496cdff0aa5434d1843d5355dbaefd88587066437f0aad29d1446aa",
+      "bytes": 14433,
+      "lines": 380,
+      "evidence_type": "implementation",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [],
+      "markers_required": [],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "camera-activity-session-header",
+      "path": "src/core/CameraActivitySession.h",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "689c67aaa94803d554cc16ac9fa3a4fa7cb7468adf7635aaca192c0d172f98c0",
+      "bytes": 6505,
+      "lines": 142,
+      "evidence_type": "implementation",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        }
+      ],
+      "markers_required": [],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "camera-activity-session-source",
+      "path": "src/core/CameraActivitySession.cpp",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "c7e2da0850757d939e17ed20069ed089c2e2c8c826d80ac778a78643430fa1a8",
+      "bytes": 7503,
+      "lines": 160,
+      "evidence_type": "implementation",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [],
+      "markers_required": [],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "camera-bridge-tool",
+      "path": "src/main_camera_bridge.cpp",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "cb90865e5f417967ab9a64dcb4da65977fb8ba987e03dcd8bffe3d090c6d07b0",
+      "bytes": 16832,
+      "lines": 359,
+      "evidence_type": "implementation",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        }
+      ],
+      "markers_required": [],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "camera-suite-physical",
+      "path": "tests/core/test_camera_activity.cpp",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "ed47c8c58bf0bb284a03ee65993aec35d02426252c7920a3780d1a4b700f4036",
+      "bytes": 21424,
+      "lines": 448,
+      "evidence_type": "synthetic",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        }
+      ],
+      "markers_required": [
+        "Provenance::synthetic"
+      ],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "camera-suite-calibration",
+      "path": "tests/core/test_camera_calibration.cpp",
+      "declared_revision": "experiment/hg-v380-09-secure-camera-integration",
+      "resolved_commit": "e825704dd57789e7fc451c9a5f2c2a7167aeaba5",
+      "exists": true,
+      "sha256": "ab33d3dbcad184f7a7874cb0bf2e156eaaddbe77ed1c14b0678d9613df987d70",
+      "bytes": 10208,
+      "lines": 227,
+      "evidence_type": "synthetic",
+      "classification_verified": true,
+      "scope": "external",
+      "scope_verified": true,
+      "referenced_by": [
+        {
+          "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "release/hackathon-2026-mcp-candidate",
+          "reference_confirmed": true,
+          "artifact_present_there": false,
+          "doc_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65"
+        }
+      ],
+      "markers_required": [
+        "Provenance::synthetic"
+      ],
+      "in_release": false,
+      "in_external": true
+    },
+    {
+      "id": "release-video-script",
+      "path": "docs/SUBMISSION_VIDEO_SCRIPT.md",
+      "declared_revision": "release/hackathon-2026-mcp-candidate",
+      "resolved_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65",
+      "exists": true,
+      "sha256": "8b4384ff432eac2f538c8094af17bdb12911628de1ee0892fdedc286d4c0ed8c",
+      "bytes": 8222,
+      "lines": 121,
+      "evidence_type": "documentation",
+      "classification_verified": true,
+      "scope": "release",
+      "scope_verified": true,
+      "referenced_by": [],
+      "markers_required": [
+        "HACKATHON CANDIDATE CERTIFIED"
+      ],
+      "in_release": true,
+      "in_external": false
+    },
+    {
+      "id": "release-dempster-shafer",
+      "path": "src/core/DempsterShafer.h",
+      "declared_revision": "release/hackathon-2026-mcp-candidate",
+      "resolved_commit": "14413ed06a7172a102f026cdc2c65728cc5baa65",
+      "exists": true,
+      "sha256": "41e92add52e7d68342881ea72b50e3d9b21627fc5041e60d4b7b23817675c28c",
+      "bytes": 5598,
+      "lines": 118,
+      "evidence_type": "implementation",
+      "classification_verified": true,
+      "scope": "release",
+      "scope_verified": true,
+      "referenced_by": [],
+      "markers_required": [],
+      "in_release": true,
+      "in_external": true
+    }
+  ],
+  "references_unchecked": []
+}
