@@ -563,13 +563,15 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/mcp/McpProtocol.cpp
         ${CMAKE_SOURCE_DIR}/src/mcp/McpTools.cpp
         ${CMAKE_SOURCE_DIR}/src/mcp/McpHttpServer.cpp
-        # Authorized Action Orchestration (Roadmap R1)
+        # Authorized Action Orchestration (Roadmap R1 & R2)
         ${CMAKE_SOURCE_DIR}/tests/action/test_action_orchestrator.cpp
+        ${CMAKE_SOURCE_DIR}/tests/action/test_alert_action_integration.cpp
         ${CMAKE_SOURCE_DIR}/src/action/ActionAuditLog.cpp
         ${CMAKE_SOURCE_DIR}/src/action/ActionPolicyEngine.cpp
         ${CMAKE_SOURCE_DIR}/src/action/LocalActionProviders.cpp
         ${CMAKE_SOURCE_DIR}/src/action/AlexaIntegrationBoundary.cpp
         ${CMAKE_SOURCE_DIR}/src/action/ActionOrchestrator.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/AlertActionAdapter.cpp
     )
 
     target_include_directories(homeguardian_tests PRIVATE
@@ -588,14 +590,44 @@ if(HOMEGUARDIAN_BUILD_TESTS)
     # Standalone test executable for Authorized Action Orchestration
     add_executable(test_action_orchestrator
         ${CMAKE_SOURCE_DIR}/tests/action/test_action_orchestrator.cpp
+        ${CMAKE_SOURCE_DIR}/tests/action/test_alert_action_integration.cpp
         ${CMAKE_SOURCE_DIR}/src/action/ActionAuditLog.cpp
         ${CMAKE_SOURCE_DIR}/src/action/ActionPolicyEngine.cpp
         ${CMAKE_SOURCE_DIR}/src/action/LocalActionProviders.cpp
         ${CMAKE_SOURCE_DIR}/src/action/AlexaIntegrationBoundary.cpp
         ${CMAKE_SOURCE_DIR}/src/action/ActionOrchestrator.cpp
+        ${CMAKE_SOURCE_DIR}/src/action/AlertActionAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Logger.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ConsentGate.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AlertPolicy.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SimulatorRuntime.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SimulatedSensorSource.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ConsentGatedAcquisition.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ConsentGuardedDevice.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/EventValidator.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/TimeWindowCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ImpactClassifier.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SyntheticImpactRule.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SimulatedEventSource.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/BoundedFeatures.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ActivityDetectors.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/EnvironmentalCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SecurityObservation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/DempsterShafer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/PrecursorDetection.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/FusionEngine.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/CaptureAccounting.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/NodeIdentity.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Observation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/PrivacyAuditLog.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnomalyDetector.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnomalyMonitor.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/simulator/LogicalDevice.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/simulator/AudioBroker.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/simulator/SimulatedSensorBackend.cpp
     )
     target_include_directories(test_action_orchestrator PRIVATE
         ${CMAKE_SOURCE_DIR}/src

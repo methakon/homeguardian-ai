@@ -129,9 +129,9 @@ ActionAuditLog::ActionAuditLog() {
 std::string ActionAuditLog::compute_hash(
     uint64_t seq, int64_t ts, const std::string& req_id,
     const std::string& evt, const std::string& state,
-    const std::string& prev) const {
+    const std::string& reason, const std::string& prev) const {
     std::ostringstream ss;
-    ss << seq << "|" << ts << "|" << req_id << "|" << evt << "|" << state << "|" << prev;
+    ss << seq << "|" << ts << "|" << req_id << "|" << evt << "|" << state << "|" << reason << "|" << prev;
     return compute_sha256_hex(ss.str());
 }
 
@@ -158,7 +158,7 @@ ActionAuditEntry ActionAuditLog::record_event(
     entry.metadata = metadata;
     entry.prev_hash = last_hash_;
     entry.hash = compute_hash(entry.sequence_num, entry.timestamp_ms, entry.request_id,
-                              entry.event_name, entry.execution_state, entry.prev_hash);
+                              entry.event_name, entry.execution_state, entry.reason, entry.prev_hash);
 
     last_hash_ = entry.hash;
     entries_.push_back(entry);
@@ -298,7 +298,7 @@ bool ActionAuditLog::verify_chain_integrity() const {
             return false;
         }
         std::string computed = compute_hash(e.sequence_num, e.timestamp_ms, e.request_id,
-                                            e.event_name, e.execution_state, e.prev_hash);
+                                            e.event_name, e.execution_state, e.reason, e.prev_hash);
         if (computed != e.hash) {
             return false;
         }
@@ -312,6 +312,169 @@ void ActionAuditLog::clear() {
     entries_.clear();
     next_seq_ = 1;
     last_hash_ = compute_sha256_hex("GENESIS-ACTION-AUDIT-LOG-1.0");
+}
+
+nlohmann::json AuditCheckpoint::to_json() const {
+    return {
+        {"checkpoint_id", checkpoint_id},
+        {"sequence_num", sequence_num},
+        {"timestamp_ms", timestamp_ms},
+        {"tip_hash", tip_hash},
+        {"anchor_id", anchor_id},
+        {"anchor_signature", anchor_signature}
+    };
+}
+
+AuditCheckpoint AuditCheckpoint::from_json(const nlohmann::json& j) {
+    AuditCheckpoint cp;
+    cp.checkpoint_id = j.at("checkpoint_id").get<std::string>();
+    cp.sequence_num = j.at("sequence_num").get<uint64_t>();
+    cp.timestamp_ms = j.at("timestamp_ms").get<int64_t>();
+    cp.tip_hash = j.at("tip_hash").get<std::string>();
+    cp.anchor_id = j.value("anchor_id", "");
+    cp.anchor_signature = j.value("anchor_signature", "");
+    return cp;
+}
+
+MockExternalCheckpointAnchor::MockExternalCheckpointAnchor(std::string anchor_id)
+    : anchor_id_(std::move(anchor_id)) {}
+
+bool MockExternalCheckpointAnchor::anchor_checkpoint(const AuditCheckpoint& checkpoint) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    AuditCheckpoint signed_cp = checkpoint;
+    signed_cp.anchor_id = anchor_id_;
+    signed_cp.anchor_signature = compute_sha256_hex(anchor_id_ + ":" + checkpoint.checkpoint_id + ":" + checkpoint.tip_hash);
+    checkpoints_.push_back(signed_cp);
+    return true;
+}
+
+std::vector<AuditCheckpoint> MockExternalCheckpointAnchor::get_anchored_checkpoints() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return checkpoints_;
+}
+
+std::optional<AuditCheckpoint> MockExternalCheckpointAnchor::get_latest_checkpoint() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (checkpoints_.empty()) return std::nullopt;
+    return checkpoints_.back();
+}
+
+void MockExternalCheckpointAnchor::clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    checkpoints_.clear();
+}
+
+AuditCheckpoint ActionAuditLog::create_checkpoint(const std::string& anchor_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    AuditCheckpoint cp;
+    cp.sequence_num = entries_.empty() ? 0 : entries_.back().sequence_num;
+    cp.timestamp_ms = entries_.empty()
+        ? std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+        : entries_.back().timestamp_ms;
+    cp.tip_hash = last_hash_;
+    cp.anchor_id = anchor_id;
+    cp.checkpoint_id = "cp-" + std::to_string(cp.sequence_num) + "-" + cp.tip_hash.substr(0, 8);
+    cp.anchor_signature = compute_sha256_hex("CHECKPOINT-ATTESTATION:" + cp.checkpoint_id + ":" + cp.tip_hash);
+    return cp;
+}
+
+bool ActionAuditLog::anchor_to(IExternalCheckpointAnchor& anchor) {
+    AuditCheckpoint cp = create_checkpoint(anchor.get_anchor_id());
+    return anchor.anchor_checkpoint(cp);
+}
+
+CheckpointVerificationResult ActionAuditLog::verify_against_checkpoint(const AuditCheckpoint& checkpoint) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    CheckpointVerificationResult res;
+
+    // Check 1: Truncation Check
+    if (entries_.size() < checkpoint.sequence_num) {
+        res.status = CheckpointVerificationStatus::LogTruncated;
+        res.valid = false;
+        res.details = "Log truncation detected: local entries count (" + std::to_string(entries_.size()) +
+                      ") is less than anchored checkpoint sequence (" + std::to_string(checkpoint.sequence_num) + ")";
+        return res;
+    }
+
+    // Check 2: Modification / Hash Chain Inconsistency Check up to checkpoint sequence
+    std::string expected_prev = compute_sha256_hex("GENESIS-ACTION-AUDIT-LOG-1.0");
+    for (size_t i = 0; i < checkpoint.sequence_num; ++i) {
+        const auto& e = entries_[i];
+        if (e.prev_hash != expected_prev) {
+            res.status = CheckpointVerificationStatus::LogModified;
+            res.valid = false;
+            res.details = "Log modification detected: broken prev_hash link at sequence " + std::to_string(e.sequence_num);
+            return res;
+        }
+        std::string computed = compute_hash(e.sequence_num, e.timestamp_ms, e.request_id,
+                                            e.event_name, e.execution_state, e.reason, e.prev_hash);
+        if (computed != e.hash) {
+            res.status = CheckpointVerificationStatus::LogModified;
+            res.valid = false;
+            res.details = "Log modification detected: payload hash mismatch at sequence " + std::to_string(e.sequence_num);
+            return res;
+        }
+        expected_prev = e.hash;
+    }
+
+    // Check 3: Tip Hash / Unauthorized Replacement / Fork Check
+    if (checkpoint.sequence_num > 0) {
+        const auto& target_entry = entries_[checkpoint.sequence_num - 1];
+        if (target_entry.hash != checkpoint.tip_hash) {
+            res.status = CheckpointVerificationStatus::UnauthorizedForkOrReplacement;
+            res.valid = false;
+            res.details = "Unauthorized fork or replacement detected: entry hash (" + target_entry.hash +
+                          ") does not match anchored checkpoint tip (" + checkpoint.tip_hash + ")";
+            return res;
+        }
+    } else {
+        // Genesis checkpoint check
+        std::string genesis_hash = compute_sha256_hex("GENESIS-ACTION-AUDIT-LOG-1.0");
+        if (checkpoint.tip_hash != genesis_hash) {
+            res.status = CheckpointVerificationStatus::UnauthorizedForkOrReplacement;
+            res.valid = false;
+            res.details = "Unauthorized genesis mismatch against anchored checkpoint";
+            return res;
+        }
+    }
+
+    res.status = CheckpointVerificationStatus::Valid;
+    res.valid = true;
+    res.details = "Audit log verified against anchored checkpoint " + checkpoint.checkpoint_id;
+    return res;
+}
+
+void ActionAuditLog::tamper_with_entry_for_testing(size_t index, const std::string& new_reason) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (index < entries_.size()) {
+        entries_[index].reason = new_reason;
+    }
+}
+
+void ActionAuditLog::truncate_for_testing(size_t count) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (count <= entries_.size()) {
+        entries_.resize(entries_.size() - count);
+        if (entries_.empty()) {
+            last_hash_ = compute_sha256_hex("GENESIS-ACTION-AUDIT-LOG-1.0");
+            next_seq_ = 1;
+        } else {
+            last_hash_ = entries_.back().hash;
+            next_seq_ = entries_.back().sequence_num + 1;
+        }
+    }
+}
+
+void ActionAuditLog::replace_chain_for_testing(const std::vector<ActionAuditEntry>& new_entries) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    entries_ = new_entries;
+    if (entries_.empty()) {
+        last_hash_ = compute_sha256_hex("GENESIS-ACTION-AUDIT-LOG-1.0");
+        next_seq_ = 1;
+    } else {
+        last_hash_ = entries_.back().hash;
+        next_seq_ = entries_.back().sequence_num + 1;
+    }
 }
 
 } // namespace homeguardian::action

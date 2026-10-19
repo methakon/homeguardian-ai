@@ -101,15 +101,11 @@ ActionEvaluationResult ActionPolicyEngine::evaluate(const ActionRequest& request
                 "Confidence " + std::to_string(request.confidence) + " below policy threshold " + std::to_string(matching_rule->min_confidence)};
     }
 
-    // 7. Consent Gate check: source device and target must have active consent grant
+    // 7. Consent Gate check: source device must have active consent grant
     if (matching_rule->requires_explicit_consent && consent_checker_) {
         if (!consent_checker_(request.source_identity)) {
             return {false, ExecutionState::RefusedConsentRevoked,
                     "Consent revoked or missing for source device: " + request.source_identity};
-        }
-        if (!request.target.empty() && !consent_checker_(request.target)) {
-            return {false, ExecutionState::RefusedConsentRevoked,
-                    "Consent revoked or missing for target device: " + request.target};
         }
     }
 
