@@ -151,6 +151,13 @@ cp "$LIBCXX" "$BUILD_DIR/gen/lib/$ABI/libc++_shared.so"
 ( cd "$BUILD_DIR/gen" && zip -q base.apk classes.dex )
 ( cd "$BUILD_DIR/gen" && zip -qr base.apk lib )
 
+echo "==> Normalise ZIP metadata (reproducible builds)"
+# The zip calls above stamp classes.dex and lib/ with the build wall-clock, which made two builds of
+# identical source produce different whole-file hashes. aapt already normalises its own entries, so
+# only these varied. Normalising must happen BEFORE zipalign and signing: the signature covers the
+# archive, so normalising afterwards would invalidate it. zipalign preserves entry timestamps.
+python3 "$ROOT/scripts/normalize_apk_zip.py" "$BUILD_DIR/gen/base.apk"
+
 echo "==> zipalign"
 "$BT/zipalign" -f 4 "$BUILD_DIR/gen/base.apk" "$BUILD_DIR/app-aligned.apk"
 
