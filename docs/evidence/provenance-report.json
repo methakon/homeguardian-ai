@@ -4,7 +4,7 @@
   "repo_root": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/antigravity-sec-06c",
   "refs": {
     "release_ref": "release/hackathon-2026-mcp-candidate",
-    "release_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33",
+    "release_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5",
     "external_ref": "origin/experiment/hg-v380-09-secure-camera-integration",
     "external_commit": "753988be543ab9fcccde2d2e6bd1f870ebddf7b4"
   },
@@ -41,7 +41,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         },
         {
           "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
@@ -78,7 +78,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         },
         {
           "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
@@ -115,7 +115,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         },
         {
           "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
@@ -148,7 +148,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         },
         {
           "doc": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
@@ -181,7 +181,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         }
       ],
       "markers_required": [],
@@ -225,7 +225,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         }
       ],
       "markers_required": [],
@@ -269,7 +269,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         }
       ],
       "markers_required": [],
@@ -295,7 +295,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         }
       ],
       "markers_required": [
@@ -323,7 +323,7 @@
           "revision": "release/hackathon-2026-mcp-candidate",
           "reference_confirmed": true,
           "artifact_present_there": false,
-          "doc_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33"
+          "doc_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5"
         }
       ],
       "markers_required": [
@@ -336,7 +336,7 @@
       "id": "release-video-script",
       "path": "docs/SUBMISSION_VIDEO_SCRIPT.md",
       "declared_revision": "release/hackathon-2026-mcp-candidate",
-      "resolved_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33",
+      "resolved_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5",
       "exists": true,
       "sha256": "dc500cc4df6ac475aaaf73fc63b739976badf69e40e0b0065b99fc9cb0bb74bc",
       "bytes": 8198,
@@ -356,7 +356,7 @@
       "id": "release-dempster-shafer",
       "path": "src/core/DempsterShafer.h",
       "declared_revision": "release/hackathon-2026-mcp-candidate",
-      "resolved_commit": "49dbdba9c3f7cc7b375e625f8980788f2a36be33",
+      "resolved_commit": "72da266cfb89f340fb8dc3c94f9d2d1b8d802ed5",
       "exists": true,
       "sha256": "41e92add52e7d68342881ea72b50e3d9b21627fc5041e60d4b7b23817675c28c",
       "bytes": 5598,
