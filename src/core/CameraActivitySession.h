@@ -80,6 +80,12 @@ struct CameraFinding {
     std::string change_character;    // see ChangeCharacter.h for the closed vocabulary
     double spread_radius = 0.0;      // RMS spread of the changed mass / frame diagonal
     double bipolar_balance = 0.0;    // 0 unipolar (a light), 1 balanced (a body)
+    // Motion-region tracking, in its smallest honest form: how far the changed mass travelled since the
+    // last characterised frame, and how many consecutive frames it has kept travelling roughly the same
+    // way. A static scene has no travel; a body crossing has both.
+    double region_travel = 0.0;      // centroid displacement since the previous characterised frame
+    size_t travel_consistent = 0;    // consecutive frames travelling in a similar direction
+    double idle_band = 0.0;          // the measured idle floor this session is using (0 = not yet)
     double baseline = 0.0;           // the detector's learned baseline
     double ratio = 1.0;
     size_t windows_observed = 0;
@@ -102,6 +108,16 @@ public:
         // session simply reports no change character, which is honest rather than guessing.
         uint32_t width = 0;
         uint32_t height = 0;
+        // Per-session idle-band calibration. The sensor's own idle changed-fraction is a property of
+        // THIS camera, exposure and lighting: measured at ~0.0098 on the workstation camera, and a
+        // constant floor either labels that noise as motion or hides a small body. With this on, the
+        // session measures its own band over the first `idle_calibration_samples` frame pairs and lifts
+        // the character's quiet floor to `idle_band_multiplier` times the measured median, never below
+        // the policy's own default. A subject present during calibration inflates the floor, which
+        // suppresses rather than invents detections - the safe direction, and it is logged.
+        bool calibrate_idle_band = true;
+        size_t idle_calibration_samples = 8;
+        double idle_band_multiplier = 2.0;
         Config() = default;
     };
 
@@ -130,6 +146,11 @@ public:
                                 const std::string& source = "") const;
 
     size_t windows_observed() const { return windows_observed_; }
+
+    // The measured idle band this session is using as its quiet floor, and the policy in force. Both are
+    // reported so a log can show WHY a frame was called quiet on this camera rather than another.
+    double idle_band() const { return idle_band_; }
+    const ChangeCharacterPolicy& character_policy() const { return policy_; }
     const ActivityChangeDetector& detector() const { return change_; }
 
 private:
@@ -143,6 +164,16 @@ private:
 
     Config cfg_{};
     ActivityChangeDetector change_;
+    ChangeCharacterPolicy policy_{};
+    std::vector<double> idle_samples_{};      // bounded: the first pairs only
+    double idle_band_ = 0.0;
+    bool have_previous_centroid_ = false;
+    double prev_centroid_x_ = 0.0;
+    double prev_centroid_y_ = 0.0;
+    double last_travel_dx_ = 0.0;
+    double last_travel_dy_ = 0.0;
+    double last_travel_ = 0.0;
+    size_t travel_consistent_ = 0;
     std::vector<uint8_t> previous_luma_{};   // the one bounded buffer this class retains
     CameraFinding last_{};
     size_t windows_observed_ = 0;

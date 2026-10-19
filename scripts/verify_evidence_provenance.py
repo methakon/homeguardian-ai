@@ -264,7 +264,11 @@ def check_artifact(root: str, artifact: dict, refs: dict, findings: list[Finding
                     # A release document may cite evidence that lives elsewhere PROVIDED it says so.
                     # The failure is an undeclared external reference: a reader of the release would
                     # take the citation at face value and not find the artifact.
-                    notice = artifact.get("external_notice_markers") or []
+                    # An artifact on an experiment branch is declared external by the DOCUMENT that
+                    # cites it. The wording is a project convention, so an entry that does not name its
+                    # own markers is checked against the default wording rather than against nothing -
+                    # a missing marker list used to fail a document that did declare the boundary.
+                    notice = artifact.get("external_notice_markers") or DEFAULT_EXTERNAL_NOTICE
                     entry["notice_confirmed"] = any(m in doc_text for m in notice)
                     if entry["release_side"] and entry["notice_confirmed"]:
                         entry["external_declared"] = True
@@ -417,6 +421,10 @@ def main(argv: list[str] | None = None) -> int:
               f"report -> {out_path}")
 
     return 0 if summary["verified"] else 1
+
+
+# The wording this repository uses to declare that an artifact is not part of the judge release.
+DEFAULT_EXTERNAL_NOTICE = ["external experiment branch", "not deployed into"]
 
 
 if __name__ == "__main__":

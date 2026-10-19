@@ -21,6 +21,14 @@ ChangeCharacter classify_change(const RegionChangeFeatures& f, const ChangeChara
     if (f.changed_fraction < policy.quiet_fraction && !compact) return ChangeCharacter::quiet;
     const bool one_directional = f.bipolar_balance <= policy.uniform_polarity;
 
+    // A change that SCALES with the scene's own brightness is illumination, whatever its spatial shape:
+    // a gain, brightness or exposure change multiplies what is already there. Checked first, because on
+    // real frames the automatic-gain response is both compact and structured, and the spatial tests
+    // cannot tell it from a body.
+    if (f.gain_correlation >= policy.gain_correlation_illumination) {
+        return ChangeCharacter::global_illumination;
+    }
+
     // A change that covers most of the frame and moves every pixel the same way is illumination (or an
     // exposure shift): no body can brighten every pixel of a static scene at once.
     if (!compact && one_directional) return ChangeCharacter::global_illumination;
@@ -46,12 +54,17 @@ std::string change_character_reason(const RegionChangeFeatures& f, ChangeCharact
     std::ostringstream os;
     os << std::fixed << std::setprecision(3) << "changed=" << f.changed_fraction
        << " peak_cell=" << f.peak_cell_share << " cells=" << f.occupied_cell_fraction
-       << " polarity_balance=" << f.bipolar_balance << " spread=" << f.spread_radius << " -> "
+       << " polarity_balance=" << f.bipolar_balance << " spread=" << f.spread_radius
+       << " gain_corr=" << f.gain_correlation << " -> "
        << change_character_to_string(verdict);
 
     switch (verdict) {
         case ChangeCharacter::global_illumination:
-            os << " (spread over the frame and one-directional: an illumination or exposure change)";
+            os << (f.gain_correlation >= ChangeCharacterPolicy{}.gain_correlation_illumination
+                       ? " (the change scales with the scene's own brightness: an illumination, gain or "
+                         "exposure change)"
+                       : " (spread over the frame and one-directional: an illumination or exposure "
+                         "change)");
             break;
         case ChangeCharacter::localized_unipolar:
             os << " (compact and one-directional: something appeared or a source switched on in view)";

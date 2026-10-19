@@ -99,6 +99,14 @@ struct RegionChangeFeatures {
     // is what the classifier keys on: a body is a small radius, a light switch is a large one, and the
     // ratio does not change when the object or the frame is a different size.
     double spread_radius = 0.0;
+    // Pearson correlation over the changed pixels between the signed delta and the pixel's OWN previous
+    // value. A gain, brightness or exposure change multiplies the scene, so a pixel moves in proportion
+    // to how bright it already was: the correlation approaches +1 and the change is explained as a
+    // scaling of the existing scene. A body moving changes a region by a contrast that has nothing to do
+    // with the background's brightness: the correlation sits near 0. Measured on real frames, this is
+    // what separates the camera's automatic-gain response from movement (see
+    // docs/CHANGE_CHARACTER_SEPARATION.md), which spatial statistics alone did not.
+    double gain_correlation = 0.0;
 };
 
 // Extract the region-aware change descriptors between two luma planes of identical geometry.

@@ -242,3 +242,65 @@ illumination-like, so it cannot manufacture a detection.
 
 Each capture now prints a character column per observation, so phase 2 is read directly: `global_illumination`
 for the lighting frames, `localized_motion` for the movement frames, and nothing else.
+
+---
+
+## Real-hardware results: an induced illumination change (2026-10-19, branch as above)
+
+The first test that is not synthetic. Rather than waiting for a person to switch a light, the camera's
+**own V4L2 brightness control** was stepped (±10 from 0, its full range) while a 600-frame capture ran,
+so the illumination change is real, camera-visible and applied under control. The honest caveat sits at
+the top of the result: this is a **uniform gain change, not a lamp** — a room light has spatial
+structure, and this does not.
+
+`docs/evidence/PHYSICAL_CAMERA_BRIGHTNESS_STEP.log` (before), `..._STEP2.log` (after), both 600/600
+frames, cadence 5, 120 observations, 0 driver-dropped frames, ~40 s.
+
+| | STEP (before gain correlation) | STEP2 (after) |
+|---|---|---|
+| peak motion / ratio | 0.9744 / 3.40 | 0.9841 / 3.80 |
+| peak confidence | 1.000 | 1.000 |
+| `quiet` | 43 | **93** |
+| `diffuse_motion` | 54 | **8** |
+| `localized_motion` | 11 | 11 |
+| `global_illumination` | 9 | 5 |
+| frames labelled as any motion | 65 / 120 | **19 / 120** |
+
+**What this establishes.** The four largest changes (0.44–0.98 of all pixels, i.e. the steps I applied)
+are classified `global_illumination` on real frames, with the reason naming the gain explanation. The
+region descriptors work on real data for the case that matters most: a large illumination change is not
+called movement.
+
+**What it also established, by failing.** 65 of 120 frames carried a motion character in a scene where
+the only deliberate change was illumination. Spatial statistics alone could not separate the camera's
+**automatic-gain response** from movement: AGC produces changes that are compact, structured and
+sometimes bipolar, which is exactly the signature the classifier reads as a body. Correlating the signed
+delta against each pixel's own previous value fixed it — a gain multiplies the scene, so the delta scales
+with brightness (correlation → +1), while a body changes a region by a contrast its background knows
+nothing about (correlation → 0). Adding `gain_correlation` and checking it first moved **46 frames from
+motion to quiet**, with `localized_motion` unchanged at 11 and the big steps still recognised.
+
+**Residual, stated as a limitation rather than hidden.** 19 of 120 frames still read as motion in a
+static scene (11 `localized_motion`, 8 `diffuse_motion`): AGC transients at lower amplitude and scene
+structure. The episode gate refuses a run only when at least half its members are `global_illumination`,
+so a run of these would remain eligible — which is one more reason the gate stays disabled by default.
+
+**Still unrun, and not claimed.** A person crossing the field with consent, a small object moved by
+hand, shadow movement, reflections, real camera movement, curtains or vegetation. Every one of them
+needs a human in the room to stage it, and none was present for this capture. The descriptors are
+therefore validated on real illumination and synthetic motion — not on real motion.
+
+## Per-session idle-band calibration and region tracking
+
+The measured idle band (~0.0098 median, ~0.0106 p90 on this camera) is a property of *this* sensor,
+exposure and lighting, so the constant floor was the wrong shape. `CameraActivitySession` now measures
+its own band over the first `idle_calibration_samples` (8) frame pairs and lifts the character's quiet
+floor to `idle_band_multiplier` (2.0) times the measured median, never below the policy default; the
+measured value is reported in the observation as `idle_band` and in the finding as `idle_band`. A
+subject present during calibration inflates the floor, which suppresses rather than invents detections —
+the safe direction, and it is logged.
+
+Region tracking is deliberately minimal and honest: `region_travel` is the displacement of the changed
+mass's centroid since the previous *characterised* frame, and `travel_consistent` counts consecutive
+frames travelling roughly the same way. A quiet frame has no centroid and resets both, rather than
+inventing movement.

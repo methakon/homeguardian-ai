@@ -81,6 +81,11 @@ struct ChangeCharacterPolicy {
     double quiet_fraction = 0.02;
     double uniform_polarity = 0.10;     // below this bipolar balance, the change is one-directional
     double compact_radius = 0.18;       // RMS spread / frame diagonal below this = a compact change
+    // At or above this correlation between the delta and the scene's own brightness, the change is
+    // explained as a scaling of the scene - a gain, brightness or exposure change - whatever its spatial
+    // shape. Real captures show the camera's automatic gain producing compact, structured changes that
+    // no spatial statistic can separate from motion.
+    double gain_correlation_illumination = 0.6;
 
     static ChangeCharacterPolicy defaults() { return ChangeCharacterPolicy{}; }
 };

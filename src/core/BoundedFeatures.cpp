@@ -128,6 +128,11 @@ RegionChangeFeatures extract_region_change_features(const uint8_t* previous_luma
     double sum_y = 0.0;
     double sum_xx = 0.0;
     double sum_yy = 0.0;
+    double sum_d = 0.0;      // signed delta, over changed pixels only
+    double sum_p = 0.0;      // previous value
+    double sum_dd = 0.0;
+    double sum_pp = 0.0;
+    double sum_dp = 0.0;
 
     for (size_t i = 0; i < pixels; ++i) {
         const int diff = static_cast<int>(current_luma[i]) - static_cast<int>(previous_luma[i]);
@@ -149,6 +154,13 @@ RegionChangeFeatures extract_region_change_features(const uint8_t* previous_luma
         sum_y += static_cast<double>(y);
         sum_xx += static_cast<double>(x) * static_cast<double>(x);
         sum_yy += static_cast<double>(y) * static_cast<double>(y);
+        const double d = static_cast<double>(diff);
+        const double pv = static_cast<double>(previous_luma[i]);
+        sum_d += d;
+        sum_p += pv;
+        sum_dd += d * d;
+        sum_pp += pv * pv;
+        sum_dp += d * pv;
     }
 
     f.changed_pixels = changed;
@@ -176,6 +188,14 @@ RegionChangeFeatures extract_region_change_features(const uint8_t* previous_luma
 
         const double var_x = std::max(0.0, sum_xx / n - mean_x * mean_x);
         const double var_y = std::max(0.0, sum_yy / n - mean_y * mean_y);
+        const double n_d = static_cast<double>(changed);
+        const double cov = n_d * sum_dp - sum_d * sum_p;
+        const double var_d = n_d * sum_dd - sum_d * sum_d;
+        const double var_p = n_d * sum_pp - sum_p * sum_p;
+        if (var_d > 0.0 && var_p > 0.0) {
+            f.gain_correlation = cov / std::sqrt(var_d * var_p);
+        }
+
         const double diagonal = std::sqrt(static_cast<double>(width) * width +
                                           static_cast<double>(height) * height);
         if (diagonal > 0.0) {
@@ -195,6 +215,8 @@ RegionChangeFeatures extract_region_change_features(const uint8_t* previous_luma
     f.centroid_y = clamp01(f.centroid_y);
     if (f.spread_radius < 0.0) f.spread_radius = 0.0;
     if (f.spread_radius > 1.0) f.spread_radius = 1.0;
+    if (f.gain_correlation < -1.0) f.gain_correlation = -1.0;
+    if (f.gain_correlation > 1.0) f.gain_correlation = 1.0;
 
     f.valid = true;
     return f;

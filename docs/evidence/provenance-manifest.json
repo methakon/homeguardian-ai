@@ -506,6 +506,97 @@
       "scope": "external",
       "evidence_type": "documentation",
       "reference_token": "CHANGE_CHARACTER_SEPARATION.md"
+    },
+    {
+      "id": "brightness-step-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_BRIGHTNESS_STEP.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_BRIGHTNESS_STEP.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "brightness-step-log-2",
+      "path": "docs/evidence/PHYSICAL_CAMERA_BRIGHTNESS_STEP2.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_BRIGHTNESS_STEP2.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-observation-header",
+      "path": "src/core/AudioObservation.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AudioObservation",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-observation-source",
+      "path": "src/core/AudioObservation.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AudioObservation",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-observation-suite",
+      "path": "tests/core/test_audio_observation.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_audio_observation.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-event-contract-doc",
+      "path": "docs/SENSOR_EVENT_CONTRACT.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "SENSOR_EVENT_CONTRACT.md",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }

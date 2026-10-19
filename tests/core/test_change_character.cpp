@@ -147,6 +147,45 @@ TEST_CASE("character: something appearing in place is NOT motion", "[character][
     REQUIRE(character_of(after, before) == ChangeCharacter::localized_unipolar);   // and its removal
 }
 
+TEST_CASE("character: a change that scales with the scene is illumination, not movement",
+          "[character][gain][real]") {
+    // Measured on real hardware: the camera's automatic gain responds to a control change by scaling the
+    // scene, and that response is both compact and structured - no spatial statistic separates it from a
+    // body. The correlation between the delta and the pixel's own previous value does: a gain multiplies
+    // what is already there, a moving body does not care how bright the background was.
+    auto textured = plane(60);
+    for (uint32_t y = 0; y < kHeight; ++y) {
+        for (uint32_t x = 0; x < kWidth; ++x) {
+            textured[size_t(y) * kWidth + x] = uint8_t(40 + (x * 160) / kWidth);   // a gradient scene
+        }
+    }
+    std::vector<uint8_t> gained(textured.size());
+    for (size_t i = 0; i < textured.size(); ++i) {
+        const double v = double(textured[i]) * 1.25;                                // gain of 25%
+        gained[i] = uint8_t(v > 255 ? 255 : v);
+    }
+    const auto gf = features_of(textured, gained);
+    INFO("gain: corr=" << gf.gain_correlation << " spread=" << gf.spread_radius
+                       << " balance=" << gf.bipolar_balance);
+    REQUIRE(gf.gain_correlation > 0.9);
+    REQUIRE(classify_change(gf) == ChangeCharacter::global_illumination);
+    REQUIRE(change_character_reason(gf, ChangeCharacter::global_illumination)
+                .find("scales with the scene") != std::string::npos);
+
+    // The discriminating case: the same textured scene with a block moving across it. The delta is a
+    // contrast the background knows nothing about, so the correlation collapses and the verdict stays
+    // motion - the gain test must not swallow real movement.
+    auto with_block = textured;
+    fill_rect(with_block, 20, 40, 15, 15, 200);
+    auto moved = textured;
+    fill_rect(moved, 70, 40, 15, 15, 200);
+    const auto mf = features_of(with_block, moved);
+    INFO("moved block: corr=" << mf.gain_correlation << " spread=" << mf.spread_radius
+                              << " balance=" << mf.bipolar_balance);
+    REQUIRE(mf.gain_correlation < 0.6);
+    REQUIRE(classify_change(mf) == ChangeCharacter::localized_motion);
+}
+
 TEST_CASE("character: the sensor's own idle band is quiet, measured from a real run",
           "[character][calibration]") {
     // Reproduces the real capture's idle band as a frame pair: about 1% of pixels crossing the delta

@@ -1,5 +1,8 @@
 #include "core/CameraActivitySession.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <utility>
 
 namespace homeguardian {
@@ -105,7 +108,45 @@ CameraFinding CameraActivitySession::ingest(const uint8_t* luma, size_t pixels,
         static_cast<size_t>(cfg_.width) * cfg_.height == pixels) {
         region = extract_region_change_features(previous_luma_.data(), luma, pixels, cfg_.width,
                                                 cfg_.height, cfg_.delta_threshold);
-        if (region.valid) character = classify_change(region);
+        // Per-session idle calibration: the first pairs establish what THIS camera's quiet floor is,
+        // before the character is asked to judge anything. The median is used rather than the maximum so
+        // one noisy frame cannot lift the floor for the whole session.
+        if (cfg_.calibrate_idle_band && idle_samples_.size() < cfg_.idle_calibration_samples) {
+            idle_samples_.push_back(region.changed_fraction);
+            if (idle_samples_.size() == cfg_.idle_calibration_samples) {
+                std::vector<double> sorted = idle_samples_;
+                std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+                const double median = sorted[sorted.size() / 2];
+                idle_band_ = std::max(policy_.quiet_fraction, median * cfg_.idle_band_multiplier);
+                policy_.quiet_fraction = idle_band_;
+            }
+        }
+        if (region.valid) character = classify_change(region, policy_);
+
+        // Region travel and direction consistency, only between characterised frames: a quiet frame has
+        // no centroid, and pretending it has one would invent movement.
+        if (region.valid && region.centroid_valid && region.changed_fraction >= policy_.quiet_fraction) {
+            if (have_previous_centroid_) {
+                const double dx = region.centroid_x - prev_centroid_x_;
+                const double dy = region.centroid_y - prev_centroid_y_;
+                last_travel_ = std::sqrt(dx * dx + dy * dy);
+                const double dot = dx * last_travel_dx_ + dy * last_travel_dy_;
+                if (last_travel_ > 1e-4 && dot > 0.0) {
+                    ++travel_consistent_;
+                } else if (last_travel_ > 1e-4) {
+                    travel_consistent_ = 1;
+                }
+                last_travel_dx_ = dx;
+                last_travel_dy_ = dy;
+            }
+            prev_centroid_x_ = region.centroid_x;
+            prev_centroid_y_ = region.centroid_y;
+            have_previous_centroid_ = true;
+        } else {
+            have_previous_centroid_ = false;
+            travel_consistent_ = 0;
+            last_travel_ = 0.0;
+        }
     }
 
     previous_luma_.assign(luma, luma + pixels);
@@ -134,6 +175,9 @@ CameraFinding CameraActivitySession::ingest(const uint8_t* luma, size_t pixels,
         last_.change_character = change_character_to_string(character);
         last_.spread_radius = region.spread_radius;
         last_.bipolar_balance = region.bipolar_balance;
+        last_.region_travel = last_travel_;
+        last_.travel_consistent = travel_consistent_;
+        last_.idle_band = idle_band_;
     };
 
     if (!result.baseline_ready) {
@@ -182,6 +226,11 @@ Observation CameraActivitySession::observation_for(const std::string& observatio
         o.features["change_character"] = last_.change_character;
         o.features["spread_radius"] = last_.spread_radius;
         o.features["bipolar_balance"] = last_.bipolar_balance;
+        o.features["region_travel"] = last_.region_travel;
+        o.features["travel_consistent"] = last_.travel_consistent;
+    }
+    if (last_.idle_band > 0.0) {
+        o.features["idle_band"] = last_.idle_band;
     }
     return o;
 }
