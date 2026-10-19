@@ -617,6 +617,45 @@
         "external experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "sensor-event-consumer-header",
+      "path": "src/core/SensorEventConsumer.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "SensorEventConsumer",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-event-consumer-source",
+      "path": "src/core/SensorEventConsumer.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "SensorEventConsumer",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-event-consumer-suite",
+      "path": "tests/core/test_sensor_event_consumer.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_sensor_event_consumer.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }

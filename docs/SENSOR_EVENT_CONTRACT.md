@@ -20,8 +20,8 @@ An observation carries, in JSON (`Observation::to_json`, schema_version 1):
 |---|---|---|
 | `type` | `inference` — a measured thing, not a command | producer |
 | `source` | `device:/dev/video0`, `alsa:default`, `android:audiorecord`, `node:kitchen` | producer |
-| `provenance` | `real` \| `synthetic` \| `mixed` — **stated by the producer, never inferred** | producer |
-| `status` | `detected` \| `not_detected` \| `unavailable` \| `inconclusive` \| `refused` | detector |
+| `provenance` | `real` \| `synthetic` — **stated by the producer, never inferred** | producer |
+| `status` | `detected` \| `not_detected` \| `inconclusive` \| `unavailable` | detector |
 | `confidence` | bounded `[0,1]` for this observation alone | detector |
 | `detector_id`, `model_id` | which rule and which version produced it, so a verdict is explainable | detector |
 | `features` | bounded scalars only (motion fraction, region spread, polarities, audio RMS/peak/ZCR) | detector |
@@ -30,8 +30,10 @@ An observation carries, in JSON (`Observation::to_json`, schema_version 1):
 Rules a producer must follow:
 
 1. **Provenance is a claim about where the data came from.** A fixture is `synthetic` even when it
-   models a real event. A capture is `real` only when it came off a sensor in this session. Mixed inputs
-   are `mixed` and never upgraded.
+   models a real event. A capture is `real` only when it came off a sensor in this session. **An
+   observation is one or the other, never `mixed`:** mixed evidence is a property of a SET of
+   observations, derived by the fusion engine from its members (`EvidenceProvenance::uncertain`), and a
+   producer that asserts it is refused rather than believed.
 2. **Refusal is an answer.** `status: unavailable` or `refused` with a reason is preferred to a
    plausible-looking number; a missing window is not evidence of quiet.
 3. **`features` is bounded and closed-form.** No field may hold arbitrary payloads, raw media, frames,
@@ -67,3 +69,40 @@ auditable.
 The contract is not a network protocol, not an authentication boundary, and not a licence to listen or
 watch anything without consent. It says nothing about species, disasters or identity, and it cannot: the
 vocabulary has no room for them.
+
+## The consumer, as implemented
+
+`SensorEventConsumer` (`src/core/SensorEventConsumer.*`) is the boundary that decides whether an incoming
+event becomes evidence. It is deliberately not a transport and not an authentication layer; its job is
+validation, and every refusal has a closed code so a caller can act on it rather than parse prose:
+
+| code | what it means |
+|---|---|
+| `not_an_event` | `type` is not `inference` |
+| `unsupported_schema` | `schema_version` this consumer does not know |
+| `malformed` | a required field is missing, or has the wrong JSON type |
+| `source_identity` | the source is empty or is not a prefix this consumer trusts |
+| `provenance_invalid` | not `real` or `synthetic` — including a `mixed` claim |
+| `provenance_conflict` | a `real` claim from a source that identifies itself as a fixture |
+| `future_timestamp` | stamped beyond the clock-skew allowance |
+| `stale_or_replay` | older than the last accepted observation |
+| `duplicate` | this observation id was already accepted |
+| `consent_missing` | consent required and not granted |
+| `source_offline` | the producer reports its source unavailable |
+
+Order matters and is tested: schema and types, then identity, then provenance, then consent, then
+timestamps and replay. Identity before provenance is deliberate — an untrusted source is refused as
+untrusted even if its provenance claim is also wrong.
+
+Three behaviours are worth stating plainly because they are the ones a system usually gets wrong:
+
+- **Consent stops capture.** A revoked consent is not a validation warning: the source is marked
+  unavailable and nothing enters the window.
+- **An offline source yields no evidence, not a quiet scene.** A disconnected sensor is a gap, and a gap
+  is never fused as "nothing happened".
+- **A replay is refused, not fused twice.** Duplicate ids and non-monotonic timestamps are both refused,
+  so a replayed stream cannot manufacture a run of observations where none occurred.
+
+What the consumer accepts reaches the fusion engine as a normalized `Observation`, and the engine's
+verdict provenance is derived from the members: two real observations produce a real verdict, two
+synthetic ones a synthetic verdict, and an empty window produces no verdict at all rather than a default.

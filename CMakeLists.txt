@@ -578,6 +578,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_animal_activity.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_change_character.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_audio_observation.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_event_consumer.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -591,6 +592,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/AnimalActivity.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ChangeCharacter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AudioObservation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SensorEventConsumer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ImpactClassifier.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SyntheticImpactRule.cpp
