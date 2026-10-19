@@ -236,8 +236,8 @@ All security boundaries are continuously asserted by automated test suites:
 
 Absolute transparency is foundational to our submission. The exact status of hardware and deployment environments is documented below:
 
-- **Xiaomi Mi A3 (Android Node):** Android node transport is evaluated using synthetic test observations; physical camera streaming on physical hardware is unverified in this candidate and locked fail-closed (`physical_camera_unverified`) to prevent unauthorized live capture during evaluation.
-- **Panasonic Eluga:** Tested as an auxiliary edge sensor device in staging; not provisioned with live cryptographic credentials in the default judge inventory.
+- **Xiaomi Mi A3 (Android 11 Node):** Physical handset is recognized over ADB with baseline Edge Service v1.0.0 verified; however, its USB data link remains intermittent and the v1.0.3 update is not yet installed. Android node transport is therefore evaluated cleanly using synthetic test observations and isolated loopback fixtures, holding the unstable physical handset fail-closed (`physical_camera_unverified`) so hardware glitches never interrupt the judge demonstration.
+- **Panasonic Eluga (CCTV Handset):** A separate legacy Android 8.1 / API 28 device attached in lab staging for auxiliary camera tests; strictly distinct from the Mi A3, unprovisioned with judge credentials, and isolated from the evaluation runtime.
 - **V380 Wi-Fi IP Camera:** RTSP ingestion pipeline designed for local LAN; intentionally held offline in the judge distribution pending user-authorized pairing.
 - **Alexa Echo Hardware:** No production Alexa Echo physical hardware or Amazon cloud skill store publication is claimed; the project provides a local-first Alexa-style demonstration client and ASK v2-compatible native C++ bridge.
 - **Remote Access Readiness:** Public remote access is not deployed; services bind strictly to loopback (`127.0.0.1`). Public WAN/VPS exposure is unsupported in this candidate and deferred to future work.

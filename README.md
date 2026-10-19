@@ -88,8 +88,9 @@ processing.
   discovered and closed; Camera 2 has vendor-only proprietary ports and remains unintegrated.
   Hardware capture backend (`V4L2`/PipeWire) is disabled by default (`media_capture_enabled: false`)
   and blocked pending physical authorization.
-- **Xiaomi Mi A3 Physical Device:** Marked offline and detached by default (`adb devices` empty).
-  Physical installation is strictly gated on operator attachment and trigger.
+- **Xiaomi Mi A3 (Android 11 Node):** Recognized over ADB with existing Edge Service v1.0.0 verified; however, its physical USB link remains intermittent and the v1.0.3 upgrade candidate is not yet installed. Held offline by default so hardware instability never delays or disrupts workstation evaluation.
+- **Panasonic Eluga (CCTV Handset):** Separate legacy Android 8.1 / API 28 device used for auxiliary RTSP/CCTV staging; unprovisioned with judge credentials and isolated from the release runtime.
+- **Workstation-First Evaluation Boundary:** The judge release is 100% self-contained on workstation loopback (`127.0.0.1`) with zero physical Android or cloud dependencies required for evaluation.
 
 **Planned (not implemented):**
 - Real on-device ML inference (OpenCV / ONNX Runtime).

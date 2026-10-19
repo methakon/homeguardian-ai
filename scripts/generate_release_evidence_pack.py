@@ -387,7 +387,7 @@ def main() -> int:
     limitations_file = out_dir / "LIMITATIONS.md"
     with open(limitations_file, "w", encoding="utf-8") as f:
         f.write("# Known Limitations & Truth-in-Claims Boundaries\n\n")
-        f.write("1. **Physical Camera Boundary (Fail-Closed):** Physical cameras (`camera-001`, `camera-002`) are intentionally unverified in this candidate release to prevent unauthorized video capture during judging. All live evaluation feeds use the deterministic synthetic provider (`camera-syn-001`).\n")
+        f.write("1. **Android Hardware Boundary:** Physical Xiaomi Mi A3 (Android 11) is recognized over ADB with baseline Edge Service v1.0.0 verified; however, its USB data connection remains intermittent and v1.0.3 is not yet installed. Android node transport is evaluated using synthetic test observations on loopback, holding physical cameras fail-closed (`physical_camera_unverified`) so hardware glitches never disrupt evaluation. The separate Panasonic Eluga CCTV handset is legacy staging hardware and unprovisioned.\n")
         f.write("2. **Alexa Skill Integration:** The conversational assistant is a local-first Alexa-style demonstration client paired with ASK SDK v2 contract tests; no live Amazon Echo cloud skill publishing is claimed.\n")
         f.write("3. **Remote Access:** Public remote access is not deployed; services bind strictly to loopback (`127.0.0.1`). Any public WAN/VPS exposure is unsupported in this candidate and deferred to future work.\n")
         f.write("4. **Physical USB-Camera Evidence:** Real USB-camera capture evidence was gathered on isolated experimental branch `experiment/hg-v380-09-secure-camera-integration` (commit `e825704dd57789e7fc451c9a5f2c2a7167aeaba5`) and is not integrated into PR #20.\n")

@@ -104,8 +104,8 @@ In keeping with the rules of the Amazon Developer Hackathon (AmazonAppDev 2026),
 
 We believe absolute transparency is the cornerstone of responsible engineering. We state the exact hardware boundaries of physical devices and infrastructure:
 
-- **Xiaomi Mi A3 (Android Node):** Android node transport is evaluated using synthetic test observations; physical camera streaming on physical hardware is unverified in this candidate and locked fail-closed (`physical_camera_unverified`) to prevent unauthorized live capture during evaluation.
-- **Panasonic Eluga:** Tested as an auxiliary edge sensor device in staging; not provisioned with live cryptographic credentials in the default judge inventory.
+- **Xiaomi Mi A3 (Android 11 Node):** Physical handset recognized over ADB with baseline Edge Service v1.0.0 verified; however, due to an intermittent physical USB link and uninstalled v1.0.3 upgrade, Android node transport is evaluated using synthetic test observations and loopback fixtures. Physical hardware streaming is held in an unverified, fail-closed state (`physical_camera_unverified`) so judge evaluation remains deterministic and fully decoupled from physical USB instability.
+- **Panasonic Eluga (CCTV Handset):** A separate legacy Android 8.1 / API 28 device tested for auxiliary edge monitoring in lab staging; not provisioned with judge credentials and completely decoupled from the candidate runtime.
 - **V380 Wi-Fi IP Camera:** RTSP ingestion pipeline designed for local LAN; intentionally held offline in the judge distribution pending user-authorized pairing.
 - **Alexa Echo Hardware:** No production Alexa Echo physical hardware or Amazon cloud skill store publication is claimed; the project provides a local-first Alexa-style demonstration client and ASK v2-compatible native C++ bridge.
 - **Remote Access Readiness:** Public remote access is not deployed; services bind strictly to loopback (`127.0.0.1`). Public WAN/VPS exposure is unsupported in this candidate and deferred to future work.
