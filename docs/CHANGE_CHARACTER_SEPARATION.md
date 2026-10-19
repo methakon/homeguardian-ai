@@ -304,3 +304,41 @@ Region tracking is deliberately minimal and honest: `region_travel` is the displ
 mass's centroid since the previous *characterised* frame, and `travel_consistent` counts consecutive
 frames travelling roughly the same way. A quiet frame has no centroid and resets both, rather than
 inventing movement.
+
+## The same experiment, three runs, two very different answers
+
+The tail attribution below was written from run 2's analysis and then measured against a third run of
+the *identical* experiment. The third run does not confirm it, and the honest record is both runs side
+by side.
+
+| run (all 600/600 frames, 120 observations, 0 driver drops) | quiet | localized_motion | diffuse_motion | global_illumination | motion-labelled |
+|---|---|---|---|---|---|
+| 1 · `PHYSICAL_CAMERA_BRIGHTNESS_STEP.log` | 43 | 11 | 54 | 9 | **65** |
+| 2 · `PHYSICAL_CAMERA_BRIGHTNESS_STEP2.log` | 93 | 11 | 8 | 5 | **19** |
+| 3 · `PHYSICAL_CAMERA_TAIL_STEP.log` | 51 | 35 | 26 | 5 | **61** |
+
+Run 3: peak motion 0.9786, ratio 4.39, peak confidence 1.000, windows `sustained_increase=6
+sustained_decrease=24 quiet=85`, verdict "a sustained increase WAS observed".
+
+**Zero `illumination_settling` labels appeared in run 3.** The attribution requires both an illumination
+step within 16 observations AND a changed mass whose centroid did not travel more than 0.02. On real
+frames the changed mass's centroid moved between observations, so the condition declined to fire. That is
+the safe direction - it refuses rather than mis-attributes - but it means the *real-frame* calibration of
+the travel epsilon is not established, and only the synthetic tests pin the logic.
+
+**Why runs 2 and 3 differ is not known, and the difference is not the code.** The only production change
+between them can convert a motion label into `illumination_settling`; it cannot add motion labels. So the
+scene differed between the runs. The most likely cause is the one this document has to name: **the
+designated test area was not controlled for occupancy.** This camera looks at the workstation area, and
+run 3 was taken while the owner was active at that workstation; run 2 was not. Real movement in the scene
+would produce exactly this - more, and travelling, motion labels - and would be *correct*, not a false
+positive. That reading is plausible and **unproven**: no occupancy was recorded, so the possibility that
+this is descriptor instability instead cannot be excluded from this evidence alone.
+
+**What follows from it.** The three-run spread is the strongest argument yet for keeping
+`require_motion_character` and the episode path disabled: on this camera, with this code, the same
+controlled lighting experiment produced 19 motion labels once and 61 another time, and the difference is
+unattributed. Establishing a trustworthy false-positive rate requires a capture whose occupancy is
+recorded - ideally the same scene, once known-empty and once with a consented person - before any
+threshold or epsilon is calibrated on it. Tuning the travel epsilon so run 3's numbers look like run 2's
+would be fitting to an unmeasured scene, which is exactly what this work has refused to do.

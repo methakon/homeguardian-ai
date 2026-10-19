@@ -85,7 +85,7 @@ std::optional<ActivityEpisode> ActivityEpisodeSelector::best(
             const std::string c = features.value("change_character", std::string());
             if (c.empty()) continue;
             ++characterised_members;
-            if (c == "global_illumination") ++illumination_members;
+            if (c == "global_illumination" || c == "illumination_settling") ++illumination_members;
         }
         const bool character_ok = !cfg_.require_motion_character || characterised_members == 0 ||
                                   (illumination_members * 2 < characterised_members);

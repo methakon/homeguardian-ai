@@ -502,3 +502,95 @@ TEST_CASE("chain: the gate does not disable the episode path for evidence it can
     DetectionFusionRule gated = episode_rule(true);
     REQUIRE(gated.evaluate(events_of(obs)).has_value());
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The illumination event's settling tail, on real evidence.
+//
+// WHAT THE REAL CAPTURE SHOWED (docs/evidence/PHYSICAL_CAMERA_BRIGHTNESS_STEP2.log)
+//   Nineteen observations still carried a motion character in a scene where the only deliberate change
+//   was illumination, and none of them sat in the idle band - every one of them sat 5-20 observations
+//   after one of the four brightness steps I applied. So the residual was not noise: it was the camera's
+//   own response decaying after each step. Time separates it from a body, and TRAVEL separates a body
+//   from the tail - which is the case these tests pin down.
+
+TEST_CASE("camera: the settling tail of an illumination step is not called movement",
+          "[camera][character][settling][real]") {
+    constexpr uint32_t kW = 100;
+    constexpr uint32_t kH = 100;
+
+    CameraActivitySession::Config cfg;
+    cfg.width = kW;
+    cfg.height = kH;
+    cfg.calibrate_idle_band = false;    // these fixtures are not a sensor's idle band
+    CameraActivitySession session(cfg);
+
+    const auto now = [] { return std::chrono::system_clock::now(); };
+    auto gradient = [](double gain) {
+        std::vector<uint8_t> f(kW * kH);
+        for (uint32_t y = 0; y < kH; ++y) {
+            for (uint32_t x = 0; x < kW; ++x) {
+                const double v = (40.0 + x * 1.2) * gain;
+                f[y * kW + x] = uint8_t(v > 255.0 ? 255.0 : v);
+            }
+        }
+        return f;
+    };
+    auto put_block = [](std::vector<uint8_t>& f, uint32_t x0, uint32_t y0, uint32_t w,
+                        uint32_t h, uint8_t value) {
+        for (uint32_t y = y0; y < y0 + h; ++y) {
+            for (uint32_t x = x0; x < x0 + w; ++x) {
+                f[y * kW + x] = value;
+            }
+        }
+    };
+
+    const auto base = gradient(1.0);
+    session.ingest(base.data(), base.size(), Provenance::real, now());
+
+    // The step: the same scene at a gain of 1.25. The changed mass is weighted towards the bright side,
+    // so its centroid sits around x = 0.6 * kW.
+    const auto stepped = gradient(1.25);
+    const auto step = session.ingest(stepped.data(), stepped.size(), Provenance::real, now());
+    REQUIRE(step.change_character == "global_illumination");
+
+    // Two observations later, an in-place change at the same centroid: compact, and it does not travel.
+    auto inplace = stepped;
+    put_block(inplace, 52, 42, 16, 16, 250);
+    const auto tail = session.ingest(inplace.data(), inplace.size(), Provenance::real, now());
+    INFO("tail: char=" << tail.change_character << " travel=" << tail.region_travel
+                       << " spread=" << tail.spread_radius << " balance=" << tail.bipolar_balance);
+    INFO("tail: valid=" << tail.valid << " character_valid=" << tail.character_valid
+                        << " motion=" << tail.motion_level << " kind=" << int(tail.kind));
+    {   // what does the classifier itself say about this exact pair, outside the session?
+        const auto f = extract_region_change_features(stepped.data(), inplace.data(), inplace.size(),
+                                                      kW, kH, FeatureBounds::kDefaultPixelDelta);
+        INFO("direct: valid=" << f.valid << " frac=" << f.changed_fraction << " spread=" << f.spread_radius
+                              << " balance=" << f.bipolar_balance << " gain_corr=" << f.gain_correlation
+                              << " -> " << change_character_to_string(classify_change(f)));
+        REQUIRE(f.valid);
+    }
+    REQUIRE(tail.change_character == "illumination_settling");
+    REQUIRE(tail.change_character != "localized_motion");
+
+    // The case the attribution must NOT swallow: the same scene, but now the change TRAVELS. A body
+    // crossing while the light settles is movement, and the travel test is what keeps it that way.
+    auto travelled = stepped;
+    put_block(travelled, 74, 42, 16, 16, 250);
+    const auto moved = session.ingest(travelled.data(), travelled.size(), Provenance::real, now());
+    INFO("travelled: char=" << moved.change_character << " travel=" << moved.region_travel);
+    REQUIRE(moved.region_travel > 0.02);
+    REQUIRE(moved.change_character == "localized_motion");
+}
+
+TEST_CASE("character: the settling vocabulary explains itself", "[character][settling]") {
+    RegionChangeFeatures f;
+    f.valid = true;
+    f.changed_fraction = 0.10;
+    f.changed_pixels = 1000;
+    f.spread_radius = 0.10;
+    const std::string why = change_character_reason(f, ChangeCharacter::illumination_settling);
+    REQUIRE(why.find("illumination") != std::string::npos);
+    REQUIRE(why.find("no region travel") != std::string::npos);
+    // and the policy's window is the measured one, not a guess
+    REQUIRE(ChangeCharacterPolicy{}.illumination_tail_observations == 16);
+}

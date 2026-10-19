@@ -72,6 +72,11 @@ std::string change_character_reason(const RegionChangeFeatures& f, ChangeCharact
         case ChangeCharacter::localized_motion:
             os << " (compact and two-directional: something moved through the field)";
             break;
+        case ChangeCharacter::illumination_settling:
+            os << " (within " << ChangeCharacterPolicy{}.illumination_tail_observations
+               << " observations of a global illumination change with no region travel: the illumination"
+                  " event settling, not a body)";
+            break;
         case ChangeCharacter::diffuse_motion:
             os << " (two-directional but spread: large or close movement, foliage, rain or a shadow)";
             break;

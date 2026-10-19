@@ -41,7 +41,10 @@ enum class ChangeCharacter {
     localized_unipolar,    // a compact change that only brightens or only darkens: an object appearing
                            // or a light source switching on IN the scene - not motion
     localized_motion,      // a compact change with both polarities: something moved through the field
-    diffuse_motion         // change spread widely with both polarities: large or close movement, rain, foliage
+    diffuse_motion,        // change spread widely with both polarities: large or close movement, rain, foliage
+    illumination_settling  // a change within a few observations of a global illumination change, with no
+                           // region travel: the camera's own response decaying, and what the brightness
+                           // step measured on real hardware leaves behind (3-4 observations per step)
 };
 
 inline const char* change_character_to_string(ChangeCharacter c) {
@@ -52,6 +55,7 @@ inline const char* change_character_to_string(ChangeCharacter c) {
         case ChangeCharacter::localized_unipolar:  return "localized_unipolar";
         case ChangeCharacter::localized_motion:    return "localized_motion";
         case ChangeCharacter::diffuse_motion:      return "diffuse_motion";
+        case ChangeCharacter::illumination_settling: return "illumination_settling";
     }
     return "unknown";
 }
@@ -86,6 +90,14 @@ struct ChangeCharacterPolicy {
     // shape. Real captures show the camera's automatic gain producing compact, structured changes that
     // no spatial statistic can separate from motion.
     double gain_correlation_illumination = 0.6;
+    // A change inside this many observations of a global illumination change, with a changed-mass
+    // centroid that has not travelled, is the illumination event's own settling tail. Measured on real
+    // frames: every motion-labelled change in a scene where the only deliberate change was illumination
+    // sat 5-20 observations after a step, in tails 3 observations long. The window is the measured tail
+    // length (16 observations = 4 s at the 5-frame cadence), and its cost is stated: in-place movement
+    // within four seconds of a light change is attributed to the light, travelling movement is not.
+    size_t illumination_tail_observations = 16;
+    double settling_travel_epsilon = 0.02;
 
     static ChangeCharacterPolicy defaults() { return ChangeCharacterPolicy{}; }
 };

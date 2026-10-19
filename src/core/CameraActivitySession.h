@@ -116,6 +116,10 @@ public:
         // the policy's own default. A subject present during calibration inflates the floor, which
         // suppresses rather than invents detections - the safe direction, and it is logged.
         bool calibrate_idle_band = true;
+        // Attribute the settling tail of an illumination change (see illumination_tail_observations). The
+        // attribution is refused when the changed mass travelled, so a body crossing while a light
+        // changes is still called movement.
+        bool attribute_illumination_tail = true;
         size_t idle_calibration_samples = 8;
         double idle_band_multiplier = 2.0;
         Config() = default;
@@ -167,6 +171,8 @@ private:
     ChangeCharacterPolicy policy_{};
     std::vector<double> idle_samples_{};      // bounded: the first pairs only
     double idle_band_ = 0.0;
+    bool have_illumination_anchor_ = false;
+    size_t observations_since_illumination_ = 0;
     bool have_previous_centroid_ = false;
     double prev_centroid_x_ = 0.0;
     double prev_centroid_y_ = 0.0;

@@ -147,6 +147,26 @@ CameraFinding CameraActivitySession::ingest(const uint8_t* luma, size_t pixels,
             travel_consistent_ = 0;
             last_travel_ = 0.0;
         }
+
+        // The illumination event's settling tail. A step is followed by a few observations the camera
+        // itself produces while its gain recovers - compact or diffuse, sometimes bipolar, and identical
+        // in every spatial statistic to movement. Time is what separates them: the tail is anchored to
+        // the step, and it does not travel. A body crossing while a light changes does travel, so this
+        // stays a narrowing of the claim rather than a suppression of evidence.
+        if (character == ChangeCharacter::global_illumination) {
+            have_illumination_anchor_ = true;
+            observations_since_illumination_ = 0;
+        } else if (have_illumination_anchor_) {
+            ++observations_since_illumination_;
+            const bool is_motion = character == ChangeCharacter::localized_motion ||
+                                   character == ChangeCharacter::diffuse_motion ||
+                                   character == ChangeCharacter::localized_unipolar;
+            if (cfg_.attribute_illumination_tail && is_motion &&
+                observations_since_illumination_ <= policy_.illumination_tail_observations &&
+                last_travel_ <= policy_.settling_travel_epsilon) {
+                character = ChangeCharacter::illumination_settling;
+            }
+        }
     }
 
     previous_luma_.assign(luma, luma + pixels);

@@ -597,6 +597,26 @@
         "external experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "tail-step-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_TAIL_STEP.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_TAIL_STEP.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }
