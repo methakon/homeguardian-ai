@@ -13,7 +13,6 @@ Run:
 from __future__ import annotations
 
 import io
-import base64
 import contextlib
 import json
 import os
@@ -216,7 +215,7 @@ class TestCleanFixtureNoFalsePositives(FixtureCase):
 
 
 class TestCredentialRedaction(FixtureCase):
-    SECRET = base64.b64encode(b"wireguard-test-key-material-32b!").decode("ascii")  # 43 base64 chars + '='
+    SECRET = "d2lyZWd1YXJkLXRlc3Qta2V5LW1hdGVyaWFsLTMyYiE="  # 43 base64 chars + '='
 
     def credential_tree(self) -> Path:
         return self.tree(
@@ -748,16 +747,16 @@ class TestCredentialRules(FixtureCase):
         return scan_json(root)["report"]
 
     def test_cred002_private_key_header(self) -> None:
-        report = self.scan_line("-----BEGIN " + "RSA PRIVATE KEY-----")
+        report = self.scan_line("-----BEGIN RSA PRIVATE KEY-----")
         finding = self.findings_for(report, "HG-CRED-002")[0]
         self.assertEqual(finding["severity"], "FAIL")
         self.assertEqual(finding["pattern_class"], "private-key-header")
 
     def test_cred003_aws_access_key_id(self) -> None:
-        report = self.scan_line("AKIA" + "IOSFODNN7EXAMPLE is the access key id")
+        report = self.scan_line("AKIAIOSFODNN7EXAMPLE is the access key id")
         finding = self.findings_for(report, "HG-CRED-003")[0]
         self.assertEqual(finding["severity"], "FAIL")
-        self.assertNotIn("AKIA" + "IOSFODNN7EXAMPLE", json.dumps(report))
+        self.assertNotIn("AKIAIOSFODNN7EXAMPLE", json.dumps(report))
 
     def test_cred004_github_token(self) -> None:
         token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0" + "K1L2M3n4"
@@ -775,12 +774,11 @@ class TestCredentialRules(FixtureCase):
         self.assertNotIn(token, json.dumps(report))
 
     def test_cred006_generic_secret_assignment(self) -> None:
-        pw = "hunter2" * 3
-        report = self.scan_line('password = "{}"'.format(pw))
+        report = self.scan_line('password = "hunter2hunter2hunter2"')
         finding = self.findings_for(report, "HG-CRED-006")[0]
         self.assertEqual(finding["severity"], "FAIL")
-        self.assertNotIn(pw, json.dumps(report))
-        self.assertEqual(finding["value_length"], len(pw))
+        self.assertNotIn("hunter2hunter2hunter2", json.dumps(report))
+        self.assertEqual(finding["value_length"], len("hunter2hunter2hunter2"))
 
     def test_cred006_placeholder_assignment_is_not_flagged(self) -> None:
         for placeholder in (
@@ -815,7 +813,7 @@ class TestCredentialRules(FixtureCase):
         )
 
     def test_all_credential_findings_carry_no_value(self) -> None:
-        secret = "hunter2" * 3
+        secret = "hunter2hunter2hunter2"
         report = self.scan_line('secret = "{}" and host 10.1.2.3'.format(secret))
         for finding in report["findings"]:
             if not finding["rule"].startswith("HG-CRED"):
