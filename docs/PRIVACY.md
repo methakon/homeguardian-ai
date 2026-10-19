@@ -613,11 +613,11 @@ observability without any new capture or retention surface:
   pending — needs Amazon credentials); the adapter verifies local bearer tokens
   only.
 
-## Simulated Alexa+ web demo — privacy notes (added 2026-10-12)
+## Standalone simulated Alexa+ bridge demo (`demo.sh`) — privacy notes (added 2026-10-12)
 
-- **It is a simulation, clearly labelled.** The UI states in a banner and in the
-  footer that this is a project-built simulated Alexa+ experience, not a real
-  Alexa+ device integration, with no MCP server and no live Amazon identity.
+- **It is a simulation, clearly labelled.** The `demo.sh` UI states in a banner and in the
+  footer that this is a project-built simulated Alexa+ bridge experience (distinct from the native C++ MCP server `hg_mcp_server`), not a real
+  Alexa+ device integration, with no live Amazon identity.
 - **No physical sensor.** Every observation is synthetic and produced in-process
   by the deterministic sensor simulator. No camera, microphone, or speaker is
   ever opened.

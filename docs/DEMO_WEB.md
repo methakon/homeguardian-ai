@@ -5,8 +5,7 @@ household-safety workflow, presented as a simulated Alexa+ conversational
 experience. Everything runs on your machine over loopback; no cloud, no
 network, no physical sensor.
 
-> This is a **project-built simulation**, not a real Alexa+ integration. There
-> is no MCP server and no live Amazon identity. All observations are synthetic.
+> This `demo.sh` workflow is a **project-built simulated Alexa+ bridge**, distinct from the full native C++ MCP server (`hg_mcp_server`). There is no live Amazon identity. All observations are synthetic. For the native C++ Model Context Protocol (MCP 2025-11-25) server and 3-tab gateway, see `docs/DEVPOST_DEMONSTRATION_GUIDE.md`.
 
 ---
 

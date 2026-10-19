@@ -7,6 +7,12 @@
 was **preserved** and audited as-is.
 **Time to deadline:** ~11 days (deadline **Oct 23, 2026 12:00 PM PDT = Oct 24, 2026 12:30 AM IST**).
 
+> [!NOTE] HISTORICAL COMPLIANCE AUDIT CONTEXT (2026-10-12)
+> This document records the pre-implementation hackathon compliance audit conducted on October 12, 2026 at commit `896f4be` prior to PR #20.
+> At the time of this audit, HomeGuardian AI pursued Route B (simulated Alexa+ experience).
+> **Subsequent Implementation Status (PR #20 / October 2026):**
+> HomeGuardian AI fully implemented and certified a genuine native C++ Model Context Protocol (MCP spec 2025-11-25) server (`hg_mcp_server`) with Streamable HTTP transport, fail-closed authentication, and 2 read-only tools. See `docs/DEVPOST_DEMONSTRATION_GUIDE.md` and `docs/PROOF_REGISTER.md` for current certified architecture.
+
 ---
 
 ## 1. Official sources inspected (accessed 2026-10-12)

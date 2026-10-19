@@ -5,6 +5,7 @@ Branch: `h04/native-http-low-footprint`
 Scope: **final integration and stability verification** of the existing native
 C++ application. No new sensing backend, no real fall detection, no emergency
 notification, no Ring/live-Alexa+ integration, no MCP, no dashboard redesign.
+*(Historical Note: This v21 report evaluated the pre-PR #20 codebase; PR #20 subsequently implemented the native C++ MCP server).*
 
 > **Simulation only.** HomeGuardian AI is a simulator-first demonstration. It
 > uses no physical camera or microphone, performs no medical inference, detects

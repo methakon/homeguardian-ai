@@ -217,3 +217,9 @@ TOTAL_SUITE_TESTS=$(( ${DEV_PASS:-0} + ${MCP_PASS:-0} ))
 echo -e "\n\033[32m✔ Release Integration Synthetic Demonstration is CERTIFIED (${TOTAL_SUITE_TESTS} Tests Passing: ${DEV_PASS} Dashboard/WebRTC + ${MCP_PASS} MCP Client).\033[0m"
 echo "Demonstration Dashboard URL: http://127.0.0.1:$WEB_PORT"
 echo "Single-run operator credentials: user='admin', password configured via secure runtime environment"
+
+if [[ "${1:-}" == "--serve" ]] || [[ "${1:-}" == "-s" ]] || [[ "${1:-}" == "--interactive" ]]; then
+  echo -e "\n\033[36m[Interactive Mode] Demonstration gateway is running at http://127.0.0.1:$WEB_PORT\033[0m"
+  echo "Press Ctrl+C to stop demonstration..."
+  wait "$GATEWAY_PID"
+fi

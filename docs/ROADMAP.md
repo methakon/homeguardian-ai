@@ -176,7 +176,7 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
 | F-01 | HTTP server | C-03 | REST API for dashboard and alerts | DONE (in scope) — implemented as the native C++ loopback transport `hg_alexa_bridge --http` (loopback read subset, no external dependency; state-changing endpoints require authenticated session & CSRF). Boost.Beast deliberately NOT adopted (dependency-avoidance). Broader/production REST (public TLS, OAuth provider) remains absent. |
-| F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | DEFERRED / SUPERSEDED — Route B selected (simulated Alexa+ experience); no MCP server is implemented or claimed. |
+| F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | DONE (implemented and certified in PR #20) — Native C++ Model Context Protocol (spec 2025-11-25) server (`hg_mcp_server`) implemented with Streamable HTTP transport, 2 read-only tools, fail-closed auth, and full test suites. (Originally deferred during F22, fully implemented in PR #20). |
 | F-03 | Alexa+ integration | F-02 | Alexa+ can invoke HomeGuardian tools | DEFERRED — no live Alexa+ identity/device integration. The in-repo simulated Alexa+ web experience is NOT equivalent to production Alexa+ integration. |
 
 ## Phase G — Dashboard and Notifications
@@ -279,9 +279,10 @@ criteria; the structured logger already emits a durable record.
   never-built Boost.Beast F-01. The dashboard is vanilla HTML/CSS/JS
   (`src/web/index.html`), embedded into the binary, showing status, alerts, the
   detection stage, and the privacy audit; it drives the real backend.
-- **F-02 (MCP), F-03 (Alexa+ integration), G-02 (notifications), G-03 (Ring
+- **F-03 (Alexa+ live integration), G-02 (notifications), G-03 (Ring
   simulator), H-01 (fall detection):** **NOT implemented / deferred** — unchanged.
-  No MCP, live Alexa, physical sensing, or production HTTP deployment is claimed.
+  Live Alexa, physical sensing, or production HTTP deployment is not claimed.
+  *(Note: F-02 Native C++ MCP server was implemented and certified in PR #20; see docs/DEVPOST_DEMONSTRATION_GUIDE.md).*
 
 ## Phase P — Licensing and release readiness (added 2026-10-13, v16)
 

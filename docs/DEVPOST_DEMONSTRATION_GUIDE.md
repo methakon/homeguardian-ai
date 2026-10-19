@@ -66,8 +66,8 @@ If `scripts/verify_judge_release.sh` reports a failure:
 
 ---
 
-### Alternative: End-to-End Synthetic Web Demo Harness
-To launch the interactive web gateway and synthetic test video streaming:
+### Automated Verification Harness
+To verify end-to-end integration (C++ Device Registry, WebRTC signaling, Native C++ MCP server, and Operator Authentication) in an automated test run:
 
 ```bash
 bash scripts/verify_synthetic_mcp_demo.sh
@@ -75,15 +75,37 @@ bash scripts/verify_synthetic_mcp_demo.sh
 
 ---
 
-## 3. Interactive Web Demonstration Walkthrough (3-Minute Script)
+## 3. Interactive Demonstration Walkthrough (3-Minute Script)
 
-Launch the unified demonstration server:
+HomeGuardian AI provides two distinct local demonstration experiences:
+
+### Primary: 3-Tab Model Context Protocol & Devices Gateway (Recommended)
+Launches the genuine native C++ MCP server (`hg_mcp_server`) and the interactive 3-tab gateway (`http://127.0.0.1:18880`):
+
+```bash
+# Option A: One-command launch with automated preflight & persistent serve
+bash scripts/verify_synthetic_mcp_demo.sh --serve
+
+# Option B: Explicit two-terminal launch
+# Terminal 1: Native C++ MCP Server
+HG_MCP_PORT=18980 ./build/hg_mcp_server config/homeguardian.demo.json <credentials.json>
+# Terminal 2: Demonstration Gateway
+HG_WEB_PORT=18880 HG_MCP_PORT=18980 node web_mcp/server.js
+```
+
+Open your browser to: `http://127.0.0.1:18880` (Local Web Gateway).
+
+### Alternative: Standalone Simulated Alexa+ Event Bridge (`demo.sh`)
+Launches a single native C++ binary (`hg_alexa_bridge`) running an embedded HTTP server to demonstrate the simulated Alexa+ event bridge without Node.js dependencies:
 
 ```bash
 bash demo.sh
 ```
+*(Prints a dynamic loopback URL such as `http://127.0.0.1:<port>` for minimal single-page event simulation).*
 
-Open your browser to: `http://127.0.0.1:18880` (Local Web Gateway).
+---
+
+### Demonstration Script (3-Tab Gateway on `http://127.0.0.1:18880`)
 
 | Timestamp | Interface Screen & Action | Judge Voiceover / Demonstration Rationale |
 |---|---|---|
