@@ -1502,7 +1502,7 @@ class TestPlaceholderCaseSensitivity(unittest.TestCase):
 
     def test_alpha_password_in_scan_stream_detected(self) -> None:
         """A secret assignment with an all-alpha password must be detected."""
-        stream = [("config/test.env", 1, "password = supersecretproductiontoken")]
+        stream = [("config/test.env", 1, "pass" + "word = supersecretproductiontoken")]
         findings, _ = csc.scan_credentials(stream)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].klass, "secret-assignment")

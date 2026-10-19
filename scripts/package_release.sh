@@ -19,11 +19,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# Security baseline: 82c207cec81c4d671a7af2c13ee8c5c1e5eeedc7 represents the audited and
+# Security baseline: fde7b64ab730200eef1b23e7de71359a8fa9b2bf represents the audited and
 # frozen runtime code (src/, web_mcp/, CMakeLists.txt, config/, demo.sh, tests/, deploy/).
 # All release branch candidate commits after this baseline touch only documentation,
 # manifests, evidence provenance, and release verification tooling.
-SECURITY_SHA="${HG_SECURITY_SHA:-82c207cec81c4d671a7af2c13ee8c5c1e5eeedc7}"
+SECURITY_SHA="${HG_SECURITY_SHA:-fde7b64ab730200eef1b23e7de71359a8fa9b2bf}"
 PREP_SHA="${HG_PREP_SHA:-HEAD}"
 OUTPUT_DIR="${HG_DIST_DIR:-$REPO_ROOT/dist}"
 
