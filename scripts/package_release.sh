@@ -19,7 +19,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SECURITY_SHA="${HG_SECURITY_SHA:-05e130395b1d3244bb38202c929902b6e1d93f28}"
+# Security baseline: 82c207cec81c4d671a7af2c13ee8c5c1e5eeedc7 represents the audited and
+# frozen runtime code (src/, web_mcp/, CMakeLists.txt, config/, demo.sh, tests/, deploy/).
+# All release branch candidate commits after this baseline touch only documentation,
+# manifests, evidence provenance, and release verification tooling.
+SECURITY_SHA="${HG_SECURITY_SHA:-82c207cec81c4d671a7af2c13ee8c5c1e5eeedc7}"
 PREP_SHA="${HG_PREP_SHA:-HEAD}"
 OUTPUT_DIR="${HG_DIST_DIR:-$REPO_ROOT/dist}"
 
@@ -136,14 +140,15 @@ MANDATORY_FILES=(
   "docs/SECURITY_READINESS_V8.md"
   "docs/RELEASE_CANDIDATE_V21.md"
   "docs/DEPLOYMENT_UBUNTU_DOCKER.md"
-  "docs/ORACLE_VPS_DEPLOYMENT_PLAN.md"
+  "docs/ORACLE_RELAY_H04_PLAN.md"
   "docs/RELEASE_AUDIT_STATUS.md"
   "docs/DEVPOST_DEMONSTRATION_GUIDE.md"
   "docs/SUBMISSION_PACKAGE.md"
-  "docs/SYNC_REPORT_GDRIVE_01_05.md"
   "docs/SUBMISSION_VIDEO_SCRIPT.md"
   "docs/DEVPOST_SUBMISSION.md"
   "docs/PROOF_REGISTER.md"
+  "deploy/coordinator/service.js"
+  "scripts/verify_judge_release.sh"
   "scripts/verify_synthetic_mcp_demo.sh"
   "scripts/test_hg_sec_01_independent.sh"
   "scripts/bench_demo.sh"
@@ -210,11 +215,17 @@ Release Contents Summary:
 - Automated Security Gates & Independent Verification Test Suites
 - Multi-Container Docker Hub & Ingress Deployment Configurations
 - Production Ubuntu & Docker Deployment Guide (docs/DEPLOYMENT_UBUNTU_DOCKER.md)
-- Oracle Cloud VPS Coexistence Plan (docs/ORACLE_VPS_DEPLOYMENT_PLAN.md)
+- Oracle Cloud VPS Coexistence Plan (docs/ORACLE_RELAY_H04_PLAN.md)
 - Devpost Demonstration & Walkthrough Guide (docs/DEVPOST_DEMONSTRATION_GUIDE.md)
 - Source Release Packaging & Verification Automation (scripts/package_release.sh)
 - Comprehensive Technical Architecture & Security Documentation
 MANIFEST
+
+# 6. Generate machine-readable JSON manifest baseline if check_release_manifest.py is present
+if [[ -f "$REPO_ROOT/scripts/check_release_manifest.py" ]]; then
+  echo -e "\n[Step 6] Generating machine-readable JSON manifest baseline..."
+  python3 "$REPO_ROOT/scripts/check_release_manifest.py" --record "$ARCHIVE_TAR" -o "${OUTPUT_DIR}/${PACKAGE_NAME}-manifest.json"
+fi
 
 echo -e "\n================================================================="
 echo "RELEASE PACKAGE CERTIFICATION MANIFEST"

@@ -8,13 +8,23 @@ README, Devpost description, video script, licence files, packaged metadata)
 are the only thing a judge reads.  This scanner checks those artefacts for the
 failure modes that cost credibility:
 
-  * LICENSING          - wrong / missing / contradictory licence statements.
+  * LICENSING          - wrong / missing / contradictory licence statements,
+                         measured against an EXPLICIT expected licence (default
+                         Apache-2.0, overridable with ``--expected-license`` /
+                         ``HG_EXPECTED_LICENSE``).  Nothing here re-licenses any
+                         file; the scanner only compares what it reads against
+                         the licence it was told to expect.
   * CONTRADICTORY CLAIMS - the same subject asserted and negated across docs
                          (e.g. "remote MCP works" here, "remote MCP unverified"
-                         in the package notes).
+                         in the package notes).  Historical, hedged, planned and
+                         negated statements are separated from present-tense
+                         assertions, and ambiguity defaults to REVIEW rather
+                         than an automatic FAIL.
   * STALE REVISION REFERENCES - commit SHAs that do not exist, or that exist
-                         but are not ancestors of HEAD, plus version/date
-                         statements that disagree with the packaged metadata.
+                         but are presented as the release/tip revision while not
+                         being an ancestor of the declared release ref.  A SHA
+                         that merely exists on another branch, cited in
+                         historical or general documentation, is VALID.
   * POSSIBLE PUBLISHED CREDENTIALS - key material, token shapes, secret
                          assignments, private-range topology addresses and bare
                          public IPv4 literals.  The matched value is NEVER
@@ -51,6 +61,21 @@ Usage
   python3 scripts/check_submission_claims.py [tree] [--json]
         [--paths FILE ...] [--severity-min FAIL|REVIEW]
         [--doc-scope submission|all] [--quiet]
+        [--expected-license MIT|Apache-2.0] [--release-ref REF]
+
+Configuration defaults (documented, not hidden)
+-----------------------------------------------
+  * expected licence - ``DEFAULT_EXPECTED_LICENCE`` ("Apache-2.0") in this
+    module.  Precedence: ``--expected-license`` > environment variable
+    ``HG_EXPECTED_LICENSE`` > the module constant.  The expected licence is the
+    licence the submission is *supposed* to carry; it is a comparison target
+    only, the scanner never edits a licence file.
+  * release ref - ``DEFAULT_RELEASE_REF`` ("HEAD") in this module.  Precedence:
+    ``--release-ref`` > environment variable ``HG_RELEASE_REF`` > the module
+    constant.  It is the revision the submission claims to be publishing, and
+    is the only ref for which the strict `merge-base --is-ancestor` test is
+    applied.  Point it at the release branch tip when scanning a checkout whose
+    own HEAD is not the release revision.
 """
 
 from __future__ import annotations
@@ -322,8 +347,14 @@ def _lines(path: Path) -> list[str]:
 # Rule 1 - licensing
 # --------------------------------------------------------------------------
 
-#: The licence this project is approved to ship under.
+#: The licence this project is approved to ship under, *by default*.  This is a
+#: documented configuration default, not a hard-coded assumption: it is
+#: overridden by --expected-license and by the HG_EXPECTED_LICENSE environment
+#: variable (in that order of precedence).
 APPROVED_LICENCE = "Apache-2.0"
+
+#: Alias kept for readability at call sites that used the old constant name.
+DEFAULT_EXPECTED_LICENCE = APPROVED_LICENCE
 
 APACHE_MARKERS = (
     "apache license",
@@ -331,6 +362,91 @@ APACHE_MARKERS = (
     "apache 2.0",
     "version 2.0, january 2004",
 )
+
+MIT_MARKERS = (
+    "mit license",
+    "mit licence",
+    "the mit license",
+    "permission is hereby granted, free of charge",
+    "expat license",
+)
+
+#: Licence registry.  `markers` identify the licence text of a LICENSE file;
+#: `aliases` are the values a package manifest may use for the same licence.
+#: Only the licences this project has actually considered are registered; any
+#: other expected value falls back to `_generic_markers()` (exact-token match on
+#: the normalised SPDX identifier) and is therefore stricter, never looser.
+LICENCE_SPECS: dict[str, dict[str, tuple[str, ...]]] = {
+    "Apache-2.0": {
+        "markers": APACHE_MARKERS,
+        "aliases": (
+            "apache-2.0",
+            "apache 2.0",
+            "apache license 2.0",
+            "apache license, version 2.0",
+            "apache",
+        ),
+    },
+    "MIT": {
+        "markers": MIT_MARKERS,
+        "aliases": ("mit", "mit license", "mit licence", "expat"),
+    },
+}
+
+#: Human output written when an expected licence cannot be matched to a
+#: registered spec.
+UNRECOGNISED_LICENCE_TEXT = "an unrecognised licence text"
+
+
+def normalise_licence_name(value: str) -> str:
+    """Canonicalise a licence name/SPDX id to a registry key when possible."""
+    lowered = " ".join(value.strip().lower().replace("_", "-").split())
+    for canonical, spec in LICENCE_SPECS.items():
+        if lowered == canonical.lower() or lowered in spec["aliases"]:
+            return canonical
+    return value.strip()
+
+
+def licence_markers(expected: str) -> tuple[str, ...]:
+    spec = LICENCE_SPECS.get(expected)
+    if spec is not None:
+        return spec["markers"]
+    return _generic_markers(expected)
+
+
+def _generic_markers(expected: str) -> tuple[str, ...]:
+    """Fallback markers for an unregistered expected licence.
+
+    Deliberately strict: the licence text must contain the expected identifier
+    as a whole token.  This keeps the default-REVIEW posture - an unregistered
+    licence is never silently accepted.
+    """
+    token = " ".join(expected.strip().lower().split())
+    if not token:
+        return ()
+    return (token,)
+
+
+def licence_file_matches(text: str, expected: str) -> bool:
+    """True when a licence file's text matches the selected expected licence."""
+    lowered = text.lower()
+    markers = licence_markers(expected)
+    if any(marker in lowered for marker in markers):
+        return True
+    token = expected.strip().lower()
+    return bool(token) and re.search(
+        r"(?<![\w.-])" + re.escape(token) + r"(?![\w.-])", lowered
+    ) is not None
+
+
+def detect_licence_name(text: str) -> str | None:
+    """Return the registry name of the licence the text looks like, if any."""
+    lowered = text.lower()
+    for canonical, spec in LICENCE_SPECS.items():
+        if any(marker in lowered for marker in spec["markers"]):
+            return canonical
+    return None
+
 
 COMPETING_LICENCE_RE = re.compile(
     r"\b(MIT License|MIT Licence|licensed under the MIT|GNU General Public License"
@@ -355,13 +471,34 @@ PROJECT_LICENCE_ASSERTION_RE = re.compile(
 )
 
 
-def scan_licensing(root: Path, targets: Sequence[ScanTarget]) -> list[Finding]:
+def scan_licensing(
+    root: Path,
+    targets: Sequence[ScanTarget],
+    expected_licence: str = DEFAULT_EXPECTED_LICENCE,
+) -> list[Finding]:
+    """Compare the licence artefacts against the *selected* expected licence.
+
+    Semantics (rule 1):
+      * LICENSE text that does not match the selected expected licence  -> FAIL
+        (HG-LIC-001).
+      * a package manifest with NO licence field                        -> REVIEW
+        (HG-LIC-010).
+      * a manifest licence that conflicts with the selected expected
+        licence                                                        -> FAIL
+        (HG-LIC-011); a manifest that agrees is silent (PASS).
+      * NOTICE that does not state the selected expected licence        -> REVIEW
+        (HG-LIC-003), so NOTICE/LICENSE consistency is still checked.
+
+    The scanner is a checker: it never writes a licence file and it never
+    re-licenses the tree it scans.
+    """
     findings: list[Finding] = []
     by_rel = {t.rel: t for t in targets}
+    expected = normalise_licence_name(expected_licence)
 
     # --- LICENSE itself -------------------------------------------------
     licence_target = by_rel.get("LICENSE")
-    licence_is_apache = False
+    licence_matches = False
     if licence_target is None:
         findings.append(
             Finding(
@@ -369,20 +506,22 @@ def scan_licensing(root: Path, targets: Sequence[ScanTarget]) -> list[Finding]:
                 severity=SEV_FAIL,
                 file="LICENSE",
                 line=0,
-                message="LICENSE file not found; the approved licence ({}) cannot be "
-                "verified".format(APPROVED_LICENCE),
+                message="LICENSE file not found; the expected licence ({}) cannot be "
+                "verified".format(expected),
                 evidence="<file absent>",
-                correction="Add the Apache License 2.0 text as LICENSE (this project's "
-                "approved licence).",
+                correction="Add the {} licence text as LICENSE (the licence this "
+                "submission is expected to carry, set with --expected-license "
+                "/ HG_EXPECTED_LICENSE).".format(expected),
             )
         )
     else:
         text = _read_text(licence_target.abspath)
-        lowered = text.lower()
-        licence_is_apache = any(marker in lowered for marker in APACHE_MARKERS)
-        if not licence_is_apache:
+        licence_matches = licence_file_matches(text, expected)
+        if not licence_matches:
             competitor = COMPETING_LICENCE_RE.search(text)
-            what = competitor.group(0) if competitor else "an unrecognised licence text"
+            what = detect_licence_name(text) or (
+                competitor.group(0) if competitor else UNRECOGNISED_LICENCE_TEXT
+            )
             findings.append(
                 Finding(
                     rule="HG-LIC-001",
@@ -390,14 +529,15 @@ def scan_licensing(root: Path, targets: Sequence[ScanTarget]) -> list[Finding]:
                     file=licence_target.rel,
                     line=_first_match_line(licence_target.abspath, COMPETING_LICENCE_RE)
                     or 1,
-                    message="LICENSE is not the approved {} licence (found: {})".format(
-                        APPROVED_LICENCE, what
+                    message="LICENSE is not the expected {} licence (found: {})".format(
+                        expected, what
                     ),
                     evidence=_snippet(_first_matching_line(licence_target.abspath,
                                                            COMPETING_LICENCE_RE)
-                                      or "Apache-2.0 markers not found"),
-                    correction="Replace LICENSE with the Apache License 2.0 text, or get "
-                    "the licence change approved before publishing.",
+                                      or "{} markers not found".format(expected)),
+                    correction="Either ship the {} licence text, or re-run with "
+                    "--expected-license naming the licence this tree really carries. "
+                    "The scanner never edits a licence file.".format(expected),
                 )
             )
 
@@ -417,9 +557,9 @@ def scan_licensing(root: Path, targets: Sequence[ScanTarget]) -> list[Finding]:
                 "their licences.",
             )
         )
-    elif licence_is_apache:
-        notice_lower = _read_text(notice_target.abspath).lower()
-        if not any(marker in notice_lower for marker in APACHE_MARKERS):
+    elif licence_matches:
+        notice_text = _read_text(notice_target.abspath)
+        if not _notice_states_licence(notice_text, expected):
             findings.append(
                 Finding(
                     rule="HG-LIC-003",
@@ -427,7 +567,7 @@ def scan_licensing(root: Path, targets: Sequence[ScanTarget]) -> list[Finding]:
                     file=notice_target.rel,
                     line=1,
                     message="NOTICE does not state the project licence ({}), so it cannot "
-                    "be shown consistent with LICENSE".format(APPROVED_LICENCE),
+                    "be shown consistent with LICENSE".format(expected),
                     evidence=_snippet(_lines(notice_target.abspath)[0]
                                       if _lines(notice_target.abspath) else ""),
                     correction="State the project licence in NOTICE and keep the "
@@ -468,27 +608,24 @@ def scan_licensing(root: Path, targets: Sequence[ScanTarget]) -> list[Finding]:
                     evidence=_snippet(_line_at(target.abspath,
                                                _line_of_key(target.abspath, '"name"') or 1)
                                       or raw),
-                    correction='Add "license": "{}" to {}.'.format(
-                        APPROVED_LICENCE, target.rel
-                    ),
+                    correction='Add "license": "{}" to {} (the selected expected '
+                    "licence).".format(expected, target.rel),
                 )
             )
-        elif not _licence_matches(str(licence)):
+        elif not _manifest_licence_matches(str(licence), expected):
             findings.append(
                 Finding(
                     rule="HG-LIC-011",
                     severity=SEV_FAIL,
                     file=target.rel,
                     line=_line_of_key(target.abspath, '"license"') or 1,
-                    message="manifest license '{}' conflicts with LICENSE ({})".format(
-                        licence, APPROVED_LICENCE if licence_is_apache else "missing/other"
-                    ),
+                    message="manifest license '{}' conflicts with the expected licence "
+                    "({})".format(licence, expected),
                     evidence=_snippet(_line_at(target.abspath,
                                                _line_of_key(target.abspath, '"license"') or 1)
                                       or ""),
-                    correction='Set "license": "{}" (or the licence actually shipped).'.format(
-                        APPROVED_LICENCE
-                    ),
+                    correction='Set "license": "{}" (or the licence actually shipped, '
+                    "and re-run with --expected-license naming it).".format(expected),
                 )
             )
 
@@ -503,6 +640,8 @@ def scan_licensing(root: Path, targets: Sequence[ScanTarget]) -> list[Finding]:
                 continue
             if ATTRIBUTION_MARKERS.search(text):
                 continue  # third-party attribution, not a claim about this work
+            if _licence_name_matches_expected(match.group(0), expected):
+                continue  # this *is* the selected expected licence
             project_level = bool(PROJECT_LICENCE_ASSERTION_RE.search(text))
             findings.append(
                 Finding(
@@ -511,22 +650,55 @@ def scan_licensing(root: Path, targets: Sequence[ScanTarget]) -> list[Finding]:
                     file=rel,
                     line=lineno,
                     message="judge-facing document mentions a competing licence ('{}'); "
-                    "the approved licence is {}".format(match.group(0), APPROVED_LICENCE),
+                    "the expected licence is {}".format(match.group(0), expected),
                     evidence=_snippet(text),
-                    correction="Keep the submission documents on the approved licence and "
-                    "move third-party licences into NOTICE.",
+                    correction="Keep the submission documents on the selected expected "
+                    "licence ({}) and move third-party licences into "
+                    "NOTICE.".format(expected),
                 )
             )
 
     return findings
 
 
-def _licence_matches(value: str) -> bool:
-    lowered = value.strip().lower()
-    if lowered in ("apache-2.0", "apache 2.0", "apache"):
+def _licence_name_matches_expected(name: str, expected: str) -> bool:
+    """True when a licence name mentioned in prose IS the selected licence."""
+    return normalise_licence_name(name) == expected or licence_file_matches(name, expected)
+
+
+def _manifest_licence_matches(value: str, expected: str) -> bool:
+    """True when a manifest licence value agrees with the expected licence.
+
+    Matches the canonical id, the registered aliases, and an SPDX expression
+    that contains the expected id as a whole token (e.g. "MIT OR Apache-2.0"
+    against an expected "MIT").  Anything else is a conflict.
+    """
+    lowered = " ".join(value.strip().lower().replace("_", "-").split())
+    if not lowered:
+        return False
+    spec = LICENCE_SPECS.get(expected)
+    if lowered == expected.lower():
         return True
-    if "apache" in lowered and "2" in lowered:
+    if spec is not None and lowered in spec["aliases"]:
         return True
+    token = expected.strip().lower()
+    return bool(token) and re.search(
+        r"(?:^|[\s(])" + re.escape(token) + r"(?:[\s)]|$)", lowered
+    ) is not None
+
+
+def _notice_states_licence(text: str, expected: str) -> bool:
+    """True when NOTICE states the expected licence outside its third-party list.
+
+    A competing licence named on a line that is explicitly an attribution
+    (third-party / dependency / vendored / URL) belongs to someone else and is
+    therefore ignored, exactly as in the doc sweep.
+    """
+    for line in text.splitlines():
+        if ATTRIBUTION_MARKERS.search(line) and not PROJECT_LICENCE_ASSERTION_RE.search(line):
+            continue
+        if licence_file_matches(line, expected):
+            return True
     return False
 
 
@@ -587,15 +759,56 @@ NEGATED = re.compile(
     r"|proven|real|live|connected|reachable|supported|in place|claimed|exercised"
     r"|evidence|proof|installed)"
     r"|\b(?:never|absent|absence|unverified|unproven|unimplemented|unsupported|blocked"
-    r"|pending|missing|without|none|neither|cannot|can't)\b"
+    r"|pending|missing|none|neither|cannot|can't)\b"
+    r"|\bwithout\s+(?:evidence|proof|verification|testing|support|any\s+\w+|a\s+server"
+    r"|an\s+endpoint)\b"
     r"|\bdo not (?:say|claim|state|assert|describe|present|recommend)\b"
+    r"|\bnot\s+(?:trusted|corroborated|confirmed|validated|attested|authoritative"
+    r"|independently\s+verified|relied\s+upon|assumed|guaranteed)\b"
+    r"|\b(?:is|are|was|were) not\b(?:\s+[\w'-]+){0,2}\s*"
+    r"(?:implemented|built|deployed|integrated|available|present|verified|tested"
+    r"|proven|real|live|connected|reachable|supported|installed|exercised)"
+    r"|\bdo(?:es)? not\b(?:\s+[\w'-]+){0,2}\s*"
+    r"(?:exist|work|run|support|provide|reach|listen|ship)"
     r"|\bnot yet\b|\bdoes not exist\b|\bno longer\b"
     r")",
     re.IGNORECASE,
 )
+#: Planned / future work.  "will", "should", "plan", "intend", "future" and
+#: friends describe intent, so they classify as PLANNED and are never read as a
+#: current IMPLEMENTED/TESTED claim.
 PLANNED = re.compile(
-    r"\b(planned|plan|plans|roadmap|proposed|proposal|intended|will be|to be built"
-    r"|future work|not yet built|blocked pending|simulated|simulation|mock)\b",
+    r"\b(planned|plan|plans|planning|roadmap|proposed|proposal|intended|intends"
+    r"|intend|will|will be|would be"
+    r"|future|future work|next (?:phase|step|milestone|release)|to be (?:built|implemented"
+    r"|integrated|verified|tested)|expected to|aims? to|should|should be"
+    r"|not yet built|blocked pending|simulated|simulation|mock)\b",
+    re.IGNORECASE,
+)
+#: Hedges: a hedged statement is not an assertion, so it can never be the FAIL
+#: side of a contradiction.
+HEDGED = re.compile(
+    r"\b(may (?:be|have|not)|might be|possibly|likely|appears? to|seems? to|probably"
+    r"|partially|partial|mostly|in part|to some extent|arguably|we believe"
+    r"|roughly|approximately|could be|tends? to)\b",
+    re.IGNORECASE,
+)
+#: Historical / incident framing.  A past-tense or dated description of what
+#: *was* the case is a record, not a present-tense claim about the submission.
+HISTORICAL_CLAIM = re.compile(
+    r"(\bpreviously\b|\bearlier\b|\bhistor\w*|\bat that time\b|\bback then\b"
+    r"|\bincident\b|\bpost-?mortem\b|\bno longer\b|\bsuperseded\b"
+    r"|\bretrospective\b|\bengineering log\b|\bchangelog\b|\bdated\b"
+    r"|\bwas\b(?:\s+[\w'-]+){0,3}\s*(?:verified|tested|implemented|built|deployed"
+    r"|integrated|recorded|observed|reported|captured|exercised|confirmed|measured|shown)"
+    r"|\bwere\b(?:\s+[\w'-]+){0,3}\s*(?:verified|tested|implemented|built|deployed"
+    r"|integrated|recorded|observed|reported|captured|exercised|confirmed|measured|shown)"
+    # present perfect reports a completed past event ("has been verified"), so it
+    # is history like the past tense, not a present-tense claim.
+    r"|\b(?:has|have|had) been\b(?:\s+[\w'-]+){0,3}\s*(?:verified|tested|implemented"
+    r"|built|deployed|integrated|recorded|observed|reported|captured|exercised"
+    r"|confirmed|measured|shown)"
+    r"|\bhad been\b|\b(?:19|20)\d{2}-\d{2}-\d{2}\b)",
     re.IGNORECASE,
 )
 #: Lines that quote requirements/rules rather than claim project state.
@@ -609,8 +822,27 @@ CLAIM_IMPLEMENTED = "IMPLEMENTED"
 CLAIM_TESTED = "TESTED"
 CLAIM_PLANNED = "PLANNED"
 CLAIM_NEGATED = "NEGATED"
+CLAIM_HISTORICAL = "HISTORICAL"
 CLAIM_UNCLASSIFIED = "UNCLASSIFIED"
 CLAIM_POSITIVE = (CLAIM_IMPLEMENTED, CLAIM_TESTED)
+
+#: A subject token must sit within this many characters of the predicate it is
+#: attributed to.  Bounded-distance binding is what keeps similar terminology on
+#: different subjects apart: "remote MCP reachability" on one line is not merged
+#: with "the VPN tunnel" named later in the same paragraph.
+SUBJECT_PREDICATE_WINDOW_CHARS = 120
+
+
+def _span_gap(a: tuple[int, int], b: tuple[int, int]) -> int:
+    return max(0, max(a[0], b[0]) - min(a[1], b[1]))
+
+
+def _within_window(span: tuple[int, int], anchors: Sequence[tuple[int, int]]) -> bool:
+    if not anchors:
+        return False
+    return min(_span_gap(span, anchor) for anchor in anchors) <= (
+        SUBJECT_PREDICATE_WINDOW_CHARS
+    )
 
 @dataclass(frozen=True)
 class Subject:
@@ -623,8 +855,19 @@ class Subject:
     #: exercised" - conflating those is the failure this scanner exists to catch.
     aspects: tuple[tuple[str, re.Pattern], ...] = ()
 
-    def aspect_names(self, text: str) -> list[str]:
-        matched = [name for name, pattern in self.aspects if pattern.search(text)]
+    def aspects_near(
+        self, text: str, anchors: Sequence[tuple[int, int]]
+    ) -> list[str]:
+        """Aspects whose marker sits within the binding window of the predicate.
+
+        Window-aware for the same reason as the subject patterns: an aspect word
+        elsewhere in a long sentence must not be attributed to the predicate.
+        """
+        matched = [
+            name
+            for name, pattern in self.aspects
+            if any(_within_window(m.span(), anchors) for m in pattern.finditer(text))
+        ]
         return matched or ["generic"]
 
 
@@ -688,7 +931,14 @@ SUBJECTS: dict[str, Subject] = {
         "Alexa integration",
         (
             re.compile(
-                r"alexa\+?[^.]{0,30}integration|alexa\+?\b|real alexa", re.IGNORECASE
+                # "Alexa-Style" is a style descriptor for the project's own
+                # demonstration client, NOT the Alexa platform: the two must not
+                # be merged (the submission docs say "Alexa-style client" while
+                # the README says "not real Alexa" - those are consistent).
+                r"alexa\+(?![\w-])|real alexa"
+                r"|alexa(?!-?style)[^.\n]{0,24}integration"
+                r"|integration[^.\n]{0,20}alexa(?!-?style)",
+                re.IGNORECASE,
             ),
         ),
         aspects=(
@@ -721,23 +971,103 @@ class ClaimHit:
     line: int
     klass: str
     text: str
+    #: True when the statement itself is a negation - never a positive assertion.
+    negated: bool = False
+    #: True when the statement is a historical / past-tense / dated record.
+    historical: bool = False
+    #: True when the statement is hedged ("may be", "partially", ...).
+    hedged: bool = False
+    #: True when the statement describes planned/future work.
+    planned: bool = False
+
+
+def analyse_statement(text: str) -> dict:
+    """Classify one statement and record *why*, so the caller can downgrade.
+
+    Order matters and is deliberate:
+      1. an explicit negation wins over every positive marker, so "the MCP
+         server is not implemented" can never be read as a positive claim
+         (scope/requirement negations are scrubbed first - see
+         `NEGATION_SCOPE_EXEMPT`);
+      2. historical / dated framing is a record, not a current claim;
+      3. planned / future framing is intent, not a current claim;
+      4. a platform/OS capability ("exists since API 24") is a fact about the
+         platform, not a claim about this submission;
+      5. only then come the present-tense positives.
+
+    Hedging is deliberately *not* a class: a hedged positive ("partially
+    verified") is still a positive so that it can be compared, but the caller
+    sees `hedged=True` and may not turn it into a FAIL.
+    """
+    negation = negation_match(text)
+    historical = HISTORICAL_CLAIM.search(text)
+    planned = PLANNED.search(text)
+    hedged = HEDGED.search(text)
+    positive: tuple[str, tuple[int, int]] | None = None
+    tested = POSITIVE_TESTED.search(text)
+    if tested is not None:
+        positive = (CLAIM_TESTED, tested.span())
+    else:
+        implemented = POSITIVE_IMPLEMENTED.search(text)
+        if implemented is not None:
+            positive = (CLAIM_IMPLEMENTED, implemented.span())
+
+    if negation is not None:
+        klass = CLAIM_NEGATED
+        anchor = negation.span()
+    elif historical is not None:
+        klass = CLAIM_HISTORICAL
+        anchor = historical.span()
+    elif planned is not None:
+        klass = CLAIM_PLANNED
+        anchor = planned.span()
+    elif positive is not None and PLATFORM_CAPABILITY.search(text):
+        klass = CLAIM_UNCLASSIFIED
+        anchor = None
+    elif positive is not None:
+        klass = positive[0]
+        anchor = positive[1]
+    else:
+        klass = CLAIM_UNCLASSIFIED
+        anchor = None
+
+    return {
+        "klass": klass,
+        "negated": negation is not None,
+        "historical": historical is not None,
+        "hedged": hedged is not None,
+        "planned": planned is not None,
+        "anchor": anchor,
+    }
+
+
+#: A *scope / requirement* negation ("no internet access is needed", "not
+#: required by the default demo") is not a denial that the thing exists, so it
+#: is scrubbed out before the negation model is applied.
+NEGATION_SCOPE_EXEMPT = re.compile(
+    r"\b(?:no|not|without)\b[^.;\n]{0,60}?\b(?:is|are|was|were|be|being)\s+"
+    r"(?:needed|required|necessary|used|involved|assumed)\b",
+    re.IGNORECASE,
+)
+
+#: Availability of an OS / third-party platform capability ("**Always-on VPN**
+#: exists from API 24", "AAudio is available since API 26").  That is a fact
+#: about the platform, not a claim about what this submission has built.
+PLATFORM_CAPABILITY = re.compile(
+    r"\b(?:exists|available|supported|introduced|present)\b(?:\s+[\w'(),/+.-]+){0,4}\s*"
+    r"\b(?:from|since|in)\s+API(?:\s+level)?\s*\d+",
+    re.IGNORECASE,
+)
+
+
+def negation_match(text: str) -> re.Match | None:
+    """Find a negation that is not merely a scope / requirement statement."""
+    return NEGATED.search(NEGATION_SCOPE_EXEMPT.sub(" ", text))
 
 
 def classify_claim(text: str) -> str:
-    """Conservative single-statement classifier.
-
-    Order matters: an explicit negation wins over every positive marker, because
-    "the MCP server is not implemented" must never read as a positive claim.
-    """
-    if NEGATED.search(text):
-        return CLAIM_NEGATED
-    if PLANNED.search(text):
-        return CLAIM_PLANNED
-    if POSITIVE_TESTED.search(text):
-        return CLAIM_TESTED
-    if POSITIVE_IMPLEMENTED.search(text):
-        return CLAIM_IMPLEMENTED
-    return CLAIM_UNCLASSIFIED
+    """Return just the class of a statement (see `analyse_statement`)."""
+    return analyse_statement(text)["klass"]
 
 
 def collect_claims(
@@ -745,9 +1075,11 @@ def collect_claims(
 ) -> tuple[list[ClaimHit], int]:
     """Return (hits, normative_lines_skipped).
 
-    One hit per (subject, aspect) the statement belongs to; fenced code blocks
+    One hit per (subject, aspect) the statement belongs to.  Fenced code blocks
     and table rows are skipped because they are usually command/log excerpts
-    rather than prose claims.
+    rather than prose claims.  A subject is only bound to the statement's
+    predicate when its token sits within `SUBJECT_PREDICATE_WINDOW_CHARS` of it,
+    so different subjects sharing similar terminology are never merged.
     """
     hits: list[ClaimHit] = []
     skipped = 0
@@ -757,22 +1089,45 @@ def collect_claims(
             continue
         if stripped.startswith("```") or stripped.startswith("|"):
             continue
-        matched_subjects = [
-            key
-            for key, subject in SUBJECTS.items()
-            if any(pattern.search(text) for pattern in subject.patterns)
-        ]
+        if stripped.startswith("#"):
+            # A markdown heading is a label for the section below it, not an
+            # assertion about the project: "### 8.1 What passed on the physical
+            # device" must not read as the claim "physical verification passed".
+            continue
+        analysis = analyse_statement(text)
+        klass = analysis["klass"]
+        if klass == CLAIM_UNCLASSIFIED or analysis["anchor"] is None:
+            continue
+        anchors = [analysis["anchor"]]
+        matched_subjects = []
+        for key, subject in SUBJECTS.items():
+            if any(
+                _within_window(match.span(), anchors)
+                for pattern in subject.patterns
+                for match in pattern.finditer(text)
+            ):
+                matched_subjects.append(key)
         if not matched_subjects:
             continue
         if NORMATIVE.search(text) and stripped.startswith((">", "*", "-", "|")):
             skipped += 1
             continue
-        klass = classify_claim(text)
-        if klass == CLAIM_UNCLASSIFIED:
-            continue
         for key in matched_subjects:
-            for aspect in SUBJECTS[key].aspect_names(text):
-                hits.append(ClaimHit(key, aspect, rel, lineno, klass, text))
+            for aspect in SUBJECTS[key].aspects_near(text, anchors):
+                hits.append(
+                    ClaimHit(
+                        key,
+                        aspect,
+                        rel,
+                        lineno,
+                        klass,
+                        text,
+                        negated=analysis["negated"],
+                        historical=analysis["historical"],
+                        hedged=analysis["hedged"],
+                        planned=analysis["planned"],
+                    )
+                )
     return hits, skipped
 
 
@@ -781,22 +1136,41 @@ def stitch_statements(
 ) -> list[tuple[str, int, str]]:
     """Join markdown-wrapped continuation lines into logical statements.
 
-    Line-level keyword classification reads "are not\nimplemented and are
-    awaiting approval" as the positive claim "implemented" - the classic
-    wrapped-prose false positive.  Joining continuations onto the fragment that
-    starts the sentence removes that class of error; headings, bullets, table
-    rows, blockquotes and fenced blocks still start a new statement.
+    Line-level keyword classification reads "are not / implemented and are /
+    awaiting approval" (three wrapped lines) as the positive claim "implemented"
+    - the classic wrapped-prose false positive.  Joining continuations onto the
+    fragment that starts the sentence removes that class of error; headings,
+    bullets, table rows, blockquotes and fenced blocks still start a new
+    statement.
+
+    Fenced code blocks are dropped entirely: a code comment such as
+    "// Verified real edge hardware" inside a ```javascript block is not prose
+    and must not be read as a claim.  (Credentials are still scanned from the
+    raw stream - a secret in a code sample is still a secret.)
     """
     stitched: list[tuple[str, int, str]] = []
     current: list | None = None
+    in_fence = False
+    last_rel: str | None = None
     for rel, lineno, text in doc_lines:
         stripped = text.strip()
-        if current is not None and current[0] != rel:
-            stitched.append((current[0], current[1], " ".join(current[2])))
-            current = None
+        if last_rel is not None and rel != last_rel:
+            if current is not None:
+                stitched.append((current[0], current[1], " ".join(current[2])))
+                current = None
+            in_fence = False  # an unterminated fence does not leak between files
+        last_rel = rel
+        if re.match(r"^(?:```|~~~)", stripped):
+            in_fence = not in_fence
+            if current is not None:
+                stitched.append((current[0], current[1], " ".join(current[2])))
+                current = None
+            continue
+        if in_fence:
+            continue
         starts_new = (
             not stripped
-            or stripped.startswith(("#", "-", "*", ">", "|", "```", "~~~"))
+            or stripped.startswith(("#", "-", "*", ">", "|"))
             or re.match(r"^\d+[.)]\s", stripped) is not None
         )
         if starts_new:
@@ -841,8 +1215,20 @@ def scan_claims(
         aspects = sorted({h.aspect for h in subject_hits})
         for aspect in aspects:
             scoped = [h for h in subject_hits if h.aspect == aspect]
-            positives = [h for h in scoped if h.klass in CLAIM_POSITIVE]
-            negatives = [h for h in scoped if h.klass == CLAIM_NEGATED]
+            # (i) historical / incident statements are records, not claims about
+            #     the submission: they are excluded from both sides.
+            current = [
+                h
+                for h in scoped
+                if not h.historical and h.klass != CLAIM_HISTORICAL
+            ]
+            positives = [h for h in current if h.klass in CLAIM_POSITIVE]
+            negatives = [h for h in current if h.klass == CLAIM_NEGATED]
+            historical_negations = [
+                h
+                for h in scoped
+                if h.klass == CLAIM_NEGATED and (h.historical or h not in current)
+            ]
             qualifier = "" if aspect == "generic" else " [{}]".format(aspect)
             if positives and negatives:
                 pos = positives[0]
@@ -856,26 +1242,49 @@ def scan_claims(
                 superseded = bool(
                     pos_date and neg_date and neg_date < pos_date
                 )
+                hedged_sides = [
+                    label
+                    for label, hit in (("asserted", pos), ("negated", neg))
+                    if hit.hedged
+                ]
+                if superseded:
+                    rule, severity = "HG-CLAIM-003", SEV_REVIEW
+                    reason = (
+                        "the negated statement is in an older file ({} vs {}), so it "
+                        "may simply be superseded history".format(neg_date, pos_date)
+                    )
+                elif not hedged_sides:
+                    # The only FAIL case: both sides present-tense, non-negated,
+                    # non-hedged and bound to the same subject.
+                    rule, severity = "HG-CLAIM-001", SEV_FAIL
+                    reason = (
+                        "both statements are present-tense, non-negated, non-hedged "
+                        "and bound to the same subject"
+                    )
+                else:
+                    rule, severity = "HG-CLAIM-004", SEV_REVIEW
+                    reason = (
+                        "downgraded to REVIEW: the {} statement is hedged, so at "
+                        "least one side is not an assertion".format(
+                            "/".join(hedged_sides)
+                        )
+                    )
                 findings.append(
                     Finding(
-                        rule="HG-CLAIM-003" if superseded else "HG-CLAIM-001",
-                        severity=SEV_REVIEW if superseded else SEV_FAIL,
+                        rule=rule,
+                        severity=severity,
                         file=pos.file,
                         line=pos.line,
                         message=(
-                            "subject '{}{}' is asserted ({}) in one document and negated "
-                            "({}) in another; the negated statement is in an older file "
-                            "({} vs {}), so it may simply be superseded history"
-                            if superseded
-                            else "subject '{}{}' is both asserted ({}) and negated ({}) "
-                            "across the documents ({} asserted / {} negated statement(s))"
+                            "subject '{}{}' is asserted ({}) in one document and "
+                            "negated ({}) in another: {} ({} asserted / {} negated "
+                            "present-tense statement(s))"
                         ).format(
                             subject.label,
                             qualifier,
                             pos.klass,
                             neg.klass,
-                            neg_date,
-                            pos_date,
+                            reason,
                             len(positives),
                             len(negatives),
                         ),
@@ -894,16 +1303,38 @@ def scan_claims(
                 )
             elif positives:
                 pos = positives[0]
+                if pos.hedged:
+                    message = (
+                        "subject '{}{}' is hedged rather than asserted ({}): '{}' - "
+                        "confirm the wording states what was actually established".format(
+                            subject.label, qualifier, pos.klass, _snippet(pos.text, 70)
+                        )
+                    )
+                elif historical_negations:
+                    message = (
+                        "subject '{}{}' is asserted ({}) while the only limitation on "
+                        "record is a historical statement ({}); confirm the limitation "
+                        "still applies to the released revision".format(
+                            subject.label,
+                            qualifier,
+                            pos.klass,
+                            historical_negations[0].file,
+                        )
+                    )
+                else:
+                    message = (
+                        "subject '{}{}' is asserted ({}) with no accompanying "
+                        "negation/limitation anywhere in the scanned documents".format(
+                            subject.label, qualifier, pos.klass
+                        )
+                    )
                 findings.append(
                     Finding(
                         rule="HG-CLAIM-002",
                         severity=SEV_REVIEW,
                         file=pos.file,
                         line=pos.line,
-                        message="subject '{}{}' is asserted ({}) with no accompanying "
-                        "negation/limitation anywhere in the scanned documents".format(
-                            subject.label, qualifier, pos.klass
-                        ),
+                        message=message,
                         evidence=_snippet(pos.text),
                         correction="State the limitation next to the claim (what is "
                         "simulated, what was not tested) or remove the claim.",
@@ -944,7 +1375,8 @@ REVISION_CONTEXT = re.compile(
 #: the documentation wart it is rather than as a fabricated reference.
 SELF_DOCUMENTED_INVALID = re.compile(
     r"(not a valid|invalid|nonexistent|non-existent|does not exist|one digit short"
-    r"|wrong|typo|mis-?cited|incorrect)",
+    r"|wrong|typo|mis-?cited|mis-?cop(?:y|ied)|incorrect|\b\d{1,2} hex\b"
+    r"|\b\d{1,2} characters?\b|\bdigit short\b|truncat\w+|\bwrong length\b)",
     re.IGNORECASE,
 )
 DEADLINE_CONTEXT = re.compile(
@@ -952,6 +1384,43 @@ DEADLINE_CONTEXT = re.compile(
 )
 
 REV_EXEMPT_NOTE = "sha-context-exempt"
+
+#: The revision the submission claims to be publishing.  This is the ONLY ref
+#: for which the strict `merge-base --is-ancestor` test applies.  Documented
+#: default; overridden by --release-ref and then by the HG_RELEASE_REF
+#: environment variable.
+DEFAULT_RELEASE_REF = "HEAD"
+
+#: A line that presents a hex token as *the release / tip revision*.  A token on
+#: such a line must be an ancestor of the declared release ref, or it is FAIL:
+#: the document is telling a judge "this is what you are getting".
+RELEASE_CLAIM_RE = re.compile(
+    r"(release (?:commit|revision|ref|tag|tip|build)|tip (?:commit|revision)"
+    r"|current (?:head|revision|commit|tip)|final (?:commit|revision)"
+    r"|submission (?:commit|revision)|published (?:commit|revision|tip)"
+    r"|shipped (?:commit|revision)|head of the release|as the release"
+    r"|at the tip|the tag points at)",
+    re.IGNORECASE,
+)
+
+#: Framing that makes a cross-branch reference *historical* rather than a claim
+#: about the release revision.  A commit that exists locally is a valid citation
+#: when the sentence presents it as history (engineering log, incident record,
+#: superseded work, a named side branch, a dated entry).
+HISTORICAL_CONTEXT_RE = re.compile(
+    r"(histor|previously|earlier|at that time|back then|dated|incident|post-?mortem"
+    r"|no longer|superseded|retrospective|engineering log|changelog|side branch"
+    r"|on (?:the )?[\w./-]+ branch|branched from|never merged|unmerged"
+    r"|was (?:verified|tested|recorded|pushed|merged|built|deployed|observed)"
+    r"|were (?:verified|tested|recorded|pushed|merged|built|deployed|observed)"
+    r"|\b(?:19|20)\d{2}-\d{2}-\d{2}\b)",
+    re.IGNORECASE,
+)
+
+#: Files that present the submission itself rather than its history.  A
+#: non-ancestor reference inside one of these, with no historical framing, is
+#: REVIEW (ambiguous) instead of a silent PASS.
+RELEASE_FACING_DOCS = frozenset(SUBMISSION_DOC_SET)
 
 
 def is_sha_candidate(token: str) -> bool:
@@ -965,25 +1434,66 @@ def is_sha_candidate(token: str) -> bool:
 
 
 def scan_revision_references(
-    root: Path, docs: Sequence[tuple[str, int, str]]
+    root: Path,
+    docs: Sequence[tuple[str, int, str]],
+    release_ref: str = DEFAULT_RELEASE_REF,
 ) -> tuple[list[Finding], dict]:
     """Check hex tokens against the git object database.
 
+    Semantics (rule 3):
+      * a token that does NOT exist as a commit                    -> FAIL
+        (HG-REV-001) when it is presented as a revision.
+      * a token that EXISTS but is not an ancestor of the declared
+        release ref, cited in historical or general documentation   -> PASS.
+        Existence is the whole test for a historical citation: a commit that
+        lives only on another branch is a valid, real revision.
+      * such a token presented as *the release/tip revision*       -> FAIL
+        (HG-REV-002): the strict `merge-base --is-ancestor <token> <ref>` test is
+        reserved for that case.
+      * such a token inside a release-facing document with no
+        historical framing                                          -> REVIEW
+        (HG-REV-004), because offline the intent cannot be decided.
+
     Limits (deliberate, and why nothing here is FAIL-by-guess):
       * `git cat-file -e <sha>^{commit}` only proves the object exists *in this
-        clone*; a SHA from another branch that was never fetched is reported the
-        same way as a fabricated one.  A missing SHA is therefore FAIL only
-        because the artefact is judge-facing and unverifiable as written.
-      * The ancestor check (`git merge-base --is-ancestor`) needs HEAD; if the
-        tree is not a git repository the check is skipped and reported as a note
-        rather than silently passing.
+        clone*; a SHA from a branch that was never fetched is reported the same
+        way as a fabricated one (HG-REV-001).
+      * The ancestor check needs the release ref to resolve; if it does not, the
+        check falls back to HEAD and says so in `stats`, rather than silently
+        passing or silently failing.
       * Tokens in digest/fingerprint/device-id contexts are skipped (reported in
         `exempt`), because offline they are indistinguishable from commit ids.
     """
     findings: list[Finding] = []
-    stats = {"considered": 0, "exempt": 0, "checked": 0, "git": True}
+    stats = {
+        "considered": 0,
+        "exempt": 0,
+        "checked": 0,
+        "git": True,
+        "release_ref": release_ref,
+        "release_resolved": False,
+        "cross_branch_ok": 0,
+        "release_claim_fail": 0,
+        "ambiguous": 0,
+    }
     git_ok = _git(root, "rev-parse", "--git-dir").returncode == 0
     stats["git"] = git_ok
+    release_sha = ""
+    if git_ok:
+        probe = _git(root, "rev-parse", "--verify", "--quiet", release_ref + "^{commit}")
+        if probe.returncode == 0:
+            release_sha = probe.stdout.strip()
+            stats["release_resolved"] = True
+            stats["release_sha"] = release_sha
+        else:
+            fallback = _git(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+            if fallback.returncode == 0:
+                release_sha = fallback.stdout.strip()
+                stats["release_resolved"] = False
+                stats["release_sha"] = release_sha
+                stats["release_ref"] = "{} (unresolved; fell back to HEAD)".format(
+                    release_ref
+                )
     seen: dict[str, list[tuple[str, int, str]]] = {}
     for rel, lineno, text in docs:
         if SHA_CONTEXT_EXEMPT.search(text):
@@ -1070,21 +1580,80 @@ def scan_revision_references(
                     )
                 )
             continue
-        if _git(root, "merge-base", "--is-ancestor", token, "HEAD").returncode != 0:
-            for rel, lineno, text in locations:
-                findings.append(
-                    Finding(
-                        rule="HG-REV-002",
-                        severity=SEV_REVIEW,
-                        file=rel,
-                        line=lineno,
-                        message="revision reference '{}' exists but is not an ancestor of HEAD "
-                        "(not part of the published history)".format(token),
-                        evidence=_snippet(text),
-                        correction="Point the document at a commit that is reachable from the "
-                        "published branch, or label the reference as unpushed work.",
+        if not release_sha:
+            continue  # no ref to compare against: nothing decidable offline
+        if _git(root, "merge-base", "--is-ancestor", token, release_sha).returncode == 0:
+            continue  # reachable from the release ref: silent PASS
+        # The token exists but is not an ancestor of the declared release ref.
+        # Existence is enough for a historical/general citation; only a
+        # release-revision claim is checked strictly.
+        emitted: list[Finding] = []
+        cross_branch_ok = 0
+        release_claims = 0
+        ambiguous = 0
+        for rel, lineno, text in occurrences:
+            if RELEASE_CLAIM_RE.search(text):
+                release_claims += 1
+                if len(emitted) < max_locations:
+                    emitted.append(
+                        Finding(
+                            rule="HG-REV-002",
+                            severity=SEV_FAIL,
+                            file=rel,
+                            line=lineno,
+                            message="revision reference '{}' is presented as the release/tip "
+                            "revision but is not an ancestor of the declared release ref "
+                            "'{}' (it exists only outside the published "
+                            "history)".format(token, release_ref),
+                            evidence=_snippet(text),
+                            correction="Point the release/tip claim at a commit that is "
+                            "reachable from the declared release ref (--release-ref), or "
+                            "label the reference as history rather than as the released "
+                            "revision.",
+                        )
                     )
+            elif HISTORICAL_CONTEXT_RE.search(text) or rel not in RELEASE_FACING_DOCS:
+                # valid citation: the commit exists, which is the whole test for a
+                # historical or general (non-release-facing) reference.
+                cross_branch_ok += 1
+            else:
+                ambiguous += 1
+                if len(emitted) < max_locations:
+                    emitted.append(
+                        Finding(
+                            rule="HG-REV-004",
+                            severity=SEV_REVIEW,
+                            file=rel,
+                            line=lineno,
+                            message="revision reference '{}' exists but is not an ancestor of "
+                            "the declared release ref '{}'; it is cited in a release-facing "
+                            "document without historical framing, so its intent cannot be "
+                            "decided offline".format(token, release_ref),
+                            evidence=_snippet(text),
+                            correction="Either present the reference as history (say which "
+                            "branch/work it belongs to) or move it to a document that is "
+                            "not release-facing.",
+                        )
+                    )
+        stats["cross_branch_ok"] += cross_branch_ok
+        stats["release_claim_fail"] += release_claims
+        stats["ambiguous"] += ambiguous
+        findings.extend(emitted)
+        if len(emitted) == max_locations and (
+            release_claims + ambiguous
+        ) > max_locations:
+            findings.append(
+                Finding(
+                    rule="HG-REV-004",
+                    severity=SEV_REVIEW,
+                    file=emitted[-1].file,
+                    line=emitted[-1].line,
+                    message="{} further location(s) cite the same non-ancestor token "
+                    "'{}'".format(release_claims + ambiguous - max_locations, token),
+                    evidence="[remaining locations elided]",
+                    correction="Reconcile every occurrence.",
                 )
+            )
     return findings, stats
 
 
@@ -1458,14 +2027,45 @@ def _doc_line_stream(
     return stream
 
 
+#: Environment variables that provide the documented configuration defaults.
+ENV_EXPECTED_LICENCE = "HG_EXPECTED_LICENSE"
+ENV_RELEASE_REF = "HG_RELEASE_REF"
+
+
+def resolve_expected_licence(cli_value: str | None = None) -> str:
+    """Resolve the expected licence: CLI > HG_EXPECTED_LICENSE > module default."""
+    if cli_value:
+        return normalise_licence_name(cli_value)
+    env_value = os.environ.get(ENV_EXPECTED_LICENCE, "").strip()
+    if env_value:
+        return normalise_licence_name(env_value)
+    return DEFAULT_EXPECTED_LICENCE
+
+
+def resolve_release_ref(cli_value: str | None = None) -> str:
+    """Resolve the release ref: CLI > HG_RELEASE_REF > module default (HEAD)."""
+    if cli_value:
+        return cli_value.strip()
+    env_value = os.environ.get(ENV_RELEASE_REF, "").strip()
+    if env_value:
+        return env_value
+    return DEFAULT_RELEASE_REF
+
+
 def run_scan(
     root: Path,
     paths: Sequence[str] | None = None,
     severity_min: str = SEV_REVIEW,
     doc_scope: str = "all",
+    expected_licence: str | None = None,
+    release_ref: str | None = None,
 ) -> Report:
+    expected = resolve_expected_licence(expected_licence)
+    ref = resolve_release_ref(release_ref)
     targets = collect_targets(root, paths)
     report = Report(root=str(root))
+    report.stats["expected_licence"] = expected
+    report.stats["release_ref"] = ref
     report.stats["files_scanned"] = len(targets)
     report.stats["docs_scanned"] = sum(
         1 for t in targets if t.kind in ("doc", "licence")
@@ -1483,13 +2083,13 @@ def run_scan(
     findings: list[Finding] = []
 
     # Rule 1
-    findings += scan_licensing(root, targets)
+    findings += scan_licensing(root, targets, expected)
     # Rule 2 (sentence-stitched: wrapped prose must not look like a claim)
     claim_findings, claim_skipped = scan_claims(stitch_statements(doc_lines), root)
     findings += claim_findings
     report.stats["claim_lines_skipped_normative"] = claim_skipped
     # Rule 3
-    rev_findings, rev_stats = scan_revision_references(root, doc_lines)
+    rev_findings, rev_stats = scan_revision_references(root, doc_lines, ref)
     findings += rev_findings
     report.stats["revision"] = rev_stats
     findings += scan_metadata_currency(
@@ -1514,6 +2114,20 @@ def run_scan(
         report.notes.append(
             "{} hex token occurrence(s) exempted as non-revision context "
             "(digest/fingerprint/device-id)".format(rev_stats["exempt"])
+        )
+    if rev_stats["cross_branch_ok"]:
+        report.notes.append(
+            "{} revision citation(s) accepted as historical/general: the commit "
+            "exists locally (possibly only on another branch) and is not "
+            "presented as the release/tip revision".format(rev_stats["cross_branch_ok"])
+        )
+    if rev_stats.get("git") and not rev_stats.get("release_resolved", True):
+        report.notes.append(
+            "release ref '{}' did not resolve; the ancestry test fell back to HEAD "
+            "({})".format(
+                report.stats.get("release_ref", "?"),
+                rev_stats.get("release_sha", "?")[:12],
+            )
         )
     if severity_min == SEV_FAIL:
         report.notes.append("severity-min=FAIL: REVIEW findings filtered from the report")
@@ -1542,8 +2156,16 @@ def render_text(report: Report) -> str:
     )
     rev = report.stats.get("revision", {})
     out.append(
+        "expected licence: {}".format(report.stats.get("expected_licence", "?"))
+    )
+    out.append(
+        "release ref: {}".format(report.stats.get("release_ref", "?"))
+    )
+    out.append(
         "revision tokens: {considered} considered, {exempt} exempt (non-revision "
-        "context), {checked} checked against git".format(**rev)
+        "context), {checked} checked against git; {cross_branch_ok} cross-branch "
+        "citation(s) accepted as historical/general, {release_claim_fail} release "
+        "claim(s) not on the release ref, {ambiguous} ambiguous".format(**rev)
         if rev
         else "revision tokens: not checked"
     )
@@ -1617,6 +2239,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="scan all docs, or only the judge-facing submission doc set",
     )
     parser.add_argument(
+        "--expected-license",
+        default=None,
+        metavar="LICENCE",
+        help="licence the submission is expected to carry (e.g. MIT, Apache-2.0). "
+        "A LICENSE that does not match is FAIL, a manifest licence that conflicts "
+        "is FAIL, a manifest with no licence field is REVIEW.  Default: the "
+        "documented module constant DEFAULT_EXPECTED_LICENCE ({}) or the "
+        "{} environment variable; this flag wins over both.".format(
+            DEFAULT_EXPECTED_LICENCE, ENV_EXPECTED_LICENCE
+        ),
+    )
+    parser.add_argument(
+        "--release-ref",
+        default=None,
+        metavar="REF",
+        help="revision the submission claims to be publishing.  The strict "
+        "merge-base --is-ancestor test is applied only to references presented as "
+        "the release/tip revision.  Default: the documented module constant "
+        "DEFAULT_RELEASE_REF ({}) or the {} environment variable; this flag wins "
+        "over both.".format(DEFAULT_RELEASE_REF, ENV_RELEASE_REF),
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="print nothing; only the exit code matters",
@@ -1637,6 +2281,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             paths=args.paths,
             severity_min=args.severity_min,
             doc_scope=args.doc_scope,
+            expected_licence=args.expected_license,
+            release_ref=args.release_ref,
         )
     except RedactionGuardError as exc:
         print("INTERNAL ERROR: {}".format(exc), file=sys.stderr)

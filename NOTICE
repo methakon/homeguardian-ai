@@ -30,11 +30,15 @@ Installed via npm for the Web MCP gateway & dashboard (web_mcp/):
 
   - werift — MIT License. https://github.com/shinyshi/werift-webrtc
   - ws — MIT License. https://github.com/websockets/ws
+  - mediabunny — Mozilla Public License 2.0 (MPL-2.0). https://github.com/shinyshi/mediabunny
+    Transitive WebRTC media dependency of werift.
+  - Transitive runtime dependencies installed via npm are distributed under
+    MIT, Apache-2.0, BSD-3-Clause, 0BSD, and Unlicense licenses.
 
 Optional, installed separately via npm for the Alexa skill prototype
 (alexa_skill/; not part of the native demo or the default build):
 
-  - ask-sdk-core, ask-sdk-model — Apache License 2.0.
+  - ask-sdk-core, ask-sdk-model, ask-sdk-runtime — Apache License 2.0.
 
 Original HomeGuardian AI source code (everything not under third_party/ and not
 fetched/installed as noted above) is Copyright 2026 Swarna Sekhar Dhar and is
