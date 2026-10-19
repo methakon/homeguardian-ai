@@ -15,8 +15,18 @@
 # Usage: HG_BRIDGE_PATH=/path/to/hg_alexa_bridge bash scripts/verify_retention.sh
 set -euo pipefail
 
-BRIDGE="$(realpath "${HG_BRIDGE_PATH:?set HG_BRIDGE_PATH to a built hg_alexa_bridge}")"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -z "${HG_BRIDGE_PATH:-}" ]; then
+  if [ -x "$REPO/build/hg_alexa_bridge" ]; then
+    BRIDGE="$REPO/build/hg_alexa_bridge"
+  elif [ -x "$REPO/hg_build/hg_alexa_bridge" ]; then
+    BRIDGE="$REPO/hg_build/hg_alexa_bridge"
+  else
+    BRIDGE="$REPO/build/hg_alexa_bridge"
+  fi
+else
+  BRIDGE="$HG_BRIDGE_PATH"
+fi
 PORT="${HG_RETENTION_PORT:-8531}"
 WORK="$(mktemp -d /tmp/hg_retention.XXXXXX)"
 PASS=0; FAIL=0

@@ -19,14 +19,24 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-BRIDGE="${HG_BRIDGE_PATH:-$REPO/hg_build/hg_alexa_bridge}"
+if [ -z "${HG_BRIDGE_PATH:-}" ]; then
+  if [ -x "$REPO/build/hg_alexa_bridge" ]; then
+    BRIDGE="$REPO/build/hg_alexa_bridge"
+  elif [ -x "$REPO/hg_build/hg_alexa_bridge" ]; then
+    BRIDGE="$REPO/hg_build/hg_alexa_bridge"
+  else
+    BRIDGE="$REPO/build/hg_alexa_bridge"
+  fi
+else
+  BRIDGE="$HG_BRIDGE_PATH"
+fi
 PORT="${1:-$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')}"
 TMP="$(mktemp -d)"
-PASS=0; FAIL=0
+PASS=0; FAIL=0; PID=""
 ok()  { PASS=$((PASS+1)); printf '  %-62s OK\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  %-62s FAIL  %s\n' "$1" "${2:-}"; }
 
-cleanup() { [ -n "${PID:-}" ] && kill -TERM "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; rm -rf "$TMP"; }
+cleanup() { [ -n "${PID:-}" ] && kill -TERM "$PID" 2>/dev/null; [ -n "${PID:-}" ] && wait "$PID" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
 
 echo "== sensor & integration status surface =="

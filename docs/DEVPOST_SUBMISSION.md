@@ -108,7 +108,7 @@ We believe absolute transparency is the cornerstone of responsible engineering. 
 - **Panasonic Eluga:** Tested as an auxiliary edge sensor device in staging; not provisioned with live cryptographic credentials in the default judge inventory.
 - **V380 Wi-Fi IP Camera:** RTSP ingestion pipeline designed for local LAN; intentionally held offline in the judge distribution pending user-authorized pairing.
 - **Alexa Echo Hardware:** No production Alexa Echo physical hardware or Amazon cloud skill store publication is claimed; the project provides a local-first Alexa-style demonstration client and ASK v2-compatible native C++ bridge.
-- **Remote-Access Readiness:** Deployed by default strictly on loopback (`127.0.0.1`); public WAN/VPS exposure requires operator configuration of TLS reverse proxy (nginx/caddy) and is not enabled by default.
+- **Remote Access Readiness:** Public remote access is not deployed; services bind strictly to loopback (`127.0.0.1`). Public WAN/VPS exposure is unsupported in this candidate and deferred to future work.
 
 ---
 

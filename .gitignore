@@ -120,3 +120,7 @@ dist/
 # Secret files
 *.secret
 
+# Evidence and cache artifacts
+release_evidence/
+__pycache__/
+*.pyc
