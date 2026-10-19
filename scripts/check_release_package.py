@@ -429,6 +429,14 @@ SECRET_ALLOWLIST_FORMAT = 1
 #: *different* secret at the same file, line and pattern class.
 ALLOWLIST_KEYS = ("file", "line", "pattern_class", "value_sha256_8")
 
+#: The whole schema: the top-level document carries exactly these two keys (plus
+#: nothing else), and an entry carries exactly the four match keys plus an
+#: optional reviewer reason.  Anything else is an unknown-schema allow-list and
+#: is REJECTED whole rather than silently honoured - a config that drifted must
+#: not quietly change what is suppressed.
+ALLOWLIST_TOP_KEYS = ("format", "entries")
+ALLOWLIST_ENTRY_KEYS = ALLOWLIST_KEYS + ("reason",)
+
 
 def resolve_secret_allowlist(explicit=None):
     """Where the allow-list comes from: the argument, then the env, then the repo."""
@@ -441,14 +449,23 @@ def resolve_secret_allowlist(explicit=None):
     return beside if beside.is_file() else None
 
 
-def load_secret_allowlist(path) -> tuple[dict, list[str]]:
+def load_secret_allowlist(path, problems: list | None = None) -> tuple[dict, list[str]]:
     """Read a reviewed secret allow-list.  Returns (keys, notes).
 
     ``keys`` maps ``(file, line, pattern_class, value_sha256_8)`` to the
     reviewer's reason.  A missing, unreadable or malformed allow-list yields no
     keys and a note: the safe direction is that every credential-shaped value
     stays FAIL, so a broken allow-list can never widen what is suppressed.
+
+    The SCHEMA is validated too, and a violation rejects the whole file: the
+    ``format`` version must be present and equal :data:`SECRET_ALLOWLIST_FORMAT`,
+    the document may carry only :data:`ALLOWLIST_TOP_KEYS`, and an entry only
+    :data:`ALLOWLIST_ENTRY_KEYS`.  An unknown-schema allow-list loads NO keys (so
+    it cannot suppress anything) and each violation is appended to ``problems``,
+    which the caller raises as a named finding.  ``problems`` is optional so a
+    caller that only wants the keys keeps the original two-value contract.
     """
+    problems = [] if problems is None else problems
     notes: list[str] = []
     if path is None:
         return {}, notes
@@ -469,6 +486,49 @@ def load_secret_allowlist(path) -> tuple[dict, list[str]]:
             "FAIL".format(path, type(exc).__name__)
         )
         return {}, notes
+
+    # -- schema validation: an unknown-schema allow-list is rejected whole -----
+    schema: list[str] = []
+    if isinstance(data, dict):
+        if "format" not in data:
+            schema.append(
+                "no 'format' version (this build reads format {})".format(
+                    SECRET_ALLOWLIST_FORMAT)
+            )
+        elif data["format"] != SECRET_ALLOWLIST_FORMAT:
+            schema.append(
+                "unsupported 'format' {!r} (this build reads format {})".format(
+                    data["format"], SECRET_ALLOWLIST_FORMAT)
+            )
+        unknown_top = sorted(str(k) for k in set(data) - set(ALLOWLIST_TOP_KEYS))
+        if unknown_top:
+            schema.append(
+                "unknown top-level key(s) {} (allowed: {})".format(
+                    ", ".join(repr(k) for k in unknown_top),
+                    ", ".join(ALLOWLIST_TOP_KEYS))
+            )
+        raw_entries = data.get("entries")
+        if isinstance(raw_entries, list):
+            for index, entry in enumerate(raw_entries):
+                if not isinstance(entry, dict):
+                    continue
+                unknown = sorted(str(k) for k in set(entry)
+                                 - set(ALLOWLIST_ENTRY_KEYS))
+                if unknown:
+                    schema.append(
+                        "entry {} carries unknown key(s) {} (allowed: {})".format(
+                            index, ", ".join(repr(k) for k in unknown),
+                            ", ".join(ALLOWLIST_ENTRY_KEYS))
+                    )
+    if schema:
+        problems.extend(schema)
+        notes.append(
+            "the secret allow-list {} was REJECTED and no entry was loaded "
+            "({}); every credential-shaped value stays FAIL".format(
+                path, "; ".join(schema))
+        )
+        return {}, notes
+
     entries = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(entries, list):
         notes.append(
@@ -2455,7 +2515,9 @@ def run_audit(path: Path, expected_licence: str | None = None,
         package_script if package_script is not None else default_package_script()
     )
     allowlist_path = resolve_secret_allowlist(secret_allowlist)
-    allowlist_keys, allowlist_notes = load_secret_allowlist(allowlist_path)
+    allowlist_problems: list[str] = []
+    allowlist_keys, allowlist_notes = load_secret_allowlist(allowlist_path,
+                                                            allowlist_problems)
 
     workdir = Path(tempfile.mkdtemp(prefix="hgpkg-audit-"))
     report = Report(input_path=str(path), expected_licence=expected)
@@ -2512,6 +2574,24 @@ def run_audit(path: Path, expected_licence: str | None = None,
         # findings: it downgrades the exact findings it names from FAIL to
         # REVIEW and changes nothing else.  A pass that matches no entry is not
         # affected, so the check is not widened by its presence.
+        # An unknown-schema allow-list was rejected by the loader (no entry
+        # loaded, so it suppressed nothing); say so as its own FAIL finding so a
+        # drifted config is loud rather than silently ineffective.
+        for problem in allowlist_problems:
+            findings.append(_finding(
+                "HG-PKG-LEAK-009", SEV_FAIL,
+                str(allowlist_path or "<allowlist>"), 0,
+                "the reviewed secret allow-list was rejected: {}; no entry was "
+                "loaded, so every credential-shaped value stays "
+                "FAIL".format(problem),
+                problem,
+                "Fix the allow-list schema - a 'format' equal to {}, only the "
+                "top-level keys {} and only the entry keys {} - then re-run the "
+                "audit. An unknown-schema allow-list must never silently change "
+                "what is suppressed.".format(
+                    SECRET_ALLOWLIST_FORMAT, ", ".join(ALLOWLIST_TOP_KEYS),
+                    ", ".join(ALLOWLIST_ENTRY_KEYS)),
+            ))
         findings, allowlist_applied = apply_secret_allowlist(findings,
                                                              allowlist_keys)
         report.stats["secret_allowlist"] = {
