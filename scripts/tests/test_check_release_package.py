@@ -1307,7 +1307,7 @@ SYNTHETIC_TEST_SECRETS = {
     "tests/cpp/test_alexa_credentials.cpp":
         'std::string ' + 'access_' + 'token = "alexa-test-token-123456";\n',
     "web_mcp/tests/doorbell.test.js":
-        'const ' + 'client_' + 'secret = "hg-test-client-secret-77";\n',
+        'const ' + 'client_sec' + 'ret = "hg-test-client-secret-77";\n',
     "tests/fixtures/synthetic_tokens.txt":
         'github_' + 'token = "' + 'ghp_' + 'testonly00000000000000000000000000"\n',
 }
