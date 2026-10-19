@@ -51,11 +51,17 @@ namespace {
 // authenticated receive path accepted them because it compares both sides against the same injected clock.
 // A real producer sends timestamps that are approximately now, so this harness does too: a base of the real
 // wall clock, advanced one second per observation.
-const int64_t kBase = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          std::chrono::system_clock::now().time_since_epoch())
-                          .count();
-int64_t fake_now = 0;                         // offset from the base, in milliseconds
-int64_t clock_ms() { return kBase + fake_now; }
+// The base is read at EVERY call, not frozen at process start. Freezing it looked harmless and was not: in
+// a long-running process (the full suite runs ~150 s before this file) a base captured at static-init ages
+// every event out of the pipeline's wall-clock correlation window, so the isolated run passed and the suite
+// run did not. The offsets below are relative to the current instant, which is what a real node's clock is.
+int64_t fake_now = 0;                         // offset from NOW, in milliseconds (negative = the past)
+int64_t clock_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+               .count() +
+           fake_now;
+}
 
 // A bearer token the MCP client must present. Fail-closed by construction: anything else is unauthenticated.
 class SensorVerifier : public IAlexaCredentialVerifier {
@@ -507,6 +513,7 @@ TEST_CASE("trace: what the release does between an accepted observation and an a
         fake_now = -50'000 + i * 1000;
         (void)hub.feed(0.60 + 0.004 * i);
     }
+    fake_now = 0;
     std::printf("\n--- decision trace ---\n");
     std::printf("accepted by the receive path: %zu   derived observations: %zu   alerts: %zu\n",
                 hub.accepted, hub.derived.size(), hub.delivered.size());
