@@ -6,7 +6,7 @@
 **Submission Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server with Alexa-Style Demonstration Client** (AmazonAppDev 2026)  
 **Evaluator Target:** Hackathon Judges, Security Auditors & Community Evaluators  
 **Candidate Version:** 1.0.3 (Release Candidate)  
-**License:** Apache License 2.0 (see [LICENSE](LICENSE) and [NOTICE](NOTICE))  
+**License:** Apache License 2.0 (see [LICENSE](../LICENSE) and [NOTICE](../NOTICE))  
 
 ---
 
@@ -217,7 +217,7 @@ All security boundaries are continuously asserted by automated test suites:
 | Suite Name | Execution Command | Test Scope & Invariants Verified | Passed / Total |
 |---|---|---|---|
 | **Automated Judge Smoke** | `bash scripts/verify_judge_release.sh` | Deterministic one-command judge smoke: C++, MCP handshake, tools, security, coordinator | **PASS (27/27)** |
-| **C++ Core & Sanitizers** | `HG_SOURCE_DIR=$(pwd) ./build/homeguardian_tests` | Catch2 suite: contract bounds, SQLite WAL retention, CSPRNG stress loop | **527 / 527** (38,929 assertions) |
+| **C++ Core & Sanitizers** | `HG_SOURCE_DIR=$(pwd) ./build/homeguardian_tests` | Catch2 suite: contract bounds, SQLite WAL retention, CSPRNG stress loop | **527 / 527** (38,926 assertions) |
 | **Independent Security Gate** | `bash scripts/test_hg_sec_01_independent.sh` | HG-SEC-01 threat model: method restriction, CSRF token replay, zero-mutation SQLite invariant | **15 / 15** |
 | **MCP Hardening & Isolation** | `bash scripts/verify_mcp.sh` | 256-bit session entropy, Bob vs Alice session isolation, slowloris read deadlines, overload drain | **73 / 73** |
 | **WebRTC & Devices Gate** | `node web_mcp/test_devices_dashboard.js` | Origin validation, fail-closed consent, CSPRNG device pairing, sequence replay protection | **161 / 161** |
@@ -249,7 +249,7 @@ Absolute transparency is foundational to our submission. The exact status of har
 Before submitting to Devpost, verify each item:
 
 - [x] **Repository Public & Accessible:** https://github.com/methakon/homeguardian-ai
-- [x] **Open-Source License:** Apache License 2.0 with [NOTICE](NOTICE) file attributing third-party dependencies.
+- [x] **Open-Source License:** Apache License 2.0 with [NOTICE](../NOTICE) file attributing third-party dependencies.
 - [x] **Truthful System Description:** Positioned truthfully as a Real Native C++ MCP 2025-11-25 Server with an Alexa-Style Demonstration Client; no claims of live Amazon identity or cloud integrations.
 - [x] **Hardware Privacy Compliance:** Documented that physical cameras are withheld in the judge build (fail-closed hardware boundary) and test feeds are synthetic.
 - [x] **Clean Release Package:** Verifiable archive generated with `scripts/package_release.sh` containing clean source and SHA-256 checksums.

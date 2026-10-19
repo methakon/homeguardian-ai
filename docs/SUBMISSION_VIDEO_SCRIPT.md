@@ -96,7 +96,7 @@
 
 ### Act 6: Verification Rigor, Disclosures & Closing (2:25 – 2:45 / 20s)
 - **Visual:**
-  - Fast montage: C++ test suite finishing 527 tests / 38,929 assertions; 15 independent security gates green; GitHub repository and Apache 2.0 license.
+  - Fast montage: C++ test suite finishing 527 tests / 38,926 assertions; 15 independent security gates green; GitHub repository and Apache 2.0 license.
   - Final screen displaying:
     - GitHub: https://github.com/methakon/homeguardian-ai
     - Transparent Disclosure: Real Native C++ MCP 2025-11-25 | Alexa-Style Demonstration Client | Synthetic Evaluation Boundary | Zero Cloud Exfiltration

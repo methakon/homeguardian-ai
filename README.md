@@ -172,7 +172,7 @@ required by `demo.sh`.
 
 ## Testing
 
-Run the full native C++ test suite (527 test cases / 38,929 assertions):
+Run the full native C++ test suite (527 test cases / 38,926 assertions):
 
 ```bash
 cd build
