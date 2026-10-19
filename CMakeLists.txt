@@ -188,6 +188,7 @@ if(OpenSSL_FOUND)
     message(STATUS "D-03: OpenSSL ${OPENSSL_VERSION} found -> building hg_device_ingress + hg_device_client + hg_ingress_probe")
 
     set(HG_NET_SOURCES
+        src/net/ObservationProducer.cpp
         src/net/DeviceProtocol.cpp
         src/net/DeviceRegistry.cpp
         src/net/ObservationIngest.cpp
@@ -243,6 +244,7 @@ if(OpenSSL_FOUND)
 
     add_executable(hg_device_client
         src/main_device_client.cpp
+        src/net/ObservationProducer.cpp
         src/net/DeviceProtocol.cpp
         src/net/TlsTransport.cpp
     )
@@ -552,6 +554,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_skill_gaps.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_device_transport.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_network_contract_audit.cpp
+        ${CMAKE_SOURCE_DIR}/tests/net/test_producer_and_reliability.cpp
         # HG-V380-09 camera adapter boundary: deterministic mock adapters plus the
         # registry/consent authorization seam. Registered in the TEST target only —
         # no shipped binary references them, so their footprints are unchanged.
@@ -614,6 +617,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/SecurityObservation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HomeAssistantAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/ObservationProducer.cpp
         ${CMAKE_SOURCE_DIR}/src/net/DeviceProtocol.cpp
         ${CMAKE_SOURCE_DIR}/src/net/DeviceRegistry.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ObservationIngest.cpp

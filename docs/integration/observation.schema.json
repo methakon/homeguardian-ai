@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HomeGuardian network observation message",
+  "contract_version": "1.0",
+  "description": "One framed JSON message a device sends to the hub. Framing is a 4-byte big-endian length prefix; the whole payload is capped at 4096 bytes. Scalars only: no frame, no audio samples and no free-form text.",
+  "type": "object",
+  "required": [
+    "kind",
+    "protocol_version_major",
+    "protocol_version_minor",
+    "device_id",
+    "observation_id",
+    "sequence",
+    "source_type",
+    "observation_type",
+    "acquisition_mode",
+    "acquired_at_ms",
+    "features"
+  ],
+  "properties": {
+    "kind": {"enum": ["hello", "welcome", "observation", "acknowledgement", "heartbeat", "goodbye", "error"]},
+    "protocol_version_major": {"const": 1},
+    "protocol_version_minor": {"const": 0},
+    "device_id": {"type": "string", "minLength": 1, "description": "A CLAIM. The hub re-derives identity from the client certificate."},
+    "observation_id": {"type": "string", "minLength": 1, "description": "Unique per observation; a repeat is refused as a replay."},
+    "sequence": {"type": "integer", "minimum": 1, "description": "Per-device, monotonic. Resume above welcome.resume_after_sequence."},
+    "source_type": {"type": "string", "description": "Hub policy vocabulary; an unknown value is refused."},
+    "observation_type": {"type": "string", "description": "Hub policy vocabulary; an unknown value is refused."},
+    "acquisition_mode": {"enum": ["live", "synthetic"]},
+    "acquired_at_ms": {"type": "integer", "minimum": 1, "description": "Milliseconds since the Unix epoch, from a synchronised clock."},
+    "features": {"type": "object", "maxProperties": 11, "description": "Bounded scalars. A blob here cannot be framed."},
+    "unit": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "provenance_claim": {"enum": ["real", "synthetic"], "description": "A CLAIM. The hub records what it can substantiate."},
+    "resume_after_sequence": {"type": "integer", "minimum": 0, "description": "welcome only: the highest sequence the hub already accepted."},
+    "reason": {"type": "string", "description": "ack/error only: the refusal code."},
+    "detail": {"type": "string", "description": "ack/error only: a bounded, non-sensitive explanation."}
+  }
+}

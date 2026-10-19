@@ -939,6 +939,69 @@
         "experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "observation-producer-header",
+      "path": "src/net/ObservationProducer.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ObservationProducer",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "observation-producer-source",
+      "path": "src/net/ObservationProducer.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ObservationProducer",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "producer-reliability-suite",
+      "path": "tests/net/test_producer_and_reliability.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_producer_and_reliability.cpp",
+      "content_markers": [
+        "ObservationProducer"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "integration-package-readme",
+      "path": "docs/integration/README.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "integration/README.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "observation-schema",
+      "path": "docs/integration/observation.schema.json",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "observation.schema.json",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }
