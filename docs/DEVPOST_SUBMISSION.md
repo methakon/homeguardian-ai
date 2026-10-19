@@ -1,11 +1,11 @@
 # HomeGuardian AI — Official Devpost Submission Entry
 
-> [!WARNING]
-> **SECURITY APPROVAL PENDING:** This submission release candidate (`05e130395b1d3244bb38202c929902b6e1d93f28`) has completed all HG-SEC-06 remediation stages and all regression test suites (526 C++ tests, 132 UI/device tests, 71 MCP tests, 15 security gates). Independent audit verification by Hermes Session 1 is actively running in parallel. This packaging and submission documentation is published under **SECURITY APPROVAL PENDING** status.
+> [!NOTE]
+> **HACKATHON CANDIDATE CERTIFIED (HG-NET-02 / HG-SEC-06D):** This submission release candidate (`release/hackathon-2026-mcp-candidate` @ commit `1e3e778`, [PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has completed all security remediation stages (HG-SEC-01 through HG-SEC-06D), loopback ingress hardening, outbound MCP coordinator bridge verification, clean-clone validation, and independent regression test suites (574 C++ tests, 161 UI/dashboard tests, 73 MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests). Fully certified for judge evaluation on local workstation loopback.
 
 **Project Title:** HomeGuardian AI — Privacy-First Whole-Home Intelligence  
 **Tagline:** Local-first, consent-gated home safety intelligence with native C++ core, Model Context Protocol (spec 2025-11-25) Streamable HTTP server, and Alexa-style demonstration client.  
-**Primary Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server & C++ Home Safety Engine with an Alexa-Style Demonstration Client**  
+**Primary Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server & C++ Home Safety Engine with an Alexa-Style Demonstration Client** (AmazonAppDev 2026)  
 **GitHub Repository:** https://github.com/methakon/homeguardian-ai  
 **License:** Apache License 2.0 (Sha256 verified against apache.org)  
 
