@@ -111,7 +111,9 @@ async function setup() {
     `scripts/bridge_ws_compat/stubs/android/util/Log.java ` +
     `scripts/bridge_ws_compat/stubs/android/system/StructStat.java ` +
     `scripts/bridge_ws_compat/stubs/android/system/Os.java ` +
+    `scripts/bridge_ws_compat/stubs/android/net/*.java ` +
     `scripts/bridge_ws_compat/stubs/org/json/JSONObject.java ` +
+    `apk_service/src/org/homeguardian/edgeservice/RouteSecurityPolicy.java ` +
     `apk_service/src/org/homeguardian/edgeservice/Provisioner.java ` +
     `apk_service/src/org/homeguardian/edgeservice/OutboundMcpBridge.java ` +
     `scripts/bridge_ws_compat/Harness.java`,
