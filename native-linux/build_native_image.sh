@@ -65,12 +65,13 @@ say "3. build the HomeGuardian MCP package"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DST=~/.local/var/pmbootstrap/pmaports/device/testing/homeguardian-mcp
 mkdir -p "$DST"
-cp "$HERE/homeguardian-mcp/APKBUILD"        "$DST/"
-cp "$HERE/homeguardian-mcp/hg-mcp.service"  "$DST/"
-cp "$HERE/homeguardian-mcp/hg-mcp.conf"     "$DST/" 2>/dev/null || true
+cp "$HERE/packaging/homeguardian-mcp/APKBUILD"        "$DST/"
+cp "$HERE/packaging/homeguardian-mcp/hg-mcp.service"  "$DST/"
+cp "$HERE/packaging/homeguardian-mcp/hg-mcp.conf"     "$DST/" 2>/dev/null || true
 # Reuse the single verified artifact already in the repository rather than keeping a second
 # copy of a 2.7 MB binary. Its sha256 is asserted by the APKBUILD's prepare().
-cp "$HERE/../../deploy/linux_arm64/hg_mcp_server" "$DST/"
+# $HERE is native-linux/, so the repository root is one level up.
+cp "$HERE/../deploy/linux_arm64/hg_mcp_server"        "$DST/"
 ( cd "$DST" && pmbootstrap -q checksum homeguardian-mcp 2>/dev/null || true )
 pmbootstrap -q build homeguardian-mcp
 
