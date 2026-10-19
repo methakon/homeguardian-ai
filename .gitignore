@@ -145,3 +145,6 @@ build_envcontext/
 
 # Owner private backups: user files must never be committed or published.
 user-backups/
+build_mcp_arm64/
+build_mcp_arm64_static/
+linux_arm64_build/
