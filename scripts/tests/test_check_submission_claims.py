@@ -1487,5 +1487,27 @@ class TestSecretRedactionWithHardenedRules(FixtureCase):
         self.assertEqual(code_text, csc.EXIT_FAIL)
 
 
+class TestPlaceholderCaseSensitivity(unittest.TestCase):
+    def test_all_alpha_passwords_not_placeholders(self) -> None:
+        """Ordinary alphabetic secrets must NOT be suppressed by PLACEHOLDER_RE."""
+        # Lowercase and mixed-case passwords >= 4 characters
+        for pwd in ("supersecretpassword", "SuperSecretProdValue", "mypasswordisstrong"):
+            self.assertIsNone(csc.PLACEHOLDER_RE.match(pwd), f"{pwd!r} must not match PLACEHOLDER_RE")
+
+    def test_genuine_placeholders_still_match(self) -> None:
+        """Uppercase placeholders and explicit keywords must still match."""
+        for pl in ("XXXX", "MY_SECRET_KEY", "<YOUR_KEY>", "${SECRET_TOKEN}",
+                   "placeholder", "SAMPLE", "Example", "changeme", "redacted"):
+            self.assertIsNotNone(csc.PLACEHOLDER_RE.match(pl), f"{pl!r} must match PLACEHOLDER_RE")
+
+    def test_alpha_password_in_scan_stream_detected(self) -> None:
+        """A secret assignment with an all-alpha password must be detected."""
+        stream = [("config/test.env", 1, "password = supersecretproductiontoken")]
+        findings, _ = csc.scan_credentials(stream)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].klass, "secret-assignment")
+        self.assertEqual(findings[0].rule, "HG-CRED-006")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

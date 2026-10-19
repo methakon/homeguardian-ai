@@ -287,6 +287,7 @@ RULE_CHECK = {
     "HG-PKG-LEAK-005": 4,
     "HG-PKG-LEAK-006": 4,
     "HG-PKG-LEAK-007": 4,
+    "HG-PKG-LEAK-008": 4,
     "HG-PKG-REV-001": 5,
     "HG-PKG-REV-002": 5,
     "HG-PKG-REV-003": 5,
@@ -470,6 +471,27 @@ def load_secret_allowlist(path) -> tuple[dict, list[str]]:
         )
         return {}, notes
     entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        notes.append(
+            "the secret allow-list {} is not a JSON object; no credential "
+            "finding is allow-listed".format(path)
+        )
+        return {}, notes
+    if data.get("format") != SECRET_ALLOWLIST_FORMAT:
+        notes.append(
+            "the secret allow-list {} declares unsupported format {!r} "
+            "(expected {}); no credential finding is allow-listed".format(
+                path, data.get("format"), SECRET_ALLOWLIST_FORMAT
+            )
+        )
+        return {}, notes
+    unknown_top = [k for k in data.keys() if k not in ("format", "entries", "notes")]
+    if unknown_top:
+        notes.append(
+            "the secret allow-list {} carries unknown top-level key(s) {!r}; "
+            "no credential finding is allow-listed".format(path, unknown_top)
+        )
+        return {}, notes
     if not isinstance(entries, list):
         notes.append(
             "the secret allow-list {} carries no 'entries' list; no credential "
@@ -484,14 +506,23 @@ def load_secret_allowlist(path) -> tuple[dict, list[str]]:
                                               for key in ALLOWLIST_KEYS):
             malformed += 1
             continue
+        if any(key not in ALLOWLIST_KEYS and key != "reason" for key in entry):
+            malformed += 1
+            continue
         try:
             line = int(entry["line"])
+            if line <= 0:
+                malformed += 1
+                continue
         except (TypeError, ValueError):
             malformed += 1
             continue
+        sha = str(entry["value_sha256_8"]).lower()
+        if len(sha) != 8 or not re.match(r"^[0-9a-f]{8}$", sha):
+            malformed += 1
+            continue
         keys[(str(entry["file"]), line, str(entry["pattern_class"]),
-              str(entry["value_sha256_8"]).lower())] = str(
-                  entry.get("reason") or "")
+              sha)] = str(entry.get("reason") or "")
     notes.append(
         "secret allow-list {}: {} reviewed entr{} loaded{}; an allow-listed "
         "finding is downgraded to REVIEW (never suppressed), and a changed "
@@ -502,10 +533,12 @@ def load_secret_allowlist(path) -> tuple[dict, list[str]]:
     )
     if malformed:
         notes.append(
-            "{} allow-list entr{} were malformed (each needs {}, and an integer "
-            "line) and were ignored, so any finding they describe stays "
-            "FAIL".format(malformed, "y" if malformed == 1 else "ies",
-                          ", ".join(ALLOWLIST_KEYS))
+            "{} allow-list entr{} were malformed (each needs {}, an integer "
+            "line > 0, and an 8-hex sha256) and were ignored, so any finding "
+            "they describe stays FAIL".format(
+                malformed, "y" if malformed == 1 else "ies",
+                ", ".join(ALLOWLIST_KEYS),
+            )
         )
     return keys, notes
 
@@ -1349,12 +1382,23 @@ def scan_packaged_values(candidates: Sequence[tuple[Path, str]], root: Path,
     """
     _require()
     stream: list[tuple[str, int, str]] = []
+    read_findings = []
     skipped_binary = 0
     skipped_large = 0
+    unreadable_files = 0
     for path, label in sorted(candidates, key=lambda item: str(item[0])):
         try:
             raw = path.read_bytes()
-        except OSError:
+        except OSError as exc:
+            unreadable_files += 1
+            read_findings.append(_finding(
+                "HG-PKG-LEAK-008", SEV_FAIL, label, 0,
+                "unreadable packaged file '{}': {}; could not be content-scanned for credentials".format(
+                    label, exc
+                ),
+                str(exc),
+                "Ensure all packaged files have readable filesystem permissions and can be opened.",
+            ))
             continue
         if len(raw) > max_bytes:
             skipped_large += 1
@@ -1367,6 +1411,7 @@ def scan_packaged_values(candidates: Sequence[tuple[Path, str]], root: Path,
             stream.append((label, lineno, line))
 
     findings, sensitive = csc.scan_credentials(stream)
+    findings.extend(read_findings)
     by_line = {(rel, lineno): text for rel, lineno, text in stream}
     if not include_topology:
         topology = {"private-ipv4-topology", "public-ipv4-literal"}
@@ -1379,6 +1424,7 @@ def scan_packaged_values(candidates: Sequence[tuple[Path, str]], root: Path,
         "lines_scanned": len(stream),
         "binary_skipped": skipped_binary,
         "large_skipped": skipped_large,
+        "unreadable_skipped": unreadable_files,
         "topology_matches_not_reported": excluded,
     }
 
@@ -1401,10 +1447,11 @@ CREDENTIAL_CLASSES = frozenset({
 CREDENTIAL_MARKER_RE = re.compile(
     r"(?i)^(?:"
     r"x{3,}|\.{3,}|<[^>]*>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|"
-    r"invalid(?:[-_][a-z0-9_-]*)?|not[-_]the[-_]secret|not[-_][a-z0-9_-]*|"
-    r"wrong(?:[-_][a-z0-9_-]*)?|dummy(?:[-_][a-z0-9_-]*)?|"
-    r"fake(?:[-_][a-z0-9_-]*)?|redacted|changeme|placeholder|"
-    r"example(?:[-_][a-z0-9_-]*)?|sample(?:[-_][a-z0-9_-]*)?)$"
+    r"invalid(?:[-_][a-z][a-z0-9]{0,7})?|not[-_]the[-_]secret"
+    r"|not[-_][a-z][a-z0-9]{0,7}|"
+    r"wrong(?:[-_][a-z][a-z0-9]{0,7})?|dummy(?:[-_][a-z][a-z0-9]{0,7})?|"
+    r"fake(?:[-_][a-z][a-z0-9]{0,7})?|redacted|changeme|placeholder|"
+    r"example(?:[-_][a-z][a-z0-9]{0,7})?|sample(?:[-_][a-z][a-z0-9]{0,7})?)$"
 )
 
 #: An identifier chain (``process.env.X``, ``fs.readFileSync``,
@@ -1469,6 +1516,9 @@ def check_packaging_hygiene(pkg: Package, rules: PackagingRules,
     relabelled = []
     downgraded = {"reference": 0, "marker": 0}
     for f in value_findings:
+        if getattr(f, "rule", None) == "HG-PKG-LEAK-008":
+            relabelled.append(f)
+            continue
         if f.klass in CREDENTIAL_CLASSES:
             shape = _credential_shape(f, by_line.get((f.file, f.line), ""))
         else:

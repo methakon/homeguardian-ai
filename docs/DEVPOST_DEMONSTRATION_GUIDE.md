@@ -16,7 +16,7 @@
 > **Transparency Declaration for Hackathon Judges:**
 > - **Real Native C++ MCP 2025-11-25 Server:** An authoritative, native C++ Model Context Protocol (MCP) server (spec 2025-11-25) is fully implemented, running locally on loopback with Streamable HTTP. It exposes strictly read-only tools (`get_homeguardian_status`, `get_alert_summary`) with CSPRNG 256-bit token credential binding and is not an Amazon-hosted runtime.
 > - **Alexa-Style Demonstration Client:** The web dashboard provides an interactive client-side Alexa-style conversational assistant connected directly to the C++ bridge and native MCP tools over loopback. There is **no live Amazon cloud identity** and no production Echo hardware required.
-> - **Synthetic vs Real Cameras (Fail-Closed Hardware Boundary):** In accordance with the Project Manager's Hardware Authorization policy and safe testing standards, the judge build strictly isolates physical cameras (`camera-001`, `camera-002`) in an **offline and unverified** state. Viewing requests for physical cameras are refused with HTTP 400 (`physical_camera_unverified`). All live demonstrations use the hardware-isolated **synthetic test provider** (`camera-syn-001`). No physical camera or microphone is ever activated during evaluation.
+> - **Synthetic vs Real Cameras (Fail-Closed Hardware Boundary):** In accordance with the Project Manager's Hardware Authorization policy and safe testing standards, the judge build strictly isolates physical cameras (`camera-001`) in an **offline and unverified** state. Viewing requests for physical cameras are refused with HTTP 400 (`physical_camera_unverified`). All live demonstrations use the hardware-isolated **synthetic test provider** (`camera-syn-001`). No physical camera or microphone is ever activated during evaluation.
 
 ---
 
@@ -83,16 +83,16 @@ Launch the unified demonstration server:
 bash demo.sh
 ```
 
-Open your browser to: `http://127.0.0.1:8199` (native) or `http://127.0.0.1:18880` (Node gateway).
+Open your browser to: `http://127.0.0.1:18880` (Local Web Gateway).
 
 | Timestamp | Interface Screen & Action | Judge Voiceover / Demonstration Rationale |
 |---|---|---|
-| **0:00 – 0:30** | **System Overview & Honesty Banner:** Point out the prominent banner indicating synthetic test feeds and loopback binding. View the **System Status Card** (`State: Running`, `Capture: Enabled (Simulated)`). | *"HomeGuardian AI provides edge-first residential safety monitoring. Notice the top banner: all observations are synthetic. No physical camera or microphone is activated, preserving total household privacy."* |
-| **0:30 – 1:00** | **Native C++ MCP Conversational Chat:** Click the **Conversational Assistant** tab. Ask: *"Is everything okay right now?"* and *"Are physical cameras active?"* | *"The conversational interface translates operator queries into JSON-RPC 2.0 calls directly to our native C++ MCP server over Streamable HTTP. The server queries in-process state and generates dynamic, grounded responses."* |
-| **1:00 – 1:30** | **Simulated Fall Scenario Execution:** In the Scenario selector, choose **Unusual Activity / Critical Impact**, click **▶ Run scenario**. | *"Watch the real C++ pipeline execute: synthetic sensor observations flow through validation, multi-detector fusion, and cooldown deduplication. An explainable alert is generated and persisted in SQLite."* |
-| **1:30 – 2:00** | **Authoritative Device Registry & Consent Gate:** Navigate to the **Registered Devices** tab. View the list of cameras and sensors. | *"The device inventory is managed by the C++ DeviceRegistry. Notice that physical cameras are strictly marked offline and unauthorized. Viewing permission requires explicit user consent."* |
-| **2:00 – 2:30** | **WebRTC Live Camera Viewer:** Select `camera-syn-001`, click **▶ Start Live View**. Observe the synthetic video test pattern stream. | *"Clicking Live View requests a scoped, single-use view token. WebRTC negotiates loopback SDP without cloud relays. Werift renders a hardware-isolated test pattern. Zero video frames pass over MCP or plain JSON."* |
-| **2:30 – 3:00** | **Fail-Closed Privacy Boundary Demonstration:** Click **⏹ Stop Stream**. Select an unconsented physical device and attempt viewing. | *"Attempting to view an unconsented or physical camera fails closed immediately with HTTP 400. In addition, idle viewers automatically time out, stopping media tracks and releasing all peer connections."* |
+| **0:00 – 0:30** | **System Overview & Honesty Banner:** Point out the prominent top banner (`SYNTHETIC SENSOR ENVIRONMENT (EVALUATION MODE)`). View the **System Status Card** (`State: Running`, `Capture: Enabled (Simulated)`). | *"HomeGuardian AI provides edge-first residential safety monitoring. Notice the top banner: all observations are synthetic. No physical camera or microphone is activated, preserving total household privacy."* |
+| **0:30 – 1:00** | **Native C++ MCP Conversational Chat:** Click the **💬 MCP Conversational Client** tab. Click quick-chat button `"Is everything okay?"` or type a question. | *"The conversational interface translates operator queries into JSON-RPC 2.0 calls directly to our native C++ MCP server over Streamable HTTP. The server queries in-process state and generates dynamic, grounded responses."* |
+| **1:00 – 1:30** | **Simulated Fall Scenario Execution:** In the **⚡ Synthetic Incident Testing** panel, click **⚠️ Trigger Simulated Critical Fall (Peak 0.95 -> Immobility 0.10)**. | *"Watch the real C++ pipeline execute: synthetic sensor observations flow through validation, multi-detector fusion, and cooldown deduplication. An explainable alert is generated and persisted in SQLite."* |
+| **1:30 – 2:00** | **Authoritative Device Registry & Consent Gate:** Navigate to the **📹 Peripheral Devices & Live Camera** tab. View the **📡 Peripheral Device Registry** card listing paired devices (`camera-syn-001`, `camera-001`). | *"The device inventory is managed by the C++ DeviceRegistry. Notice that physical camera camera-001 is strictly marked offline and unverified. Viewing permission requires explicit user consent."* |
+| **2:00 – 2:30** | **WebRTC Live Camera Viewer:** In the **📷 Live Camera Panel**, select `camera-syn-001` and click **▶ Start Live View**. Observe the synthetic video test pattern stream. | *"Clicking Live View requests a scoped, single-use view token. WebRTC negotiates loopback SDP without cloud relays. Werift renders a hardware-isolated test pattern. Zero video frames pass over MCP or plain JSON."* |
+| **2:30 – 3:00** | **Fail-Closed Privacy Boundary & Wire Inspector:** Click **⏹ Stop**. Attempt to view unverified physical device `camera-001` (refused with HTTP 400). Switch to **🔬 WebRTC & MCP Wire Inspector** tab to view redacted wire frames. | *"Attempting to view an unverified physical camera fails closed immediately with HTTP 400. The wire inspector proves tokens are strictly redacted and zero raw media leaks."* |
 
 ---
 
@@ -249,7 +249,7 @@ Absolute transparency is foundational to our submission. The exact status of har
 Before submitting to Devpost, verify each item:
 
 - [x] **Repository Public & Accessible:** https://github.com/methakon/homeguardian-ai
-- [x] **Open-Source License:** Apache License 2.0 with [NOTICE](file:///home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/antigravity-submission-packaging/NOTICE) file attributing third-party dependencies.
+- [x] **Open-Source License:** Apache License 2.0 with [NOTICE](NOTICE) file attributing third-party dependencies.
 - [x] **Truthful System Description:** Positioned truthfully as a Real Native C++ MCP 2025-11-25 Server with an Alexa-Style Demonstration Client; no claims of live Amazon identity or cloud integrations.
 - [x] **Hardware Privacy Compliance:** Documented that physical cameras are withheld in the judge build (fail-closed hardware boundary) and test feeds are synthetic.
 - [x] **Clean Release Package:** Verifiable archive generated with `scripts/package_release.sh` containing clean source and SHA-256 checksums.

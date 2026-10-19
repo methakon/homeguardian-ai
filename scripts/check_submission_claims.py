@@ -1789,9 +1789,9 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
 
 #: Values that are obviously placeholders, not secrets.
 PLACEHOLDER_RE = re.compile(
-    r"^(?:x{4,}|\.{3,}|<[^>]*>|\$\{?[A-Za-z_]+\}?|[A-Z_]{4,}|(?:redacted|example|sample"
-    r"|placeholder|changeme|none|null|true|false|empty|todo))$",
-    re.IGNORECASE,
+    r"^(?:[xX]{4,}|\.{3,}|<[^>]*>|\$\{?[A-Za-z_]+\}?|(?-i:[A-Z_]{4,})"
+    r"|(?i:redacted|example|sample|placeholder|changeme|none|null|true|false"
+    r"|empty|todo))$",
 )
 
 #: IPv4 literals that are never a disclosure (unspecified / loopback / broadcast).

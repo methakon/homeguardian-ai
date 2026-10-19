@@ -24,8 +24,23 @@ const {
 const REPO_ROOT = path.resolve(__dirname, '..');
 const CXX_BIN = path.join(REPO_ROOT, 'build', 'hg_mcp_server');
 const CXX_CONFIG = path.join(REPO_ROOT, 'config', 'homeguardian.demo.json');
-const JAVAC_BIN = '/home/swarna-sekhar-dhar/android-jdk/bin/javac';
-const JAVA_BIN = '/home/swarna-sekhar-dhar/android-jdk/bin/java';
+function findJdkBinary(name) {
+  if (process.env[name.toUpperCase() + '_BIN']) {
+    return process.env[name.toUpperCase() + '_BIN'];
+  }
+  const javaHome = process.env.JAVA_HOME || (process.env.HOME ? path.join(process.env.HOME, 'android-jdk') : null);
+  if (javaHome) {
+    const candidate = path.join(javaHome, 'bin', name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  for (const dir of ['/usr/bin', '/usr/local/bin', '/usr/lib/jvm/default-java/bin']) {
+    const candidate = path.join(dir, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return name;
+}
+const JAVAC_BIN = findJdkBinary('javac');
+const JAVA_BIN = findJdkBinary('java');
 
 const PORTS = {
   CXX_MCP: 8790,
