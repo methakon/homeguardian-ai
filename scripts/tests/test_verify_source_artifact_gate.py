@@ -69,13 +69,20 @@ REAL_FIXTURE_VALUE = "operator-secret-xyz"
 #: The certified value sha256[:8] of the line above.
 REAL_FIXTURE_SHA8 = "c9387d23"
 
-#: A 48-char high-entropy value that begins with a magic prefix the shipped
-#: marker regex treats as a negative-test label.  This is the *shape* of the
-#: part-1 defect: the prefix makes a real secret read as a REVIEW.
+#: A 48-char high-entropy value that begins with a magic prefix.  Under the
+#: unbounded marker regex this read as a negative-test label (REVIEW) - the
+#: shape of the part-1 defect, where the prefix made a real secret quiet.  The
+#: marker suffix is now BOUNDED, so the shipped checker classifies this value as
+#: a literal: it is a genuine FAIL and no longer needs the gate to rescue it.
 PREFIXED_HIGH_ENTROPY = "dummy-" + ("Kf9Qm2Zr7LpVxTb4NwYs6HdJe3AgCu8Ma1QzRt5Bv0Ln"
                                     "Qw4Er7Ty1Ui3Op5As8Df2Gh6Jk9Lz")[:48]
 BARE_HIGH_ENTROPY = ("Zq7Wm3Er9Ty1Ui5Op8As2Df6Gh4Jk0Lz9Xc7Vb5Nm3Qw1Er8Ty"
                      "6Ui4Op2As9D")[:48]
+
+#: A word-shaped negative-test label the (bounded) marker regex still treats as a
+#: label: "dummy-" plus a 7-character word.  With no reviewed allow-list entry it
+#: is exactly the value the gate must refuse to call explained.
+MARKER_LABEL_VALUE = "dummy-testval"
 
 REVISION = "aac0efd7fe01f06f24ca7fd4e51653f9dfa1b314"
 LICENCE_TEXT = (
@@ -540,12 +547,12 @@ class TestCheckFSecrets(GateFixtureCase):
         self.assertEqual(gate.exit_code_for(result), 1)
 
     def test_unexplained_heuristic_downgrade_fails(self):
-        # THE PART-1 SHAPE: a high-entropy value carrying a magic prefix the
-        # shipped marker regex treats as a negative-test label.  The underlying
-        # checker reports it as a REVIEW with no reviewed allow-list entry; the
-        # gate must refuse to treat that as explained.
+        # A value the shipped marker regex genuinely downgrades - a word-shaped
+        # negative-test label - with no reviewed allow-list entry.  The checker
+        # reports it as a REVIEW, and the gate must refuse to treat that as
+        # explained.
         files = base_tree()
-        files.update(self.secret_files(PREFIXED_HIGH_ENTROPY))
+        files.update(self.secret_files(MARKER_LABEL_VALUE))
         result = self.gate(self.build(files=files).artifact)
         self.assertEqual(self.status_of(result, "F"), gate.SEV_FAIL)
         self.assertEqual(gate.exit_code_for(result), 1)
@@ -554,6 +561,24 @@ class TestCheckFSecrets(GateFixtureCase):
         self.assertEqual(evidence["genuine"], 0)
         self.assertTrue(any(f["rule"] == "HG-GATE-F-002"
                             for f in result["checks"]["F"]["findings"]))
+
+    def test_prefixed_high_entropy_is_now_a_genuine_fail(self):
+        # THE PART-1 SHAPE, AFTER THE MARKER SUFFIX WAS BOUNDED: a high-entropy
+        # value carrying a magic prefix used to be excused as a label and needed
+        # this gate to catch it.  The checker now classifies it as a literal, so
+        # the gate sees a plain genuine FAIL - strictly stronger, with no
+        # downgrade left to explain.
+        import check_release_package as crp
+
+        self.assertIsNone(crp.CREDENTIAL_MARKER_RE.match(PREFIXED_HIGH_ENTROPY))
+        files = base_tree()
+        files.update(self.secret_files(PREFIXED_HIGH_ENTROPY))
+        result = self.gate(self.build(files=files).artifact)
+        self.assertEqual(self.status_of(result, "F"), gate.SEV_FAIL)
+        self.assertEqual(gate.exit_code_for(result), 1)
+        evidence = result["checks"]["F"]["evidence"]
+        self.assertEqual(evidence["unexplained_downgrades"], 0)
+        self.assertEqual(evidence["genuine"], 1)
 
     def test_same_shape_is_waivable_only_by_a_reviewed_entry(self):
         # ...and the escape hatch is data, not a rule change: the identical

@@ -1397,13 +1397,21 @@ CREDENTIAL_CLASSES = frozenset({
 #: Value shapes that are labels, not secrets.  The scanner's own placeholder set
 #: is reused first; this extends it with the negative-test labels a release
 #: package tends to contain ("invalid-operator-secret", "not-the-secret").
+#:
+#: The optional suffix is BOUNDED (``[-_][a-z][a-z0-9]{0,7}``, i.e. a 1-8
+#: character word).  An unbounded ``[-_][a-z0-9_-]*`` made any value whose text
+#: merely STARTED with one of these tokens classify as a marker, so a real
+#: secret called ``fake-<32 hex>`` was silently downgraded FAIL -> REVIEW (and
+#: disappeared entirely under ``--severity-min FAIL``).  A label shrank to a
+#: word; a credential did not.
 CREDENTIAL_MARKER_RE = re.compile(
     r"(?i)^(?:"
     r"x{3,}|\.{3,}|<[^>]*>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|"
-    r"invalid(?:[-_][a-z0-9_-]*)?|not[-_]the[-_]secret|not[-_][a-z0-9_-]*|"
-    r"wrong(?:[-_][a-z0-9_-]*)?|dummy(?:[-_][a-z0-9_-]*)?|"
-    r"fake(?:[-_][a-z0-9_-]*)?|redacted|changeme|placeholder|"
-    r"example(?:[-_][a-z0-9_-]*)?|sample(?:[-_][a-z0-9_-]*)?)$"
+    r"invalid(?:[-_][a-z][a-z0-9]{0,7})?|not[-_]the[-_]secret"
+    r"|not[-_][a-z][a-z0-9]{0,7}|"
+    r"wrong(?:[-_][a-z][a-z0-9]{0,7})?|dummy(?:[-_][a-z][a-z0-9]{0,7})?|"
+    r"fake(?:[-_][a-z][a-z0-9]{0,7})?|redacted|changeme|placeholder|"
+    r"example(?:[-_][a-z][a-z0-9]{0,7})?|sample(?:[-_][a-z][a-z0-9]{0,7})?)$"
 )
 
 #: An identifier chain (``process.env.X``, ``fs.readFileSync``,
