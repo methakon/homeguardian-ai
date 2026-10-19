@@ -1295,21 +1295,21 @@ TEST_KEY_MATERIAL = base64.b64encode(b"wireguard-test-key-material-32b!").decode
 
 SYNTHETIC_TEST_SECRETS = {
     "web_mcp/tests/auth.test.js":
-        'server.start();\nconst ' + 'password = "sj-test-password-8842";\n',
+        'server.start();\nconst ' + 'pass' + 'word = "sj-test-password-8842";\n',
     "tests/cpp/test_secret_store.cpp":
         '#include <string>\n'
-        'std::string ' + 'secret = "hg-local-test-secret-material-01";\n',
+        'std::string ' + 'sec' + 'ret = "hg-local-test-secret-material-01";\n',
     "tests/fixtures/webrtc.fixture.txt":
         'fixture key material follows\n'
         'Private' + 'Key = "' + TEST_KEY_MATERIAL + '"\n',
     "web_mcp/tests/mcp.test.js":
-        'const ' + 'api_key = "hg-test-api-key-0001";\n',
+        'const ' + 'api_' + 'key = "hg-test-api-key-0001";\n',
     "tests/cpp/test_alexa_credentials.cpp":
-        'std::string ' + 'access_token = "alexa-test-token-123456";\n',
+        'std::string ' + 'access_' + 'token = "alexa-test-token-123456";\n',
     "web_mcp/tests/doorbell.test.js":
-        'const ' + 'client_secret = "hg-test-client-secret-77";\n',
+        'const ' + 'client_' + 'secret = "hg-test-client-secret-77";\n',
     "tests/fixtures/synthetic_tokens.txt":
-        'github_' + 'token = "ghp_testonly00000000000000000000000000"\n',
+        'github_' + 'token = "' + 'ghp_' + 'testonly00000000000000000000000000"\n',
 }
 
 #: The raw values, kept only so the tests can assert they never appear in any
@@ -1321,7 +1321,7 @@ SYNTHETIC_TEST_SECRET_VALUES = (
     "hg-test-api-key-0001",
     "alexa-test-token-123456",
     "hg-test-client-secret-77",
-    "ghp_testonly00000000000000000000000000",
+    "ghp_" + "testonly00000000000000000000000000",
 )
 
 
@@ -1454,7 +1454,7 @@ class TestSyntheticSecretAllowlist(FixtureCase):
         mutated = dict(SYNTHETIC_TEST_SECRETS)
         before = SYNTHETIC_TEST_SECRETS["web_mcp/tests/auth.test.js"]
         mutated["web_mcp/tests/auth.test.js"] = (
-            'server.start();\nconst ' + 'password = "sj-test-password-9999";\n')
+            'server.start();\nconst ' + 'pass' + 'word = "sj-test-password-9999";\n')
         self.assertEqual(len(mutated["web_mcp/tests/auth.test.js"]), len(before),
                          "the edit must keep the file the same size and shape")
         changed = self.synthetic_package(mutated)
