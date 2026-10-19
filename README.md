@@ -198,6 +198,7 @@ MCP server and MCP client verification (requires `hg_mcp_server` to be built and
 the commands behind the MCP numbers quoted elsewhere in the submission:
 
 ```bash
+bash scripts/verify_judge_release.sh    # Automated judge smoke test: Native C++, MCP 2025-11-25, Coordinator, Security
 bash scripts/verify_mcp.sh              # native protocol suite: 73 checks, 0 failures
 node web_mcp/test_client.js             # MCP client suite: 26 checks, 0 failures
 node web_mcp/test_devices_dashboard.js   # dashboard/WebRTC/secrets: 161 checks, 0 failures

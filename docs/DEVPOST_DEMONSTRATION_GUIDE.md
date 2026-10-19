@@ -20,26 +20,57 @@
 
 ---
 
-## 2. Quick-Start Judge Reproduction (Single Command)
+## 2. Quick-Start Judge Reproduction (Automated Single Command)
 
-To verify the entire end-to-end integration across C++ core, native MCP server, device registry, and web gateway in a clean temporary sandbox:
+To automatically verify that the genuine native C++ MCP server, Streamable HTTP coordinator, protocol 2025-11-25 handshake, strictly two read-only tools, and security boundaries build and pass cleanly on local workstation loopback:
 
 ```bash
-# 1. Clone or extract release package
-cd /path/to/homeguardian-ai
+# 1. Clone repository or checkout release branch
+git checkout release/hackathon-2026-mcp-candidate
 
-# 2. Run the end-to-end synthetic demonstration harness
-bash scripts/verify_synthetic_mcp_demo.sh
+# 2. Run the automated judge release verification harness
+bash scripts/verify_judge_release.sh
 ```
 
-**Expected Result:**
+**Expected Result (Machine-Readable Verdict):**
 ```text
-=================================================================
-DEMONSTRATION RESULTS: 9 PASSED, 0 FAILED
-=================================================================
-✔ Release Integration Synthetic Demonstration is CERTIFIED (97 Tests Passing: 71 Dashboard/WebRTC + 26 MCP Client).
-Demonstration Dashboard URL: http://127.0.0.1:18880
-Single-run operator credentials: user='admin', password configured via secure runtime environment
+================================================================================
+HOMEGUARDIAN AI — JUDGE RELEASE VERIFICATION SUMMARY
+================================================================================
+VERDICT:                PASS
+COMMIT_SHA:             d5cf13e...
+BRANCH:                 release/hackathon-2026-mcp-candidate
+DURATION_SECONDS:       5
+BUILD_PREREQUISITES:    PASS (C++20, CMake, Node.js, npm packages)
+NATIVE_MCP_PROTOCOL:    PASS (73/73 checks passed via verify_mcp.sh)
+MCP_HANDSHAKE:          PASS (Protocol 2025-11-25, 256-bit CSPRNG token)
+READ_ONLY_TOOLS:        PASS (get_homeguardian_status, get_alert_summary)
+MUTATING_TOOLS_EXCLUDED:PASS (Zero mutating tools, zero camera frame tools)
+SECURITY_BOUNDS:        PASS (401 Auth, 403 Session Hijack/Origin, 413 Payload)
+OUTBOUND_COORDINATOR:   PASS (Loopback binding, auth token, 503 fail-closed offline)
+CAMERA_SAFETY_BOUNDARY: PASS (media_capture_enabled=false, 0 physical video streams)
+CLEAN_PROCESS_SHUTDOWN: PASS (All child processes exited cleanly, 0 leaks)
+TOTAL_CHECKS_PASSED:    27
+TOTAL_CHECKS_FAILED:    0
+================================================================================
+Judge evaluation ready. To reproduce, run: bash scripts/verify_judge_release.sh
+```
+
+### Judge Failure Guidance & Troubleshooting
+If `scripts/verify_judge_release.sh` reports a failure:
+1. **Missing Prerequisites:** Ensure `curl`, `jq`, `cmake` (>= 3.20), `make`, `g++` (or `clang++` with C++20), and `node` (>= 18) are installed on the host. The script will explicitly identify any missing tool.
+2. **Missing Node Modules:** If npm packages are absent, run `npm install` once from repository root (installs `ws` and `werift` without cloud access).
+3. **Stale Background Listeners:** If test ports are blocked by an existing daemon, run `pkill -f hg_mcp_server || true` and retry. All ports are selected dynamically from unprivileged ranges (`18800-19900`).
+4. **Credential Permissions (0600):** The native C++ MCP server strictly enforces POSIX `0600` or `0400` permissions on secret files and refuses execution if world-readable. The script automatically sets `chmod 600` on generated test credentials.
+5. **No Cloud or Network Required:** All checks execute strictly over `127.0.0.1` loopback; no internet access or VPN connection is needed during verification.
+
+---
+
+### Alternative: End-to-End Synthetic Web Demo Harness
+To launch the interactive web gateway and synthetic test video streaming:
+
+```bash
+bash scripts/verify_synthetic_mcp_demo.sh
 ```
 
 ---
@@ -185,12 +216,16 @@ All security boundaries are continuously asserted by automated test suites:
 
 | Suite Name | Execution Command | Test Scope & Invariants Verified | Passed / Total |
 |---|---|---|---|
-| **C++ Core & Sanitizers** | `HG_SOURCE_DIR=$(pwd) ./build/homeguardian_tests` | Catch2 suite: contract bounds, SQLite WAL retention, CSPRNG stress loop | **526 / 526** (38,926 assertions) |
+| **Automated Judge Smoke** | `bash scripts/verify_judge_release.sh` | Deterministic one-command judge smoke: C++, MCP handshake, tools, security, coordinator | **PASS (27/27)** |
+| **C++ Core & Sanitizers** | `HG_SOURCE_DIR=$(pwd) ./build/homeguardian_tests` | Catch2 suite: contract bounds, SQLite WAL retention, CSPRNG stress loop | **527 / 527** (38,929 assertions) |
 | **Independent Security Gate** | `bash scripts/test_hg_sec_01_independent.sh` | HG-SEC-01 threat model: method restriction, CSRF token replay, zero-mutation SQLite invariant | **15 / 15** |
-| **MCP Hardening & Isolation** | `bash scripts/verify_mcp.sh` | 256-bit session entropy, Bob vs Alice session isolation, slowloris read deadlines, overload drain | **71 / 71** |
-| **WebRTC & Devices Gate** | `node web_mcp/test_devices_dashboard.js` | Origin validation, fail-closed consent, CSPRNG device pairing, sequence replay protection | **132 / 132** |
+| **MCP Hardening & Isolation** | `bash scripts/verify_mcp.sh` | 256-bit session entropy, Bob vs Alice session isolation, slowloris read deadlines, overload drain | **73 / 73** |
+| **WebRTC & Devices Gate** | `node web_mcp/test_devices_dashboard.js` | Origin validation, fail-closed consent, CSPRNG device pairing, sequence replay protection | **161 / 161** |
+| **Java WS Bridge E2E** | `node tests/test_java_ws_bridge_cxx_e2e.js` | Java OutboundMcpBridge $\leftrightarrow$ Node Coordinator $\leftrightarrow$ Native C++ Engine | **21 / 21** |
+| **Outbound Bridge Gate** | `node tests/test_outbound_mcp_bridge.js` | Mutual auth, operation allowlist, 64KB bounds, 4403 revocation, reconnect backoff | **46 / 46** |
 | **Conversational Client** | `node web_mcp/test_client.js` | Streamable HTTP compliance, tool routing, conversation intent generation | **26 / 26** |
 | **Alexa Skill Contract** | `cd alexa_skill && npm test` | Contract boundary tests, error encapsulation, payload size limits | **77 / 77** |
+| **Android Route Security** | `RouteSecurityPolicyTest.java` | /32 overlay routing, `Network.bindSocket()` pinning, zero LAN fallback | **44 / 44** |
 | **Startup & Footprint** | `bash scripts/bench_demo.sh` | Native bridge cold startup (0.278s) vs legacy Node (0.118s), zero credential leakage | **PASS** |
 | **Alert Retention** | `HG_BRIDGE_PATH=build/hg_alexa_bridge bash scripts/verify_retention.sh` | SQLite 30-day age retention window, durable pruning on restart | **8 / 8** |
 | **Build & Deploy Guards** | `bash scripts/verify_deploy_guards.sh` | Non-root container execution, unprovisioned mount refusal, absent image credentials | **12 / 12** |
