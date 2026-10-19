@@ -587,6 +587,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_audio_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_activity_pattern.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_media_backpressure.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_v380_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_scenario_record.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
@@ -605,6 +606,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/SensorEventConsumer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ActivityPattern.cpp
         ${CMAKE_SOURCE_DIR}/src/core/BoundedMediaBuffer.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/V380SourceAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ScenarioRecord.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/AlsaCommandAudioSource.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp

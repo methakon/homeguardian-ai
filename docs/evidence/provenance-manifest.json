@@ -1104,6 +1104,45 @@
         "experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "v380-adapter-header",
+      "path": "src/backend/linux/V380SourceAdapter.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "V380SourceAdapter",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "v380-adapter-source",
+      "path": "src/backend/linux/V380SourceAdapter.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "V380SourceAdapter",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "v380-adapter-suite",
+      "path": "tests/core/test_v380_adapter.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_v380_adapter.cpp",
+      "content_markers": [
+        "V380Refusal"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }
