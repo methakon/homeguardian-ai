@@ -1788,10 +1788,17 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
 )
 
 #: Values that are obviously placeholders, not secrets.
+#: Case-insensitivity is scoped, never global.  ``re.IGNORECASE`` on the whole
+#: alternation made ``[A-Z_]{4,}`` match ANY all-alphabetic value of four
+#: characters or more (``supersecretvalue``, ``SuperSecretProdValue``), so a real
+#: assignment was classified as a placeholder and suppressed entirely - a
+#: fail-open.  The CONSTANT_CASE alternative is therefore matched case
+#: *sensitively* (``(?-i:...)``) and only the literal placeholder words keep
+#: case-insensitive matching (``(?i:...)``).
 PLACEHOLDER_RE = re.compile(
-    r"^(?:x{4,}|\.{3,}|<[^>]*>|\$\{?[A-Za-z_]+\}?|[A-Z_]{4,}|(?:redacted|example|sample"
-    r"|placeholder|changeme|none|null|true|false|empty|todo))$",
-    re.IGNORECASE,
+    r"^(?:[xX]{4,}|\.{3,}|<[^>]*>|\$\{?[A-Za-z_]+\}?|(?-i:[A-Z_]{4,})"
+    r"|(?i:redacted|example|sample|placeholder|changeme|none|null|true|false"
+    r"|empty|todo))$"
 )
 
 #: IPv4 literals that are never a disclosure (unspecified / loopback / broadcast).
