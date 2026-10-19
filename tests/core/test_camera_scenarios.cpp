@@ -492,10 +492,16 @@ TEST_CASE("scenario matrix: the three RECORDED ambient runs, replayed exactly",
          {{kQuiet, 60, 0.0}, {kRise, 1, 0.710}, {kRise, 1, 0.710}, {kRise, 1, 0.400},
           {kQuiet, 52, 0.0}, {kUnusable, 5, 0.0}},
          true, 0.6067, "not_detected 0.015 -> no alert"},
-        {"run 2 (25 s): rises at obs 9-10 and 17-19, then 41 settling falls",
+        // Corrected: run 2's eight confirmed rises are THREE runs, not two. The log records them at
+        // frames 46, 51 (run A, length 2), 86, 91, 96 (run B, length 3) and 586, 591, 596 (run C,
+        // length 3, three observations from the end). An earlier model of this run folded run C into
+        // the early part; the numbers below are the recorded ones, checked against the log's sequence
+        // numbers.
+        {"run 2 (25 s): rises in runs A(2) B(3) C(3), 41 settling falls between B and C",
          {{kQuiet, 9, 0.0}, {kRise, 1, 0.625}, {kRise, 1, 0.520}, {kQuiet, 6, 0.0},
           {kRise, 1, 0.715}, {kRise, 1, 0.630}, {kRise, 1, 0.435}, {kFall, 41, 0.10},
-          {kQuiet, 54, 0.0}, {kUnusable, 5, 0.0}},
+          {kQuiet, 47, 0.0}, {kRise, 1, 0.540}, {kRise, 1, 0.465}, {kRise, 1, 0.340},
+          {kQuiet, 4, 0.0}, {kUnusable, 5, 0.0}},
          true, 0.5933, "inconclusive 0.080 -> no alert"},
         {"run 3 (25 s): 3 confirmed rises that are individually weak",
          {{kQuiet, 31, 0.0}, {kRise, 1, 0.545}, {kRise, 1, 0.545}, {kRise, 1, 0.345},
@@ -547,6 +553,11 @@ TEST_CASE("scenario matrix: the three RECORDED ambient runs, replayed exactly",
             REQUIRE(alert->confidence == Approx(run.expect_confidence).margin(0.002));
             REQUIRE(alert->details["evidence_mode"] == "episode");
             REQUIRE(alert->details["provenance"] == "synthetic");   // the replay's label, honestly
+            // Selection, not aggregation: the episode is one run, and where a run has a weaker rival
+            // (run 2's late run C, mean 0.448) the stronger one is the one reported.
+            REQUIRE(episode.has_value());
+            REQUIRE(episode->length == 3);
+            REQUIRE(episode->mean_confidence == Approx(run.expect_confidence).margin(0.002));
         } else {
             // Run 3 is the useful negative: three contiguous confirmed rises, and the episode path
             // still refuses them because their mean confidence (0.478) is below the unchanged gate.

@@ -246,7 +246,7 @@ they are the real evidence, and they are less flattering than one sample suggest
 | run | elapsed | peak motion | confirmed increases | confirmed decreases | classic verdict (tool's own) | episode path (replay) |
 |---|---|---|---|---|---|---|
 | 1 | 42.5 s | 0.0745 | 3 (one contiguous run) | 0 | not_detected 0.015 -> no alert | **ALERT** 0.607 |
-| 2 | 24.6 s | **0.4227** | 8 (runs of 2 and 3) | 41 | inconclusive 0.080 -> no alert | **ALERT** 0.593 |
+| 2 | 24.6 s | **0.4227** | 8, in three runs: frames 46-51 (len 2), 86-96 (len 3), 586-596 (len 3, at the very end) | 41 | inconclusive 0.080 -> no alert | **ALERT** 0.593 (the middle run; the late run's mean 0.448 is below the gate) |
 | 3 | 24.6 s | 0.1163 | 3 (contiguous) | 8 | not_detected 0.025 -> no alert | no alert (mean 0.478) |
 
 **All three runs produced confirmed sustained increases in a room nobody was deliberately using.** Run
@@ -261,7 +261,16 @@ during normal life, which is the strongest argument available for leaving it dis
 signal as *reporting* rather than as an alarm.
 
 Run 3 is the useful negative and shows the machinery working: three contiguous confirmed rises whose
-mean confidence (0.478) sits below the unchanged 0.5 gate, so the episode path refuses them too.
+mean confidence (0.478) sits below the unchanged 0.5 gate, so the episode path refuses them too. Run 2
+shows the same rule from the other side: its eight confirmed rises belong to **three separate runs**
+(frames 46-51, 86-96 and 586-596), and the episode reported is the strongest of them (mean 0.593), not
+an aggregate of all eight (which would be 0.534) and not the weaker late run (0.448).
+
+*Correction to an earlier draft of this section, kept visible:* the first version of this table
+described run 2 as "8 increases in runs of 2 and 3" and its replay fixture modelled only the first five.
+Both were wrong — the log's own sequence numbers show three runs of 8, the last of them three
+observations from the end of the capture. The fixture and the table were corrected together, which is
+the only reason the discrepancy is in the record rather than in someone's memory.
 
 **A configuration finding from comparing the runs.** Runs 2 and 3 captured the same 600 frames in
 24.6 s where run 1 took 42.5 s — the sensor's frame rate is not fixed, so "cadence 5" means 0.205 s per
