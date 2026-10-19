@@ -70,4 +70,55 @@ struct ActivityPatternFinding {
 ActivityPatternFinding characterise_activity_pattern(const std::vector<ActivitySample>& samples,
                                                     const ActivityPatternConfig& config = {});
 
+// ---------------------------------------------------------------------------------------------------
+// The AUDIO half of the same research: the temporal shape of what was heard, from the bounded features
+// the microphone adapter already produces (RMS and zero-crossing rate). Same discipline as above - a
+// closed vocabulary, opt-in, and a description of levels and repetition rather than of what made the
+// sound. It cannot name a sound event, a word or a species, and does not try.
+
+struct AudioActivitySample {
+    double rms = 0.0;                  // from observe_audio_window()
+    double zero_crossing_rate = 0.0;   // ditto; kept so a future pattern can use shape, not only level
+};
+
+enum class AudioActivityPattern {
+    quiet,            // nothing above the floor in the window
+    isolated_event,   // one sound, and no repetition
+    repeated_events,  // repeated, similar-level sounds: something recurring
+    sustained_level,  // a level that stays up for most of the window
+    varying,          // sounds with no consistent level
+};
+
+const char* audio_activity_pattern_to_string(AudioActivityPattern p);
+
+struct AudioPatternConfig {
+    bool enabled = false;             // OPT-IN, like the motion analysis
+    size_t max_samples = 64;          // bounded
+    double floor_rms = 0.02;          // above this, something was audible
+    double event_min_rms = 0.05;      // an event is clearly above the floor
+    // "Alike" means mutually alike, not merely near the median. Two clusters whose levels differ by a
+    // factor of fifteen are not a repetition, and the first version of this rule called them one because
+    // it only counted events close to the median. The dispersion of the EVENT SET is therefore tested too.
+    double similar_ratio = 0.25;      // levels within a quarter of each other are alike
+    size_t min_repeats = 3;
+    double sustained_occupancy = 0.6; // fraction of the window above the floor that means "sustained"
+};
+
+struct AudioPatternFinding {
+    bool valid = false;
+    std::string reason;
+    AudioActivityPattern pattern = AudioActivityPattern::quiet;
+    size_t samples_used = 0;
+    size_t events = 0;
+    size_t repeats = 0;
+    double mean_event_rms = 0.0;
+    double occupancy = 0.0;           // fraction of samples above the floor
+    double confidence = 0.0;          // bounded [0,1]
+    std::string description;
+    std::string uncertainty;
+};
+
+AudioPatternFinding characterise_audio_activity(const std::vector<AudioActivitySample>& samples,
+                                               const AudioPatternConfig& config = {});
+
 }  // namespace homeguardian

@@ -127,4 +127,116 @@ ActivityPatternFinding characterise_activity_pattern(const std::vector<ActivityS
     return finding;
 }
 
+const char* audio_activity_pattern_to_string(AudioActivityPattern p) {
+    switch (p) {
+        case AudioActivityPattern::quiet:           return "quiet";
+        case AudioActivityPattern::isolated_event:  return "isolated_event";
+        case AudioActivityPattern::repeated_events: return "repeated_events";
+        case AudioActivityPattern::sustained_level: return "sustained_level";
+        case AudioActivityPattern::varying:         return "varying";
+    }
+    return "quiet";
+}
+
+AudioPatternFinding characterise_audio_activity(const std::vector<AudioActivitySample>& samples,
+                                               const AudioPatternConfig& config) {
+    AudioPatternFinding finding;
+    finding.uncertainty =
+        "a level-and-repetition description only: not speech, not a keyword, not a species and not a sound "
+        "classification, and it does not distinguish a door, a tap, a voice or an animal from each other";
+
+    if (!config.enabled) {
+        finding.reason = "the audio-pattern analysis is opt-in and is not enabled";
+        return finding;
+    }
+    if (samples.empty()) {
+        finding.reason = "no samples: there is nothing to characterise";
+        return finding;
+    }
+
+    const size_t take = std::min(samples.size(), config.max_samples);
+    const std::vector<AudioActivitySample> window(samples.end() - static_cast<long>(take), samples.end());
+    finding.samples_used = window.size();
+
+    std::vector<double> events;
+    size_t audible = 0;
+    for (const auto& s : window) {
+        if (s.rms >= config.floor_rms) ++audible;
+        if (s.rms >= config.event_min_rms) events.push_back(s.rms);
+    }
+    finding.events = events.size();
+    finding.occupancy = static_cast<double>(audible) / static_cast<double>(window.size());
+
+    if (finding.occupancy >= config.sustained_occupancy) {
+        finding.pattern = AudioActivityPattern::sustained_level;
+        finding.confidence = 0.9;
+        finding.valid = true;
+        std::ostringstream os;
+        os << "the level stayed above the " << std::fixed << std::setprecision(3) << config.floor_rms
+           << " floor in " << std::setprecision(2) << finding.occupancy * 100.0 << "% of the window";
+        finding.description = os.str();
+        return finding;
+    }
+    if (events.empty()) {
+        finding.pattern = AudioActivityPattern::quiet;
+        finding.confidence = 0.9;
+        finding.valid = true;
+        finding.description = "nothing above the floor in the window";
+        return finding;
+    }
+
+    std::vector<double> sorted = events;
+    std::sort(sorted.begin(), sorted.end());
+    const double median = sorted[sorted.size() / 2];
+    finding.mean_event_rms = std::accumulate(events.begin(), events.end(), 0.0) /
+                             static_cast<double>(events.size());
+
+    if (events.size() == 1) {
+        finding.pattern = AudioActivityPattern::isolated_event;
+        finding.confidence = 0.5;
+        finding.valid = true;
+        finding.description = "one sound above the floor, and no repetition";
+        return finding;
+    }
+
+    // A repeat needs a similar LEVEL and a similar SPACING-INDEPENDENT count: two loud events of wildly
+    // different levels are not a repetition, and one event cannot repeat.
+    size_t repeats = 0;
+    for (const double level : events) {
+        if (std::fabs(level - median) <= config.similar_ratio * median) ++repeats;
+    }
+    finding.repeats = repeats;
+
+    // ... and the event SET must itself be tight: mean absolute deviation relative to the median level.
+    // Without this, an alternating loud/quiet burst pattern counts as a repetition because half the events
+    // sit near the median, however far the other half is from it.
+    double deviation = 0.0;
+    for (const double level : events) deviation += std::fabs(level - median);
+    deviation /= static_cast<double>(events.size());
+    const double dispersion = median > 0.0 ? deviation / median : 1.0;
+    const bool levels_alike = dispersion <= config.similar_ratio;
+
+    if (repeats >= config.min_repeats && levels_alike) {
+        finding.pattern = AudioActivityPattern::repeated_events;
+        finding.confidence = std::min(1.0, 0.5 * std::min(1.0, static_cast<double>(repeats) /
+                                                                  (2.0 * static_cast<double>(
+                                                                             config.min_repeats))) +
+                                           0.5 * std::min(1.0, static_cast<double>(repeats) /
+                                                                   static_cast<double>(events.size())));
+    } else {
+        finding.pattern = AudioActivityPattern::varying;
+        finding.confidence = 0.4;
+    }
+    // (dispersion is stated in the description below so a reader can see why the verdict was varying)
+    finding.valid = true;
+    std::ostringstream os;
+    os << finding.events << " sound(s) above the " << std::fixed << std::setprecision(3)
+       << config.event_min_rms << " event level, " << repeats << " of them within "
+       << std::setprecision(0) << config.similar_ratio * 100.0 << "% of the median level "
+       << std::setprecision(3) << median << " (dispersion " << deviation / (median > 0.0 ? median : 1.0)
+       << ")";
+    finding.description = os.str();
+    return finding;
+}
+
 }  // namespace homeguardian
