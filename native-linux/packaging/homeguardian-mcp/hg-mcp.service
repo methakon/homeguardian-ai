@@ -1,0 +1,58 @@
+[Unit]
+Description=HomeGuardian MCP server
+Documentation=file:/usr/share/doc/homeguardian-mcp/README
+# Needs the network only to be reachable over a tunnel; the listener itself is loopback.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=homeguardian
+Group=homeguardian
+
+# --- credential gate -------------------------------------------------------------------
+# Credentials are never shipped. Generate them with the documented command before the
+# first start. ExecCondition fails the unit (without a crash loop) when they are absent.
+ExecCondition=/bin/sh -c 'test -r /etc/homeguardian/creds.json'
+# Refuse to run with a world- or group-readable token file.
+ExecCondition=/bin/sh -c 'm=$(stat -c%%a /etc/homeguardian/creds.json); test "$m" = 600 -o "$m" = 400'
+
+# --- the engine ------------------------------------------------------------------------
+# Bind is pinned to loopback here as well as in the config, so a bad config file cannot
+# expose the server on a network interface.
+Environment=HG_MCP_PORT=8790
+Environment=HG_MCP_BIND=127.0.0.1
+Environment=HG_MCP_ALLOW_REMOTE=0
+ExecStart=/usr/libexec/homeguardian/hg_mcp_server /etc/homeguardian/hg-mcp.conf /etc/homeguardian/creds.json
+
+# Restart on failure — but NOT on a credential failure, which would spin. systemd treats
+# ExecCondition failure as a clean stop, so this only covers engine crashes.
+Restart=on-failure
+RestartSec=5s
+
+# --- hardening -------------------------------------------------------------------------
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# The engine needs to read its config, credentials and its own state directory only.
+ReadOnlyPaths=/etc/homeguardian
+ReadWritePaths=/var/lib/homeguardian
+StateDirectory=homeguardian
+StateDirectoryMode=0750
+
+# Logs go to the journal; the engine must never print tokens (it does not).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hg-mcp
+
+[Install]
+WantedBy=multi-user.target

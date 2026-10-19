@@ -1,0 +1,86 @@
+# Reference: https://wiki.postmarketos.org/wiki/APKBUILD_reference
+#
+# Packages the verified HomeGuardian C++ MCP engine for postmarketOS (aarch64, glibc).
+#
+# The binary is NOT built here. It is the already-verified glibc ARM64 artifact, shipped
+# prebuilt so that the device never compiles anything — no cmake, no g++, no network fetch
+# of spdlog/nlohmann_json at build time. The package simply installs it and wires up
+# supervision. Its sha256 is asserted in prepare(), so a wrong or tampered binary fails the
+# build instead of silently shipping.
+pkgname=homeguardian-mcp
+pkgver=1.0.0
+pkgrel=0
+pkgdesc="HomeGuardian MCP server (read-only home status + alert summary)"
+url="https://github.com/methakon/homeguardian-ai"
+arch="aarch64"
+license="MIT"
+depends="libstdc++"
+makedepends=""
+install="$pkgname.pre-install"
+subpackages=""
+source="
+	hg_mcp_server
+	hg-mcp.service
+	hg-mcp.conf
+"
+builddir="$srcdir"
+
+# The deployed artifact's digest, recorded so every build re-checks it.
+_hg_expected_sha256="82b6cd877ff9a84f1a4feb2d92b6e60de8d38507111bf5029be5bf74f7ca82a8"
+
+prepare() {
+	# Fail loudly rather than package the wrong binary.
+	actual="$(sha256sum "$srcdir/hg_mcp_server" | cut -d' ' -f1)"
+	if [ "$actual" != "$_hg_expected_sha256" ]; then
+		error "hg_mcp_server sha256 mismatch"
+		error "  expected: $_hg_expected_sha256"
+		error "  actual:   $actual"
+		return 1
+	fi
+}
+
+build() {
+	# Nothing to compile — this is a prebuilt, reproducible artifact.
+	return 0
+}
+
+package() {
+	install -Dm755 "$srcdir/hg_mcp_server" \
+		"$pkgdir"/usr/libexec/homeguardian/hg_mcp_server
+
+	# Config and credentials live under /etc but are NOT shipped with secrets.
+	install -Dm644 "$srcdir/hg-mcp.conf" \
+		"$pkgdir"/etc/homeguardian/hg-mcp.conf
+
+	install -Dm644 "$srcdir/hg-mcp.service" \
+		"$pkgdir"/usr/lib/systemd/system/hg-mcp.service
+
+	# Runtime state dir, owned by the service account.
+	install -dm750 "$pkgdir"/var/lib/homeguardian
+
+	install -dm755 "$pkgdir"/usr/share/doc/$pkgname
+	cat > "$pkgdir"/usr/share/doc/$pkgname/README <<'EOF'
+HomeGuardian MCP server
+
+Runs a read-only MCP server on 127.0.0.1:8790 exposing exactly two tools:
+get_homeguardian_status and get_alert_summary.
+
+Credentials are NOT shipped. Generate a per-device token before first start:
+
+    install -d -m750 /etc/homeguardian
+    umask 077
+    TOK=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    printf '{"%s":{"principal":"hub","allow_status":true,"allow_alert_summary":true}}\n' \
+        "$TOK" > /etc/homeguardian/creds.json
+    chmod 600 /etc/homeguardian/creds.json
+    systemctl restart hg-mcp
+
+The unit refuses to start if the credential file is missing or world-readable.
+
+The listener is loopback-only by design. Remote access is expected over an authenticated
+SSH tunnel or a private overlay network — never by binding the MCP port to a network
+interface.
+EOF
+}
+
+sha512sums="SKIP"
