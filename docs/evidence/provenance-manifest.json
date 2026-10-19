@@ -39,7 +39,11 @@
           "revision": "experiment/hg-v380-09-secure-camera-integration"
         }
       ],
-      "note": "Raw, unedited transcript written by the capture tool's --log option. This is the only byte-for-byte original in the evidence set. Markers are read from the artifact itself: the header line, the per-observation provenance label, and the verdict line."
+      "note": "Raw, unedited transcript written by the capture tool's --log option. This is the only byte-for-byte original in the evidence set. Markers are read from the artifact itself: the header line, the per-observation provenance label, and the verdict line.",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "capture-log-transcribed",
@@ -63,7 +67,11 @@
           "revision": "experiment/hg-v380-09-secure-camera-integration"
         }
       ],
-      "note": "Runs 1-5 are a transcription of each capture's own stdout; the file states this at the top. Classifying it as 'real' would be the exact error this validator exists to catch."
+      "note": "Runs 1-5 are a transcription of each capture's own stdout; the file states this at the top. Classifying it as 'real' would be the exact error this validator exists to catch.",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "judge-evidence-note",
@@ -81,6 +89,10 @@
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "experiment/hg-v380-09-secure-camera-integration"
         }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
       ]
     },
     {
@@ -99,6 +111,10 @@
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "experiment/hg-v380-09-secure-camera-integration"
         }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
       ]
     },
     {
@@ -113,6 +129,10 @@
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "release/hackathon-2026-mcp-candidate"
         }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
       ]
     },
     {
@@ -135,6 +155,10 @@
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "release/hackathon-2026-mcp-candidate"
         }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
       ]
     },
     {
@@ -157,6 +181,10 @@
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
           "revision": "release/hackathon-2026-mcp-candidate"
         }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
       ]
     },
     {
@@ -175,7 +203,11 @@
           "revision": "release/hackathon-2026-mcp-candidate"
         }
       ],
-      "note": "Wiring, bounds and pipeline-integration tests. Hardware-free by construction: every injected frame is Provenance::synthetic."
+      "note": "Wiring, bounds and pipeline-integration tests. Hardware-free by construction: every injected frame is Provenance::synthetic.",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "camera-suite-calibration",
@@ -193,7 +225,11 @@
           "revision": "release/hackathon-2026-mcp-candidate"
         }
       ],
-      "note": "EMA decay and fusion-window dilution, driven by a deterministic step. Never a physical measurement."
+      "note": "EMA decay and fusion-window dilution, driven by a deterministic step. Never a physical measurement.",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "release-video-script",
@@ -215,6 +251,100 @@
       "evidence_type": "implementation",
       "reference_token": "DempsterShafer",
       "note": "Release-contained control artifact; the frame of discernment here is what makes a calamity claim unrepresentable."
+    },
+    {
+      "id": "activity-episode-header",
+      "path": "src/core/ActivityEpisode.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ActivityEpisode"
+    },
+    {
+      "id": "activity-episode-source",
+      "path": "src/core/ActivityEpisode.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ActivityEpisode"
+    },
+    {
+      "id": "camera-replay-suite",
+      "path": "tests/core/test_camera_replay.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_camera_replay.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "fusion-provenance-suite",
+      "path": "tests/core/test_fusion_provenance.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_fusion_provenance.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "episode-suite",
+      "path": "tests/core/test_activity_episode.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_activity_episode.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "provenance-validator",
+      "path": "scripts/verify_evidence_provenance.py",
+      "revision": "release/hackathon-2026-mcp-candidate",
+      "scope": "release",
+      "evidence_type": "implementation",
+      "reference_token": "verify_evidence_provenance",
+      "note": "Cherry-picked into the release branch at 82c207c; verified there by this same tool."
+    },
+    {
+      "id": "provenance-validator-tests",
+      "path": "tests/scripts/test_evidence_provenance.py",
+      "revision": "release/hackathon-2026-mcp-candidate",
+      "scope": "release",
+      "evidence_type": "implementation",
+      "reference_token": "test_evidence_provenance.py",
+      "note": "Cherry-picked into the release branch at 82c207c; verified there by this same tool.",
+      "forbid_markers": []
+    },
+    {
+      "id": "provenance-handoff",
+      "path": "docs/EVIDENCE_PROVENANCE_HANDOFF.md",
+      "revision": "release/hackathon-2026-mcp-candidate",
+      "scope": "release",
+      "evidence_type": "documentation",
+      "reference_token": "EVIDENCE_PROVENANCE_HANDOFF.md",
+      "note": "Cherry-picked into the release branch at 82c207c; verified there by this same tool."
+    },
+    {
+      "id": "fusion-hardening-note",
+      "path": "docs/FUSION_PROVENANCE_AND_EPISODE_HARDENING.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "FUSION_PROVENANCE_AND_EPISODE_HARDENING.md",
+      "note": "Written on the external branch; not referenced by any release document."
+    },
+    {
+      "id": "pr20-accuracy-review",
+      "path": "docs/PR20_DOC_ACCURACY_REVIEW.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "PR20_DOC_ACCURACY_REVIEW.md"
     }
   ]
 }

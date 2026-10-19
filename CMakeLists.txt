@@ -570,6 +570,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_camera_activity.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_camera_calibration.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_camera_replay.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_fusion_provenance.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_activity_episode.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -579,6 +581,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/EventValidator.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SimulatedEventSource.cpp
         ${CMAKE_SOURCE_DIR}/src/core/TimeWindowCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ActivityEpisode.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ImpactClassifier.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SyntheticImpactRule.cpp

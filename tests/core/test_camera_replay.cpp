@@ -71,6 +71,7 @@ Observation make_observation(int index, DetectorStatus status, double confidence
     o.observation_timestamp = now;
     o.features = nlohmann::json::object();
     o.features["replay"] = true;
+    o.features["direction"] = "rising";   // recorded rises; the replay keeps the direction it saw
     return o;
 }
 
@@ -82,21 +83,21 @@ std::vector<Observation> window_of(int increases, int decreases, int quiet, int 
     const auto base = base_time();
     int i = 0;
     for (int k = 0; k < decreases; ++k) {
-        obs.push_back(make_observation(i++, DetectorStatus::detected, decrease_confidence,
-                                       base + std::chrono::milliseconds(10 * i)));
+        const auto at = base + std::chrono::milliseconds(10 * i);
+        obs.push_back(make_observation(i++, DetectorStatus::detected, decrease_confidence, at));
     }
     for (int k = 0; k < increases && k < 6; ++k) {
+        const auto at = base + std::chrono::milliseconds(10 * i);
         obs.push_back(make_observation(i++, DetectorStatus::detected,
-                                       kRecordedIncreaseConfidence[k],
-                                       base + std::chrono::milliseconds(10 * i)));
+                                       kRecordedIncreaseConfidence[k], at));
     }
     for (int k = 0; k < quiet; ++k) {
-        obs.push_back(make_observation(i++, DetectorStatus::not_detected, 0.0,
-                                       base + std::chrono::milliseconds(10 * i)));
+        const auto at = base + std::chrono::milliseconds(10 * i);
+        obs.push_back(make_observation(i++, DetectorStatus::not_detected, 0.0, at));
     }
     for (int k = 0; k < warming; ++k) {
-        obs.push_back(make_observation(i++, DetectorStatus::inconclusive, 0.0,
-                                       base + std::chrono::milliseconds(10 * i)));
+        const auto at = base + std::chrono::milliseconds(10 * i);
+        obs.push_back(make_observation(i++, DetectorStatus::inconclusive, 0.0, at));
     }
     return obs;
 }

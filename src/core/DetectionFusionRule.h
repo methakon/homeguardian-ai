@@ -18,6 +18,7 @@
 // HARD RULE: inconclusive / unavailable / not_detected evidence NEVER produces
 // an alert. An uncertain result is never promoted to a confirmation.
 
+#include "core/ActivityEpisode.h"
 #include "core/Alert.h"
 #include "core/CorrelationRule.h"
 #include "core/FusionEngine.h"
@@ -47,6 +48,12 @@ public:
         // influence the alert. Adding it here makes that influence explicit and
         // is covered by tests.
         std::vector<std::string> evidence_detector_ids = {"activity-energy"};
+        // Opt-in: also consider a bounded activity EPISODE (ActivityEpisodeSelector) as qualifying
+        // evidence. OFF by default, so the release's decision path is bit-for-bit what it was; a
+        // caller that turns it on is choosing to judge a short sustained change on its own evidence
+        // instead of on the size of the window it arrived in. No threshold in this class changes.
+        bool use_episode_evidence = false;
+        ActivityEpisodeSelector::Config episode{};
         Config() = default;             // explicit: usable in a default argument
     };
 
@@ -85,6 +92,15 @@ public:
     }
 
 private:
+    // One place assembles the alert, whichever evidence path qualified, so the message and the
+    // provenance fields cannot drift apart between them.
+    std::optional<Alert> build_alert(double confidence, size_t contributing, const std::string& reason,
+                                     EvidenceProvenance provenance, size_t real_inputs,
+                                     size_t synthetic_inputs, const char* evidence_mode,
+                                     const ActivityEpisode* episode, const FusionResult& classic,
+                                     const std::vector<std::string>& usable_event_ids,
+                                     size_t inconclusive) const;
+
     std::string name_;
     Config cfg_;
     FusionEngine fusion_;
