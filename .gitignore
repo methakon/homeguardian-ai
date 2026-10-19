@@ -113,3 +113,7 @@ hg_d03_*
 
 # Node dependencies
 node_modules/
+
+# Python bytecode from the provenance validator and its tests
+__pycache__/
+*.pyc
