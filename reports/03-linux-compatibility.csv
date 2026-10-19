@@ -1,0 +1,24 @@
+component,category,android_visible,android_interface,native_linux_reachable,proot_ubuntu_reachable,driver_or_hal,blocking_reason,notes
+cpu,compute,yes,getprop / /proc/cpuinfo,yes,yes,kernel syscall,none,8 cores Qualcomm trinket SM6125 Cortex-A73/A53; arm64-v8a; usable by any userspace
+memory,compute,yes,/proc/meminfo,yes,yes,kernel syscall,none,MemTotal 5738336 kB (~5.47 GiB); ample for PRoot Ubuntu + engine
+storage_app_private,storage,yes,df /data/user/0,yes,yes,kernel syscall,none,108G total / 87G available; Termux state stays app-private
+network_sockets,connectivity,yes,dumpsys wifi / getprop wifi.interface,yes,yes,kernel facility,none,wlan0 enabled; POSIX sockets work under PRoot; this is what the coordinator link needs
+thermal_sensors,monitoring,yes,/sys/class/thermal,yes,partial,kernel sysfs + SELINUX,selinux_gating,62 thermal zones; /sys readable but app access is SELinux-gated under PRoot
+usb_otg,connectivity,yes,getprop sys.usb.state,partial,no,kernel gadget driver,android_gadget_ownership,sys.usb.state=adb; the USB gadget is owned by Android; also physically faulty (error -71)
+display_panel,display,yes,SurfaceFlinger / dumpsys display,no,no,android HAL,none,720x1560 density 320; needs SurfaceFlinger; no DRM node exposed to apps
+touchscreen,input,yes,Android input stack (event0-5),no,no,android input HAL,none,needs Android input stack; not a plain Linux evdev node for apps
+power_key,input,yes,Android input event,no,no,android input HAL,none,delivered as Android input events only
+volume_keys,input,yes,Android input event,no,no,android input HAL,none,delivered as Android input events only
+accelerometer,sensor,yes,Sensor HAL over Binder,no,no,android sensor HAL,none,no /dev/iio exposed to applications
+gyroscope,sensor,yes,Sensor HAL over Binder,no,no,android sensor HAL,none,no /dev/iio exposed to applications
+ambient_light,sensor,yes,Sensor HAL over Binder,no,no,android sensor HAL,none,no /dev/iio exposed to applications
+proximity,sensor,yes,Sensor HAL over Binder,no,no,android sensor HAL,none,no /dev/iio exposed to applications
+camera,capture,yes,Camera2 HAL,no,no,android camera HAL,none,no V4L2 node usable by an application; requires Android service + permission model
+microphone,audio,yes,AudioRecord / AudioFlinger HAL,no,no,android audio HAL,none,no ALSA device usable by an application; requires Android service + permission model
+speaker_audio,audio,yes,AudioTrack / AudioFlinger,yes,no,android audio HAL,none,playback shares the same HAL limitation for apps
+bluetooth,connectivity,uncollected,Android Bluetooth stack,no,no,android bluetooth stack,none,property probe returned empty; apps cannot open raw HCI
+battery_power,power,yes,dumpsys battery,partial,no,android health HAL,none,98% charging 36.0C; charge state is an Android service reading
+location_gps,sensor,yes,Android location service,no,no,android location HAL,none,no access from PRoot userspace
+mcp_engine_cpp,workload,yes_native,ordinary process,yes,yes,none,none,THE TARGET WORKLOAD: pure CPU/memory/files/sockets; glibc aarch64 build required (Bionic binary will not run under glibc)
+coordinator_bridge,workload,yes_native,ordinary process,yes,yes,none,none,plain WebSocket/JSON over POSIX sockets; runs in PRoot
+android_sensor_bridge,workload,required,none,n/a,n/a,android api,none,REMAINS NECESSARY: camera/mic capture and foreground persistence cannot move to PRoot
