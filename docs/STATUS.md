@@ -332,7 +332,7 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | 30-second ticker proof | **BLOCKED - PHONE LOCKED** (`mDreamingLockscreen=true`, activity STOPPED, tick counter 0) |
 | H-03 acceptance (import, connect, consent, camera/mic, Wi-Fi) | **PENDING OPERATOR UNLOCK** |
 
-## H-03 JNI fix - verified on the physical device
+## H-03 JNI fix - historical lab audit on test device
 
 | item | state |
 |---|---|

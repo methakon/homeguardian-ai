@@ -26,6 +26,11 @@ Fetched at build time (CMake FetchContent; not vendored in this repository):
   - spdlog — MIT License. https://github.com/gabime/spdlog
   - nlohmann/json — MIT License. https://github.com/nlohmann/json
 
+Installed via npm for the Web MCP gateway & dashboard (web_mcp/):
+
+  - werift — MIT License. https://github.com/shinyshi/werift-webrtc
+  - ws — MIT License. https://github.com/websockets/ws
+
 Optional, installed separately via npm for the Alexa skill prototype
 (alexa_skill/; not part of the native demo or the default build):
 
@@ -34,3 +39,8 @@ Optional, installed separately via npm for the Alexa skill prototype
 Original HomeGuardian AI source code (everything not under third_party/ and not
 fetched/installed as noted above) is Copyright 2026 Swarna Sekhar Dhar and is
 licensed under the Apache License, Version 2.0.
+
+Licensing history note:
+Earlier pre-release development commits used the MIT License. Effective from
+the Hackathon 2026 candidate release (PR #20), all original code is licensed
+under the Apache License, Version 2.0.

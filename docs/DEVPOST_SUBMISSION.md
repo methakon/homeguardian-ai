@@ -93,7 +93,7 @@ In keeping with the rules of the Amazon Developer Hackathon (AmazonAppDev 2026),
 
 ### Honest Hardware & Deployment Limitations
 
-We believe absolute transparency is the cornerstone of responsible engineering. We state the exact operational limitations of physical devices and infrastructure:
+We believe absolute transparency is the cornerstone of responsible engineering. We state the exact hardware boundaries of physical devices and infrastructure:
 
 - **Xiaomi Mi A3 (Android Node):** Android node transport is evaluated using synthetic test observations; physical camera streaming on physical hardware is unverified in this candidate and locked fail-closed (`physical_camera_unverified`) to prevent unauthorized live capture during evaluation.
 - **Panasonic Eluga:** Tested as an auxiliary edge sensor device in staging; not provisioned with live cryptographic credentials in the default judge inventory.

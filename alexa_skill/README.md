@@ -10,19 +10,19 @@ and it never claims real-time sensor analysis.
 
 ## What this answers up front
 
-**Q: Can the Alexa Developer Console Simulator test this without deploying a
+**Q: Can the Alexa Developer Console Simulator test this prior to deploying a
 backend?**
 
-**No.** Amazon's simulator requires a configured endpoint and deployed skill
+Amazon's simulator requires a configured endpoint and deployed skill
 code. The lowest-cost supported path is an **Alexa-hosted skill**, which
-auto-provisions an AWS Lambda function **without you creating an AWS account or
-paying anything** (Lambda's free tier covers the tiny request volume of testing;
-see Cost below). This repository's handler is written for exactly that path
+auto-provisions an AWS Lambda function with zero cloud cost
+(Lambda's free tier covers testing volume; see Cost below).
+This repository's handler is written for exactly that path
 (`index.js` exports `exports.handler`, the standard Lambda entry point).
 
-The unit tests in `test/handler.test.js` run **without any deployment** — they
-invoke the handlers directly — so the skill logic is fully verified locally
-before you ever touch the console.
+The unit tests in `test/handler.test.js` run directly in Node.js — they
+invoke the handlers in-process — so the skill logic is fully verified locally
+before configuring the console.
 
 ## Architecture
 
