@@ -23,6 +23,17 @@ The eight mutation fixtures the release-package audit is required to cover are:
 plus the secret-redaction proof in :class:`TestSecretRedaction`, which asserts a
 planted credential never reaches stdout, stderr or the JSON report, and that the
 internal guard aborts (exit 3) rather than emit a matched value.
+
+The regression fixtures added for the release-QA defects are:
+
+    9.  a mandatory file the candidate dropped        TestMandatoryFilesRegression
+    10. runtime attribution omissions (42 packages,
+        4 nested components, an unnamed MPL component)
+                                                     TestAttributionOmissionsRegression
+    11. a reviewed allow-list for synthetic credential
+        fixtures in TEST files - which downgrades a
+        named finding to REVIEW and can never hide a
+        different value                           TestSyntheticSecretAllowlist
 """
 
 from __future__ import annotations
@@ -39,6 +50,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
@@ -1060,6 +1072,486 @@ class TestImportableApi(FixtureCase):
         result = self.audit(rel.outdir, script=rel.script)
         for note in result["notes"]:
             self.assertNotIn(secret, note)
+
+
+# ---------------------------------------------------------------------------
+# Fixture 9 - a mandatory file the candidate dropped (two release documents)
+# ---------------------------------------------------------------------------
+
+#: The real defect: MANDATORY_FILES named two release documents the candidate no
+#: longer carried, so the packaging script's own mandatory-files step exited 1
+#: and wrote no manifest at all.
+RELEASE_DOCUMENTS = ("docs/SECURITY_READINESS_V8.md", "docs/RELEASE_CANDIDATE_V21.md")
+
+
+class TestMandatoryFilesRegression(FixtureCase):
+    """A file the packaging declares mandatory and the candidate dropped is FAIL."""
+
+    MANDATORY = tuple(DEFAULT_MANDATORY) + RELEASE_DOCUMENTS
+
+    def test_two_declared_mandatory_documents_absent_are_fail_and_named(self):
+        # The candidate dropped both documents, and (as in the real defect) the
+        # packaging aborted before it wrote any manifest.
+        rel = self.release(mandatory=self.MANDATORY, manifest=False,
+                           checksums=False)
+        result = self.audit(rel.outdir, script=rel.script)
+        src = findings_for(result, "HG-PKG-SRC-001")
+        self.assertEqual(sorted(f["file"] for f in src), sorted(RELEASE_DOCUMENTS),
+                         rules_of(result))
+        for finding in src:
+            self.assertEqual(finding["severity"], "FAIL")
+            self.assertIn(finding["file"], json.dumps(finding),
+                          "the finding must name the missing path")
+        self.assertEqual(status_of(result, 2), "FAIL")
+        self.assertEqual(crp.exit_code_for(result), crp.EXIT_FAIL)
+        # Non-vacuous: the list under test came out of the packaging script
+        # verbatim, and it is exactly the declared set that is enforced.
+        self.assertEqual(result["packaging_rules"]["source"], str(rel.script))
+        self.assertEqual(result["packaging_rules"]["mandatory_count"],
+                         len(self.MANDATORY))
+        self.assertEqual(
+            sorted(f["file"] for f in src), sorted(RELEASE_DOCUMENTS))
+
+    def test_the_same_mandatory_list_is_satisfied_when_the_candidate_carries_them(self):
+        """Control: the fixture does not fire when the documents are shipped."""
+        files = base_files(extra={name: "# {} fixture\n".format(name)
+                                  for name in RELEASE_DOCUMENTS})
+        rel = self.release(files=files, mandatory=self.MANDATORY)
+        result = self.audit(rel.outdir, script=rel.script)
+        self.assertNotIn("HG-PKG-SRC-001", rules_of(result))
+        self.assertNotEqual(status_of(result, 2), "FAIL")
+
+
+# ---------------------------------------------------------------------------
+# Fixture 10 - runtime attribution omissions
+# ---------------------------------------------------------------------------
+
+ROOT_TREE_PACKAGES = 42       # the ~42 root-tree npm packages that were unattributed
+NESTED_PACKAGES = 4           # the Alexa/nested components that were unattributed
+
+
+def _pinned_entry(name, version, licence):
+    return {
+        "version": version,
+        "license": licence,
+        "resolved": "https://registry.npmjs.org/{}/-/{}-{}.tgz".format(
+            name, name, version),
+        "integrity": "sha512-fixture-{}-{}-integrity".format(name, version),
+    }
+
+
+def _lockfile_with(packages, root=None):
+    """A lockfileVersion-3 lockfile carrying ``packages`` (key -> entry)."""
+    data = {
+        "name": root or "homeguardian-web-mcp",
+        "version": "1.0.0",
+        "lockfileVersion": 3,
+        "packages": {
+            "": {"name": root or "homeguardian-web-mcp", "version": "1.0.0",
+                 "license": "Apache-2.0",
+                 "dependencies": {"rootpkg-00": "^1.0.0"}},
+        },
+    }
+    data["packages"].update(packages)
+    return data
+
+
+def unattributed_root_tree(count=ROOT_TREE_PACKAGES, licence="MIT"):
+    """``count`` pinned runtime packages, named so they are easy to assert on."""
+    return {
+        "node_modules/rootpkg-{:02d}".format(index):
+            _pinned_entry("rootpkg-{:02d}".format(index), "1.0.0", licence)
+        for index in range(count)
+    }
+
+
+def unattributed_nested(count=NESTED_PACKAGES, licence="MIT"):
+    """The nested (Alexa bridge) tree, in its own lockfile/project directory."""
+    return {
+        "node_modules/alexapkg-{}".format(index):
+            _pinned_entry("alexapkg-{}".format(index), "1.0.0", licence)
+        for index in range(count)
+    }
+
+
+def with_mediabunny(packages):
+    packages = dict(packages)
+    packages["node_modules/mediabunny"] = {
+        "version": "1.61.5",
+        "license": "MPL-2.0",
+        "resolved": "https://registry.npmjs.org/mediabunny/-/mediabunny-1.61.5.tgz",
+        "integrity": "sha512-fixture-mediabunny-integrity",
+    }
+    return packages
+
+
+class TestAttributionOmissionsRegression(FixtureCase):
+    """Runtime dependencies absent from the attribution record are detected.
+
+    The real case: ~42 root-tree packages and 4 nested (Alexa) components were
+    not attributed at all, and mediabunny 1.61.5 under MPL-2.0 was not named.
+    """
+
+    def omitted_package(self, *, notice=None, licence="MIT", with_mpl=True):
+        packages = unattributed_root_tree(licence=licence)
+        if with_mpl:
+            packages = with_mediabunny(packages)
+        return self.release(
+            lockfile=_lockfile_with(packages),
+            extra_files={
+                "alexa_skill/package-lock.json": json.dumps(
+                    _lockfile_with(unattributed_nested(), root="alexa-bridge"),
+                    indent=2) + "\n",
+            },
+            notice=notice,
+        )
+
+    def test_root_tree_and_nested_components_are_fail_and_aggregated(self):
+        rel = self.omitted_package()
+        result = self.audit(rel.outdir, script=rel.script)
+        stats = result["stats"]["dependencies"]
+
+        # Non-vacuous: the lockfiles really were read, and every runtime entry
+        # of both trees was collected (47 npm components, not zero).
+        self.assertEqual(stats["npm_components"],
+                         ROOT_TREE_PACKAGES + NESTED_PACKAGES + 1)
+        self.assertEqual(stats["attribution_files"], ["NOTICE"])
+
+        group = findings_for(result, "HG-PKG-DEP-002")
+        self.assertEqual(len(group), 1, rules_of(result))
+        self.assertEqual(group[0]["severity"], "FAIL")
+        self.assertIn("{} runtime component(s) under MIT".format(
+            ROOT_TREE_PACKAGES + NESTED_PACKAGES), group[0]["message"])
+        self.assertIn("rootpkg-00@1.0.0", group[0]["message"])
+        self.assertIn("alexapkg-0@1.0.0", group[0]["message"])
+        self.assertEqual(stats["uncovered_by_licence"],
+                         {"MIT": ROOT_TREE_PACKAGES + NESTED_PACKAGES})
+        # The nested tree is a different project directory, and it is reported
+        # in the same aggregate without being merged away.
+        self.assertIn("alexa_skill/package-lock.json", group[0]["evidence"])
+        self.assertEqual(status_of(result, 6), "FAIL")
+        self.assertEqual(crp.exit_code_for(result), crp.EXIT_FAIL)
+
+    def test_an_unnamed_mpl_component_is_fail_by_name_not_by_licence_summary(self):
+        lockfile = _lockfile_with(with_mediabunny(
+            unattributed_root_tree(count=0)))
+        # Even a licence-level statement that DOES mention MPL in an npm-scoped
+        # context is not enough: MPL-2.0 needs the component identified.
+        notice = NOTICE.replace(
+            "Bundled third-party components:",
+            "Web gateway runtime dependencies (npm) are bundled under MPL-2.0 "
+            "and MIT as applicable.\n\nBundled third-party components:")
+        rel = self.release(lockfile=lockfile, notice=notice)
+        result = self.audit(rel.outdir, script=rel.script)
+        named = findings_for(result, "HG-PKG-DEP-001")
+        self.assertEqual(len(named), 1, rules_of(result))
+        self.assertEqual(named[0]["severity"], "FAIL")
+        for token in ("mediabunny", "1.61.5", "MPL-2.0"):
+            self.assertIn(token, named[0]["message"])
+        self.assertIn("mediabunny", named[0]["evidence"])
+        self.assertEqual(
+            result["stats"]["dependencies"]["per_package_required_missing"],
+            ["mediabunny"])
+        # It is NOT swallowed into the collective bucket for MPL.
+        for finding in findings_for(result, "HG-PKG-DEP-003"):
+            self.assertNotIn("mediabunny", finding["message"])
+
+    def test_group_coverage_does_not_count_as_individual_attribution(self):
+        """A dependency claimed to be covered 'as a group' is REVIEW, not covered."""
+        rel = self.release(
+            lockfile=_lockfile_with(unattributed_root_tree()),
+            notice=NOTICE.replace(
+                "Bundled third-party components:",
+                "Bundled third-party components:\nThe npm runtime dependencies "
+                "of the web gateway are bundled under the MIT License."),
+        )
+        result = self.audit(rel.outdir, script=rel.script)
+        stats = result["stats"]["dependencies"]
+        collective = findings_for(result, "HG-PKG-DEP-003")
+        self.assertEqual(len(collective), ROOT_TREE_PACKAGES,
+                         rules_of(result)[:5])
+        self.assertTrue(all(f["severity"] == "REVIEW" for f in collective))
+        self.assertIn("rootpkg-00@1.0.0",
+                      [f["message"].split("'")[1] for f in collective])
+        # The group statement did NOT make any component individually attributed,
+        # and it did not clear the finding either.
+        self.assertEqual(stats["covered"], [])
+        self.assertEqual(stats["uncovered_by_licence"], {})
+        self.assertEqual(status_of(result, 6), "REVIEW")
+        self.assertNotEqual(status_of(result, 6), "PASS")
+        self.assertEqual(crp.exit_code_for(result), crp.EXIT_REVIEW)
+
+
+# ---------------------------------------------------------------------------
+# Fixture 11 - the reviewed allow-list for synthetic credential fixtures
+# ---------------------------------------------------------------------------
+
+#: The credential-shaped literals that genuinely ship inside TEST files.  Each is
+#: a synthetic fixture - a negative-test password, a unit test's local secret, a
+#: key-material literal whose decoded form contains "test-key-material" - but the
+#: checker cannot prove that from the artefact, so every one of them is FAIL.
+SYNTHETIC_TEST_SECRETS = {
+    "web_mcp/tests/auth.test.js":
+        'server.start();\nconst password = "sj-test-password-8842";\n',
+    "tests/cpp/test_secret_store.cpp":
+        '#include <string>\n'
+        'std::string secret = "hg-local-test-secret-material-01";\n',
+    "tests/fixtures/webrtc.fixture.txt":
+        'fixture key material follows\n'
+        'PrivateKey = "d2lyZWd1YXJkLXRlc3Qta2V5LW1hdGVyaWFsLTMyYiE="\n',
+    "web_mcp/tests/mcp.test.js":
+        'const api_key = "hg-test-api-key-0001";\n',
+    "tests/cpp/test_alexa_credentials.cpp":
+        'std::string access_token = "alexa-test-token-123456";\n',
+    "web_mcp/tests/doorbell.test.js":
+        'const client_secret = "hg-test-client-secret-77";\n',
+    "tests/fixtures/synthetic_tokens.txt":
+        'github_token = "ghp_testonly00000000000000000000000000"\n',
+}
+
+#: The raw values, kept only so the tests can assert they never appear in any
+#: output.  The checker never carries them into a finding.
+SYNTHETIC_TEST_SECRET_VALUES = (
+    "sj-test-password-8842",
+    "hg-local-test-secret-material-01",
+    "d2lyZWd1YXJkLXRlc3Qta2V5LW1hdGVyaWFsLTMyYiE=",
+    "hg-test-api-key-0001",
+    "alexa-test-token-123456",
+    "hg-test-client-secret-77",
+    "ghp_testonly00000000000000000000000000",
+)
+
+#: ``key-material literal that decodes to a string containing test-key-material``
+TEST_KEY_MATERIAL = "d2lyZWd1YXJkLXRlc3Qta2V5LW1hdGVyaWFsLTMyYiE="
+
+
+class TestSyntheticSecretAllowlist(FixtureCase):
+    """The reviewed allow-list: what it downgrades, and what it cannot hide.
+
+    What it DOES: downgrade ONE FAIL credential finding - matched by file, line,
+    pattern class and the matched value's sha256[:8] - to REVIEW, with the
+    finding still reported, still carrying its class/length/digest, and with the
+    value still never printed.
+    What it does NOT do: suppress the finding, cover any other value at the same
+    location, or change the behaviour of a run that has no allow-list.
+    """
+
+    def synthetic_package(self, secrets=None):
+        return self.release(extra_files=dict(secrets or SYNTHETIC_TEST_SECRETS))
+
+    def credential_findings(self, result):
+        return findings_for(result, "HG-PKG-LEAK-003")
+
+    def credential_finding(self, result, *, file, pattern_class):
+        for finding in self.credential_findings(result):
+            if finding["file"] == file and finding["pattern_class"] == pattern_class:
+                return finding
+        self.fail("no HG-PKG-LEAK-003 finding for {} / {}: {}".format(
+            file, pattern_class, json.dumps(self.credential_findings(result))))
+
+    def allowlist_file(self, entries, name="release-secret-allowlist.json"):
+        path = self.tmp / name
+        path.write_text(json.dumps({
+            "format": crp.SECRET_ALLOWLIST_FORMAT,
+            "entries": entries,
+        }, indent=2), encoding="utf-8")
+        return path
+
+    # -- (a) an allow-listed synthetic fixture is REVIEW, not FAIL -------------
+
+    def test_allowlisted_synthetic_fixture_is_review_and_the_finding_says_so(self):
+        rel = self.synthetic_package()
+        baseline = self.audit(rel.outdir, script=rel.script)
+        creds = self.credential_findings(baseline)
+        # Non-vacuous pre-condition: with no allow-list every one of these 8
+        # fixture literals is FAIL, including the test-key-material one.
+        self.assertEqual(len(creds), 8, rules_of(baseline))
+        self.assertTrue(all(f["severity"] == "FAIL" for f in creds))
+        key_finding = self.credential_finding(
+            baseline, file="tests/fixtures/webrtc.fixture.txt",
+            pattern_class="wireguard-key")
+        # The "test-key-material" case really is the literal under test.
+        self.assertIn(TEST_KEY_MATERIAL,
+                      SYNTHETIC_TEST_SECRETS["tests/fixtures/webrtc.fixture.txt"])
+
+        target = self.credential_finding(
+            baseline, file="web_mcp/tests/auth.test.js",
+            pattern_class="secret-assignment")
+        allow = self.allowlist_file([{
+            "file": target["file"],
+            "line": target["line"],
+            "pattern_class": target["pattern_class"],
+            "value_sha256_8": target["value_sha256_8"],
+            "reason": "negative-test password asserted by the JS test",
+        }])
+        # Non-vacuous: the entry carries ONLY the truncated digest, never the
+        # value, so the checked-in file cannot leak what it describes.
+        self.assertNotIn("sj-test-password-8842",
+                         allow.read_text(encoding="utf-8"))
+
+        code, out, err = run_cli(str(rel.outdir), "--package-script",
+                                 str(rel.script), "--json",
+                                 "--secret-allowlist", str(allow))
+        report = json.loads(out)
+        reviewed = self.credential_finding(
+            report, file=target["file"], pattern_class=target["pattern_class"])
+        self.assertEqual(reviewed["severity"], "REVIEW")
+        self.assertIn("ALLOW-LISTED FOR REVIEW", reviewed["message"])
+        self.assertIn("synthetic fixture", reviewed["message"])
+        # The finding is not suppressed: it is still there, with the same
+        # identifying fields, and it still cannot print the value.
+        self.assertEqual(reviewed["value_sha256_8"], target["value_sha256_8"])
+        self.assertEqual(reviewed["value_length"], target["value_length"])
+        self.assertEqual(reviewed["line"], target["line"])
+        self.assertIn("[redacted:", reviewed["evidence"])
+        # Everything else is untouched - the allow-list is not a blanket pass.
+        others = [f for f in self.credential_findings(report)
+                  if f["file"] != target["file"]]
+        self.assertEqual(len(others), 7, rules_of(report))
+        self.assertTrue(all(f["severity"] == "FAIL" for f in others),
+                        [(f["file"], f["severity"]) for f in others])
+        self.assertEqual(
+            self.credential_finding(report,
+                                    file="tests/fixtures/webrtc.fixture.txt",
+                                    pattern_class="wireguard-key")["severity"],
+            "FAIL")
+        self.assertEqual(key_finding["severity"], "FAIL")
+        self.assertEqual(report["stats"]["secret_allowlist"]["entries"], 1)
+        self.assertEqual(report["stats"]["secret_allowlist"]["applied"], 1)
+        self.assertEqual(code, crp.EXIT_FAIL)
+
+        for blob in (out, err):
+            for value in SYNTHETIC_TEST_SECRET_VALUES:
+                self.assertNotIn(value, blob)
+        self.assertEqual(err, "")
+
+    # -- (b) the allow-list cannot hide a DIFFERENT value ---------------------
+
+    def test_changing_the_value_at_an_allowlisted_location_returns_to_fail(self):
+        original = self.synthetic_package()
+        first = self.audit(original.outdir, script=original.script)
+        target = self.credential_finding(
+            first, file="web_mcp/tests/auth.test.js",
+            pattern_class="secret-assignment")
+        allow = self.allowlist_file([{
+            "file": target["file"], "line": target["line"],
+            "pattern_class": target["pattern_class"],
+            "value_sha256_8": target["value_sha256_8"],
+            "reason": "negative-test password asserted by the JS test",
+        }])
+
+        # Control: the very same package, through this allow-list, is REVIEW.
+        with mock.patch.dict(os.environ,
+                             {"HG_SECRET_ALLOWLIST": str(allow)}):
+            reviewed = self.audit(original.outdir, script=original.script)
+        self.assertEqual(
+            self.credential_finding(reviewed, file=target["file"],
+                                    pattern_class=target["pattern_class"]
+                                    )["severity"], "REVIEW")
+        self.assertEqual(reviewed["stats"]["secret_allowlist"]["applied"], 1)
+
+        # Now change ONLY the value, on the same line and in the same class.
+        mutated = dict(SYNTHETIC_TEST_SECRETS)
+        before = SYNTHETIC_TEST_SECRETS["web_mcp/tests/auth.test.js"]
+        mutated["web_mcp/tests/auth.test.js"] = (
+            'server.start();\nconst password = "sj-test-password-9999";\n')
+        self.assertEqual(len(mutated["web_mcp/tests/auth.test.js"]), len(before),
+                         "the edit must keep the file the same size and shape")
+        changed = self.synthetic_package(mutated)
+
+        with mock.patch.dict(os.environ,
+                             {"HG_SECRET_ALLOWLIST": str(allow)}):
+            after = self.audit(changed.outdir, script=changed.script)
+        finding = self.credential_finding(after, file=target["file"],
+                                         pattern_class=target["pattern_class"])
+        self.assertEqual(finding["line"], target["line"])
+        self.assertNotEqual(finding["value_sha256_8"], target["value_sha256_8"])
+        self.assertEqual(finding["severity"], "FAIL")
+        self.assertNotIn("ALLOW-LISTED", finding["message"])
+        # Non-vacuous: the entry was still loaded, and it matched nothing.
+        self.assertEqual(after["stats"]["secret_allowlist"]["entries"], 1)
+        self.assertEqual(after["stats"]["secret_allowlist"]["applied"], 0)
+        self.assertEqual(crp.exit_code_for(after), crp.EXIT_FAIL)
+
+    def test_an_entry_that_omits_the_value_digest_matches_nothing(self):
+        """An entry without all four keys suppresses nothing (safe direction)."""
+        rel = self.synthetic_package()
+        baseline = self.audit(rel.outdir, script=rel.script)
+        target = self.credential_finding(
+            baseline, file="web_mcp/tests/auth.test.js",
+            pattern_class="secret-assignment")
+        # The file+line+class are right, but the value key is missing.
+        allow = self.allowlist_file([{
+            "file": target["file"], "line": target["line"],
+            "pattern_class": target["pattern_class"],
+            "reason": "tried to allow-list by location alone",
+        }], name="location-only.json")
+        code, out, _err = run_cli(str(rel.outdir), "--package-script",
+                                  str(rel.script), "--json",
+                                  "--secret-allowlist", str(allow))
+        report = json.loads(out)
+        self.assertEqual(
+            self.credential_finding(report, file=target["file"],
+                                    pattern_class=target["pattern_class"]
+                                    )["severity"], "FAIL")
+        self.assertEqual(report["stats"]["secret_allowlist"]["entries"], 0)
+        self.assertEqual(report["stats"]["secret_allowlist"]["applied"], 0)
+        self.assertTrue(any("malformed" in n for n in report["notes"]),
+                        report["notes"])
+        self.assertEqual(code, crp.EXIT_FAIL)
+
+    # -- (c) no allow-list: unchanged behaviour ------------------------------
+
+    def test_with_no_allowlist_the_findings_are_unchanged(self):
+        rel = self.synthetic_package()
+        # Neutralise any ambient HG_SECRET_ALLOWLIST so "no allow-list" is
+        # exactly what this run has.
+        with mock.patch.dict(os.environ, {"HG_SECRET_ALLOWLIST": ""}):
+            result = self.audit(rel.outdir, script=rel.script)
+        creds = self.credential_findings(result)
+        self.assertEqual(len(creds), 8, rules_of(result))
+        self.assertTrue(all(f["severity"] == "FAIL" for f in creds))
+        self.assertNotIn("ALLOW-LISTED", json.dumps(result))
+        self.assertIsNone(result["stats"]["secret_allowlist"]["path"])
+        self.assertEqual(result["stats"]["secret_allowlist"]["entries"], 0)
+        self.assertEqual(result["stats"]["secret_allowlist"]["applied"], 0)
+        self.assertEqual(result["counts"]["REVIEW"], 0)
+        self.assertEqual(crp.exit_code_for(result), crp.EXIT_FAIL)
+        # The redaction guarantee is unchanged by the mechanism's presence.
+        blob = json.dumps(result)
+        for value in SYNTHETIC_TEST_SECRET_VALUES:
+            self.assertNotIn(value, blob)
+            self.assertNotIn(value, " ".join(result["notes"]))
+
+    def test_a_malformed_allowlist_suppresses_nothing(self):
+        rel = self.synthetic_package()
+        broken = self.tmp / "broken.json"
+        broken.write_text("{ this is not json", encoding="utf-8")
+        code, out, err = run_cli(str(rel.outdir), "--package-script",
+                                 str(rel.script), "--json",
+                                 "--secret-allowlist", str(broken))
+        report = json.loads(out)
+        creds = self.credential_findings(report)
+        self.assertEqual(len(creds), 8, rules_of(report))
+        self.assertTrue(all(f["severity"] == "FAIL" for f in creds))
+        self.assertEqual(report["stats"]["secret_allowlist"]["applied"], 0)
+        self.assertTrue(any("could not be read" in n for n in report["notes"]),
+                        report["notes"])
+        self.assertEqual(code, crp.EXIT_FAIL)
+
+    def test_a_missing_allowlist_file_suppresses_nothing(self):
+        rel = self.synthetic_package()
+        absent = self.tmp / "not-there.json"
+        code, out, _err = run_cli(str(rel.outdir), "--package-script",
+                                  str(rel.script), "--json",
+                                  "--secret-allowlist", str(absent))
+        report = json.loads(out)
+        self.assertTrue(all(f["severity"] == "FAIL"
+                            for f in self.credential_findings(report)))
+        self.assertEqual(report["stats"]["secret_allowlist"]["entries"], 0)
+        self.assertTrue(any("no secret allow-list at" in n
+                            for n in report["notes"]), report["notes"])
+        self.assertEqual(code, crp.EXIT_FAIL)
 
 
 if __name__ == "__main__":

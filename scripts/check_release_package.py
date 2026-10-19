@@ -34,6 +34,8 @@ The six checks
     values are NEVER printed: only the pattern class, the value length and the
     first 8 hex of its SHA-256 are reported, and every finding is masked before
     the scanner's own redaction guard is run over it as a final assertion.
+    Credential findings are never suppressed by a heuristic; the only mechanism
+    that may downgrade one is the reviewed allow-list documented below.
  5. THE PACKAGE RECORDS ITS SOURCE REVISION.  Verifies the recorded revision
     (release manifest fields, revision files inside the package, the archive /
     package-directory name) and, when a repository is available, corroborates
@@ -59,6 +61,66 @@ A packaged entry that the packaging script's OWN exclusion list forbids is FAIL:
 if it is in the artefact, the packaging gate was bypassed or the rules changed.
 Everything else in the same family (build output, local state, captured media)
 is REVIEW: unexpected, but not a disclosure.  See ``PACKAGING_FORBIDDEN_FALLBACK``.
+
+Reviewed secret allow-list (synthetic credential fixtures)
+-----------------------------------------------------------
+Some credential-shaped literals genuinely ship inside a release *because they
+are test fixtures*: a negative-test password in a JavaScript test, a local
+secret in a C++ unit test, a key-material literal a test decodes.  The checker
+cannot prove from an artefact that such a literal is a fixture, so it leaves the
+finding FAIL.  This checker therefore carries **no heuristic that suppresses a
+credential finding** - a heuristic that hides one real secret is worse than a
+false positive.
+
+What it carries instead is a REVIEWED ALLOW-LIST: a checked-in JSON file that
+names an individual finding by all four of
+
+  * the package-relative file,
+  * the line number,
+  * the credential pattern class (``wireguard-key``, ``secret-assignment``, ...),
+    and
+  * the first 8 hex of the SHA-256 of the matched *value*,
+
+and records why the value is a reviewed fixture.  The value itself is never
+written into the allow-list and never leaves the tool: the truncated digest is
+what identifies it, exactly as in every other credential finding.
+
+An allow-listed finding is downgraded FAIL -> REVIEW and its message says it is
+allow-listed for review: the finding stays visible and is never suppressed.
+Because the entry is keyed by the value's digest, editing the value at that
+location - which is what a real leak looks like - returns the finding to FAIL.
+The allow-list can only cover the one value that was reviewed; it cannot hide a
+different one, and it cannot be widened to a path, a class or a line range.
+With no allow-list present the behaviour is the unchanged, un-suppressed one.
+
+Resolution order:
+  1. ``--secret-allowlist FILE`` on the CLI, or ``HG_SECRET_ALLOWLIST`` for the
+     importable API (the CLI flag wins);
+  2. ``scripts/release-secret-allowlist.json`` beside this script, when it
+     exists.  The repository ships no such file, so by default nothing is
+     allow-listed.
+A missing, unreadable or malformed allow-list suppresses nothing (the safe
+direction) and is reported in the notes.
+
+Allow-list format (JSON):
+  {
+    "format": 1,
+    "entries": [
+      {
+        "file": "web_mcp/tests/auth.test.js",
+        "line": 42,
+        "pattern_class": "secret-assignment",
+        "value_sha256_8": "9fdc99be",
+        "reason": "negative-test password asserted by this test; reviewed"
+      }
+    ]
+  }
+
+A reviewer adds an entry by taking ``file``, ``line``, ``pattern_class`` and
+``value_sha256_8`` straight out of the finding (all four are in the text report
+and in ``--json``), reading that line to confirm the value is a fixture, and
+committing the entry - so the downgrade is a reviewed diff of data rather than a
+change to the rules.
 
 Redaction discipline
 --------------------
@@ -150,7 +212,13 @@ by ``check_submission_claims.Finding.to_dict()``, extended with ``check``):
     "stats": {                                # per-check detail
         "archive": str|null, "archive_entries": int,
         "release_manifest": str|null,
-        "packaging": {...}, "revision": {...}, "dependencies": {...}
+        "packaging": {...}, "revision": {...}, "dependencies": {...},
+        "secret_allowlist": {                 # reviewed allow-list of fixtures
+            "path": str|null,                 # null when none was resolved
+            "format": 1,                      # int
+            "entries": int,                   # reviewed entries loaded
+            "applied": int                    # findings downgraded FAIL->REVIEW
+        }
     }
   }
 
@@ -340,6 +408,158 @@ def _sanitize(findings: Iterable, values: Sequence[str]) -> list:
             )
         )
     return clean
+
+
+# --------------------------------------------------------------------------
+# Reviewed secret allow-list (synthetic credential fixtures)
+# --------------------------------------------------------------------------
+
+#: Environment variable naming the allow-list for the importable API; the CLI's
+#: ``--secret-allowlist`` takes precedence over it.
+ENV_SECRET_ALLOWLIST = "HG_SECRET_ALLOWLIST"
+
+#: Where a checked-in allow-list lives, beside this script.  The repository ships
+#: no such file, so the default audit is the un-suppressed one.
+SECRET_ALLOWLIST_NAME = "release-secret-allowlist.json"
+
+SECRET_ALLOWLIST_FORMAT = 1
+
+#: An entry matches a finding only when ALL FOUR of these agree.  Keying on the
+#: matched value's ``sha256[:8]`` is what stops an entry from covering a
+#: *different* secret at the same file, line and pattern class.
+ALLOWLIST_KEYS = ("file", "line", "pattern_class", "value_sha256_8")
+
+
+def resolve_secret_allowlist(explicit=None):
+    """Where the allow-list comes from: the argument, then the env, then the repo."""
+    if explicit:
+        return Path(explicit)
+    env = os.environ.get(ENV_SECRET_ALLOWLIST)
+    if env:
+        return Path(env)
+    beside = Path(__file__).resolve().parent / SECRET_ALLOWLIST_NAME
+    return beside if beside.is_file() else None
+
+
+def load_secret_allowlist(path) -> tuple[dict, list[str]]:
+    """Read a reviewed secret allow-list.  Returns (keys, notes).
+
+    ``keys`` maps ``(file, line, pattern_class, value_sha256_8)`` to the
+    reviewer's reason.  A missing, unreadable or malformed allow-list yields no
+    keys and a note: the safe direction is that every credential-shaped value
+    stays FAIL, so a broken allow-list can never widen what is suppressed.
+    """
+    notes: list[str] = []
+    if path is None:
+        return {}, notes
+    path = Path(path)
+    if not path.is_file():
+        notes.append(
+            "no secret allow-list at {} (an entry names a reviewed synthetic "
+            "credential fixture by file, line, pattern class and value "
+            "sha256[:8]); nothing is allow-listed".format(path)
+        )
+        return {}, notes
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError) as exc:
+        notes.append(
+            "the secret allow-list {} could not be read ({}); no credential "
+            "finding is allow-listed and every credential-shaped value stays "
+            "FAIL".format(path, type(exc).__name__)
+        )
+        return {}, notes
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        notes.append(
+            "the secret allow-list {} carries no 'entries' list; no credential "
+            "finding is allow-listed".format(path)
+        )
+        return {}, notes
+
+    keys: dict = {}
+    malformed = 0
+    for entry in entries:
+        if not isinstance(entry, dict) or any(key not in entry
+                                              for key in ALLOWLIST_KEYS):
+            malformed += 1
+            continue
+        try:
+            line = int(entry["line"])
+        except (TypeError, ValueError):
+            malformed += 1
+            continue
+        keys[(str(entry["file"]), line, str(entry["pattern_class"]),
+              str(entry["value_sha256_8"]).lower())] = str(
+                  entry.get("reason") or "")
+    notes.append(
+        "secret allow-list {}: {} reviewed entr{} loaded{}; an allow-listed "
+        "finding is downgraded to REVIEW (never suppressed), and a changed "
+        "value at the same file/line/pattern class returns to FAIL".format(
+            path, len(keys), "y" if len(keys) == 1 else "ies",
+            "" if keys else " (nothing is allow-listed)",
+        )
+    )
+    if malformed:
+        notes.append(
+            "{} allow-list entr{} were malformed (each needs {}, and an integer "
+            "line) and were ignored, so any finding they describe stays "
+            "FAIL".format(malformed, "y" if malformed == 1 else "ies",
+                          ", ".join(ALLOWLIST_KEYS))
+        )
+    return keys, notes
+
+
+def apply_secret_allowlist(findings, keys) -> tuple[list, int]:
+    """Downgrade FAIL -> REVIEW for the credential findings ``keys`` names.
+
+    Returns (findings, applied).  Only ``HG-PKG-LEAK-003`` FAIL findings are
+    eligible, and only when the entry's file, line, pattern class AND value
+    ``sha256[:8]`` all agree.  The finding keeps its class, length and truncated
+    digest, so the value is still never printed; only the severity and the
+    message change.  A value changed at that location does not match the entry
+    and stays FAIL.
+    """
+    if not keys:
+        return list(findings), 0
+    out = []
+    applied = 0
+    for finding in findings:
+        key = (finding.file, finding.line, finding.klass or "",
+               (finding.value_sha256_8 or "").lower())
+        if (finding.rule == "HG-PKG-LEAK-003" and finding.severity == SEV_FAIL
+                and key in keys):
+            applied += 1
+            reason = keys[key]
+            out.append(finding.__class__(
+                rule=finding.rule,
+                severity=SEV_REVIEW,
+                file=finding.file,
+                line=finding.line,
+                message=(
+                    "{}; ALLOW-LISTED FOR REVIEW: this value, at this file, "
+                    "line and pattern class, is recorded in the reviewed secret "
+                    "allow-list as a synthetic fixture ({}), so this finding is "
+                    "reported as REVIEW rather than FAIL. It is not suppressed: "
+                    "a different value here - which is what a real leak looks "
+                    "like - is not covered by the entry and returns to "
+                    "FAIL.".format(finding.message, reason or "no reason recorded")
+                ),
+                evidence=finding.evidence,
+                correction=(
+                    "If the value at {}:{} changes, re-run this checker, confirm "
+                    "the new value is intended, and re-record it in the "
+                    "allow-list as a reviewed change; do not widen an entry to a "
+                    "path, a pattern class or a line range.".format(
+                        finding.file, finding.line)
+                ),
+                klass=finding.klass,
+                value_length=finding.value_length,
+                value_sha256_8=finding.value_sha256_8,
+            ))
+        else:
+            out.append(finding)
+    return out, applied
 
 
 # --------------------------------------------------------------------------
@@ -2198,16 +2418,19 @@ class Report:
 def run_audit(path: Path, expected_licence: str | None = None,
               package_script: Path | None = None, repo_arg: str | None = None,
               severity_min: str = SEV_REVIEW, include_topology: bool = False,
-              max_scan_bytes: int = 2 * 1024 * 1024) -> Report:
+              max_scan_bytes: int = 2 * 1024 * 1024,
+              secret_allowlist: Path | None = None) -> Report:
     _require()
     expected = csc.resolve_expected_licence(expected_licence)
     rules = load_packaging_rules(
         package_script if package_script is not None else default_package_script()
     )
+    allowlist_path = resolve_secret_allowlist(secret_allowlist)
+    allowlist_keys, allowlist_notes = load_secret_allowlist(allowlist_path)
 
     workdir = Path(tempfile.mkdtemp(prefix="hgpkg-audit-"))
     report = Report(input_path=str(path), expected_licence=expected)
-    notes = list(rules.notes)
+    notes = list(rules.notes) + list(allowlist_notes)
     try:
         pkg, load_notes = load_package(path, workdir)
         notes.extend(load_notes)
@@ -2255,6 +2478,25 @@ def run_audit(path: Path, expected_licence: str | None = None,
         findings += dep
         notes.extend(dep_notes)
         report.stats["dependencies"] = dep_stats
+
+        # The reviewed secret allow-list is applied last, on the assembled
+        # findings: it downgrades the exact findings it names from FAIL to
+        # REVIEW and changes nothing else.  A pass that matches no entry is not
+        # affected, so the check is not widened by its presence.
+        findings, allowlist_applied = apply_secret_allowlist(findings,
+                                                             allowlist_keys)
+        report.stats["secret_allowlist"] = {
+            "path": str(allowlist_path) if allowlist_path else None,
+            "format": SECRET_ALLOWLIST_FORMAT,
+            "entries": len(allowlist_keys),
+            "applied": allowlist_applied,
+        }
+        if allowlist_applied:
+            notes.append(
+                "{} credential finding(s) were allow-listed for review by {}: "
+                "reported as REVIEW (never suppressed), value withheld".format(
+                    allowlist_applied, allowlist_path)
+            )
 
         findings = _sorted(f for f in findings if _passes_severity(f, severity_min))
         findings = _sanitize(findings, sensitive)
@@ -2306,6 +2548,12 @@ def audit_package(package_path, *, expected_licence: str | None = None,
     """Importable entry point: audit a package and return the JSON-serialisable
     report dict.  No printing, no ``sys.exit``, no writes outside a private
     temporary directory.
+
+    The reviewed secret allow-list (see the module docstring) is resolved from
+    the ``HG_SECRET_ALLOWLIST`` environment variable or from
+    ``scripts/release-secret-allowlist.json`` beside the checker; this signature
+    is a documented contract, so the allow-list path is deliberately NOT an
+    argument here (the CLI takes ``--secret-allowlist`` for that).
 
     Raises ``ScannerUnavailable`` when ``check_submission_claims.py`` cannot be
     imported, and ``PackageInputError`` when the path is not an auditable
@@ -2408,6 +2656,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-scan-bytes", type=int, default=2 * 1024 * 1024,
                         help="skip packaged files larger than this for the content "
                              "scan (default: 2097152)")
+    parser.add_argument("--secret-allowlist", default=None, metavar="FILE",
+                        help="reviewed JSON allow-list of synthetic credential "
+                             "fixtures, keyed by file, line, pattern class and "
+                             "value sha256[:8]. An entry downgrades the finding "
+                             "it names to REVIEW; it never suppresses it, and a "
+                             "changed value at that location returns to FAIL. "
+                             "Default: the HG_SECRET_ALLOWLIST variable, else "
+                             "release-secret-allowlist.json beside this script "
+                             "(absent by default, so nothing is allow-listed)")
     parser.add_argument("--quiet", action="store_true",
                         help="print nothing; only the exit code matters")
     return parser
@@ -2424,6 +2681,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             severity_min=args.severity_min,
             include_topology=args.include_topology,
             max_scan_bytes=args.max_scan_bytes,
+            secret_allowlist=Path(args.secret_allowlist)
+            if args.secret_allowlist else None,
         )
     except ScannerUnavailable as exc:
         print("INTERNAL ERROR: {}".format(exc), file=sys.stderr)

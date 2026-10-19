@@ -7,6 +7,16 @@ repository, the real release output or the network.  Standard library only.
 Run:
     python3 scripts/tests/test_check_release_manifest.py -v
     python3 -m unittest discover -s scripts/tests -t scripts -v
+
+The regression fixtures for the release-QA defects are:
+
+    * a stale recorded SECURITY revision      TestStaleSecurityRevisionBaseline
+    * a correct baseline that passes with
+      every check still on                    TestCorrectBaselinePassesWithoutLoosening
+    * a deliberate removal resolved by
+      re-recording the baseline               TestReviewedManifestRerecord
+    * a wrong revision and corrupted /
+      truncated / altered / short manifests   TestWrongRevisionAndCorruptedManifests
 """
 
 from __future__ import annotations
@@ -600,6 +610,370 @@ class TestInputsAndCli(FixtureCase):
         blob = json.dumps(result)
         for text in FIXTURE_FILES.values():
             self.assertNotIn(text.strip().splitlines()[0], blob)
+
+
+# ---------------------------------------------------------------------------
+# Fixture 1 - a stale recorded SECURITY revision
+# ---------------------------------------------------------------------------
+
+#: The real defect: the packaging script's hardcoded security SHA had drifted
+#: from the candidate's runtime trees by 5241 diff lines, so its drift gate
+#: exited 1.  Once a package has been cut anyway, the recorded baseline is what
+#: has to catch it: the security revision the baseline records must be the one
+#: the shipped package was actually cut from.
+STALE_SEC = "1111111111111111111111111111111111111111"
+SHIPPED_SEC = "2222222222222222222222222222222222222222"
+
+
+class TestStaleSecurityRevisionBaseline(FixtureCase):
+    """A package cut from a different security revision than the baseline records."""
+
+    def release_security_only(self, sec, label="security-only"):
+        """A package whose ONLY revision record is its security revision.
+
+        The archive/manifest name carries no ``sec-.../prep-...`` pair and the
+        text manifest records no "Prep / Docs SHA" field, so the security
+        revision is the single revision the artefact and its record describe -
+        which is the field the packaging script's own drift gate is built
+        around.
+        """
+        rel = self.release(sec=sec, prep=PREP_A)
+        name = "homeguardian-ai-1.0.0-{}".format(label)
+        (rel.outdir / "{}-manifest.txt".format(rel.name)).rename(
+            rel.outdir / "{}-manifest.txt".format(name))
+        rel.archive.rename(rel.outdir / "{}-source.tar.gz".format(name))
+        rel.archive = rel.outdir / "{}-source.tar.gz".format(name)
+        rel.name = name
+        manifest = rel.outdir / "{}-manifest.txt".format(name)
+        manifest.write_text(
+            "\n".join(line for line in
+                      manifest.read_text(encoding="utf-8").splitlines()
+                      if not line.startswith("Prep / Docs SHA:")) + "\n",
+            encoding="utf-8")
+        return rel
+
+    def test_a_stale_recorded_security_revision_is_fail_and_names_both(self):
+        recorded = self.release_security_only(STALE_SEC)
+        baseline_path, baseline = self.baseline_path(recorded.archive)
+        self.assertEqual(baseline["source"]["security_baseline"], STALE_SEC)
+        self.assertEqual(baseline["source"]["revision"], STALE_SEC,
+                         "the security revision must be the revision this "
+                         "baseline records")
+
+        shipped = self.release_security_only(SHIPPED_SEC)
+        result = crm.verify_manifest(str(shipped.archive), baseline_path)
+        revision = self.findings_for(result, "HG-MF-004")
+        self.assertEqual(len(revision), 1, self.rules(result))
+        self.assertEqual(revision[0]["severity"], "FAIL")
+        # Both sides are named: the expected (recorded) and the found (shipped).
+        self.assertIn(STALE_SEC[:12], revision[0]["message"])
+        self.assertIn(SHIPPED_SEC[:12], revision[0]["message"])
+        self.assertEqual(result["source"]["recorded_revision"], STALE_SEC)
+        self.assertEqual(result["source"]["actual_revision"], SHIPPED_SEC)
+        self.assertEqual(result["source"]["recorded_security"], STALE_SEC)
+        self.assertEqual(result["source"]["actual_security"], SHIPPED_SEC)
+        self.assertEqual(result["checks"]["revision"], "FAIL")
+        self.assertEqual(crm.exit_code_for(result), crm.EXIT_FAIL)
+
+    def test_the_same_security_revision_passes(self):
+        """Control: the FAIL above is the drift, not the fixture's shape."""
+        rel = self.release_security_only(STALE_SEC)
+        baseline_path, _ = self.baseline_path(rel.archive)
+        result = crm.verify_manifest(str(rel.archive), baseline_path)
+        self.assertNotIn("HG-MF-004", self.rules(result))
+        self.assertEqual(result["counts"], {"FAIL": 0, "REVIEW": 0})
+        self.assertEqual(result["checks"]["revision"], "PASS")
+        self.assertEqual(result["source"]["recorded_security"], STALE_SEC)
+        self.assertEqual(result["source"]["actual_security"], STALE_SEC)
+
+
+# ---------------------------------------------------------------------------
+# Fixture 2 - a correct baseline passes, with nothing switched off
+# ---------------------------------------------------------------------------
+
+
+class TestCorrectBaselinePassesWithoutLoosening(FixtureCase):
+    def test_a_correct_baseline_passes_with_every_check_still_on(self):
+        rel = self.release()
+        baseline_path, baseline = self.baseline_path(rel.archive)
+
+        # The documented defaults - no flag, no switch, no override.
+        result = crm.verify_manifest(str(rel.archive), baseline_path)
+        self.assertEqual(result["counts"], {"FAIL": 0, "REVIEW": 0})
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["checks"]["files"], "PASS")
+        self.assertEqual(result["checks"]["digests"], "PASS")
+        self.assertEqual(result["checks"]["revision"], "PASS")
+        self.assertEqual(result["manifest_format"], "json")
+        self.assertEqual(result["checks"]["text_mode_limits"], "none",
+                         "per-file checks must not have been skipped")
+        self.assertEqual(crm.exit_code_for(result), crm.EXIT_OK)
+
+        # The baseline drift check RAN, with non-zero comparison counts: every
+        # recorded file was present and was hashed against the record.
+        summary = result["summary"]
+        self.assertGreater(summary["recorded_files"], 0)
+        self.assertEqual(summary["recorded_files"], len(FIXTURE_FILES))
+        self.assertEqual(len(baseline["files"]), summary["recorded_files"])
+        self.assertEqual(summary["present_files"], summary["recorded_files"])
+        self.assertEqual(summary["missing"], 0)
+        self.assertEqual(summary["unexpected"], 0)
+        self.assertEqual(summary["changed"], 0)
+
+        # A revision "PASS" is only ever produced AFTER a successful comparison
+        # of two non-empty operands (a comparison that could not be made reads
+        # REVIEW, and one that disagreed reads FAIL).
+        self.assertTrue(result["source"]["recorded_revision"])
+        self.assertTrue(result["source"]["actual_revision"])
+        self.assertEqual(result["source"]["recorded_revision"],
+                         result["source"]["actual_revision"])
+        # The same holds for the archive digests.
+        self.assertTrue(result["archive"]["recorded_sha256"])
+        self.assertEqual(result["archive"]["recorded_sha256"],
+                         result["archive"]["actual_sha256"])
+        self.assertTrue(result["archive"]["recorded_sha512"])
+        self.assertEqual(result["archive"]["recorded_sha512"],
+                         result["archive"]["actual_sha512"])
+        self.assertTrue(baseline["archive"]["sha256"])
+
+        # Nothing was loosened to reach that PASS: the defaults of the two
+        # switches that can widen the check are the strict ones.
+        import inspect
+
+        parameters = inspect.signature(crm.verify_manifest).parameters
+        self.assertIs(parameters["check_archive_digests"].default, True)
+        self.assertEqual(parameters["unexpected_severity"].default, "REVIEW")
+        self.assertNotIn("severity-min", result.get("checks", {}))
+
+    def test_one_wrong_input_flips_the_same_call_to_fail(self):
+        """Falsification: the PASS above is earned by the inputs, not by a default."""
+        rel = self.release(prep=PREP_A)
+        baseline_path, _ = self.baseline_path(rel.archive)
+        clean = crm.verify_manifest(str(rel.archive), baseline_path)
+        self.assertEqual(clean["checks"]["revision"], "PASS")
+
+        # Same call, same defaults, same fixture - only the revision differs.
+        other = self.release(prep=PREP_B)
+        drifted = crm.verify_manifest(str(other.archive), baseline_path)
+        self.assertIn("HG-MF-004", self.rules(drifted))
+        self.assertEqual(self.findings_for(drifted, "HG-MF-004")[0]["severity"],
+                         "FAIL")
+        self.assertEqual(drifted["checks"]["revision"], "FAIL")
+        self.assertEqual(crm.exit_code_for(drifted), crm.EXIT_FAIL)
+
+
+# ---------------------------------------------------------------------------
+# Fixture 4 - a deliberate removal resolved by re-recording the baseline
+# ---------------------------------------------------------------------------
+
+REMOVED_ON_PURPOSE = "src/core/registry.cpp"
+
+
+class TestReviewedManifestRerecord(FixtureCase):
+    def test_a_deliberate_removal_is_resolved_by_re_recording_the_baseline(self):
+        original = self.release()
+        old_baseline_path, _ = self.baseline_path(original.archive)
+
+        # The file was deliberately deleted from the candidate.
+        reduced = dict(FIXTURE_FILES)
+        del reduced[REMOVED_ON_PURPOSE]
+        candidate = self.release(files=reduced)
+
+        # (a) it FAILs against the old baseline
+        stale = crm.verify_manifest(str(candidate.archive), old_baseline_path)
+        missing = self.findings_for(stale, "HG-MF-001")
+        self.assertEqual([f["path"] for f in missing], [REMOVED_ON_PURPOSE])
+        self.assertEqual(missing[0]["severity"], "FAIL")
+        self.assertEqual(stale["summary"]["missing"], 1)
+        self.assertEqual(stale["checks"]["files"], "FAIL")
+        self.assertEqual(crm.exit_code_for(stale), crm.EXIT_FAIL)
+
+        # (b) the supported --record path re-records the baseline (a reviewed,
+        # committed change), rather than the check being weakened.
+        new_baseline_path = self.tmp / "rerecorded.json"
+        code, _out, err = run_cli(str(candidate.archive), "--record", "-o",
+                                  str(new_baseline_path))
+        self.assertEqual(code, crm.EXIT_OK)
+        self.assertEqual(err, "")
+        recorded = json.loads(new_baseline_path.read_text(encoding="utf-8"))
+        self.assertEqual([entry["path"] for entry in recorded["files"]],
+                         sorted(reduced))
+        self.assertEqual(len(recorded["files"]), len(reduced))
+        for entry in recorded["files"]:
+            self.assertEqual(len(entry["sha256"]), 64,
+                             "the re-record must still hash every file")
+        self.assertNotIn(REMOVED_ON_PURPOSE,
+                         [entry["path"] for entry in recorded["files"]])
+
+        # (c) it PASSes against the new baseline
+        rerecorded = crm.verify_manifest(str(candidate.archive),
+                                         new_baseline_path)
+        self.assertEqual(rerecorded["counts"], {"FAIL": 0, "REVIEW": 0})
+        self.assertEqual(rerecorded["total"], 0)
+        self.assertEqual(rerecorded["checks"]["files"], "PASS")
+        self.assertEqual(rerecorded["checks"]["revision"], "PASS")
+        self.assertEqual(crm.exit_code_for(rerecorded), crm.EXIT_OK)
+        self.assertNotIn("HG-MF-001", self.rules(rerecorded))
+
+        # (d) the re-record did NOT blind the tool: a DIFFERENT unexpected file
+        # is still caught...
+        sneaked = dict(reduced)
+        sneaked["docs/UNREVIEWED.md"] = "# added after the baseline was recorded\n"
+        arrived = self.release(files=sneaked)
+        after = crm.verify_manifest(str(arrived.archive), new_baseline_path)
+        unexpected = self.findings_for(after, "HG-MF-002")
+        self.assertEqual([f["path"] for f in unexpected], ["docs/UNREVIEWED.md"])
+        self.assertEqual(crm.exit_code_for(after), crm.EXIT_FAIL)
+
+        # ... and so is an edited file at the same size.
+        edited = dict(reduced)
+        body = FIXTURE_FILES["src/main.cpp"]
+        edited["src/main.cpp"] = body.replace("return 0", "return 1")
+        self.assertEqual(len(edited["src/main.cpp"]), len(body))
+        changed_package = self.release(files=edited)
+        changed = crm.verify_manifest(str(changed_package.archive),
+                                      new_baseline_path)
+        self.assertEqual(
+            [f["path"] for f in self.findings_for(changed, "HG-MF-003")],
+            ["src/main.cpp"])
+        self.assertNotIn("HG-MF-001", self.rules(changed))
+        self.assertEqual(crm.exit_code_for(changed), crm.EXIT_FAIL)
+
+
+# ---------------------------------------------------------------------------
+# Fixture 7 - a wrong revision and corrupted / altered / short manifests
+# ---------------------------------------------------------------------------
+
+
+class TestWrongRevisionAndCorruptedManifests(FixtureCase):
+    def test_a_mismatched_recorded_revision_is_fail(self):
+        rel = self.release(prep=PREP_A)
+        baseline_path, baseline = self.baseline_path(rel.archive)
+        baseline["source"]["revision"] = PREP_B
+        baseline["source"]["prep"] = PREP_B
+        baseline_path.write_text(json.dumps(baseline, indent=2), encoding="utf-8")
+
+        result = crm.verify_manifest(str(rel.archive), baseline_path)
+        revision = self.findings_for(result, "HG-MF-004")
+        self.assertEqual(len(revision), 1, self.rules(result))
+        self.assertEqual(revision[0]["severity"], "FAIL")
+        self.assertIn(PREP_B[:12], revision[0]["message"])
+        self.assertIn(PREP_A[:12], revision[0]["message"])
+        self.assertEqual(result["source"]["recorded_revision"], PREP_B)
+        self.assertEqual(result["source"]["actual_revision"], PREP_A)
+        self.assertEqual(result["checks"]["revision"], "FAIL")
+        # Non-vacuous: the revision is the ONLY thing wrong with this package.
+        self.assertNotIn("HG-MF-001", self.rules(result))
+        self.assertNotIn("HG-MF-002", self.rules(result))
+        self.assertNotIn("HG-MF-003", self.rules(result))
+        self.assertNotIn("HG-MF-006", self.rules(result))
+        self.assertEqual(crm.exit_code_for(result), crm.EXIT_FAIL)
+
+    def test_a_truncated_manifest_is_an_error_not_a_pass(self):
+        rel = self.release()
+        baseline_path, _ = self.baseline_path(rel.archive)
+        text = baseline_path.read_text(encoding="utf-8")
+        baseline_path.write_text(text[: len(text) // 2], encoding="utf-8")
+        with self.assertRaises(crm.ManifestInputError):
+            crm.verify_manifest(str(rel.archive), baseline_path)
+        code, _out, err = run_cli(str(rel.archive), "--manifest",
+                                  str(baseline_path))
+        self.assertEqual(code, crm.EXIT_INTERNAL)
+        self.assertIn("error:", err)
+
+    def test_a_manifest_that_lost_its_file_list_is_an_error(self):
+        rel = self.release()
+        baseline_path, baseline = self.baseline_path(rel.archive)
+        del baseline["files"]
+        baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+        with self.assertRaises(crm.ManifestInputError):
+            crm.verify_manifest(str(rel.archive), baseline_path)
+
+    def test_a_recorded_digest_truncated_by_corruption_is_fail(self):
+        rel = self.release()
+        baseline_path, baseline = self.baseline_path(rel.archive)
+        entry = next(item for item in baseline["files"]
+                     if item["path"] == "src/main.cpp")
+        full = entry["sha256"]
+        entry["sha256"] = full[:12]          # a corrupted/truncated record
+        baseline_path.write_text(json.dumps(baseline, indent=2),
+                                 encoding="utf-8")
+
+        result = crm.verify_manifest(str(rel.archive), baseline_path)
+        changed = self.findings_for(result, "HG-MF-003")
+        self.assertEqual([f["path"] for f in changed], ["src/main.cpp"])
+        self.assertEqual(changed[0]["severity"], "FAIL")
+        self.assertEqual(changed[0]["recorded_sha256"], full[:12])
+        self.assertEqual(changed[0]["actual_sha256"], full)
+        self.assertEqual(result["checks"]["files"], "FAIL")
+        self.assertEqual(crm.exit_code_for(result), crm.EXIT_FAIL)
+
+    def test_an_altered_recorded_archive_digest_is_fail(self):
+        rel = self.release()
+        baseline_path, baseline = self.baseline_path(rel.archive)
+        truth = baseline["archive"]["sha256"]
+        baseline["archive"]["sha256"] = "0" * 64
+        baseline_path.write_text(json.dumps(baseline, indent=2),
+                                 encoding="utf-8")
+
+        result = crm.verify_manifest(str(rel.archive), baseline_path)
+        digests = self.findings_for(result, "HG-MF-006")
+        self.assertEqual(len(digests), 1, self.rules(result))
+        self.assertEqual(digests[0]["severity"], "FAIL")
+        self.assertEqual(digests[0]["recorded_sha256"], "0" * 64)
+        self.assertEqual(digests[0]["actual_sha256"], truth)
+        self.assertIn(truth[:16], digests[0]["evidence"]
+                      if "evidence" in digests[0] else digests[0]["message"])
+        self.assertEqual(result["checks"]["digests"], "FAIL")
+        self.assertEqual(crm.exit_code_for(result), crm.EXIT_FAIL)
+
+    def test_a_manifest_missing_an_entry_the_package_carries_is_fail(self):
+        rel = self.release()
+        baseline_path, baseline = self.baseline_path(rel.archive)
+        dropped = baseline["files"].pop(0)     # a file the package DOES carry
+        baseline["package"]["file_count"] = len(baseline["files"])
+        baseline_path.write_text(json.dumps(baseline, indent=2),
+                                 encoding="utf-8")
+
+        default = crm.verify_manifest(str(rel.archive), baseline_path)
+        self.assertEqual(self.findings_for(default, "HG-MF-002")[0]["severity"],
+                         "REVIEW")
+        # The supported severity switch raises it to FAIL for a release gate.
+        gate = crm.verify_manifest(str(rel.archive), baseline_path,
+                                  unexpected_severity="FAIL")
+        added = self.findings_for(gate, "HG-MF-002")
+        self.assertEqual([f["path"] for f in added], [dropped["path"]])
+        self.assertEqual(added[0]["severity"], "FAIL")
+        self.assertEqual(added[0]["actual_sha256"], dropped["sha256"])
+        self.assertEqual(crm.exit_code_for(gate), crm.EXIT_FAIL)
+
+    def test_a_same_size_content_edit_is_caught_by_the_sha256(self):
+        rel = self.release()
+        baseline_path, _ = self.baseline_path(rel.archive)
+
+        body = FIXTURE_FILES["src/main.cpp"]
+        edited_body = body.replace("return 0", "return 1")
+        self.assertEqual(
+            len(edited_body), len(body),
+            "the fixture must keep the size identical, so a size-only "
+            "comparison would miss this edit")
+        edited = dict(FIXTURE_FILES)
+        edited["src/main.cpp"] = edited_body
+        mutated = self.release(files=edited)
+
+        result = crm.verify_manifest(str(mutated.archive), baseline_path)
+        changed = self.findings_for(result, "HG-MF-003")
+        self.assertEqual([f["path"] for f in changed], ["src/main.cpp"])
+        self.assertEqual(changed[0]["severity"], "FAIL")
+        self.assertEqual(changed[0]["recorded_size"], changed[0]["actual_size"])
+        self.assertEqual(changed[0]["recorded_size"], len(body))
+        self.assertNotEqual(changed[0]["recorded_sha256"],
+                            changed[0]["actual_sha256"])
+        self.assertIn("size is unchanged", changed[0]["message"])
+        self.assertNotIn("HG-MF-001", self.rules(result))
+        self.assertNotIn("HG-MF-002", self.rules(result))
+        self.assertEqual(result["checks"]["files"], "FAIL")
+        self.assertEqual(crm.exit_code_for(result), crm.EXIT_FAIL)
 
 
 if __name__ == "__main__":
