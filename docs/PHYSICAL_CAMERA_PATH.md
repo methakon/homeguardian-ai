@@ -343,7 +343,18 @@ model, no threshold change:
   detection-fusion rule      : no alert
 ```
 
-That is the no-false-positive side of the ledger on real frames.
+That is the no-false-positive side of the ledger on real frames, and the durable artifact
+`docs/evidence/PHYSICAL_CAMERA_STILL_SCENE.log` shows the confirmation rule refusing a *brief* change
+whose peak motion (0.2664) was **larger** than the acceptance run's (0.1252): one anomalous episode is
+not a sustained change.
+
+### 12.6 Evidence durability (a gap this session exposed, now closed)
+
+The capture transcripts for runs 1-5 were written to `/tmp` and the system has since removed them, so
+the byte-for-byte originals are gone; their values survive as a labelled transcription in
+`docs/evidence/PHYSICAL_CAMERA_CAPTURE_LOG.md`. `hg_camera_bridge` now takes `--log <path>` and writes
+its transcript straight to a durable file, and every capture cited as evidence from here on is produced
+that way.
 
 ### 12.5 Still NOT claimed
 

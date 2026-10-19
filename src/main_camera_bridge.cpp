@@ -49,6 +49,7 @@ void print_usage(const char* argv0) {
         "  %s --probe [--device <node>]                     enumerate camera nodes (captures nothing)\n"
         "  %s --capture --confirm --frames <n> [--device <node>] [--width w] [--height h]\n"
         "                        [--hold <seconds>] [--cadence <frames-per-observation>]\n"
+        "                        [--log <path>]      write the transcript to a durable file\n"
         "                                                   capture n frames and reduce them to scalars\n"
         "\n"
         "--hold    waits N seconds (counting down) before capture starts, so a person can step\n"
@@ -128,6 +129,7 @@ int main(int argc, char** argv) {
     uint32_t height = 480;
     int hold_seconds = 0;
     int cadence = 1;
+    std::string log_path;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -140,8 +142,21 @@ int main(int argc, char** argv) {
         else if (a == "--height" && i + 1 < argc) height = static_cast<uint32_t>(std::atoi(argv[++i]));
         else if (a == "--hold" && i + 1 < argc) hold_seconds = std::atoi(argv[++i]);
         else if (a == "--cadence" && i + 1 < argc) cadence = std::atoi(argv[++i]);
+        else if (a == "--log" && i + 1 < argc) log_path = argv[++i];
         else if (a == "--help" || a == "-h") { print_usage(argv[0]); return 0; }
         else { std::printf("unknown argument: %s\n", a.c_str()); print_usage(argv[0]); return 2; }
+    }
+
+    // Evidence must survive the session. `/tmp` is cleaned up by the system, and a capture whose
+    // transcript is gone cannot support the claim it made - so a requested log path is written
+    // directly, and the notice goes to stderr so it cannot corrupt the log itself.
+    if (!log_path.empty()) {
+        if (std::freopen(log_path.c_str(), "w", stdout) == nullptr) {
+            std::fprintf(stderr, "cannot write the log to %s: %s\n", log_path.c_str(),
+                         std::strerror(errno));
+            return 2;
+        }
+        std::fprintf(stderr, "capture transcript -> %s\n", log_path.c_str());
     }
 
     if (!probe && !capture) { print_usage(argv[0]); return 2; }
