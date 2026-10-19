@@ -1,6 +1,6 @@
 # PHYSICAL CAMERA CAPTURE LOG — real frames reduced to bounded scalars
 
-Device: `/dev/video0` (uvicorn `uvcvideo`, YUYV 640x480, stride 1280, 640*480 = 307200 pixels).
+Device: `/dev/video0` (`uvcvideo` (V4L2), YUYV 640x480, stride 1280, 640*480 = 307200 pixels).
 Every observation in every run below carries `provenance: "real"`.
 All captures ran with `--confirm` (the operator gate). **No frame was stored, written, streamed or
 transmitted**: each frame is reduced to its luma plane in place and discarded.
