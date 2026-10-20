@@ -111,8 +111,11 @@ public class MainActivity extends Activity {
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
-            // H-03: hand the compact observations to the D-03 transport, then refresh the panel.
-            // The drain returns ONLY numeric features - no pixels, no PCM, no credentials.
+            // HG-PANASONIC-SERVICE-TRANSPORT-06: the Activity NO LONGER feeds the transport.
+            // It used to call nodePanel.sample(nativeDrainObservations(), ...) here, which is why
+            // onPause() silenced the node. The foreground service owns that now and pumps on its own
+            // scheduler. This tick is a DISPLAY observer only: if it stops, the screen goes stale and
+            // the node keeps reporting.
             if (nodePanel != null) {
                 if (!panelIdentified) {
                     nodePanel.setIdentity(nativeIdentity(), DeviceIdentity.defaultDisplayName());
@@ -121,9 +124,11 @@ public class MainActivity extends Activity {
                     Log.i(TAG, nativeSetObservationIntervalMs(1000));
                     panelIdentified = true;
                 }
-                nodePanel.sample(nativeDrainObservations(), nativeStats());
-                    // Ask the native gate, every tick, WHY each sensor is authorized or not.
-                    nodePanel.setConsent(nativeConsentState());
+                final String stats = nativeStats();
+                nodePanel.setNativeStats(stats);
+                nodePanel.refreshView(stats);
+                // Ask the native gate, every tick, WHY each sensor is authorized or not.
+                nodePanel.setConsent(nativeConsentState());
             }
             refreshCounters();
             // Heartbeat: makes "the ticker executes repeatedly" an OBSERVABLE fact in the log

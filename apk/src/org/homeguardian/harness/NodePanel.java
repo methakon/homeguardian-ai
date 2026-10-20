@@ -9,7 +9,6 @@ import android.os.BatteryManager;
 import android.os.Build;
 import android.os.PowerManager;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -18,12 +17,22 @@ import android.widget.TextView;
 /**
  * H-03: the operator-visible hub link and node status panel.
  *
- * It shows ONLY what it can learn: the transport's own counters, the Wi-Fi state, the battery and
- * thermal state the OS exposes, and the acquisition counters the native layer reports. Nothing
- * here is inferred, and no observation or credential is ever displayed.
+ * HG-PANASONIC-SERVICE-TRANSPORT-06 - WHAT CHANGED AND WHY
+ * This panel used to OWN the transport: it built the ObservationTransport, held the NodeSession and
+ * fed it from {@code sample(...)} on the Activity's tick. {@code MainActivity.onPause()} removes that
+ * ticker, so the transport went idle the moment the screen went off - while capture kept running.
+ * The node produced media and stopped reporting, which is the opposite of what a headless sensor
+ * node is for.
  *
- * Recording stays operator-controlled: this panel can start and stop the LINK, and the
- * acquisition buttons live with the capture controls in MainActivity.
+ * The panel now COMMANDS and OBSERVES:
+ *   - "Connect" sends an Intent to {@code CctvService}; the service builds and owns the link.
+ *   - "Disconnect" sends an Intent; the service tears it down, wake lock included.
+ *   - The status text is READ from {@code NodeTransportHost}'s published state. The panel holds NO
+ *     reference to the transport, so nothing this object does - or fails to do when it is paused -
+ *     can stop the node reporting. That is deliberate, and it is the bug this change removes.
+ *
+ * It still shows ONLY what it can learn, and nothing is inferred. No observation, payload or
+ * credential is ever displayed: only counts, states, and the OS's own battery/thermal/Wi-Fi report.
  */
 public final class NodePanel {
 
@@ -39,8 +48,6 @@ public final class NodePanel {
     private final EditText hostEdit;
     private final EditText portEdit;
     private final TextView stateView;
-    private ObservationTransport transport;
-    private NodeSession session;
     private String deviceId = "";
     private String displayName = "";
 
@@ -55,7 +62,7 @@ public final class NodePanel {
         root.setPadding(0, 16, 0, 16);
 
         final TextView header = new TextView(ctx);
-        header.setText("Hub link (Wi-Fi, mutual TLS)");
+        header.setText("Hub link (Wi-Fi, mutual TLS) - service-owned");
         header.setPadding(0, 12, 0, 4);
         root.addView(header);
 
@@ -70,13 +77,14 @@ public final class NodePanel {
         portEdit.setText("8443");
         root.addView(portEdit);
 
-        root.addView(button("Connect to hub", new View.OnClickListener() {
+        // These buttons no longer start a transport. They ASK THE SERVICE to, which is the point.
+        root.addView(button("Connect to hub (via service)", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 connect();
             }
         }));
-        root.addView(button("Disconnect", new View.OnClickListener() {
+        root.addView(button("Disconnect (via service)", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 disconnect();
@@ -139,9 +147,6 @@ public final class NodePanel {
     public void setIdentity(String deviceId, String displayName) {
         this.deviceId = deviceId == null ? "" : deviceId;
         this.displayName = displayName == null ? "" : displayName;
-        if (session != null) {
-            session.setDeviceId(this.deviceId);
-        }
         refresh("identity set");
     }
 
@@ -152,8 +157,12 @@ public final class NodePanel {
         return b;
     }
 
+    /**
+     * Ask the SERVICE to start the link. The endpoint travels as Intent extras and the panel keeps
+     * no reference to the resulting transport - so a paused panel cannot stop the node reporting.
+     */
     private void connect() {
-        final String host = hostEdit.getText().toString().trim();
+        final String hubHost = hostEdit.getText().toString().trim();
         final int port;
         try {
             port = Integer.parseInt(portEdit.getText().toString().trim());
@@ -161,54 +170,81 @@ public final class NodePanel {
             stateView.setText("port must be a number");
             return;
         }
-        if (host.length() == 0) {
+        if (hubHost.length() == 0) {
             stateView.setText("enter the hub host or LAN IP");
             return;
         }
         if (!NodeSession.credentialsPresent(ctx)) {
-            // Refuse rather than connect unverified: no certificate, no link.
+            // Refuse rather than connect unverified: no certificate, no link. The service repeats
+            // this check; failing here just gives the operator a faster, clearer answer.
             stateView.setText("no device credentials in app storage; provisioning is required first"
                     + " (see the H-03 acceptance doc). Nothing was connected.");
             return;
         }
-        if (transport != null) {
-            transport.stop();
-        }
-        transport = new ObservationTransport(NodeSession.buildConfig(ctx, deviceId, displayName, host, port));
-        session = new NodeSession(transport);
-        session.setDeviceId(deviceId);
-        transport.start();
-        stateView.setText("connecting to " + host + ":" + port + " ...");
+        final Intent i = new Intent(ctx, CctvService.class);
+        i.setAction(CctvService.ACTION_LINK_START);
+        i.putExtra(CctvService.EXTRA_LINK_HOST, hubHost);
+        i.putExtra(CctvService.EXTRA_LINK_PORT, port);
+        i.putExtra(CctvService.EXTRA_DEVICE_ID, deviceId);
+        i.putExtra(CctvService.EXTRA_DISPLAY_NAME, displayName);
+        ctx.startService(i);
+        stateView.setText("asked the service to connect to " + hubHost + ":" + port + " ...");
     }
 
+    /** Ask the SERVICE to stop the link. Releasing the wake lock is part of that. */
     private void disconnect() {
-        if (transport != null) {
-            transport.stop();
-            transport = null;
-            session = null;
-        }
-        stateView.setText("disconnected by the operator");
+        final Intent i = new Intent(ctx, CctvService.class);
+        i.setAction(CctvService.ACTION_LINK_STOP);
+        ctx.startService(i);
+        stateView.setText("asked the service to disconnect");
     }
 
-    /** Called from the UI tick with the native drain and the native stats line. */
-    public void sample(String ndjson, String nativeStats) {
-        if (session != null) {
-            session.pump(ndjson);
-        }
+    // Latest live consent state from the native gate ("consent: camera=... | microphone=...").
+    private String consentState = "not polled yet";
+
+    /** Shows the native gate's own reason for each sensor. Sanitized by the native side. */
+    public void setConsent(String state) {
+        if (state == null || state.isEmpty() || state.equals(consentState)) return;
+        this.consentState = state;
+        refresh("consent state");
+    }
+
+    /**
+     * Repaint. Called by the Activity's own (optional) observer tick. Nothing here feeds the link -
+     * the link is pumped by the service, so a missing repaint only makes the DISPLAY stale, never
+     * the node silent.
+     */
+    public void refreshView(String nativeStats) {
         refresh(nativeStats);
+    }
+
+    /**
+     * Compact transport counters for the acceptance log. Machine-checkable and sanitized: counts only
+     * - never a payload, a device id, a credential or any media.
+     *
+     * Read from the host's published counters because the SERVICE owns the transport instance now.
+     */
+    public String transportCounters() {
+        return "transport state=" + NodeTransportHost.state()
+                + " queued=" + NodeTransportHost.queuedCountStatic()
+                + " sent=" + NodeTransportHost.sentCountStatic()
+                + " refused=" + NodeTransportHost.refusedCountStatic()
+                + " dropped=" + NodeTransportHost.droppedCountStatic()
+                + " permanent=" + NodeTransportHost.permanentRejectionCountStatic()
+                + " pumped=" + NodeTransportHost.pumpedTotalStatic()
+                + " consent_blocked=" + NodeTransportHost.consentBlocked()
+                + " link=" + CctvService.linkStatus();
     }
 
     private void refresh(String nativeStats) {
         final StringBuilder sb = new StringBuilder();
-        sb.append("hub link: ");
-        if (transport == null) {
-            sb.append("not connected");
-        } else if (transport.isConnected()) {
-            sb.append("CONNECTED (TLS verified)");
-        } else if (transport.isSuspended()) {
-            sb.append("SUSPENDED by the hub: ").append(transport.suspensionReason());
-        } else {
-            sb.append("connecting / offline");
+        sb.append("hub link (service-owned): ").append(NodeTransportHost.state());
+        sb.append('\n').append("  ").append(NodeTransportHost.detail());
+        sb.append('\n').append("  last stop: ").append(NodeTransportHost.lastStopReason());
+        sb.append('\n').append("  consent block: ").append(NodeTransportHost.consentBlocked());
+        if (NodeTransportHost.linkHost().length() > 0) {
+            sb.append('\n').append("  endpoint: ").append(NodeTransportHost.linkHost())
+                    .append(':').append(NodeTransportHost.linkPort());
         }
         sb.append('\n').append("wi-fi: ").append(wifiState());
         sb.append('\n').append(consentState);
@@ -216,29 +252,28 @@ public final class NodePanel {
                 .append(NodeSession.credentialsPresent(ctx) ? "present" : "MISSING");
         final String cam = permState("android.permission.CAMERA");
         final String mic = permState("android.permission.RECORD_AUDIO");
-        sb.append('\n').append("permissions: camera=").append(cam).append(" microphone=").append(mic);
+        sb.append('\n').append("permissions: camera=").append(cam)
+                .append(" microphone=").append(mic);
 
-        if (transport != null) {
-            sb.append('\n').append("transport: queued=").append(transport.queuedCount())
-                    .append(" sent=").append(transport.sentCount())
-                    .append(" refused=").append(transport.refusedCount())
-                    .append(" dropped=").append(transport.droppedCount())
-                    .append(" permanent=").append(transport.permanentRejectionCount());
+        sb.append('\n').append("transport: queued=").append(NodeTransportHost.queuedCountStatic())
+                .append(" sent=").append(NodeTransportHost.sentCountStatic())
+                .append(" refused=").append(NodeTransportHost.refusedCountStatic())
+                .append(" dropped=").append(NodeTransportHost.droppedCountStatic())
+                .append(" permanent=").append(NodeTransportHost.permanentRejectionCountStatic());
+        sb.append('\n').append("observations queued by this app: ")
+                .append(NodeTransportHost.queuedTotalStatic())
+                .append(" parse_failures=").append(NodeTransportHost.parseFailuresStatic());
+        sb.append('\n').append("frames written to the hub: ")
+                .append(NodeTransportHost.sentCountStatic());
+        if (NodeTransportHost.lastSentAtMsStatic() > 0) {
+            sb.append(" (last write ").append(ago(NodeTransportHost.lastSentAtMsStatic())).append(")");
         }
-        if (session != null) {
-            sb.append('\n').append("observations queued by this app: ").append(session.queuedTotal())
-                    .append(" parse_failures=").append(session.parseFailures());
-            sb.append('\n').append("frames written to the hub: ")
-                    .append(transport == null ? "unknown" : Long.toString(transport.sentCount()));
-            if (session.lastSentAtMs() > 0) {
-                sb.append(" (last write ").append(ago(session.lastSentAtMs())).append(")");
-            }
-            // HONEST GAP: the transport parses and validates the hub's acknowledgment but keeps no
-            // counter for it, so "last acknowledged observation" cannot be reported yet. Saying
-            // "acknowledged" here would be claiming more than the code knows.
-            sb.append('\n').append("hub acknowledgment counter: not exposed by the transport yet")
-                    .append(" (gap, see the H-03 acceptance doc)");
-        }
+        // HONEST GAP: the transport parses and validates the hub's acknowledgment but keeps no
+        // counter for it, so "last acknowledged observation" cannot be reported yet. Saying
+        // "acknowledged" here would be claiming more than the code knows.
+        sb.append('\n').append("hub acknowledgment counter: not exposed by the transport yet")
+                .append(" (gap, see the H-03 acceptance doc)");
+        sb.append('\n').append("service pump ticks: ").append(NodeTransportHost.pumpedTotalStatic());
         sb.append('\n').append("camera fps (measured): ").append(fps());
         sb.append('\n').append("native: ").append(nativeStats == null ? "(unavailable)" : nativeStats);
         sb.append('\n').append("battery: ").append(batteryState());
@@ -254,29 +289,6 @@ public final class NodePanel {
         } catch (RuntimeException e) {
             return "unknown";
         }
-    }
-
-    // Latest live consent state from the native gate ("consent: camera=... | microphone=...").
-    private String consentState = "not polled yet";
-
-    /** Shows the native gate's own reason for each sensor. Sanitized by the native side. */
-    public void setConsent(String state) {
-        if (state == null || state.isEmpty() || state.equals(consentState)) return;
-        this.consentState = state;
-        refresh("consent state");
-    }
-
-    /**
-     * Compact transport counters for the acceptance log. Machine-checkable and sanitized: counts only
-     * - never a payload, a device id, a credential or any media.
-     */
-    public String transportCounters() {
-        if (transport == null) return "transport=not-connected";
-        return "transport queued=" + transport.queuedCount()
-                + " sent=" + transport.sentCount()
-                + " refused=" + transport.refusedCount()
-                + " dropped=" + transport.droppedCount()
-                + " permanent=" + transport.permanentRejectionCount();
     }
 
     private String wifiState() {
@@ -302,7 +314,7 @@ public final class NodePanel {
     /** FPS from the native frame counter, measured over wall time - never estimated. */
     private String fps() {
         final long now = System.currentTimeMillis();
-        final long frames = extractCounter(lastStats(), "frames_processed");
+        final long frames = extractCounter(lastStatsCache, "frames_processed");
         if (frames < 0) {
             return "unavailable";
         }
@@ -322,8 +334,9 @@ public final class NodePanel {
 
     private String lastStatsCache = "";
 
-    private String lastStats() {
-        return lastStatsCache;
+    /** Pushed in by the Activity each observer tick, so fps can be derived without owning anything. */
+    public void setNativeStats(String nativeStats) {
+        this.lastStatsCache = nativeStats == null ? "" : nativeStats;
     }
 
     static long extractCounter(String stats, String key) {

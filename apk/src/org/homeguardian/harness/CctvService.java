@@ -69,6 +69,22 @@ public class CctvService extends Service {
     public static final String ACTION_SINK_SELFTEST = "org.homeguardian.harness.CCTV_SINK_SELFTEST";
 
     /**
+     * HG-PANASONIC-SERVICE-TRANSPORT-06: the hub link is now started and stopped by the SERVICE.
+     * The Activity sends these; it no longer constructs or ticks the transport.
+     *
+     * LINK_START is an EXPLICIT operator action and is therefore allowed to clear a consent block
+     * left by an earlier withdrawal. Nothing implicit - a START_STICKY restart, a reconnect or a
+     * timer - can clear it.
+     */
+    public static final String ACTION_LINK_START = "org.homeguardian.harness.CCTV_LINK_START";
+    public static final String ACTION_LINK_STOP = "org.homeguardian.harness.CCTV_LINK_STOP";
+    /** Extras for LINK_START. The endpoint is runtime input, never a compiled-in default. */
+    public static final String EXTRA_LINK_HOST = "link_host";
+    public static final String EXTRA_LINK_PORT = "link_port";
+    public static final String EXTRA_DEVICE_ID = "device_id";
+    public static final String EXTRA_DISPLAY_NAME = "display_name";
+
+    /**
      * THE capture session. Owned by the service, never by the activity, so that activity
      * onPause()/onStop() cannot terminate screen-off capture. Exactly one instance exists.
      * Unbounded (runMs <= 0): it runs until an explicit disarm/stop.
@@ -97,6 +113,47 @@ public class CctvService extends Service {
     private long startedUptimeMs = 0L;
     private int ticks = 0;
     private volatile boolean running = false;
+
+    /**
+     * HG-PANASONIC-SERVICE-TRANSPORT-06: the hub link, OWNED HERE.
+     *
+     * It used to live in NodePanel, which the Activity builds and ticks - so onPause() stopped it.
+     * Capture survived screen-off; the transport did not. This is the fix: the service owns the
+     * link and drives its own scheduler, so ownership no longer depends on a visible Activity.
+     *
+     * Never created or started implicitly. Only ACTION_LINK_START builds it.
+     */
+    private NodeTransportHost linkHost;
+    private Handler pumpHandler;
+
+    /**
+     * The service-owned pump interval. Independent of TICK_MS (which only refreshes the
+     * notification): the native interval is clamped to 100..60000 ms, and this default matches the
+     * panel's previous default so observation latency does not silently change with the move.
+     */
+    private static final long PUMP_MS = 1000L;
+
+    private final Runnable pump = new Runnable() {
+        @Override
+        public void run() {
+            final NodeTransportHost h = linkHost;
+            if (h == null || !running) {
+                return;
+            }
+            try {
+                // The drain is a native read over the process-global engine, so this works with
+                // the Activity absent - which is the whole point of the move.
+                if (ObservationSource.isLoaded()) {
+                    h.pump(ObservationSource.drainObservations());
+                } else {
+                    Log.w(TAG, "native observation source not loaded: " + ObservationSource.loadError());
+                }
+            } catch (RuntimeException e) {
+                Log.w(TAG, "pump tick failed: " + e);
+            }
+            pumpHandler.postDelayed(this, PUMP_MS);
+        }
+    };
 
     /**
      * Reflects the last stop reason for the status panel. "never_started", "operator_stop",
@@ -138,6 +195,7 @@ public class CctvService extends Service {
     public void onCreate() {
         super.onCreate();
         ticker = new Handler();
+        pumpHandler = new Handler();
         createChannel();
         Log.i(TAG, "service created");
     }
@@ -149,6 +207,7 @@ public class CctvService extends Service {
         if (ACTION_STOP.equals(action)) {
             Log.i(TAG, "stop requested by operator");
             lastStopReason = "operator_stop";
+            stopLink("operator stop");
             disarmCapture("operator stop");
             disarmMic("operator stop");
             stopSelf();
@@ -207,6 +266,10 @@ public class CctvService extends Service {
             }, "hg-sink-selftest").start();
         } else if (ACTION_MIC_DISARM.equals(action)) {
             disarmMic("operator disarm");
+        } else if (ACTION_LINK_START.equals(action)) {
+            startLink(intent);
+        } else if (ACTION_LINK_STOP.equals(action)) {
+            stopLink("operator disconnect");
         }
 
         updateNotification();
@@ -221,11 +284,15 @@ public class CctvService extends Service {
     public void onDestroy() {
         running = false;
         isRunning = false;
+        // Stop the hub link FIRST and unconditionally: it owns a wake lock, and a wake lock leaked
+        // past service destruction is the worst failure mode this class has.
+        stopLink("service destroyed");
         // Release the camera before the service goes away, whatever the reason. A leaked
         // capture session would survive as a phantom camera client on device 0.
         disarmCapture("service destroyed");
         disarmMic("service destroyed");
         if (ticker != null) ticker.removeCallbacks(tick);
+        if (pumpHandler != null) pumpHandler.removeCallbacks(pump);
         if (lastStopReason.equals("never_started") || lastStopReason.equals("system_killed")) {
             lastStopReason = "destroyed";
         }
@@ -237,6 +304,60 @@ public class CctvService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null; // started service only; no binding surface
+    }
+
+    // -------------------------------------------------- hub link ownership (service-owned)
+
+    /**
+     * Start the hub link. Explicit operator action only.
+     *
+     * The endpoint arrives as an Intent extra, never a compiled-in default: a hardcoded development
+     * LAN address would become device identity by accident, which the brief forbids. Missing or
+     * unparseable values refuse rather than guess.
+     */
+    private synchronized void startLink(Intent intent) {
+        final String host = intent == null ? null : intent.getStringExtra(EXTRA_LINK_HOST);
+        final String deviceId = intent == null ? null : intent.getStringExtra(EXTRA_DEVICE_ID);
+        final String displayName = intent == null ? null : intent.getStringExtra(EXTRA_DISPLAY_NAME);
+        int port = 8443;
+        if (intent != null && intent.hasExtra(EXTRA_LINK_PORT)) {
+            port = intent.getIntExtra(EXTRA_LINK_PORT, 8443);
+        }
+        if (host == null || host.trim().length() == 0) {
+            Log.w(TAG, "LINK_START refused: no hub host supplied");
+            return;
+        }
+        if (linkHost != null) {
+            linkHost.stop("restarting with new endpoint");
+        }
+        linkHost = new NodeTransportHost(this, deviceId, displayName, host.trim(), port);
+        // An EXPLICIT operator connect is allowed to clear a consent block. Nothing implicit can.
+        linkHost.clearConsentBlock();
+        final String r = linkHost.start();
+        Log.i(TAG, "link start: " + r);
+        if (pumpHandler != null && running) {
+            pumpHandler.removeCallbacks(pump);
+            pumpHandler.post(pump);
+        }
+    }
+
+    /**
+     * Stop the hub link and everything it holds, including the wake lock. Safe to call when no link
+     * exists, which is what lets every exit path call it unconditionally.
+     */
+    private synchronized void stopLink(String reason) {
+        if (pumpHandler != null) {
+            pumpHandler.removeCallbacks(pump);
+        }
+        if (linkHost != null) {
+            linkHost.stop(reason);
+        }
+    }
+
+    /** The panel reads this; it never drives the link. */
+    public static String linkStatus() {
+        return NodeTransportHost.state() + " | " + NodeTransportHost.detail()
+                + " | " + NodeTransportHost.lastStopReason();
     }
 
     // ------------------------------------------------------------------ capture ownership
@@ -259,6 +380,12 @@ public class CctvService extends Service {
 
     /** Stop and release the capture session. Safe to call when nothing is armed. */
     private synchronized void disarmCapture(String why) {
+        // Stage 1 item 10 + Stage 2: withdrawing capture consent must also stop observation
+        // PRODUCTION from leaving the node. The host's block is what prevents a later service
+        // restart or reconnect from silently resuming transmission without a fresh operator act.
+        if (captureArmed && linkHost != null) {
+            linkHost.onConsentWithdrawn();
+        }
         if (capture == null) { captureArmed = false; return; }
         Log.i(TAG, "disarming capture (" + why + ")");
         capture.stop();                       // releases camera, session, codec and surface
