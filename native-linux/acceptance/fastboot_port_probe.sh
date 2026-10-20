@@ -32,8 +32,22 @@ LOG="${PROBE_LOG:-$(pwd)/fastboot_probe_$(date +%Y%m%d-%H%M%S).log}"
 
 # Controller map, derived from this host (see the report).
 # xhci = the port family that failed. ehci = untested candidate.
-declare -A CTRL_PCI=( [usb1]="0000:00:1a.0 ehci" [usb2]="0000:00:14.0 xhci" \
-                      [usb3]="0000:00:14.0 xhci" [usb4]="0000:00:1d.0 ehci" )
+#
+# Deliberately a `case` rather than an associative array: `declare -A` is a bashism,
+# and this script previously died with a bare `Syntax error: "(" unexpected` when
+# invoked as `sh script.sh` (dash cannot parse it), because the failure happens at
+# parse time before any runtime guard could explain itself.
+controller_of() {   # $1 = device path like 2-1  ->  prints "<pci> <type>"
+    local root
+    root="${1%%-*}"
+    case "$root" in
+        1) echo "0000:00:1a.0 ehci" ;;
+        2) echo "0000:00:14.0 xhci" ;;
+        3) echo "0000:00:14.0 xhci" ;;
+        4) echo "0000:00:1d.0 ehci" ;;
+        *) echo "unknown unknown" ;;
+    esac
+}
 
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG"; }
 
@@ -69,13 +83,21 @@ cmd_observe() {
     local i=0 found=""
     while [ $i -lt 40 ]; do
         if found=$(find_xiaomi); then
-            IFS='|' read -r path ids speed devnum prod <<<"$found"
-            mapfile -t c < <(controller_of "$path")   # "pci ctrl"
+            # portable split: a herestring (<<<) is a bashism and dash rejects it
+            # outright, so use a heredoc instead.
+            IFS='|' read -r path ids speed devnum prod <<EOF
+$found
+EOF
+            # portable split (no mapfile: bash-only, would break under sh)
+            ctrl_info=$(controller_of "$path")
+            c_pci=${ctrl_info%% *}
+            c_type=${ctrl_info##* }
             log "  FOUND on $path  ids=$ids speed=$speed devnum=$devnum product='$prod'"
-            log "  >>> controller: ${c[0]:-?} (${c[1]:-?})"
-            case "${c[1]:-}" in
+            log "  >>> controller: $c_pci ($c_type)"
+            case "$c_type" in
                 xhci) log "  >>> this is the xHCI controller that FAILED before" ;;
                 ehci) log "  >>> NATIVE EHCI - the untested candidate. Note this port." ;;
+                *)    log "  >>> unrecognised controller" ;;
             esac
             return 0
         fi
