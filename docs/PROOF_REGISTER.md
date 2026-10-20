@@ -1,8 +1,8 @@
 # HomeGuardian AI — Release Proof & Verification Register
 
 **Document Version:** 1.0.0  
-**Candidate SHA:** `c08e7e591f197dfb547e62253abb50f451f16a50` (`c08e7e5`)  
-**Parent SHA:** `7c3c32307092f61d80a6048d58442d994dbec32c`  
+**Candidate SHA:** `78408552860428eb4cbfa8da8a76cb13b145e071` (`7840855`)  
+**Parent SHA:** `cd117aa6d2bdf3690f02c3486c8e44b4a729c9b8`  
 **License:** Apache License 2.0  
 
 ---
