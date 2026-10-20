@@ -42,6 +42,7 @@ struct McpHttpConfig {
     std::string bind_address = "127.0.0.1";
     uint16_t port = 8790;
     bool allow_remote = false;
+    bool allow_vpn = false;                    // Allow binding to VPN overlay addresses (WireGuard / VpnService)
     std::vector<std::string> allowed_origins;  // exact match; empty => Origin always refused
     bool require_auth = true;
     size_t max_body_bytes = kMaxJsonBytes;
@@ -96,6 +97,9 @@ private:
 
 // True when `addr` is a loopback literal (127.0.0.0/8 or ::1). Exposed for testing.
 bool is_loopback_literal(const std::string& addr);
+
+// True when `addr` is a recognized VPN overlay interface literal (e.g. 10.66.0.0/16 WireGuard overlay). Exposed for testing.
+bool is_vpn_literal(const std::string& addr);
 
 // Reads cryptographically secure random bytes from the OS (/dev/urandom).
 // Returns true on success, false if the OS entropy source fails. Exposed for testing.

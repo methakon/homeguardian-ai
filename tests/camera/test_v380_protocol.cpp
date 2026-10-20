@@ -295,3 +295,32 @@ TEST_CASE("v380 protocol: the assembler enforces the protocol's own sanity rules
         REQUIRE(asm_.begin_chunk(partial.data(), partial.size(), &hdr) == ChunkOutcome::need_more);
     }
 }
+
+TEST_CASE("v380 protocol: chunk assembler handles 8MiB frame reassembly safely without buffer overflow", "[v380proto][chunks][asan]") {
+    // Reassemble a large 8MiB-range frame composed of 16,384 chunks of 500 bytes = 8,192,000 bytes
+    const size_t kChunkBodySize = 500;
+    const uint16_t kTotalChunks = 16384;
+    const size_t kTotalBytes = static_cast<size_t>(kTotalChunks) * kChunkBodySize;
+
+    ChunkAssembler asm_(ChunkAssembler::Config{8u * 1024u * 1024u, 65535});
+    ChunkHeader hdr;
+
+    std::vector<uint8_t> body(kChunkBodySize, 0x5a);
+    std::string body_str(reinterpret_cast<const char*>(body.data()), body.size());
+
+    std::vector<uint8_t> c = chunk(kChunkTypeIFrame, kTotalChunks, 0, body_str);
+
+    for (uint16_t i = 0; i < kTotalChunks; ++i) {
+        write_u16(&c, 5, i);
+        REQUIRE(asm_.begin_chunk(c.data(), c.size(), &hdr) == ChunkOutcome::need_more);
+        REQUIRE(asm_.append_chunk(hdr, c.data() + kChunkHeaderBytes, kChunkBodySize, nullptr));
+    }
+
+    AssembledFrame frame;
+    REQUIRE(asm_.take_frame(&frame));
+    REQUIRE(frame.type == kChunkTypeIFrame);
+    REQUIRE(frame.chunks == kTotalChunks);
+    REQUIRE(frame.payload_bytes == kTotalBytes);
+    REQUIRE(asm_.frames_completed() == 1);
+    REQUIRE(asm_.frame_bytes_held() == 0);
+}

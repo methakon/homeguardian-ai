@@ -296,6 +296,28 @@ bool is_loopback_literal(const std::string& addr) {
     return false;
 }
 
+bool is_vpn_literal(const std::string& addr) {
+    // WireGuard / Android VpnService overlay subnet for HomeGuardian (10.66.0.0/16)
+    if (addr.rfind("10.66.", 0) == 0) return true;
+    return false;
+}
+
+static bool is_private_ip(const std::string& addr) {
+    if (addr.rfind("10.", 0) == 0) return true;
+    if (addr.rfind("192.168.", 0) == 0) return true;
+    if (addr.rfind("172.", 0) == 0) {
+        auto second = addr.substr(4);
+        auto dot = second.find('.');
+        if (dot != std::string::npos) {
+            try {
+                int oct = std::stoi(second.substr(0, dot));
+                if (oct >= 16 && oct <= 31) return true;
+            } catch (...) {}
+        }
+    }
+    return false;
+}
+
 bool read_os_entropy(void* buf, size_t len) {
     int fd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
@@ -742,8 +764,12 @@ bool McpHttpServer::start(std::string& error) {
         error = "refusing to bind wildcard address (0.0.0.0); explicit interface or loopback required";
         return false;
     }
-    if (!impl_->cfg.allow_remote && !is_loopback_literal(impl_->cfg.bind_address)) {
-        error = "refusing to bind a non-loopback address without allow_remote";
+    const bool is_loopback = is_loopback_literal(impl_->cfg.bind_address);
+    const bool is_vpn = is_vpn_literal(impl_->cfg.bind_address);
+    const bool is_valid_vpn_bind = is_vpn || (impl_->cfg.allow_vpn && is_private_ip(impl_->cfg.bind_address));
+
+    if (!impl_->cfg.allow_remote && !is_loopback && !is_valid_vpn_bind) {
+        error = "refusing to bind a non-loopback address without allow_remote or allow_vpn";
         return false;
     }
     if (impl_->cfg.require_auth == false) {

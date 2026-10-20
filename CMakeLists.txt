@@ -11,6 +11,17 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
 
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+if(ENABLE_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
+if(ENABLE_UBSAN)
+    add_compile_options(-fsanitize=undefined)
+    add_link_options(-fsanitize=undefined)
+endif()
+
 # Embed the dashboard HTML (single source of truth: src/web/index.html) so the
 # native demo binary is self-contained (no Node.js, no web-server file at
 # runtime). Generated at BUILD time, with the HTML as a real dependency: an
@@ -564,10 +575,12 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         # registry/consent authorization seam. Registered in the TEST target only —
         # no shipped binary references them, so their footprints are unchanged.
         ${CMAKE_SOURCE_DIR}/src/camera/MockCameraAdapter.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/V380CameraAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/RegistryAuthorizer.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteConnector.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_boundary.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_v380_camera_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_v380_protocol.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteProfile.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/ControlChannel.cpp

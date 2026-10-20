@@ -329,6 +329,62 @@ TEST_CASE("mcp: build refusal rules for the transport bind are unit-testable", "
     REQUIRE_FALSE(is_loopback_literal("0.0.0.0"));
     REQUIRE_FALSE(is_loopback_literal("10.20.30.6"));
     REQUIRE_FALSE(is_loopback_literal(""));
+
+    // WireGuard / Android VpnService overlay detection (10.66.0.0/16)
+    REQUIRE(is_vpn_literal("10.66.0.2"));
+    REQUIRE(is_vpn_literal("10.66.0.10"));
+    REQUIRE(is_vpn_literal("10.66.1.50"));
+    REQUIRE_FALSE(is_vpn_literal("127.0.0.1"));
+    REQUIRE_FALSE(is_vpn_literal("192.168.1.1"));
+    REQUIRE_FALSE(is_vpn_literal("10.20.30.6"));
+    REQUIRE_FALSE(is_vpn_literal("8.8.8.8"));
+}
+
+TEST_CASE("mcp: transport validates VPN and non-loopback bind permissions", "[mcp]") {
+    FakeVerifier verifier;
+    FakeProvider provider;
+    ToolRegistry tools = make_homeguardian_tools(verifier, provider);
+
+    // 1. Refuse arbitrary remote address when neither allow_remote nor allow_vpn is set
+    {
+        McpHttpConfig cfg;
+        cfg.bind_address = "8.8.8.8";
+        cfg.allow_remote = false;
+        cfg.allow_vpn = false;
+        McpHttpServer server(cfg, tools, verifier);
+        std::string err;
+        REQUIRE_FALSE(server.start(err));
+        REQUIRE(err.find("without allow_remote or allow_vpn") != std::string::npos);
+    }
+
+    // 2. VPN overlay address (10.66.0.2) passes address check (even with allow_remote=false)
+    {
+        McpHttpConfig cfg;
+        cfg.bind_address = "10.66.0.2";
+        cfg.allow_remote = false;
+        cfg.allow_vpn = false;
+        McpHttpServer server(cfg, tools, verifier);
+        std::string err;
+        // The address security gate passes; fails only at the OS socket bind() since 10.66.0.2 is not assigned locally
+        bool ok = server.start(err);
+        if (!ok) {
+            REQUIRE(err.find("without allow_remote or allow_vpn") == std::string::npos);
+        }
+    }
+
+    // 3. Private IP with allow_vpn=true passes security gate
+    {
+        McpHttpConfig cfg;
+        cfg.bind_address = "10.20.30.40";
+        cfg.allow_remote = false;
+        cfg.allow_vpn = true;
+        McpHttpServer server(cfg, tools, verifier);
+        std::string err;
+        bool ok = server.start(err);
+        if (!ok) {
+            REQUIRE(err.find("without allow_remote or allow_vpn") == std::string::npos);
+        }
+    }
 }
 
 TEST_CASE("mcp: transport unconditionally refuses wildcard bind addresses", "[mcp]") {

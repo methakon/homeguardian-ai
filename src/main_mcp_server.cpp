@@ -143,6 +143,7 @@ int main(int argc, char* argv[]) {
     cfg.port = static_cast<uint16_t>(port < 1 || port > 65535 ? 8790 : port);
     cfg.bind_address = env_or("HG_MCP_BIND", "127.0.0.1");
     cfg.allow_remote = env_bool("HG_MCP_ALLOW_REMOTE", false);
+    cfg.allow_vpn = env_bool("HG_MCP_ALLOW_VPN", false);
     const std::vector<std::string> extra_origins = split_csv(env_or("HG_MCP_ORIGINS", ""));
     cfg.allowed_origins = extra_origins;
     cfg.require_auth = true;
