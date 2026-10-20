@@ -16,6 +16,12 @@ set -u
 GATE_MC=90000          # 90.0 C. Conservative by design; NOT a CPU safety limit.
 MARKER="/var/lib/homeguardian/thermal-gate.log"
 
+# Create the marker's directory. Without this the redirect below fails on any host
+# where StateDirectory has not run yet, and the audit trail would silently not
+# exist - which defeats the purpose of recording the gate decision at all.
+# The redirects stay tolerant so a read-only filesystem cannot block service start.
+mkdir -p "$(dirname "$MARKER")" 2>/dev/null || true
+
 log() { logger -t hg-thermal "$*" 2>/dev/null; echo "$*"; }
 
 worst_mc=0
