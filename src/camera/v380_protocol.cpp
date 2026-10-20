@@ -81,10 +81,11 @@ bool build_password_field(const std::string& password, const std::string& static
         *why = "the random key must be exactly 16 bytes";
         return false;
     }
-    if (password.empty()) {
-        *why = "refusing to build a password field from an empty password";
-        return false;
-    }
+    // An EMPTY password is a legitimate input for this family, not a mistake: the QR-code setup path lets the
+    // owner leave the device password unset, and the field is then a fresh random key plus one encrypted
+    // all-zero block. The caller must still pass it deliberately (an absent argument is not an empty one),
+    // but the codec does not refuse it. Refusing here was my own invention and would have blocked the only
+    // credential this device actually has.
     // 16 bytes of clear random key + one AES block == the 32-byte field. A longer password needs more
     // blocks than the field can hold, so it is refused HERE, loudly, instead of being truncated into a
     // device-side `invalid_password` that would look like a wrong credential.

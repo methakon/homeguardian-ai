@@ -96,3 +96,70 @@ No live camera stream, no decoded frame, no camera-to-fused-alert operation, no 
 disaster inference, no deployment. The codec is a wire implementation verified against synthetic bytes, and
 the `[v380proto]` suite passed with **no camera connected** — which is precisely why no media claim may be
 written in any tense until the handshake above produces `ok` and a frame is actually reassembled.
+
+---
+
+# MEASURED RESULTS — the bounded handshake, run once per camera
+
+Tool: `tools/v380_handshake.cpp` (`hg_v380_handshake`). One connection, one login, and only if the login is
+answered, exactly one stream login. It **stops before the stream start (303)**, which is the command that
+begins media: no stream was opened, no frame was reassembled, no video byte was written anywhere.
+
+## Camera 3 — `192.168.1.10`, device id 103287516, empty password (QR-set-up device)
+
+```
+connect ok  ip=192.168.1.10 port=8800
+login response: 412 bytes, command=-100 result_code=0 -> unexpected_command
+first bytes: 9c ff ff ff 00 00 00 ...
+stream login response: 32 bytes, command=401 v21=-11 -> unsupported_firmware_generation
+RESULT unsupported_firmware_generation
+```
+
+**Classification: `unsupported_firmware_generation`** — not `ok`, and **not** `invalid_password`.
+
+- The device **answered**, so the empty password was never rejected as a credential: it refused the exchange
+  before reaching a credential verdict (`-100` = `0xFFFFFF9C`, whose low byte `0x9c` is the signature the
+  public write-up attributes to the newer framing).
+- The stream login then returned `401` with **`v21 = -11`**, the documented rejection of the newer generation.
+- That generation encrypts its media behind a 30-byte `V380 Pro`-framed protocol, and public reverse
+  engineering reports the key as recoverable only by unpacking a Qihoo-360-Jiagu-packed application at
+  runtime, with the previously public keys tested and failing. **No protocol work reaches it**, so this is a
+  named dead end rather than a half-finished task. Nothing in this repository attempts to invent that key.
+- The login response contains **no `V380 Pro` literal**, which is recorded because it is what was measured —
+  the framing signature appears on the media connection, not on the login exchange.
+
+## Cameras 1 and 2 — `192.168.1.19`, `192.168.1.20`
+
+```
+RESULT connect_failed  detail=connect failed: No route to host
+```
+
+**Classification: `connect_failed` — no path.** Not a credential verdict and not a protocol verdict: nothing
+about these units was learned, because nothing could be sent.
+
+- `No route to host` is stronger than a timeout: the local stack has no route/ARP entry for either address.
+- A broadcast discovery query (`NVDEVSEARCH^100` to `255.255.255.255:10008`, the vendor discovery protocol the
+  public tool uses) produced **0 responders** on this subnet.
+- The owner reports both cameras powered and networked; the measurement says they are **not reachable from
+  this workstation**, and that is reported as "not observable from here" rather than as either party being
+  wrong. The specific data that closes the gap: the address the vendor app currently shows for each camera,
+  or the router's DHCP client list.
+- **No device id was fabricated.** The login request carries a *numeric* device id at a fixed offset; an IP
+  address cannot fill it, and substituting one would manufacture an identifier and make the device's answer a
+  lie about which camera was contacted. The tool's `missing_device_id` path (exit 2) exists exactly for this
+  and was not needed here only because the connection fails first.
+
+## What this means for the goal
+
+**No unit can be streamed by the proprietary-protocol route today**, and that is now a measured statement
+rather than a guess: one camera is on the wrong side of a generation boundary this codec cannot cross, and two
+are not reachable from here at all.
+
+The cheap alternative for camera 3 is **not** the proprietary protocol: its firmware refused 554/8899, which
+is the as-shipped state for this family, and the vendor app exposes a documented *ONVIF setting* on models
+that support it. Earlier work on camera 1 proved that toggling it yields **local RTSP with live H.265 RTP** —
+but it also proved that interface demanded **no authentication**, which is why the security check runs BEFORE
+any media claim and why authentication must be verified, not assumed. If camera 3's app shows the toggle, that
+is the shortest path to an actual live stream, entirely local. Reaching the newer generation's encrypted
+stream, by contrast, would require runtime-unpacking a protected vendor application — a different and much
+more invasive act than a protocol handshake, and **not authorized**; it would need its own explicit decision.

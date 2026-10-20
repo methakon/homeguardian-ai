@@ -742,3 +742,10 @@ add_executable(hg_scenario_runner
 )
 target_include_directories(hg_scenario_runner PRIVATE src)
 target_link_libraries(hg_scenario_runner PRIVATE)
+
+# The bounded V380 handshake probe: one login, one stream login, NO media.
+add_executable(hg_v380_handshake
+    ${CMAKE_SOURCE_DIR}/tools/v380_handshake.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/Aes128Ecb.cpp)
+target_include_directories(hg_v380_handshake PRIVATE ${CMAKE_SOURCE_DIR}/src)
