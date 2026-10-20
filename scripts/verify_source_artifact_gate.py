@@ -404,7 +404,11 @@ def _discover_manifest(artifact: Path) -> Path | None:
         p for p in directory.iterdir()
         if p.is_file() and p.name.endswith(MANIFEST_SUFFIXES)
     )
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    stem = artifact.name.split("-source.tar")[0]
+    matching = [p for p in candidates if stem in p.name]
+    return matching[0] if matching else candidates[0]
 
 
 # --------------------------------------------------------------------------
