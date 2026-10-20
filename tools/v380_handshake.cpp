@@ -8,7 +8,8 @@
 // ONE ATTEMPT PER INVOCATION: no retry loop, no backoff, no reconnect. Everything is a named outcome, because
 // the device sends no text on a failed exchange and a boolean would throw away the only diagnostic there is.
 //
-// usage: hg_v380_handshake --ip <addr> [--id <device-id>] [--password <pw>] [--key <file>] [--username <u>]
+// usage: hg_v380_handshake --ip <addr> [--id <device-id>] [--password <pw> | --password-env VAR |
+//        --password-stdin] [--key <file>] [--username <u>]
 //   --key defaults to $HG_V380_KEY or ~/projects/homeguardian-ai-evidence-private/v380_static_key.txt and
 //   must NOT be group/other-readable. The vendor static key is a parameter and lives outside this repository
 //   on purpose: the repository is public.
@@ -119,7 +120,25 @@ int main(int argc, char** argv) {
         const bool has_next = (i + 1) < argc;
         if (a == "--ip" && has_next) ip = argv[++i];
         else if (a == "--id" && has_next) id_text = argv[++i];
-        else if (a == "--password" && has_next) password = argv[++i];
+        else if (a == "--password" && has_next) {
+            // argv is visible in the process list and in shell history, so this form is only appropriate for
+            // the empty password a QR-set-up device actually has. A REAL credential must arrive via
+            // --password-env or --password-stdin.
+            password = argv[++i];
+            if (!password.empty()) {
+                std::fprintf(stderr,
+                             "warning: --password puts a credential in the process list and shell history; "
+                             "prefer --password-env or --password-stdin\n");
+            }
+        }
+        else if (a == "--password-env" && has_next) {
+            const char* v = ::getenv(argv[++i]);
+            if (v == nullptr) { std::fprintf(stderr, "no such environment variable\n"); return 64; }
+            password = v;
+        }
+        else if (a == "--password-stdin") {
+            std::getline(std::cin, password);
+        }
         else if (a == "--username" && has_next) username = argv[++i];
         else if (a == "--key" && has_next) key_path = argv[++i];
         else if (a == "--port" && has_next) port = static_cast<uint16_t>(std::stoi(argv[++i]));

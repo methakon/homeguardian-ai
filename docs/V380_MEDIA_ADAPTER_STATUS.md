@@ -1,5 +1,10 @@
 # V380 proprietary media adapter — status, blocker, and the firmware-generation split
 
+> **Privacy notice:** this document's subject is host identity, so real LAN addresses, device
+> identifiers and fingerprints appear as placeholders (`<redacted-...>`). Measurements, evidence and
+> conclusions are unchanged; only the values are withheld, and the real values live in the private
+> evidence directory outside every repository.
+
 **Authorization.** The owner has explicitly authorized reverse-engineering and use of the V380 proprietary
 media protocol on ports 8800/9800 for Cameras 1, 2 and 3, with the standing condition that the cameras are
 never exposed to the public internet. This supersedes the earlier milestone rule that held media BLOCKED and
@@ -40,9 +45,9 @@ assertions / 9 cases; full suite 9810 assertions / 734 cases.
 
 ## 2. THE BLOCKER, and the question the protocol cannot answer from here
 
-**Neither camera is reachable.** Re-measured, not carried forward: `192.168.1.19` and `192.168.1.20` give
+**Neither camera is reachable.** Re-measured, not carried forward: `<redacted-lan-host-cam1>` and `<redacted-lan-host-cam2>` give
 **no ICMP reply**, every tested port (554/8554/8899/8800/9800/80/443) is **filtered — timeouts, not refusals**,
-and the neighbour table shows both as `FAILED`. Camera 3 (`192.168.1.10`) is absent from the neighbour table
+and the neighbour table shows both as `FAILED`. Camera 3 (`<redacted-lan-host-cam3>`) is absent from the neighbour table
 entirely. A closed port would RST instantly; a timeout across every port means **no path**, so nothing is
 learned about which camera ports exist. Live ingestion cannot be attempted until the devices are powered and
 on the network.
@@ -65,7 +70,7 @@ on the network.
    is separate from the cloud account login. None exists in the private evidence directory. It must be at most
    **16 characters** for the legacy field; a longer password cannot be sent at all, which is a finding in
    itself and the reason the codec refuses rather than truncates.
-3. The device id per unit (camera 3's `103287516` is on record; camera 1 and 2 device ids are not yet).
+3. The device id per unit (camera 3's `<redacted-cam3-device-id>` is on record; camera 1 and 2 device ids are not yet).
 
 ## 3. The next measurable step
 
@@ -105,10 +110,10 @@ Tool: `tools/v380_handshake.cpp` (`hg_v380_handshake`). One connection, one logi
 answered, exactly one stream login. It **stops before the stream start (303)**, which is the command that
 begins media: no stream was opened, no frame was reassembled, no video byte was written anywhere.
 
-## Camera 3 — `192.168.1.10`, device id 103287516, empty password (QR-set-up device)
+## Camera 3 — `<redacted-lan-host-cam3>`, device id <redacted-cam3-device-id>, empty password (QR-set-up device)
 
 ```
-connect ok  ip=192.168.1.10 port=8800
+connect ok  ip=<redacted-lan-host-cam3> port=8800
 login response: 412 bytes, command=-100 result_code=0 -> unexpected_command
 first bytes: 9c ff ff ff 00 00 00 ...
 stream login response: 32 bytes, command=401 v21=-11 -> unsupported_firmware_generation
@@ -128,7 +133,7 @@ RESULT unsupported_firmware_generation
 - The login response contains **no `V380 Pro` literal**, which is recorded because it is what was measured —
   the framing signature appears on the media connection, not on the login exchange.
 
-## Cameras 1 and 2 — `192.168.1.19`, `192.168.1.20`
+## Cameras 1 and 2 — `<redacted-lan-host-cam1>`, `<redacted-lan-host-cam2>`
 
 ```
 RESULT connect_failed  detail=connect failed: No route to host
@@ -185,7 +190,7 @@ Awaiting the owner enabling ONVIF in the V380 Pro app (*Settings → Advanced se
 as-shipped and current state was measured, not assumed:
 
 ```
-== v380_security_check v2: 192.168.1.10  rtsp=554 onvif=8899 ==
+== v380_security_check v2: <redacted-lan-host-cam3>  rtsp=554 onvif=8899 ==
    RTSP/554       DISABLED    no RTSP listener (connection refused)
    ONVIF/8899     DISABLED    no ONVIF listener (connection refused)
 == VERDICT == DISABLED
@@ -199,7 +204,7 @@ still cannot be claimed from it alone.
 ### The exact sequence once the toggle is on
 
 1. Re-run the checker — **same command, no credentials, before touching any stream**:
-   `bash scripts/v380_security_check.sh 192.168.1.10 554 8899`
+   `bash scripts/v380_security_check.sh <redacted-lan-host-cam3> 554 8899`
 2. Read the classification, and act on it rather than around it:
    - `EXPOSED` → the interface answers **without authentication**. **STOP**, document the security impact, do
      not wire it into anything, and report to the owner. This is exactly what camera 1's toggle produced
