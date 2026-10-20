@@ -4,7 +4,7 @@
   "repo_root": ".",
   "refs": {
     "release_ref": "release/hackathon-2026-mcp-candidate",
-    "release_commit": "cd117aa6d2bdf3690f02c3486c8e44b4a729c9b8",
+    "release_commit": "0cf715c1ef9338cbe3155e4bcffbfa962e0e861f",
     "external_ref": "9d252c46f6fca2008e5e0285107002470d451df4",
     "external_commit": "9d252c46f6fca2008e5e0285107002470d451df4"
   },
@@ -268,7 +268,7 @@
       "id": "release-video-script",
       "path": "docs/SUBMISSION_VIDEO_SCRIPT.md",
       "declared_revision": "release/hackathon-2026-mcp-candidate",
-      "resolved_commit": "cd117aa6d2bdf3690f02c3486c8e44b4a729c9b8",
+      "resolved_commit": "0cf715c1ef9338cbe3155e4bcffbfa962e0e861f",
       "exists": true,
       "sha256": "e8a7d762151bba15498ee0e9bc3ea30da55738038965e4d61a4a69d8045dcef6",
       "bytes": 8300,
@@ -288,7 +288,7 @@
       "id": "release-dempster-shafer",
       "path": "src/core/DempsterShafer.h",
       "declared_revision": "release/hackathon-2026-mcp-candidate",
-      "resolved_commit": "cd117aa6d2bdf3690f02c3486c8e44b4a729c9b8",
+      "resolved_commit": "0cf715c1ef9338cbe3155e4bcffbfa962e0e861f",
       "exists": true,
       "sha256": "41e92add52e7d68342881ea72b50e3d9b21627fc5041e60d4b7b23817675c28c",
       "bytes": 5598,
