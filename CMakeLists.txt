@@ -501,6 +501,7 @@ target_link_libraries(hg_camera_bridge PRIVATE
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
         ${CMAKE_SOURCE_DIR}/tests/core/test_config.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_aes128_ecb.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_logger.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_event.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_event_validator.cpp
@@ -561,9 +562,11 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         # registry/consent authorization seam. Registered in the TEST target only —
         # no shipped binary references them, so their footprints are unchanged.
         ${CMAKE_SOURCE_DIR}/src/camera/MockCameraAdapter.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/RegistryAuthorizer.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteConnector.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_boundary.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_v380_protocol.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteProfile.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/ControlChannel.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/DirectMediaPlanner.cpp
@@ -617,6 +620,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/SyntheticImpactRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/CaptureAccounting.cpp
         ${CMAKE_SOURCE_DIR}/src/core/NodeIdentity.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Aes128Ecb.cpp
         ${CMAKE_SOURCE_DIR}/src/core/BoundedFeatures.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ActivityDetectors.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DempsterShafer.cpp
