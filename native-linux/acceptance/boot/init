@@ -1,0 +1,61 @@
+#!/bin/busybox sh
+# /init - HomeGuardian Mi A3 (laurel_sprout) initramfs init
+#
+# SCOPE AND HONEST LIMITS
+#   This initramfs does ONE thing: bring up enough to find the root filesystem and
+#   hand off to it. It is NOT a rescue shell, and it does not attempt to be clever.
+#
+#   Thermal context that constrains it: this board has no CPU die temperature sensor
+#   and no passive thermal trip. Every line here is deliberately minimal so boot
+#   does not generate avoidable sustained load.
+#
+#   It has never run on real hardware. Treat it as unvalidated.
+
+/bin/busybox --install -s /bin
+
+mount -t proc     none /proc
+mount -t sysfs    none /sys
+mount -t devtmpfs none /dev 2>/dev/null || mdev -s
+
+echo "homeguardian-initramfs: starting"
+
+# --- load only what is needed to reach the root device ----------------------
+# The full module set is NOT loaded here. Loading thousands of modules at boot
+# would be both slow and pointless heat on a device with no thermal throttling.
+MODDIR=/lib/modules/7.2.3
+for m in qcom_q6v5_wcss ath10k_core cfg80211 mac80211 ath10k_snoc; do
+    f=$(find "$MODDIR" -name "$m.ko" 2>/dev/null | head -1)
+    [ -n "$f" ] && modprobe -d / "$m" 2>/dev/null
+done
+
+# --- wait for the root device ----------------------------------------------
+# UFS on this platform. A bounded wait, never an unbounded loop: a hung boot on
+# an unattended device is worse than a clean failure we can read off the console.
+ROOTDEV=${hg_root:-/dev/sda}
+TRIES=0
+while [ $TRIES -lt 30 ]; do
+    [ -b "$ROOTDEV" ] && break
+    sleep 1
+    TRIES=$((TRIES + 1))
+done
+
+if [ ! -b "$ROOTDEV" ]; then
+    echo "homeguardian-initramfs: root device $ROOTDEV not found after ${TRIES}s"
+    # Serial console is available on this board (earlycon=msm_geni_serial,0x4a90000)
+    # so a diagnostic shell here is reachable; still, fail toward a readable state
+    # rather than looping.
+    exec /bin/sh
+fi
+
+echo "homeguardian-initramfs: root device present, switching"
+mkdir -p /newroot
+mount -t ext4 -o ro "$ROOTDEV" /newroot || {
+    echo "homeguardian-initramfs: mount $ROOTDEV failed"
+    exec /bin/sh
+}
+
+mount -o move /proc  /newroot/proc  2>/dev/null
+mount -o move /sys   /newroot/sys   2>/dev/null
+mount -o move /dev   /newroot/dev   2>/dev/null
+
+exec switch_root /newroot /sbin/init
