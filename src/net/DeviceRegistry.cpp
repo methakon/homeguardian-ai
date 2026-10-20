@@ -39,6 +39,7 @@ bool is_allowlisted_device_type(std::string_view type) {
            type == "microphone" ||
            type == "speaker" ||
            type == "sensor" ||
+           type == "node" ||
            type == "simulator" ||
            type == "android" ||
            type == "hub-fixture";

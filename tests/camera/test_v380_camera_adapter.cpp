@@ -62,7 +62,7 @@ TEST_CASE("v380 camera adapter: inventory onboarding and device registry integra
     reg_opts.id = LogicalDeviceId{"site.home.prod", "cam.v380.ec39.01"};
     reg_opts.hardware_mac = "44:12:65:aa:bb:cc";  // non-randomized unicast MAC
     reg_opts.endpoint_host = "192.168.1.19";
-    reg_opts.owner_identity_label = "OWNER-V380-001";
+    reg_opts.owner_identity_label = "ec39.01";
     reg_opts.owner_authorized = true;
     reg_opts.now_ms = now_ms();
 
@@ -72,7 +72,7 @@ TEST_CASE("v380 camera adapter: inventory onboarding and device registry integra
 
     const auto* rec = inventory.find(reg_opts.id);
     REQUIRE(rec != nullptr);
-    REQUIRE(rec->owner_identity_label == "OWNER-V380-001");
+    REQUIRE(rec->owner_identity_label == "ec39.01");
     REQUIRE(rec->firmware_model == "V380 EC39");
     REQUIRE(rec->media == MediaStatus::vendor_protocol_only);
 

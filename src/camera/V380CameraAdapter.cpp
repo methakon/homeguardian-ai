@@ -148,8 +148,11 @@ bool V380CameraAdapter::register_into_inventory(CameraInventory& inventory,
                            options.owner_authorized, options.now_ms, reason)) {
         return false;
     }
-    inventory.note_firmware(options.id, "V380 EC39", true, nullptr);
-    inventory.set_media_status(options.id, MediaStatus::vendor_protocol_only, nullptr);
+    const auto* rec = inventory.find_by_fingerprint(fp);
+    if (rec != nullptr) {
+        inventory.note_firmware(rec->id, "V380 EC39", true, nullptr);
+        inventory.set_media_status(rec->id, MediaStatus::vendor_protocol_only, nullptr);
+    }
     return true;
 }
 
