@@ -224,3 +224,67 @@ still cannot be claimed from it alone.
 Standing down until the DHCP leases / addresses are confirmed from the router. Both gave `No route to host`
 and neither answered the vendor discovery broadcast, so nothing about them is known from here, and no device
 id will be guessed in the meantime. Nothing is scheduled for these units.
+
+---
+
+# Dynamic addresses: how camera identity survives a DHCP change
+
+The cameras take DHCP leases, so any design that stores an address breaks quietly the moment the lease moves -
+and one that treats the address as IDENTITY breaks dangerously, because a recycled address would hand a
+camera's consent to whatever device takes it next. Both failure modes are already real here: two of the three
+units changed address while nothing about the devices changed.
+
+**The rule: an address is an attachment attribute, never an identity.** Identity is the owner-confirmed device
+id plus the NIC fingerprint (normalized MAC), both of which were stable across the moves. Nothing
+authorization-related may read an address - consent, pairing and capture flags are stored against the logical
+device.
+
+**And it is not "scanning".** One UDP broadcast (`NVDEVSEARCH^100`) reaches every camera on the segment; each
+answers with its id, fingerprint, address, mask and gateway in a single exchange. There is no sweep, no
+per-host probing, and no traffic to anything that is not already listening for that query. A periodic subnet
+sweep would be slower, noisier, and would enumerate devices nobody asked about.
+
+`src/camera/V380Discovery.{h,cpp}` parses those responses (validated against a live device whose device id was
+independently confirmed - the field it reads as the device id reproduced that value exactly).
+`src/camera/CameraEndpointResolver.{h,cpp}` turns a device id into a current address under five rules:
+
+1. **Resolve on demand, cache briefly.** A resolved address is reused within a short TTL; a failed connection
+   invalidates it immediately, which is how a move is discovered without waiting for anything.
+2. **The fingerprint decides.** A responder claiming a known device id with a DIFFERENT MAC is refused
+   (`fingerprint_mismatch`) and no address is returned. This is the security-critical rule: without it, another
+   device could claim a camera's id and inherit its consent.
+3. **Contradictions apply nothing.** Two responders claiming one device id, or one address claimed by two
+   responders, means the pass is not evidence: report `conflict` and resolve nothing.
+4. **A move is not a new device.** Same fingerprint at a new address is `resolved_moved`: identity and consent
+   survive, only the attachment is updated. Reporting a move as a stranger is how a registry fills with
+   phantoms.
+5. **Fail closed.** Every refusal and every absence returns no address, so a caller can never accidentally
+   connect to whatever happens to answer. An id nobody registered is `not_found` - onboarding by accident is
+   not possible.
+
+## Demonstrated on the live cameras
+
+A census of the segment, then resolution **by device id alone** with the units' *previous* leases planted as
+the remembered (now stale) addresses:
+
+```
+pass 1: 3 responder(s)
+  device_id=<redacted-camid-1>  fingerprint=<redacted-mac-a>  address=<redacted-lan-host-a>  media_port=8800
+  device_id=<redacted-camid-2>  fingerprint=<redacted-mac-b>  address=<redacted-lan-host-b>  media_port=8800
+  device_id=<redacted-camid-3>  fingerprint=<redacted-mac-c>  address=<redacted-lan-host-c>  media_port=8800
+
+RESOLVE resolved_moved  device_id=<redacted-camid-1>  address=<redacted-lan-host-a>
+RESOLVE resolved_moved  device_id=<redacted-camid-2>  address=<redacted-lan-host-b>
+RESOLVE resolved        device_id=<redacted-camid-3>  address=<redacted-lan-host-c>
+```
+
+Two units the memory had at their old addresses were correctly reported as **moved** (same fingerprint, new
+address); the one that had not moved was not falsely reported as moved. In the same run, a device presenting a
+known device id with the wrong fingerprint was **refused** with no address returned.
+
+Tests: `[resolve]` 44 assertions / 8 cases with a stubbed discovery source, so the rules are verified without a
+network and without cameras - including the move, the mismatch, both conflict shapes, cache expiry,
+invalidation, and the refusal to resolve an unregistered id.
+
+**Owner-side note:** a DHCP reservation would make the addresses stable, but nothing here depends on it, and it
+needs router access. Resolution is the mechanism; a reservation would only be an optimisation.

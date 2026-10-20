@@ -563,9 +563,12 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         # no shipped binary references them, so their footprints are unchanged.
         ${CMAKE_SOURCE_DIR}/src/camera/MockCameraAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/V380Discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/CameraEndpointResolver.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/RegistryAuthorizer.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteConnector.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_boundary.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_endpoint_resolver.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_v380_protocol.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteProfile.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/ControlChannel.cpp
@@ -749,3 +752,10 @@ add_executable(hg_v380_handshake
     ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/core/Aes128Ecb.cpp)
 target_include_directories(hg_v380_handshake PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# The resolver probe: device id in, current address out. No media.
+add_executable(hg_v380_resolve
+    ${CMAKE_SOURCE_DIR}/tools/v380_resolve.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/V380Discovery.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/CameraEndpointResolver.cpp)
+target_include_directories(hg_v380_resolve PRIVATE ${CMAKE_SOURCE_DIR}/src)
