@@ -30,6 +30,19 @@ On a minimal ARM64 image the only non-header dependency the network path adds ov
 protocol, registry, ingest and detector layers are OpenSSL-free and build without it (CMake then skips only
 the socket-layer binaries and says so).
 
+### ARM64 status: COMPILED, not yet linked or run
+
+Verified on this host (`docs/evidence/ARM64_CROSS_COMPILE.log`): **19 representative sources compile for
+aarch64** with `aarch64-linux-gnu-g++ 13.3.0` in an `ubuntu:24.04` container pinned to `--platform
+linux/amd64`, so the compiler runs natively and only the output is aarch64. `readelf -h` on a produced
+object reports `Class: ELF64`, `Type: REL`, `Machine: AArch64` — real aarch64 codegen, not a syntax check.
+The sources covered are the network, media, camera, audio and protocol layers this document describes.
+
+**Still NOT verified, and not claimed:** the *link* of a complete ARM64 binary (that needs an arm64 sysroot
+with libssl/libspdlog/libstdc++, i.e. a multiarch rootfs) and *execution* of one on ARM64 hardware. Anyone
+reading this as "the hub runs on ARM64" is reading more than has been shown; the correct statement is that
+the code compiles for aarch64 and the remaining steps are a sysroot link and a run on the target.
+
 ## The single integration command
 
 ```sh
