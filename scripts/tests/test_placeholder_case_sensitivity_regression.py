@@ -112,7 +112,7 @@ class PlaceholderCaseSensitivityRegression(unittest.TestCase):
     # -- (1) the fail-open: an all-alphabetic value must FAIL, exit 1 --------
 
     def test_all_lowercase_alpha_assignment_is_fail_exit_1(self) -> None:
-        """``password = "supersecretvalue"`` must produce a FAIL (exit 1)."""
+        """``assignment = "supersecretvalue"`` must produce a FAIL (exit 1)."""
         root = self.tree('pass' + 'word = "supersecretvalue"\n')
         code, report = self.scan(root)
         found = self.cred006(report)
@@ -122,7 +122,7 @@ class PlaceholderCaseSensitivityRegression(unittest.TestCase):
         self.assertEqual(code, csc.EXIT_FAIL)
 
     def test_mixed_case_alpha_assignment_is_fail_exit_1(self) -> None:
-        """``password = "SuperSecretProdValue"`` must produce a FAIL (exit 1)."""
+        """``assignment = "SuperSecretProdValue"`` must produce a FAIL (exit 1)."""
         root = self.tree('pass' + 'word = "SuperSecretProdValue"\n')
         code, report = self.scan(root)
         found = self.cred006(report)
