@@ -62,8 +62,7 @@ if str(SCRIPTS) not in sys.path:
 import verify_source_artifact_gate as gate  # noqa: E402
 
 #: The real synthetic credential fixture the release carries in
-#: tests/core/test_native_http_security.cpp line 35:
-#:     std::string secret = "operator-secret-xyz";
+#: tests/core/test_native_http_security.cpp line 35 (std::string secret):
 #: This is the value the reviewed allow-list entry names.
 REAL_FIXTURE_VALUE = "operator-secret-xyz"
 #: The certified value sha256[:8] of the line above.

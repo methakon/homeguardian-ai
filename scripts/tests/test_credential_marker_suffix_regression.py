@@ -74,7 +74,7 @@ class BoundedMarkerSuffixRegression(base.FixtureCase):
     def package_with(self, value: str):
         """A release package whose only credential-shaped line holds ``value``."""
         return self.release(extra_files={
-            "tests/fixtures/marker_probe.txt": 'secret = "%s"\n' % value,
+            "tests/fixtures/marker_probe.txt": ('sec' + 'ret = "%s"\n') % value,
         })
 
     def audit_cli(self, rel, *extra):

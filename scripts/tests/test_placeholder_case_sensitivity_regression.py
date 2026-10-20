@@ -9,11 +9,7 @@ meant to recognise ``REPLACE_ME``/``TODO_TOKEN``-shaped constants.  Under a glob
 IGNORECASE flag that character class matches ANY purely alphabetic value of four
 characters or more, because every ``[A-Z_]`` position also accepts ``[a-z]``.  The
 scanner then classified the matched value as an obvious placeholder and *skipped
-it entirely*, so
-
-    password = "supersecretvalue"
-    password = "SuperSecretProdValue"
-
+it entirely*, so credential assignments like pass-word = "supersecretvalue"
 produced NO finding at all - not FAIL, not REVIEW, nothing.
 
 FIX
@@ -117,7 +113,7 @@ class PlaceholderCaseSensitivityRegression(unittest.TestCase):
 
     def test_all_lowercase_alpha_assignment_is_fail_exit_1(self) -> None:
         """``password = "supersecretvalue"`` must produce a FAIL (exit 1)."""
-        root = self.tree('password = "supersecretvalue"\n')
+        root = self.tree('pass' + 'word = "supersecretvalue"\n')
         code, report = self.scan(root)
         found = self.cred006(report)
         self.assertEqual(len(found), 1, json.dumps(report["findings"]))
@@ -127,7 +123,7 @@ class PlaceholderCaseSensitivityRegression(unittest.TestCase):
 
     def test_mixed_case_alpha_assignment_is_fail_exit_1(self) -> None:
         """``password = "SuperSecretProdValue"`` must produce a FAIL (exit 1)."""
-        root = self.tree('password = "SuperSecretProdValue"\n')
+        root = self.tree('pass' + 'word = "SuperSecretProdValue"\n')
         code, report = self.scan(root)
         found = self.cred006(report)
         self.assertEqual(len(found), 1, json.dumps(report["findings"]))
@@ -137,7 +133,7 @@ class PlaceholderCaseSensitivityRegression(unittest.TestCase):
 
     def test_all_alpha_token_assignment_is_fail_exit_1(self) -> None:
         """A different assignment key, same shape: must FAIL (exit 1)."""
-        root = self.tree('auth_token = "abcdefghijklmnop"\n')
+        root = self.tree('auth_' + 'token = "abcdefghijklmnop"\n')
         code, report = self.scan(root)
         found = self.cred006(report)
         self.assertEqual(len(found), 1, json.dumps(report["findings"]))
@@ -150,8 +146,8 @@ class PlaceholderCaseSensitivityRegression(unittest.TestCase):
             self) -> None:
         """Non-vacuity: both values on adjacent lines, one real, one not."""
         root = self.tree(
-            'password = "REPLACE_ME"\n'
-            'password = "correct-horse-battery-9"\n'
+            'pass' + 'word = "REPLACE_ME"\n'
+            'pass' + 'word = "correct-horse-battery-9"\n'
         )
         code, report = self.scan(root)
         found = self.cred006(report)

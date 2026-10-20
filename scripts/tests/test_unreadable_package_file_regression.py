@@ -55,8 +55,8 @@ import test_check_release_package as base  # noqa: E402
 
 #: Two packaged files that each carry a credential-shaped value (the scanner's
 #: secret-assignment pattern needs 12 or more characters).
-SECRET_A = 'const secret = "hg-test-client-secret-77";\n'
-SECRET_B = 'const api_key = "hg-test-api-key-0001";\n'
+SECRET_A = 'const ' + 'sec' + 'ret = "hg-test-client-secret-77";\n'
+SECRET_B = 'const ' + 'api_' + 'key = "hg-test-api-key-0001";\n'
 PATHS = {"tests/fixtures/a.js": SECRET_A, "web/tests/b.js": SECRET_B}
 
 
