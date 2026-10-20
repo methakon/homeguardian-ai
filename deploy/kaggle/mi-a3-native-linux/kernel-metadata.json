@@ -1,0 +1,16 @@
+{
+  "id": "swarnasekhardhar/homeguardian-mi-a3-linux-build",
+  "title": "HomeGuardian Mi A3 Native Linux Build",
+  "code_file": "mi_a3_env_probe.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "machine_shape": "",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

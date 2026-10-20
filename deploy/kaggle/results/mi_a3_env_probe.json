@@ -1,0 +1,41 @@
+{
+  "architecture": "x86_64",
+  "platform": "Linux-6.18.48+-x86_64-with-glibc2.39",
+  "cpus": 4,
+  "MemTotal_MB": 32099,
+  "MemAvailable_MB": 31004,
+  "SwapTotal_MB": 0,
+  "disk": "Filesystem      Size  Used Avail Use% Mounted on",
+  "disk_all": "Filesystem        Size  Used Avail Use% Mounted on\noverlay           8.0T  7.0T  1.1T  87% /\ntmpfs              64M     0   64M   0% /dev\nshm                14G     0   14G   0% /dev/shm\n/dev/loop2         20G  112K   20G   1% /kaggle/src\n/dev/mapper/snap  8.0T  7.0T  1.1T  87% /etc/hosts\ntmpfs             4.0K     0  4.0K   0% /proc/acpi",
+  "toolchain": {
+    "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "g++": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "cmake": "cmake version 3.31.10",
+    "make": "GNU Make 4.3",
+    "git": "git version 2.43.0",
+    "python": "3.13.15"
+  },
+  "internet": true,
+  "apt_available": true,
+  "sudo": true,
+  "qemu": {
+    "qemu-aarch64-static": null,
+    "qemu-aarch64": null,
+    "qemu-img": null
+  },
+  "cross_compilers": {
+    "aarch64-linux-gnu-gcc": null,
+    "aarch64-linux-gnu-g++": null,
+    "arm-linux-gnueabihf-gcc": null
+  },
+  "docker": null,
+  "kvm": false,
+  "binfmt": true,
+  "gpu": {
+    "exit_code": 127,
+    "devices": []
+  },
+  "cuda_visible_devices": "<unset>",
+  "exec_permitted": true,
+  "free_space_working_MB": 19971
+}
