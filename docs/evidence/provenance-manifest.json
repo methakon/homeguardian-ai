@@ -1197,6 +1197,25 @@
         "experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "arm64-cross-compile-log",
+      "path": "docs/evidence/ARM64_CROSS_COMPILE.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "ARM64_CROSS_COMPILE.log",
+      "content_markers": [
+        "aarch64-linux-gnu-g++",
+        "compiled_for_aarch64"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }
