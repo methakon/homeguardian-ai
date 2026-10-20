@@ -1,0 +1,18 @@
+# ARM64 cross-compile check of the HomeGuardian hub sources
+# host: x86_64 (40 cores)   container: ubuntu:24.04 --platform linux/amd64   toolchain: aarch64-linux-gnu-g++ 13.3.0
+# method: compiler runs NATIVELY (x86_64), output is aarch64 - no emulation for the compile itself
+# scope: compile check (-c) of representative sources; NOT a link and NOT a run.
+
+toolchain host arch: x86_64   [must be x86_64: the compiler runs natively, output is aarch64]
+aarch64-linux-gnu-g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+compiled_for_aarch64=19  failed=0  
+-rw-r--r-- 1 root root  202424 Oct 20 09:48 /tmp/obj/ActivityPattern.cpp.o
+-rw-r--r-- 1 root root  210232 Oct 20 09:48 /tmp/obj/AlsaCommandAudioSource.cpp.o
+-rw-r--r-- 1 root root  111528 Oct 20 09:47 /tmp/obj/BoundedFeatures.cpp.o
+-rw-r--r-- 1 root root  146488 Oct 20 09:47 /tmp/obj/BoundedMediaBuffer.cpp.o
+--- architecture of a produced object ---
+bash: line 28: file: command not found
+--- undefined symbols still resolvable at link time (proves it is a real compile, not a syntax check) ---
+  Class:                             ELF64
+  Type:                              REL (Relocatable file)
+  Machine:                           AArch64
