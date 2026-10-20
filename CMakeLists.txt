@@ -342,6 +342,7 @@ add_executable(hg_alexa_bridge
     src/core/RuntimeStatus.cpp
     src/core/Pipeline.cpp
     src/core/TimeWindowCorrelation.cpp
+    src/core/ActivityEpisode.cpp
     src/core/DetectionFusionRule.cpp
     src/core/ImpactClassifier.cpp
     src/core/SyntheticImpactRule.cpp
@@ -403,6 +404,7 @@ target_link_libraries(hg_alexa_bridge PRIVATE
         src/core/RuntimeStatus.cpp
         src/core/Pipeline.cpp
         src/core/TimeWindowCorrelation.cpp
+        src/core/ActivityEpisode.cpp
         src/core/DetectionFusionRule.cpp
         src/core/ImpactClassifier.cpp
         src/core/SyntheticImpactRule.cpp
