@@ -1,0 +1,45 @@
+############ CABLE-FREE VERIFICATION (USB physically unplugged) ############
+verification time: 2026-10-17 10:55:55 IST
+phones on the USB bus      : 0   (0 = cable out)
+sysfs /sys/bus/usb/devices/2-3 present: NO
+adb transports:
+List of devices attached
+192.168.1.14:41639     device product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:15
+
+
+---- A. connect (mDNS blocked -> falls back to the remembered endpoint) ----
+10:55:57 mDNS found nothing; retrying the last verified endpoint (192.168.1.14:41639)
+10:55:57 trying 192.168.1.14:41639
+10:55:57   adb connect rc=0: already connected to 192.168.1.14:41639 
+10:55:57 connected and identity-verified: 192.168.1.14:41639 @ 192.168.1.14:41639
+
+10:55:57 identity OK: serial=192.168.1.14:41639 device=laurel_sprout platform=trinket abi=arm64-v8a sdk=30 mem=5603MB
+
+wireless ADB established
+  serial      : 192.168.1.14:41639
+  transport   : 192.168.1.14:41639     device product:laurel_sprout model:Mi_A3 device:laurel_sprout transport_id:15
+  phone LAN   : 192.168.1.14
+  MCP stays   : 127.0.0.1:8790 on the device (never exposed)
+
+Next: ./edge_dev_deploy.sh   ./edge_dev_status.sh   ./edge_dev_test.sh
+connect exit=0
+
+---- B. APK DEPLOY over Wi-Fi with the cable OUT ----
+10:55:57 target: 192.168.1.14:41639
+10:55:57 identity OK: serial=192.168.1.14:41639 device=laurel_sprout platform=trinket abi=arm64-v8a sdk=30 mem=5603MB
+10:55:57 deploying homeguardian-edge-service.apk to 192.168.1.14:41639
+10:55:57 local apk sha256: 2d6018e0afa4c7250b621efcb4194dc3d964c4895e18cc043738644d03a47246
+  Performing Streamed Install
+  Success
+10:56:01 installed in 4s
+
+deployment verified
+  local sha256    : 2d6018e0afa4c7250b621efcb4194dc3d964c4895e18cc043738644d03a47246
+  device sha256   : 2d6018e0afa4c7250b621efcb4194dc3d964c4895e18cc043738644d03a47246
+  match           : YES
+  versionName    : 1.0.0  (code 1, minSdk 30)
+  primaryCpuAbi   : arm64-v8a
+  installed path  : /data/app/~~D9ZL_0qFqhJM6Lm0qlgXFg==/org.homeguardian.edgeservice-bIM2hWU6woZMqTkuOl49BA==/base.apk
+10:56:02 waiting for MY_PACKAGE_REPLACED to bring the service up
+  service pid     : 25036 (restarted by the install, no screen interaction needed)
+deploy exit=0

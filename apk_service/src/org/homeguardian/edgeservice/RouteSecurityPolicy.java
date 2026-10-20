@@ -26,12 +26,13 @@ import java.util.List;
  * testable off-device against synthetic network states - including the /32 shape, and including
  * states a test host cannot produce (no network, VPN down, overlapping routes).
  *
- * FAIL-CLOSED ON ABSENT PERMISSION
- * Reading ConnectivityManager requires ACCESS_NETWORK_STATE. That permission is NOT yet in the
- * manifest: it takes the operator-approved set from three to four, and adding it is an operator
- * decision. Until it is granted, {@link AndroidPlatformRouting} reports the platform as unavailable
- * and this policy REFUSES every non-loopback destination. That is deliberate - it refuses rather
- * than silently falling back to the containment logic that is known to be wrong.
+ * FAIL-CLOSED WHEN THE PLATFORM CANNOT ANSWER
+ * Reading ConnectivityManager requires ACCESS_NETWORK_STATE. That permission IS present in the
+ * manifest - it was operator-approved, widening the approved set from three to four - so
+ * {@link AndroidPlatformRouting} reads real platform state and route decisions are made from it.
+ * The refusal below still applies when the permission is not granted at runtime (revoked, or a
+ * build without it): the policy REFUSES every non-loopback destination rather than silently
+ * falling back to the containment logic that is known to be wrong.
  */
 public final class RouteSecurityPolicy {
 
@@ -300,10 +301,10 @@ public final class RouteSecurityPolicy {
     /**
      * Real platform view. Reads ConnectivityManager, which requires ACCESS_NETWORK_STATE.
      *
-     * The permission is deliberately NOT in the manifest yet: it widens the operator-approved set
-     * from three to four and that is an operator decision. Until it is granted this reports
-     * unavailable and the policy refuses - fail-closed, never a silent downgrade to the unreliable
-     * containment path.
+     * ACCESS_NETWORK_STATE is present in the manifest (operator-approved, widening the approved set
+     * from three to four), so in production this reads the real platform state. If the permission is
+     * not granted at runtime this reports unavailable and the policy refuses - fail-closed, never a
+     * silent downgrade to the unreliable containment path.
      */
     public static final class AndroidPlatformRouting implements PlatformRouting {
         private final android.content.Context ctx;
@@ -412,9 +413,9 @@ public final class RouteSecurityPolicy {
      * Real socket binder. Finds the active network with TRANSPORT_VPN and pins the socket to it via
      * Network.bindSocket, so the kernel uses that network's table for this connection.
      *
-     * Requires ACCESS_NETWORK_STATE, which is not in the manifest yet (operator decision). Until it
-     * is granted the lookup throws SecurityException and this returns a refusal - it never returns
-     * null on an exception, because an unbound socket would be an unpinned path.
+     * Requires ACCESS_NETWORK_STATE, which is present in the manifest (operator-approved). If it is
+     * not granted at runtime the lookup throws SecurityException and this returns a refusal - it
+     * never returns null on an exception, because an unbound socket would be an unpinned path.
      */
     public static final class AndroidSocketBinder implements SocketBinder {
         private final android.content.Context ctx;

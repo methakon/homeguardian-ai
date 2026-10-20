@@ -1,0 +1,15 @@
+{
+    "log_level": "info",
+    "server_host": "127.0.0.1",
+    "server_port": 8791,
+    "data_dir": "/data/local/tmp/hg_edge/data",
+    "max_event_history": 1000,
+    "correlation_window_ms": 5000,
+    "alert_confidence_threshold": 0.5,
+    "media_capture_enabled": true,
+    "cloud_processing_enabled": false,
+    "consent_policy_version": "1.0.0",
+    "routine_retention_days": 730,
+    "profile_retention_days": 1825,
+    "alert_retention_days": 30
+}

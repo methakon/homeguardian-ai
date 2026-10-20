@@ -1,0 +1,134 @@
+{
+  "schema": "hg-android-artifact-record/1",
+  "generated_utc": "2026-10-20T11:05:00Z",
+  "audit": "G05 + G08 (Mi A3 Android edge service, signed APK provenance)",
+  "source": {
+    "audited_branch": "experiment/mi-a3-edge-service",
+    "audited_sha": "c8a8a78d4025e6795bad8d136d56bd2c0f9fa052",
+    "audited_sha_subject": "fix(android): store resources.arsc uncompressed so the APK can install on API 30",
+    "build_worktree": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-service",
+    "build_worktree_head": "26448d3b588ec4f4aeaff931ca27624e3ceba2b8",
+    "build_worktree_branch": "experiment/mi-a3-linux-runtime",
+    "build_worktree_dirty_entries": 0,
+    "build_tree_contains_fix_commit": true,
+    "provenance_gap": "apk_service/build_service_apk.sh does not pin or embed a source revision; no digest is recorded beside the APK in the build directory"
+  },
+  "artifact": {
+    "filename": "homeguardian-edge-service.apk",
+    "size_bytes": 1651248,
+    "sha256": "cee0024c97f064045ff2d7829cf8e3f0f98e5944fe0095757044b98a37b3f172",
+    "sha256_matches_reported": true,
+    "content_digest_sha256": "de0bdb22261dcdb49cb9c8609c2249eb26a9e6c45c978e12ff73f8416f1529aa",
+    "content_digest_scope": "5 entries, 4690720 content bytes; META-INF signature artefacts excluded by the project's own tool",
+    "companion_idsig": { "filename": "homeguardian-edge-service.apk.idsig", "size_bytes": 21974, "meaning": "APK Signature Scheme v4 signature file" },
+    "zip_entries": 8,
+    "entry_list": [
+      "AndroidManifest.xml",
+      "resources.arsc",
+      "classes.dex",
+      "lib/arm64-v8a/libhg_edge_service.so",
+      "lib/arm64-v8a/libc++_shared.so",
+      "META-INF/HARNESSD.SF",
+      "META-INF/HARNESSD.RSA",
+      "META-INF/MANIFEST.MF"
+    ],
+    "entries_normalised_timestamp": "1980-01-01 00:00 (ZIP metadata normalised for reproducibility)"
+  },
+  "package": {
+    "identifier": "org.homeguardian.edgeservice",
+    "version_name": "1.0.3",
+    "version_code": 4,
+    "min_sdk": 30,
+    "target_sdk": 30,
+    "compile_sdk": 34,
+    "label": "HomeGuardian Edge"
+  },
+  "signing": {
+    "schemes_present": ["v1 (JAR signing)", "v2/v3 (APK Signing Block magic present)", "v4 (companion .idsig)"],
+    "schemes_cryptographically_verified_by_auditor": ["v1 certificate parsed and fingerprinted"],
+    "schemes_not_verified": ["v2", "v3", "v4 — apksigner requires a JVM, which is absent on this workstation"],
+    "certificate": {
+      "subject": "C=US, O=HomeGuardian, CN=HomeGuardian Harness Debug",
+      "issuer": "C=US, O=HomeGuardian, CN=HomeGuardian Harness Debug (self-signed)",
+      "serial": "44E3EA415474EB06",
+      "not_before": "2026-10-10T18:44:21Z",
+      "not_after": "2054-02-25T18:44:21Z",
+      "signature_algorithm": "sha256WithRSAEncryption",
+      "sha256_fingerprint": "86:9B:0A:27:0F:D8:55:A2:CD:9E:B6:6C:E3:F8:04:3D:0E:DF:F9:F4:BF:2E:B6:55:2A:C3:F4:04:47:D0:28:1B",
+      "sha1_fingerprint": "D5:31:23:97:A7:6B:AC:57:56:0B:C6:E9:49:F2:09:74:3A:D7:87:9C"
+    },
+    "key_classification": "DEBUG key (CN states 'Harness Debug'); this is NOT a production/release signing key and the build must not be described as release-signed"
+  },
+  "permissions": [
+    "android.permission.INTERNET",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.ACCESS_NETWORK_STATE"
+  ],
+  "components": {
+    "activities": [{ "name": "org.homeguardian.edgeservice.MainActivity", "exported": true, "launchable": true }],
+    "services": [{ "name": "org.homeguardian.edgeservice.EdgeService", "exported": false }],
+    "receivers": [{ "name": "org.homeguardian.edgeservice.BootReceiver", "exported": true, "enabled": true,
+                    "intent_actions": ["android.intent.action.BOOT_COMPLETED", "android.intent.action.MY_PACKAGE_REPLACED"],
+                    "android_permission_guard": null }],
+    "providers": []
+  },
+  "abis_and_jni": {
+    "declared_native_code": ["arm64-v8a"],
+    "packaged_libraries": ["lib/arm64-v8a/libhg_edge_service.so", "lib/arm64-v8a/libc++_shared.so"],
+    "note": "single ABI only; a 32-bit-only or x86 device cannot install this artifact"
+  },
+  "architecture_preservation": {
+    "native_cpp_mcp_server_present": true,
+    "evidence": "libhg_edge_service.so is an unstripped ELF aarch64 shared object containing homeguardian::mcp::McpHttpServer (start/serve/stats/set_allowed_origins), ToolRegistry, McpHttpConfig, make_homeguardian_tools(IAlexaCredentialVerifier&, IAlexaStatusProvider&), plus jsonrpc, tools/call and protocol revision 2025-11-25",
+    "rfc6455_json_bridge_present": true,
+    "rfc6455_location": "Java layer, not native: classes.dex carries Sec-WebSocket/Upgrade/ws:// strings and apk_service/src/org/homeguardian/edgeservice/OutboundMcpBridge.java is the only tree file citing RFC6455",
+    "operator_authorization_controls": [
+      "OutboundMcpBridge: 256-bit CSPRNG device auth token, shown once on explicit operator action, revocable (revokeAuthToken)",
+      "OutboundMcpBridge: production MCP bearer token read in-process and never transmitted",
+      "OutboundMcpBridge: at most 8 in-flight requests; excess refused rather than queued without bound",
+      "OutboundMcpBridge: a 4403 response sets revoked=true and suppresses reconnect",
+      "native: ConsentGuardedDevice::authorize_delivery gated on consent state"
+    ]
+  },
+  "installability_evidence": {
+    "package_inspection": "PASS - static inspection only (aapt2 badging/xmltree, zip inspection, certificate extraction, JNI strings)",
+    "real_device_installation": "NOT PERFORMED - installing or replacing the APK is an explicitly prohibited protected-hardware operation in this mission",
+    "device_interaction_performed": "read-only only: adb devices, dumpsys package, pm path, and a single read-only adb pull of the already-installed base.apk for signer comparison"
+  },
+  "installed_build_comparison": {
+    "installed_package": "org.homeguardian.edgeservice",
+    "installed_version_code": 1,
+    "installed_version_name": "1.0.0",
+    "installed_min_sdk": 30,
+    "installed_target_sdk": 30,
+    "installed_first_install": "2026-10-17T03:59:56",
+    "installed_last_update": "2026-10-17T11:19:34",
+    "installed_apk_sha256": "2d6018e0afa4c7250b621efcb4194dc3d964c4895e18cc043738644d03a47246",
+    "installed_apk_size_bytes": 1634936,
+    "candidate_version_code": 4,
+    "candidate_version_name": "1.0.3",
+    "signing_continuity": "CONTINUOUS - installed and candidate certificates are byte-identical (same SHA-256 fingerprint and same serial 44E3EA415474EB06)",
+    "upgrade_path": "in-place update is permitted (versionCode increases 1 -> 4, signer unchanged); application data is preserved by an update of the same package signed by the same key"
+  },
+  "build_toolchain": {
+    "packaging": "apk_service/build_service_apk.sh with scripts/normalize_apk_zip.py",
+    "aapt_source": "Android build-tools (aapt writes resources.arsc STORED)",
+    "compile_sdk": 34,
+    "platform_build_version": "14",
+    "reproducibility_claims_in_repo": [
+      "962483e build: normalise ZIP metadata so the signed APK is byte-reproducible",
+      "32fb79c build: add a precisely defined APK content digest"
+    ],
+    "reproducibility_verified_by_auditor": false,
+    "reproducibility_note": "the content-digest tool was executed successfully against this APK (de0bdb22...), but a rebuild to confirm byte-for-byte reproduction was not performed in this audit"
+  },
+  "verification_commands": [
+    "sha256sum homeguardian-edge-service.apk",
+    "$HOME/Android/Sdk/build-tools/34.0.0/aapt2 dump badging homeguardian-edge-service.apk",
+    "$HOME/Android/Sdk/build-tools/34.0.0/aapt2 dump xmltree --file AndroidManifest.xml homeguardian-edge-service.apk",
+    "python3 scripts/apk_content_digest.py homeguardian-edge-service.apk",
+    "unzip -l homeguardian-edge-service.apk",
+    "openssl pkcs7 -inform DER -in META-INF/HARNESSD.RSA -print_certs | openssl x509 -noout -fingerprint -sha256"
+  ]
+}

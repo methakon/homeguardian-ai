@@ -1,0 +1,5 @@
+  mWakefulness=Awake
+  mWakefulnessChanging=false
+  mIsPowered=false
+  mHoldingDisplaySuspendBlocker=true
+  mIsPowered=false

@@ -446,6 +446,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_event_validator.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_simulated_event_source.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_time_window_correlation.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_environmental_context.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_pipeline.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_alert.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_family_profile.cpp
@@ -512,6 +513,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/DempsterShafer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/PrecursorDetection.cpp
         ${CMAKE_SOURCE_DIR}/src/core/EnvironmentalCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/EnvironmentalContext.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SecurityObservation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HomeAssistantAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp

@@ -1,0 +1,98 @@
+Activity Resolver Table:
+  Non-Data Actions:
+      android.intent.action.MAIN:
+        5d653f5 org.homeguardian.edgeservice/.MainActivity filter e54958a
+          Action: "android.intent.action.MAIN"
+          Category: "android.intent.category.LAUNCHER"
+
+Receiver Resolver Table:
+  Non-Data Actions:
+      android.intent.action.BOOT_COMPLETED:
+        24fe7fb org.homeguardian.edgeservice/.BootReceiver filter bd67018
+          Action: "android.intent.action.BOOT_COMPLETED"
+          Action: "android.intent.action.MY_PACKAGE_REPLACED"
+      android.intent.action.MY_PACKAGE_REPLACED:
+        24fe7fb org.homeguardian.edgeservice/.BootReceiver filter bd67018
+          Action: "android.intent.action.BOOT_COMPLETED"
+          Action: "android.intent.action.MY_PACKAGE_REPLACED"
+
+Key Set Manager:
+  [org.homeguardian.edgeservice]
+      Signing KeySets: 75
+
+Packages:
+  Package [org.homeguardian.edgeservice] (f8b541d):
+    userId=10226
+    pkg=Package{5353835 org.homeguardian.edgeservice}
+    codePath=/data/app/~~g1XAQiQvPE9MVjBfdX9K8w==/org.homeguardian.edgeservice-58Ou0G_eChiMZTi5ZIiPUg==
+    resourcePath=/data/app/~~g1XAQiQvPE9MVjBfdX9K8w==/org.homeguardian.edgeservice-58Ou0G_eChiMZTi5ZIiPUg==
+    legacyNativeLibraryDir=/data/app/~~g1XAQiQvPE9MVjBfdX9K8w==/org.homeguardian.edgeservice-58Ou0G_eChiMZTi5ZIiPUg==/lib
+    primaryCpuAbi=arm64-v8a
+    secondaryCpuAbi=null
+    versionCode=1 minSdk=30 targetSdk=30
+    versionName=1.0.0
+    splits=[base]
+    apkSigningVersion=3
+    applicationInfo=ApplicationInfo{5353835 org.homeguardian.edgeservice}
+    flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]
+    privateFlags=[ PRIVATE_FLAG_ACTIVITIES_RESIZE_MODE_RESIZEABLE_VIA_SDK_VERSION ALLOW_AUDIO_PLAYBACK_CAPTURE PRIVATE_FLAG_ALLOW_NATIVE_HEAP_POINTER_TAGGING ]
+    forceQueryable=false
+    queriesPackages=[]
+    dataDir=/data/user/0/org.homeguardian.edgeservice
+    supportsScreens=[small, medium, large, xlarge, resizeable, anyDensity]
+    timeStamp=2026-10-17 10:50:49
+    firstInstallTime=2026-10-17 03:59:56
+    lastUpdateTime=2026-10-17 10:50:51
+    signatures=PackageSignatures{8f50863 version:3, signatures:[adc75fa8], past signatures:[]}
+    installPermissionsFixed=true
+    pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]
+    requested permissions:
+      android.permission.INTERNET
+      android.permission.FOREGROUND_SERVICE
+      android.permission.RECEIVE_BOOT_COMPLETED
+    install permissions:
+      android.permission.FOREGROUND_SERVICE: granted=true
+      android.permission.RECEIVE_BOOT_COMPLETED: granted=true
+      android.permission.INTERNET: granted=true
+    User 0: ceDataInode=[PAIRING-CODE-REDACTED] installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false
+      gids=[3003]
+      runtime permissions:
+
+Queries:
+  system apps queryable: false
+  queries via package name:
+  queries via intent:
+    com.mi.global.shop:
+      org.homeguardian.edgeservice
+    com.eterno:
+      org.homeguardian.edgeservice
+    com.whatsapp:
+      org.homeguardian.edgeservice
+    com.truecaller:
+      org.homeguardian.edgeservice
+    com.radio.pocketfm:
+      org.homeguardian.edgeservice
+    com.amazon.dee.app:
+      org.homeguardian.edgeservice
+  queryable via interaction:
+    User 0:
+
+Package Changes:
+  Sequence number=43
+  User 0:
+    seq=17, package=com.google.android.gms
+    seq=22, package=com.android.vending
+    seq=23, package=com.vigafun.funfinity.foodhunt
+    seq=39, package=com.google.android.apps.docs
+    seq=42, package=org.homeguardian.edgeservice
+
+
+Dexopt state:
+  [org.homeguardian.edgeservice]
+    path: /data/app/~~g1XAQiQvPE9MVjBfdX9K8w==/org.homeguardian.edgeservice-58Ou0G_eChiMZTi5ZIiPUg==/base.apk
+      arm64: [status=speed-profile] [reason=install]
+
+
+Compiler stats:
+  [org.homeguardian.edgeservice]
+     base.apk - 139
