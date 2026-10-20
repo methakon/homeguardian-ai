@@ -288,3 +288,67 @@ invalidation, and the refusal to resolve an unregistered id.
 
 **Owner-side note:** a DHCP reservation would make the addresses stable, but nothing here depends on it, and it
 needs router access. Resolution is the mechanism; a reservation would only be an optimisation.
+
+---
+
+# Exposure measurement — CVE-2025-7503 (telnet) and CVE-2026-12527 (RTSP bypass), after the ONVIF toggle
+
+Owner-directed, exposure only. **No credentials were sent, no login attempted, no banner read, no file
+requested, nothing extracted, no config or firmware touched.** Port 23 was connect-classified only: an OPEN
+result is the finding, and logging in would be the exploit rather than the assessment.
+
+## Per-unit surface (one TCP connect per port; errno semantics are the evidence)
+
+| Unit | 23 (telnet) | 554 (RTSP) | 8899 (ONVIF) | 8800 / 9800 (vendor) |
+|---|---|---|---|---|
+| camera 1 | CLOSED (refused) | CLOSED (refused) | CLOSED (refused) | OPEN |
+| camera 2 | CLOSED (refused) | CLOSED (refused) | CLOSED (refused) | OPEN |
+| camera 3 | CLOSED (refused) | CLOSED (refused) | CLOSED (refused) | OPEN |
+
+`CLOSED (refused)` is a live host answering with a refusal (errno 111) — a different fact from a filtered
+timeout, and it means no listener exists on that port.
+
+## CVE-2025-7503 (telnet root backdoor, hard-coded credentials)
+
+**Not present on any of the three units.** Port 23 refuses on all three, so the documented backdoor service is
+absent from our hardware as measured. Note this is a *per-unit measurement*, not a general statement about the
+V380 family: the advisory names the `AppFHE1_V1.0.6.0` firmware line, while these units report
+`AppEV2W_VA3` / `Hw_AWT3610E_XHR_E_V1.0_WF_20230807`, and one unit's earlier full 1-65535 sweep likewise found
+only 8800/9800. Re-measure rather than inherit this verdict if a unit's firmware changes.
+
+## CVE-2026-12527 (RTSP media-pipeline auth bypass)
+
+**Not testable, and not applicable as measured — there is no RTSP listener to bypass.** Port 554 refuses on all
+three units, and after the owner enabled the ONVIF setting on camera 3 the interface state is **unchanged from
+the pre-toggle baseline**: 554 refused, 8899 refused, no ONVIF WS-Discovery responder.
+
+That state is the correct result to report, and it must not be read as "secured": per the checker's own rule,
+`DISABLED` is not `AUTHENTICATION ENFORCED` — nothing is protected because nothing is running.
+
+### The sensitive check, and what it returned
+
+A single WS-Discovery `Probe` multicast to `239.255.255.250:3702` (one query, not a sweep) produced **no ONVIF
+reply**. One datagram came back from a different host (`<redacted-lan-host-other>`) carrying our own Probe body
+rather than a `ProbeMatches` element with `XAddrs` — that is a reflection of our own packet, **not** an ONVIF
+responder, and it is recorded as such rather than counted as a device answering.
+
+### The network cannot settle why, and should not pretend to
+
+Three states look identical from here: the toggle did not take effect; the firmware ignores it (as on camera 2,
+where the option is absent from the app entirely); or the listeners only bind after a reboot. **Only the device's
+own UI decides which.** The decisive evidence is the app screen for this unit — whether an ONVIF switch exists
+at all and whether it reads ON — and, if it does, whether the vendor app requires a restart for it to bind.
+
+## What this means for the goal
+
+The only open surface on all three units is the vendor protocol (8800/9800), whose media path this project has
+already measured as closed to us (`v21 = -11`, the encrypted generation). So **no unit currently offers a route
+to live video**, and that statement is now measured from both directions: the proprietary path refuses, and the
+standard path has no listener.
+
+## Recommended remediation, unchanged and not dependent on any of the above
+
+The cameras should sit on their own segment reachable only by one trusted broker, with default-DROP on the
+camera-facing interface and **no port forwarding** to any camera. Isolation bounds who can reach a camera; it
+does not make an unauthenticated service secure, and it is not claimed to. Verifying that no forwarding rule
+exists needs the router's own admin page and therefore the owner's password.
