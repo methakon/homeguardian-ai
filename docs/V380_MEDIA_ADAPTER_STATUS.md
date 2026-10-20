@@ -163,3 +163,59 @@ any media claim and why authentication must be verified, not assumed. If camera 
 is the shortest path to an actual live stream, entirely local. Reaching the newer generation's encrypted
 stream, by contrast, would require runtime-unpacking a protected vendor application — a different and much
 more invasive act than a protocol handshake, and **not authorized**; it would need its own explicit decision.
+
+---
+
+# STATUS — proprietary path CLOSED on camera 3; pivot to the standard path (owner decision, 2026-10-21 00:01 IST)
+
+## 1. Camera 3 — proprietary 8800/9800: **CLOSED**
+
+**Closed as `unsupported_firmware_generation`.** The bounded handshake produced `401` with `v21 = -11` after a
+login the device refused with `-100`, and public reverse engineering attributes that generation's encrypted
+media to a Qihoo-360-Jiagu-packed application whose key is reachable only by unpacking it at runtime.
+
+Per the owner's instruction, **no attempt will be made to unpack or memory-dump the vendor application**, and
+none is planned. The closure is a decision recorded against evidence, not a task left half-done: the codec
+stays in the tree because it is the reason the verdict could be measured at all, and its `[v380proto]` suite
+documents what the legacy path would require. Nothing further will be spent on this route for this unit.
+
+## 2. Camera 3 — pivot to standard RTSP/ONVIF: **AWAITING OWNER TOGGLE**
+
+Awaiting the owner enabling ONVIF in the V380 Pro app (*Settings → Advanced settings → ONVIF setting*). The
+as-shipped and current state was measured, not assumed:
+
+```
+== v380_security_check v2: 192.168.1.10  rtsp=554 onvif=8899 ==
+   RTSP/554       DISABLED    no RTSP listener (connection refused)
+   ONVIF/8899     DISABLED    no ONVIF listener (connection refused)
+== VERDICT == DISABLED
+exit=0
+```
+
+**`DISABLED` is not `AUTHENTICATION ENFORCED`** — nothing is protected, because nothing is running. No
+security claim may be read from this result in either direction; it is a baseline, and a secured integration
+still cannot be claimed from it alone.
+
+### The exact sequence once the toggle is on
+
+1. Re-run the checker — **same command, no credentials, before touching any stream**:
+   `bash scripts/v380_security_check.sh 192.168.1.10 554 8899`
+2. Read the classification, and act on it rather than around it:
+   - `EXPOSED` → the interface answers **without authentication**. **STOP**, document the security impact, do
+     not wire it into anything, and report to the owner. This is exactly what camera 1's toggle produced
+     (anonymous RTSP with live H.265 RTP), so it is the *expected* outcome, not a surprise.
+   - `AUTHENTICATION ENFORCED` → only then proceed, and only with an approved credential passed via
+     `--creds FILE` (never inline, never in shell history), which is also the only way the positive half of
+     the check can be completed. Without it the positive half is `NOT ATTEMPTED`, never "passed".
+   - `INCONCLUSIVE` → treat as non-secure (non-zero exit) and report; do not retry until it is understood.
+3. Only after a green security result: probe the stream locally (`ffprobe`), record the REAL working URL,
+   codec, resolution and FPS as measured values, and keep it on the local network — no port forwarding, no
+   public stream, no relay.
+4. Media claims stay unwritten until step 3 has an actual result. A viable *interface* is not a viable
+   *stream*, and neither is a capability claim.
+
+## 3. Cameras 1 and 2 — **STANDING DOWN**
+
+Standing down until the DHCP leases / addresses are confirmed from the router. Both gave `No route to host`
+and neither answered the vendor discovery broadcast, so nothing about them is known from here, and no device
+id will be guessed in the meantime. Nothing is scheduled for these units.
