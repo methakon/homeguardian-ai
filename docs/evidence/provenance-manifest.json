@@ -1143,6 +1143,60 @@
         "experiment branch",
         "not deployed into"
       ]
+    },
+    {
+      "id": "local-media-observation-header",
+      "path": "src/core/LocalMediaObservation.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "LocalMediaObservation",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "local-media-observation-source",
+      "path": "src/core/LocalMediaObservation.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "LocalMediaObservation",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "local-media-derivation-suite",
+      "path": "tests/core/test_local_media_observation.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_local_media_observation.cpp",
+      "content_markers": [
+        "derive_motion_observation"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "media-chain-suite",
+      "path": "tests/integration/test_local_media_to_mcp.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_local_media_to_mcp.cpp",
+      "content_markers": [
+        "derive_motion_observation"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }

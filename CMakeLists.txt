@@ -556,6 +556,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/net/test_network_contract_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_producer_and_reliability.cpp
         ${CMAKE_SOURCE_DIR}/tests/integration/test_network_sensor_to_mcp.cpp
+        ${CMAKE_SOURCE_DIR}/tests/integration/test_local_media_to_mcp.cpp
         # HG-V380-09 camera adapter boundary: deterministic mock adapters plus the
         # registry/consent authorization seam. Registered in the TEST target only —
         # no shipped binary references them, so their footprints are unchanged.
@@ -587,6 +588,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_audio_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_activity_pattern.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_media_backpressure.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_local_media_observation.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_v380_adapter.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_scenario_record.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_audit.cpp
@@ -606,6 +608,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/SensorEventConsumer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ActivityPattern.cpp
         ${CMAKE_SOURCE_DIR}/src/core/BoundedMediaBuffer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/LocalMediaObservation.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/V380SourceAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ScenarioRecord.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/AlsaCommandAudioSource.cpp
