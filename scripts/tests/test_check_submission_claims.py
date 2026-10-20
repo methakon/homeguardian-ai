@@ -1483,5 +1483,83 @@ class TestSecretRedactionWithHardenedRules(FixtureCase):
         self.assertEqual(code_text, csc.EXIT_FAIL)
 
 
+# ---------------------------------------------------------------------------
+# Regression: a skipped revision check must never read as CLEANER than the
+# check itself would have.  Scanning a non-git tree used to return exit 2 with
+# FAIL=0 while the same content scanned as a git tree returned exit 1 with a
+# FAIL, because the skip was recorded only as a note - and Report.counts()
+# counts findings, not notes.  That is a false release certification.
+# ---------------------------------------------------------------------------
+
+
+class TestRevisionChecksSkippedIsNotACleanVerdict(FixtureCase):
+    #: a documentation set carrying a revision-looking token to be validated
+    DOCS = {
+        "README.md": "# Fixture\n\nApache-2.0 licensed.\n",
+        "LICENSE": APACHE_HEADER,
+        "NOTICE": "Fixture\n",
+        "docs/PROOF_REGISTER.md": (
+            "# Proof register\n\n"
+            "**Candidate SHA:** `13471a90abed022b57bb626672ea237650b6f81a`\n"
+        ),
+    }
+
+    def test_non_git_tree_reports_the_skip_as_a_review_finding(self) -> None:
+        """The skip is surfaced as a finding, so it moves the exit code."""
+        root = self.tree(self.DOCS)  # plain directory: no .git
+
+        report = scan_json(root)
+        self.assertIsInstance(report, dict)
+        rev = self.findings_for(report["report"], "HG-REV-005")
+
+        self.assertEqual(len(rev), 1, report["report"].get("notes"))
+        self.assertEqual(rev[0]["severity"], csc.SEV_REVIEW)
+        # ...and it is not merely a note
+        self.assertIn("HG-REV-005", self.rules(report["report"]))
+        self.assertNotEqual(
+            report["exit"],
+            csc.EXIT_OK,
+            "a tree whose revision checks were skipped must not exit clean",
+        )
+        self.assertEqual(report["exit"], csc.EXIT_REVIEW)
+
+    def test_git_tree_does_not_emit_the_skip_finding(self) -> None:
+        """When the checks actually ran, the skip finding must not appear."""
+        repo = self.git_repo(self.DOCS)
+        commit = self.git(repo, "rev-parse", "HEAD")
+
+        report = scan_json(repo, "--release-ref", commit)
+        self.assertNotIn("HG-REV-005", self.rules(report["report"]))
+
+    def test_skip_verdict_is_not_cleaner_than_the_real_verdict(self) -> None:
+        """The core invariant: skipped checks can never look better than run ones.
+
+        Same content, two ways of invoking the scanner.  The non-git verdict must
+        not be strictly cleaner than the git verdict -- otherwise a release with a
+        bad revision reference could be certified by scanning an extracted tree.
+        """
+        root = self.tree(self.DOCS)
+        non_git = scan_json(root)
+
+        repo = self.git_repo(self.DOCS)
+        commit = self.git(repo, "rev-parse", "HEAD")
+        git_run = scan_json(repo, "--release-ref", commit)
+
+        # The real run found the bogus SHA as a FAIL.
+        self.assertEqual(git_run["exit"], csc.EXIT_FAIL)
+        self.assertGreaterEqual(git_run["report"]["counts"]["FAIL"], 1)
+
+        # The skipped run must still surface a finding of its own, and must not
+        # exit clean.  (Exit codes run 0=clean .. 3=internal, so "not clean" is
+        # the testable property; asserting a numeric ordering between FAIL and
+        # REVIEW exit codes would be meaningless.)
+        self.assertGreaterEqual(non_git["report"]["counts"]["REVIEW"], 1)
+        self.assertNotEqual(
+            non_git["exit"],
+            csc.EXIT_OK,
+            "the skipped-revision run must not certify the tree as clean",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

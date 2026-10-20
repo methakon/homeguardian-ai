@@ -2113,9 +2113,49 @@ def run_scan(
     for rel in (RELEASE_README, *DEVPOST_DOCS, VIDEO_SCRIPT, *PACKAGE_DOCS):
         if _classify(rel) is not None and not (root / rel).exists():
             report.notes.append("target artefact not present in this tree: {}".format(rel))
-    if not rev_stats["git"]:
+    if not rev_stats["git"] and rev_stats.get("considered", 0):
         report.notes.append(
             "not a git repository: revision existence/ancestry checks were skipped"
+        )
+        # ...and a FINDING, not only a note.  The note above is invisible to the
+        # exit code (Report.counts() counts self.findings only), so a non-git tree
+        # used to return a CLEANER verdict than the same content scanned as a git
+        # tree -- exit 2/FAIL=0 here versus exit 1/FAIL=2 there.  That is a false
+        # release certification: an invalid revision reference would be certified.
+        # A skipped check must never read as more-clean than the check itself would
+        # have, so the skip is surfaced at REVIEW severity and moves the exit code.
+        #
+        # Guarded on `considered`: if the tree carries no revision-looking token
+        # then skipping the check costs nothing and a finding would be a false
+        # positive (and would make every non-git fixture tree un-scannable).  The
+        # finding is warranted only when there was something that needed checking
+        # and it went unchecked.
+        #
+        # NOTE: append to the LOCAL `findings` list, not to report.findings.
+        # report.findings is replaced wholesale further down
+        # (`report.findings = _sort_findings(filtered)`), so anything appended to
+        # it directly here is silently discarded.  The local list is what flows
+        # through the filter/sort/assign path.
+        findings.append(
+            Finding(
+                rule="HG-REV-005",
+                severity=SEV_REVIEW,
+                file="<tree>",
+                line=0,
+                message=(
+                    "revision existence/ancestry checks were SKIPPED: the scanned tree "
+                    "is not a git repository, so revision references were not validated"
+                ),
+                evidence=(
+                    "git rev-parse --git-dir exited non-zero; {} revision token(s) were "
+                    "read but none checked".format(rev_stats.get("considered", 0))
+                ),
+                correction=(
+                    "Scan a git working tree at the release ref, e.g. "
+                    "`git worktree add --detach <dir> <ref>` and point the scanner at "
+                    "<dir>. A non-git tree cannot yield a clean revision verdict."
+                ),
+            )
         )
     if rev_stats["exempt"]:
         report.notes.append(
