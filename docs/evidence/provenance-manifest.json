@@ -4,7 +4,7 @@
   "generated_by": "scripts/verify_evidence_provenance.py",
   "refs": {
     "release": "release/hackathon-2026-mcp-candidate",
-    "external": "origin/experiment/hg-v380-09-secure-camera-integration"
+    "external": "9d252c46f6fca2008e5e0285107002470d451df4"
   },
   "evidence_types": {
     "real": "measurement produced by physical hardware (a device frame)",
@@ -17,7 +17,7 @@
     {
       "id": "still-scene-capture-log",
       "path": "docs/evidence/PHYSICAL_CAMERA_STILL_SCENE.log",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "real",
       "reference_token": "PHYSICAL_CAMERA_STILL_SCENE.log",
@@ -32,11 +32,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        },
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "experiment/hg-v380-09-secure-camera-integration"
+          "revision": "9d252c46f6fca2008e5e0285107002470d451df4"
         }
       ],
       "note": "Raw, unedited transcript written by the capture tool's --log option. This is the only byte-for-byte original in the evidence set. Markers are read from the artifact itself: the header line, the per-observation provenance label, and the verdict line."
@@ -44,7 +40,7 @@
     {
       "id": "capture-log-transcribed",
       "path": "docs/evidence/PHYSICAL_CAMERA_CAPTURE_LOG.md",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "transcribed",
       "reference_token": "PHYSICAL_CAMERA_CAPTURE_LOG.md",
@@ -56,11 +52,7 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        },
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "experiment/hg-v380-09-secure-camera-integration"
+          "revision": "9d252c46f6fca2008e5e0285107002470d451df4"
         }
       ],
       "note": "Runs 1-5 are a transcription of each capture's own stdout; the file states this at the top. Classifying it as 'real' would be the exact error this validator exists to catch."
@@ -68,57 +60,44 @@
     {
       "id": "judge-evidence-note",
       "path": "docs/JUDGE_EVIDENCE_PHYSICAL_SENSOR.md",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "documentation",
       "reference_token": "JUDGE_EVIDENCE_PHYSICAL_SENSOR.md",
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        },
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "experiment/hg-v380-09-secure-camera-integration"
+          "revision": "9d252c46f6fca2008e5e0285107002470d451df4"
         }
       ]
     },
     {
       "id": "physical-camera-path",
       "path": "docs/PHYSICAL_CAMERA_PATH.md",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "documentation",
       "reference_token": "PHYSICAL_CAMERA_PATH.md",
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        },
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "experiment/hg-v380-09-secure-camera-integration"
+          "revision": "9d252c46f6fca2008e5e0285107002470d451df4"
         }
       ]
     },
     {
       "id": "v4l2-device-header",
       "path": "src/backend/linux/V4l2CameraDevice.h",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "V4l2CameraDevice",
-      "referenced_by": [
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        }
-      ]
+      "referenced_by": []
     },
     {
       "id": "v4l2-device-source",
       "path": "src/backend/linux/V4l2CameraDevice.cpp",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "V4l2CameraDevice"
@@ -126,21 +105,16 @@
     {
       "id": "camera-activity-session-header",
       "path": "src/core/CameraActivitySession.h",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "CameraActivitySession",
-      "referenced_by": [
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        }
-      ]
+      "referenced_by": []
     },
     {
       "id": "camera-activity-session-source",
       "path": "src/core/CameraActivitySession.cpp",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "CameraActivitySession"
@@ -148,51 +122,36 @@
     {
       "id": "camera-bridge-tool",
       "path": "src/main_camera_bridge.cpp",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "hg_camera_bridge",
-      "referenced_by": [
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        }
-      ]
+      "referenced_by": []
     },
     {
       "id": "camera-suite-physical",
       "path": "tests/core/test_camera_activity.cpp",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "synthetic",
       "reference_token": "test_camera_activity.cpp",
       "content_markers": [
         "Provenance::synthetic"
       ],
-      "referenced_by": [
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        }
-      ],
+      "referenced_by": [],
       "note": "Wiring, bounds and pipeline-integration tests. Hardware-free by construction: every injected frame is Provenance::synthetic."
     },
     {
       "id": "camera-suite-calibration",
       "path": "tests/core/test_camera_calibration.cpp",
-      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
       "scope": "external",
       "evidence_type": "synthetic",
       "reference_token": "test_camera_calibration.cpp",
       "content_markers": [
         "Provenance::synthetic"
       ],
-      "referenced_by": [
-        {
-          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "release/hackathon-2026-mcp-candidate"
-        }
-      ],
+      "referenced_by": [],
       "note": "EMA decay and fusion-window dilution, driven by a deterministic step. Never a physical measurement."
     },
     {
@@ -203,7 +162,7 @@
       "evidence_type": "documentation",
       "reference_token": "SUBMISSION_VIDEO_SCRIPT.md",
       "content_markers": [
-        "HACKATHON CANDIDATE CERTIFIED"
+        "HACKATHON RELEASE CANDIDATE"
       ],
       "note": "Release-contained control artifact: proves the release scope check passes for a file that is genuinely in the release."
     },

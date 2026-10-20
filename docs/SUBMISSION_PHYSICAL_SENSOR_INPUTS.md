@@ -1,7 +1,7 @@
 # Submission inputs — physical sensor (camera) path
 
 **Supplied to:** the submission lead (Antigravity) for the README, project description and demo.
-**Source commit:** `b48254121474cb6eee69a63e9c39a73e90c96d35`
+**Source commit:** `9d252c46f6fca2008e5e0285107002470d451df4`
 **Branch:** `experiment/hg-v380-09-secure-camera-integration` — **experimental and isolated; not merged.**
 **Status:** factual inputs only. No further capture, no microphone, no threshold change, no merge.
 
@@ -56,7 +56,7 @@ care.
 
 ## 5. Evidence paths and exact SHAs (External Experiment Branch)
 
-> **Important Boundary Note:** No physical camera integration and no V380 camera integration are included in PR #20. The USB camera driver (`V4l2CameraDevice`), bridge tool (`main_camera_bridge`), and capture evidence logs listed below reside on external experiment branch **`experiment/hg-v380-09-secure-camera-integration`** (HEAD commit `b48254121474cb6eee69a63e9c39a73e90c96d35`). They are unmerged and not deployed into `release/hackathon-2026-mcp-candidate` (PR #20). The clean judge candidate runtime runs strictly fail-closed (`media_capture_enabled: false`, `physical_camera_unverified`) using synthetic observation fixtures.
+> **Important Boundary Note:** No physical camera integration and no V380 camera integration are included in PR #20. The USB camera driver (`V4l2CameraDevice`), bridge tool (`main_camera_bridge`), and capture evidence logs listed below reside exclusively on external experiment branch **`experiment/hg-v380-09-secure-camera-integration`** (HEAD commit `9d252c46f6fca2008e5e0285107002470d451df4`). They are unmerged and not deployed into `release/hackathon-2026-mcp-candidate` (PR #20). The clean judge candidate runtime runs strictly fail-closed (`media_capture_enabled: false`, `physical_camera_unverified`) using synthetic observation fixtures.
 
 | Item | Path / SHA (on `experiment/hg-v380-09-secure-camera-integration`) |
 |---|---|
@@ -68,7 +68,7 @@ care.
 | Finding vocabulary + session (external branch) | `src/core/CameraActivitySession.{h,cpp}` |
 | Operator-gated tool (external branch) | `src/main_camera_bridge.cpp` |
 | Tests (external branch) | `tests/core/test_camera_activity.cpp`, `tests/core/test_camera_calibration.cpp` |
-| Docs / evidence commit | **`b48254121474cb6eee69a63e9c39a73e90c96d35`** |
+| Docs / evidence commit | **`9d252c46f6fca2008e5e0285107002470d451df4`** |
 | Durable-log + evidence commit | `f6afdcf4bdf27d713302faba002d4d38fea200b6` |
 | Motion-verified commit | `70a994e63d29ce1274b44ddb6406c640005f924d` |
 | Calibration-analysis commit | `7388ae3570f2029ac982a2148102453fefb66c76` |
