@@ -3,8 +3,8 @@
   "description": "Every camera-evidence artifact referenced by HomeGuardian AI submission documentation, with the revision that is supposed to contain it, its evidence type, and its scope relative to the judge release. Verified by scripts/verify_evidence_provenance.py.",
   "generated_by": "scripts/verify_evidence_provenance.py",
   "refs": {
-    "release": "release/hackathon-2026-mcp-candidate",
-    "external": "9d252c46f6fca2008e5e0285107002470d451df4"
+    "release": "origin/release/hackathon-2026-mcp-candidate",
+    "external": "origin/experiment/hg-v380-09-secure-camera-integration"
   },
   "evidence_types": {
     "real": "measurement produced by physical hardware (a device frame)",
@@ -17,7 +17,7 @@
     {
       "id": "still-scene-capture-log",
       "path": "docs/evidence/PHYSICAL_CAMERA_STILL_SCENE.log",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "real",
       "reference_token": "PHYSICAL_CAMERA_STILL_SCENE.log",
@@ -32,15 +32,23 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "9d252c46f6fca2008e5e0285107002470d451df4"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        },
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "experiment/hg-v380-09-secure-camera-integration"
         }
       ],
-      "note": "Raw, unedited transcript written by the capture tool's --log option. This is the only byte-for-byte original in the evidence set. Markers are read from the artifact itself: the header line, the per-observation provenance label, and the verdict line."
+      "note": "Raw, unedited transcript written by the capture tool's --log option. This is the only byte-for-byte original in the evidence set. Markers are read from the artifact itself: the header line, the per-observation provenance label, and the verdict line.",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "capture-log-transcribed",
       "path": "docs/evidence/PHYSICAL_CAMERA_CAPTURE_LOG.md",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "transcribed",
       "reference_token": "PHYSICAL_CAMERA_CAPTURE_LOG.md",
@@ -52,52 +60,85 @@
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "9d252c46f6fca2008e5e0285107002470d451df4"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        },
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "experiment/hg-v380-09-secure-camera-integration"
         }
       ],
-      "note": "Runs 1-5 are a transcription of each capture's own stdout; the file states this at the top. Classifying it as 'real' would be the exact error this validator exists to catch."
+      "note": "Runs 1-5 are a transcription of each capture's own stdout; the file states this at the top. Classifying it as 'real' would be the exact error this validator exists to catch.",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "judge-evidence-note",
       "path": "docs/JUDGE_EVIDENCE_PHYSICAL_SENSOR.md",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "documentation",
       "reference_token": "JUDGE_EVIDENCE_PHYSICAL_SENSOR.md",
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "9d252c46f6fca2008e5e0285107002470d451df4"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        },
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "experiment/hg-v380-09-secure-camera-integration"
         }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
       ]
     },
     {
       "id": "physical-camera-path",
       "path": "docs/PHYSICAL_CAMERA_PATH.md",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "documentation",
       "reference_token": "PHYSICAL_CAMERA_PATH.md",
       "referenced_by": [
         {
           "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
-          "revision": "9d252c46f6fca2008e5e0285107002470d451df4"
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        },
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "experiment/hg-v380-09-secure-camera-integration"
         }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
       ]
     },
     {
       "id": "v4l2-device-header",
       "path": "src/backend/linux/V4l2CameraDevice.h",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "V4l2CameraDevice",
-      "referenced_by": []
+      "referenced_by": [
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "v4l2-device-source",
       "path": "src/backend/linux/V4l2CameraDevice.cpp",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "V4l2CameraDevice"
@@ -105,16 +146,25 @@
     {
       "id": "camera-activity-session-header",
       "path": "src/core/CameraActivitySession.h",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "CameraActivitySession",
-      "referenced_by": []
+      "referenced_by": [
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "camera-activity-session-source",
       "path": "src/core/CameraActivitySession.cpp",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "CameraActivitySession"
@@ -122,58 +172,1050 @@
     {
       "id": "camera-bridge-tool",
       "path": "src/main_camera_bridge.cpp",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "implementation",
       "reference_token": "hg_camera_bridge",
-      "referenced_by": []
+      "referenced_by": [
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        }
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "camera-suite-physical",
       "path": "tests/core/test_camera_activity.cpp",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "synthetic",
       "reference_token": "test_camera_activity.cpp",
       "content_markers": [
         "Provenance::synthetic"
       ],
-      "referenced_by": [],
-      "note": "Wiring, bounds and pipeline-integration tests. Hardware-free by construction: every injected frame is Provenance::synthetic."
+      "referenced_by": [
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        }
+      ],
+      "note": "Wiring, bounds and pipeline-integration tests. Hardware-free by construction: every injected frame is Provenance::synthetic.",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "camera-suite-calibration",
       "path": "tests/core/test_camera_calibration.cpp",
-      "revision": "9d252c46f6fca2008e5e0285107002470d451df4",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
       "scope": "external",
       "evidence_type": "synthetic",
       "reference_token": "test_camera_calibration.cpp",
       "content_markers": [
         "Provenance::synthetic"
       ],
-      "referenced_by": [],
-      "note": "EMA decay and fusion-window dilution, driven by a deterministic step. Never a physical measurement."
+      "referenced_by": [
+        {
+          "path": "docs/SUBMISSION_PHYSICAL_SENSOR_INPUTS.md",
+          "revision": "origin/release/hackathon-2026-mcp-candidate"
+        }
+      ],
+      "note": "EMA decay and fusion-window dilution, driven by a deterministic step. Never a physical measurement.",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
     },
     {
       "id": "release-video-script",
       "path": "docs/SUBMISSION_VIDEO_SCRIPT.md",
-      "revision": "release/hackathon-2026-mcp-candidate",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
       "scope": "release",
       "evidence_type": "documentation",
       "reference_token": "SUBMISSION_VIDEO_SCRIPT.md",
       "content_markers": [
-        "HACKATHON RELEASE CANDIDATE"
+        "HACKATHON CANDIDATE CERTIFIED"
       ],
       "note": "Release-contained control artifact: proves the release scope check passes for a file that is genuinely in the release."
     },
     {
       "id": "release-dempster-shafer",
       "path": "src/core/DempsterShafer.h",
-      "revision": "release/hackathon-2026-mcp-candidate",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
       "scope": "release",
       "evidence_type": "implementation",
       "reference_token": "DempsterShafer",
       "note": "Release-contained control artifact; the frame of discernment here is what makes a calamity claim unrepresentable."
+    },
+    {
+      "id": "activity-episode-header",
+      "path": "src/core/ActivityEpisode.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ActivityEpisode"
+    },
+    {
+      "id": "activity-episode-source",
+      "path": "src/core/ActivityEpisode.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ActivityEpisode"
+    },
+    {
+      "id": "camera-replay-suite",
+      "path": "tests/core/test_camera_replay.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_camera_replay.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "fusion-provenance-suite",
+      "path": "tests/core/test_fusion_provenance.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_fusion_provenance.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "episode-suite",
+      "path": "tests/core/test_activity_episode.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_activity_episode.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "provenance-validator",
+      "path": "scripts/verify_evidence_provenance.py",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
+      "scope": "release",
+      "evidence_type": "implementation",
+      "reference_token": "verify_evidence_provenance",
+      "note": "Cherry-picked into the release branch at 82c207c; verified there by this same tool."
+    },
+    {
+      "id": "provenance-validator-tests",
+      "path": "tests/scripts/test_evidence_provenance.py",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
+      "scope": "release",
+      "evidence_type": "implementation",
+      "reference_token": "test_evidence_provenance.py",
+      "note": "Cherry-picked into the release branch at 82c207c; verified there by this same tool.",
+      "forbid_markers": []
+    },
+    {
+      "id": "provenance-handoff",
+      "path": "docs/EVIDENCE_PROVENANCE_HANDOFF.md",
+      "revision": "origin/release/hackathon-2026-mcp-candidate",
+      "scope": "release",
+      "evidence_type": "documentation",
+      "reference_token": "EVIDENCE_PROVENANCE_HANDOFF.md",
+      "note": "Cherry-picked into the release branch at 82c207c; verified there by this same tool."
+    },
+    {
+      "id": "fusion-hardening-note",
+      "path": "docs/FUSION_PROVENANCE_AND_EPISODE_HARDENING.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "FUSION_PROVENANCE_AND_EPISODE_HARDENING.md",
+      "note": "Written on the external branch; not referenced by any release document."
+    },
+    {
+      "id": "pr20-accuracy-review",
+      "path": "docs/PR20_DOC_ACCURACY_REVIEW.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "PR20_DOC_ACCURACY_REVIEW.md"
+    },
+    {
+      "id": "ambient-run-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_AMBIENT_RUN.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_AMBIENT_RUN.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "animal-activity-header",
+      "path": "src/core/AnimalActivity.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AnimalActivity"
+    },
+    {
+      "id": "animal-activity-source",
+      "path": "src/core/AnimalActivity.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AnimalActivity"
+    },
+    {
+      "id": "animal-activity-suite",
+      "path": "tests/core/test_animal_activity.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_animal_activity.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "scenario-suite",
+      "path": "tests/core/test_camera_scenarios.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_camera_scenarios.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "scenario-matrix-doc",
+      "path": "docs/PHYSICAL_CAMERA_SCENARIOS.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "PHYSICAL_CAMERA_SCENARIOS.md"
+    },
+    {
+      "id": "ambient-run-2-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_AMBIENT_RUN_2.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_AMBIENT_RUN_2.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "ambient-run-3-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_AMBIENT_RUN_3.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_AMBIENT_RUN_3.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "character-run-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_CHARACTER_RUN.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_CHARACTER_RUN.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "character-run-2-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_CHARACTER_RUN2.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_CHARACTER_RUN2.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ]
+    },
+    {
+      "id": "change-character-header",
+      "path": "src/core/ChangeCharacter.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ChangeCharacter"
+    },
+    {
+      "id": "change-character-source",
+      "path": "src/core/ChangeCharacter.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ChangeCharacter"
+    },
+    {
+      "id": "change-character-suite",
+      "path": "tests/core/test_change_character.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_change_character.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ]
+    },
+    {
+      "id": "change-separation-doc",
+      "path": "docs/CHANGE_CHARACTER_SEPARATION.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "CHANGE_CHARACTER_SEPARATION.md"
+    },
+    {
+      "id": "brightness-step-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_BRIGHTNESS_STEP.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_BRIGHTNESS_STEP.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "brightness-step-log-2",
+      "path": "docs/evidence/PHYSICAL_CAMERA_BRIGHTNESS_STEP2.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_BRIGHTNESS_STEP2.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-observation-header",
+      "path": "src/core/AudioObservation.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AudioObservation",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-observation-source",
+      "path": "src/core/AudioObservation.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AudioObservation",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-observation-suite",
+      "path": "tests/core/test_audio_observation.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_audio_observation.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-event-contract-doc",
+      "path": "docs/SENSOR_EVENT_CONTRACT.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "SENSOR_EVENT_CONTRACT.md",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "tail-step-log",
+      "path": "docs/evidence/PHYSICAL_CAMERA_TAIL_STEP.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "PHYSICAL_CAMERA_TAIL_STEP.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "device=/dev/video0",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-event-consumer-header",
+      "path": "src/core/SensorEventConsumer.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "SensorEventConsumer",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-event-consumer-source",
+      "path": "src/core/SensorEventConsumer.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "SensorEventConsumer",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-event-consumer-suite",
+      "path": "tests/core/test_sensor_event_consumer.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_sensor_event_consumer.cpp",
+      "content_markers": [
+        "Provenance::synthetic"
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "alsa-audio-adapter-header",
+      "path": "src/backend/linux/AlsaCommandAudioSource.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AlsaCommandAudioSource",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "alsa-audio-adapter-source",
+      "path": "src/backend/linux/AlsaCommandAudioSource.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "AlsaCommandAudioSource",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-probe-tool",
+      "path": "src/main_audio_probe.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "hg_audio_probe",
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "audio-adapter-suite",
+      "path": "tests/core/test_audio_adapter.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_audio_adapter.cpp",
+      "content_markers": [
+        "Provenance::real"
+      ],
+      "external_notice_markers": [
+        "external experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "activity-pattern-header",
+      "path": "src/core/ActivityPattern.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ActivityPattern",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "activity-pattern-source",
+      "path": "src/core/ActivityPattern.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ActivityPattern",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "activity-pattern-suite",
+      "path": "tests/core/test_activity_pattern.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_activity_pattern.cpp",
+      "content_markers": [
+        "ActivityPatternConfig"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-record-header",
+      "path": "src/core/ScenarioRecord.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ScenarioRecord",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-record-source",
+      "path": "src/core/ScenarioRecord.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ScenarioRecord",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-runner-tool",
+      "path": "src/main_scenario_runner.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "hg_scenario_runner",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-record-suite",
+      "path": "tests/core/test_scenario_record.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_scenario_record.cpp",
+      "content_markers": [
+        "SYNTHETIC fixtures only"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "sensor-audit-suite",
+      "path": "tests/core/test_sensor_audit.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_sensor_audit.cpp",
+      "content_markers": [
+        "IngestCode"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "staged-scenario-doc",
+      "path": "docs/STAGED_SCENARIO_HARNESS.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "STAGED_SCENARIO_HARNESS.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "hermes2-coordination-doc",
+      "path": "docs/HERMES2_CONTRACT_COORDINATION.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "HERMES2_CONTRACT_COORDINATION.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-ambient-log-1",
+      "path": "docs/evidence/scenario-ambient_baseline.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "scenario-ambient_baseline.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-ambient-log-2",
+      "path": "docs/evidence/scenario-ambient_baseline-20261019T154155Z.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "scenario-ambient_baseline-20261019T154155Z.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "scenario-records-json",
+      "path": "docs/evidence/scenario-records-20261019T154658Z.json",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "scenario-records-20261019T154658Z.json",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ],
+      "content_markers": [
+        "provenance"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "note": "derived from a real capture log; the capture retained no frame and no audio"
+    },
+    {
+      "id": "scenario-ambient-log-3",
+      "path": "docs/evidence/scenario-ambient_baseline-20261019T154622Z.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "scenario-ambient_baseline-20261019T154622Z.log",
+      "content_markers": [
+        "REAL camera capture -> bounded scalars",
+        "MOTION-VERDICT"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "network-contract-handoff",
+      "path": "docs/NETWORK_CONTRACT_V1_HANDOFF.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "NETWORK_CONTRACT_V1_HANDOFF.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "network-contract-audit-suite",
+      "path": "tests/net/test_network_contract_audit.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_network_contract_audit.cpp",
+      "content_markers": [
+        "Fixture"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "observation-producer-header",
+      "path": "src/net/ObservationProducer.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ObservationProducer",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "observation-producer-source",
+      "path": "src/net/ObservationProducer.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "ObservationProducer",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "producer-reliability-suite",
+      "path": "tests/net/test_producer_and_reliability.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_producer_and_reliability.cpp",
+      "content_markers": [
+        "ObservationProducer"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "integration-package-readme",
+      "path": "docs/integration/README.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "integration/README.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "observation-schema",
+      "path": "docs/integration/observation.schema.json",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "observation.schema.json",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "e2e-mcp-sensor-suite",
+      "path": "tests/integration/test_network_sensor_to_mcp.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_network_sensor_to_mcp.cpp",
+      "content_markers": [
+        "SensorHub"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "bounded-media-buffer-header",
+      "path": "src/core/BoundedMediaBuffer.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "BoundedMediaBuffer",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "bounded-media-buffer-source",
+      "path": "src/core/BoundedMediaBuffer.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "BoundedMediaBuffer",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "media-backpressure-suite",
+      "path": "tests/core/test_media_backpressure.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_media_backpressure.cpp",
+      "content_markers": [
+        "MediaBufferConfig"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "linux-hub-integration-doc",
+      "path": "docs/integration/LINUX_HUB_INTEGRATION.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "LINUX_HUB_INTEGRATION.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "hub-integration-check-script",
+      "path": "scripts/linux_hub_integration_check.sh",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "linux_hub_integration_check",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "physical-camera-procedure",
+      "path": "docs/PHYSICAL_NETWORK_CAMERA_PROCEDURE.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "PHYSICAL_NETWORK_CAMERA_PROCEDURE.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "alert-interface-r2",
+      "path": "docs/ALERT_INTERFACE_R2.md",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "documentation",
+      "reference_token": "ALERT_INTERFACE_R2.md",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "v380-adapter-header",
+      "path": "src/backend/linux/V380SourceAdapter.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "V380SourceAdapter",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "v380-adapter-source",
+      "path": "src/backend/linux/V380SourceAdapter.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "V380SourceAdapter",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "v380-adapter-suite",
+      "path": "tests/core/test_v380_adapter.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_v380_adapter.cpp",
+      "content_markers": [
+        "V380Refusal"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "local-media-observation-header",
+      "path": "src/core/LocalMediaObservation.h",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "LocalMediaObservation",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "local-media-observation-source",
+      "path": "src/core/LocalMediaObservation.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "implementation",
+      "reference_token": "LocalMediaObservation",
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "local-media-derivation-suite",
+      "path": "tests/core/test_local_media_observation.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_local_media_observation.cpp",
+      "content_markers": [
+        "derive_motion_observation"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "media-chain-suite",
+      "path": "tests/integration/test_local_media_to_mcp.cpp",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "synthetic",
+      "reference_token": "test_local_media_to_mcp.cpp",
+      "content_markers": [
+        "derive_motion_observation"
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
+    },
+    {
+      "id": "arm64-cross-compile-log",
+      "path": "docs/evidence/ARM64_CROSS_COMPILE.log",
+      "revision": "experiment/hg-v380-09-secure-camera-integration",
+      "scope": "external",
+      "evidence_type": "real",
+      "reference_token": "ARM64_CROSS_COMPILE.log",
+      "content_markers": [
+        "aarch64-linux-gnu-g++",
+        "compiled_for_aarch64"
+      ],
+      "forbid_markers": [
+        "\"provenance\": \"synthetic\""
+      ],
+      "external_notice_markers": [
+        "experiment branch",
+        "not deployed into"
+      ]
     }
   ]
 }

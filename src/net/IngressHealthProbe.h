@@ -50,7 +50,7 @@ struct IngressProbeResult {
     std::string endpoint;         // "host:port" exactly as dialled
     std::string tls_version;      // e.g. "TLSv1.3"
     std::string server_subject;   // e.g. "CN=homeguardian-hub"
-    std::string server_san;       // e.g. "DNS:ingress,DNS:localhost,IP:192.168.1.6"
+    std::string server_san;       // e.g. "DNS:ingress,DNS:localhost,IP:10.20.30.6"
     std::string detail;           // bounded explanation; never carries key material
 
     // One line for the container log / health-check output.

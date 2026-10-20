@@ -35,13 +35,17 @@ void ActivityChangeDetector::reset() {
 }
 
 ActivityChangeDetector::Result ActivityChangeDetector::snapshot() const {
+    // The snapshot is the last OBSERVED result, not a re-derivation. Reporting `ratio` as the
+    // raw last value (as this did) let a caller print "sustained increase" beside a ratio
+    // below 1 - a self-contradicting finding a reviewer would rightly distrust.
+    if (have_result_) return last_result_;
     Result r;
     r.baseline_ready = samples_ >= cfg_.warmup;
     r.direction = last_direction_;
     r.confirmed = confirmed_;
     r.baseline_level = baseline_;
     r.recent_level = last_value_;
-    r.ratio = last_value_;
+    r.ratio = 1.0;
     r.consecutive = consecutive_;
     r.samples = samples_;
     return r;
@@ -59,6 +63,9 @@ ActivityChangeDetector::Result ActivityChangeDetector::observe(
         r.confirmed = confirmed_;
         r.baseline_level = baseline_;
         r.recent_level = last_value_;
+        r.ratio = 1.0;
+        last_result_ = r;
+        have_result_ = true;
         return r;
     }
 
@@ -102,6 +109,8 @@ ActivityChangeDetector::Result ActivityChangeDetector::observe(
         last_direction_ = r.direction;
         consecutive_ = 0;
         confirmed_ = false;
+        last_result_ = r;
+        have_result_ = true;
         return r;
     }
 
@@ -138,6 +147,8 @@ ActivityChangeDetector::Result ActivityChangeDetector::observe(
                    " activity not yet confirmed (" + std::to_string(consecutive_) + " of " +
                    std::to_string(cfg_.confirm_samples) + ")";
     }
+    last_result_ = r;
+    have_result_ = true;
     return r;
 }
 
@@ -167,9 +178,20 @@ Observation ActivityChangeDetector::to_observation(const Result& r,
     o.features["consecutive"] = r.consecutive;
     o.features["samples"] = r.samples;
     o.features["baseline_ready"] = r.baseline_ready;
-    // Confidence is the strength of the change, not a probability of any
-    // specific cause: it saturates at 1.0 and stays 0 while unconfirmed.
-    o.confidence = r.confirmed ? std::min(1.0, (r.ratio - 1.0) / 2.0) : 0.0;
+    // Confidence is the strength of the change, not a probability of any specific cause: it
+    // saturates at 1.0 and stays 0 while unconfirmed.
+    //
+    // It must be clamped at BOTH ends. A confirmed FALLING change has ratio < 1, so
+    // (ratio - 1) is negative and a one-sided min() would produce a negative confidence -
+    // which the validated Event constructor rejects, turning a legitimate falling finding
+    // into an exception. The magnitude of the deviation from 1.0 is the strength in both
+    // directions.
+    if (r.confirmed) {
+        const double strength = std::abs(r.ratio - 1.0) / 2.0;
+        o.confidence = std::max(0.0, std::min(1.0, strength));
+    } else {
+        o.confidence = 0.0;
+    }
     o.note = r.reason;
     return o;
 }

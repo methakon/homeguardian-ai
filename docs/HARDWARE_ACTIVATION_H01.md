@@ -1,5 +1,12 @@
 # H-01 — Real hardware activation and Alexa camera readiness
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 Status: **H-01a partially complete (microphone and speaker discovered; the Android phone is
 NOT visible to the system), H-01b/c/d/e software complete and waiting for the operator's
 explicit start action, H-01f BLOCKED (no supported Amazon runtime exists).**
@@ -252,7 +259,7 @@ immediate next diagnostic step.
 `adb devices -l` is empty after an `adb kill-server` / `start-server` cycle, and the full USB
 tree contains no phone vendor ID at all (only Intel hubs, a CSR8510 and a Dell Bluetooth
 receiver, the HP W100 camera and a USB keyboard). A phone *is* present in the room, but over
-**Bluetooth** (an "S25 Ultra" is paired at `00:00:46:88:4C:50`) - which is an audio pairing
+**Bluetooth** (an "S25 Ultra" is paired at `<redacted-mac-i>`) - which is an audio pairing
 and cannot carry ADB. Nothing was installed, and no device property was invented.
 
 ## 12. Sustained capture: root cause, and a correction to an earlier claim

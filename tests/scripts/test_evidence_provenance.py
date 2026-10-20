@@ -265,6 +265,38 @@ class EvidenceProvenanceValidatorTests(unittest.TestCase):
         self.assertFalse(entry["in_release"])
         self.assertTrue(entry["referenced_by"][0]["reference_confirmed"])
 
+    def test_release_document_declaring_external_evidence_is_accepted(self) -> None:
+        """Citing external evidence is fine when the release says so; hiding it is not."""
+        self.repo.write("docs/SUBMISSION.md",
+                        "The capture log at docs/evidence/CAPTURE.log lives on the external "
+                        "experiment branch and is not part of this release.\n")
+        release = self.repo.commit()
+        self.repo.branch("external")
+        self.repo.write("docs/evidence/CAPTURE.log", REAL_LOG)
+        self.repo.commit()
+        manifest = self.repo.manifest([{
+            "id": "external-log", "path": "docs/evidence/CAPTURE.log", "revision": "external",
+            "scope": "external", "evidence_type": "real",
+            "external_notice_markers": ["external experiment branch"],
+            # cite by branch, so the check follows the release tip rather than one frozen commit
+            "referenced_by": [{"path": "docs/SUBMISSION.md", "revision": "release"}],
+        }])
+        rc, report = self.repo.run_validator(manifest)
+        self.assertEqual(rc, 0, report.get("findings"))
+        self.assertEqual(report["summary"]["external_declared_by_release"], 1)
+        entry = report["artifacts"][0]["referenced_by"][0]
+        self.assertTrue(entry["notice_confirmed"])
+
+        # The same citation WITHOUT the declaration is exactly the failure this tool exists for.
+        self.repo.checkout("release")
+        self.repo.write("docs/SUBMISSION.md", "The capture log is at docs/evidence/CAPTURE.log.\n")
+        self.repo.commit("drop the external notice")
+        rc2, report2 = self.repo.run_validator(manifest)
+        self.assertEqual(rc2, 1)
+        self.assertEqual([f["kind"] for f in report2["findings"]],
+                         ["claim_not_supported_in_release"])
+        self.assertIn("does not declare it as external", report2["findings"][0]["detail"])
+
     def test_reference_token_must_actually_appear_in_the_citing_document(self) -> None:
         """A document that does not mention the artifact is not a citation, so it cannot dangle."""
         self.repo.write("docs/SUBMISSION.md", "no mention of any evidence file here\n")

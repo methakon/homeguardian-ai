@@ -1,6 +1,13 @@
 
 # H-03 - Android Wi-Fi Camera and Audio Sensor: hardware acceptance
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 Every claim below is labelled with HOW FAR it got. Nothing here is inferred from a successful
 build, and no device result is claimed without the device.
 
@@ -255,9 +262,9 @@ design, and is why the certificate must not be looked for beside the key.
 2. Open **HomeGuardian Node** and press **Import credentials** (the four files are already staged
    in `Android/data/org.homeguardian.harness/files/hg_provisioning/`; the app copies them into
    private storage and deletes the source copies).
-3. Enter host **192.168.1.6** and port **8443**, press **Connect to hub**.
+3. Enter host **<redacted-lan-host-6>** and port **8443**, press **Connect to hub**.
 4. Press **Grant consent (camera + microphone)**, then **Start camera**, then **Start microphone**.
-5. Leave the phone awake on Wi-Fi (`Airtel_Dhar`, got `192.168.1.4`).
+5. Leave the phone awake on Wi-Fi (`<redacted-wifi-ssid>`, got `<redacted-lan-host-4>`).
 
 I will then verify: camera callbacks and a rising frame counter, microphone samples, and
 observations ACCEPTED by the ingress over Wi-Fi - and only after that will I ask for the physical

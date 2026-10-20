@@ -97,6 +97,14 @@ def resolve_revision(root: str, revision: str) -> str | None:
     return None
 
 
+def is_ancestor(root: str, older: str, newer: str) -> bool:
+    """True when `older` is reachable from `newer` - i.e. the older commit ships in the newer one."""
+    if not older or not newer:
+        return False
+    rc, _ = git(root, "merge-base", "--is-ancestor", older, newer)
+    return rc == 0
+
+
 def blob_at(root: str, commit: str, path: str) -> bytes | None:
     """Return the blob content of ``path`` at ``commit``, or None when it is not there."""
     rc, _ = git(root, "cat-file", "-e", f"{commit}:{path}")
@@ -224,7 +232,8 @@ def check_artifact(root: str, artifact: dict, refs: dict, findings: list[Finding
         doc_path = ref.get("path", "")
         doc_rev = ref.get("revision") or revision
         entry = {"doc": doc_path, "revision": doc_rev, "reference_confirmed": False,
-                 "artifact_present_there": None}
+                 "artifact_present_there": None, "notice_confirmed": False,
+                 "release_side": False}
         doc_commit = resolve_revision(root, doc_rev)
         if doc_commit is None:
             # A ref that this clone simply does not have is a check we could not run, not a
@@ -247,13 +256,33 @@ def check_artifact(root: str, artifact: dict, refs: dict, findings: list[Finding
                 entry["reference_confirmed"] = token in doc_text
                 entry["artifact_present_there"] = blob_at(root, doc_commit, path) is not None
                 entry["doc_commit"] = doc_commit
-                if (entry["reference_confirmed"] and not entry["artifact_present_there"]):
-                    kind = "claim_not_supported_in_release" if doc_commit == release_commit else "dangling_reference"
-                    if not (kind == "claim_not_supported_in_release" and allow_external):
-                        findings.append(Finding(
-                            kind, aid,
-                            f"{doc_path} @ {doc_rev} ({(doc_commit or '?')[:8]}) cites {token!r} but "
-                            f"{path} is not present at that revision"))
+                # "In the release" means reachable from the release tip, not merely equal to it: any
+                # document in the release's history ships in the release.
+                entry["release_side"] = bool(release_commit) and (
+                    doc_commit == release_commit or is_ancestor(root, doc_commit, release_commit))
+                if entry["reference_confirmed"] and not entry["artifact_present_there"]:
+                    # A release document may cite evidence that lives elsewhere PROVIDED it says so.
+                    # The failure is an undeclared external reference: a reader of the release would
+                    # take the citation at face value and not find the artifact.
+                    # An artifact on an experiment branch is declared external by the DOCUMENT that
+                    # cites it. The wording is a project convention, so an entry that does not name its
+                    # own markers is checked against the default wording rather than against nothing -
+                    # a missing marker list used to fail a document that did declare the boundary.
+                    notice = artifact.get("external_notice_markers") or DEFAULT_EXTERNAL_NOTICE
+                    entry["notice_confirmed"] = any(m in doc_text for m in notice)
+                    if entry["release_side"] and entry["notice_confirmed"]:
+                        entry["external_declared"] = True
+                    else:
+                        kind = ("claim_not_supported_in_release" if entry["release_side"]
+                                else "dangling_reference")
+                        if not (kind == "claim_not_supported_in_release" and allow_external):
+                            findings.append(Finding(
+                                kind, aid,
+                                f"{doc_path} @ {doc_rev} ({(doc_commit or '?')[:8]}) cites {token!r} "
+                                f"but {path} is not present at that revision"
+                                + ("" if not notice else
+                                   f", and the document does not declare it as external "
+                                   f"(none of {notice!r} appears)")))
         record["referenced_by"].append(entry)
 
     return record
@@ -263,7 +292,7 @@ def build_report(root: str, manifest: dict, findings: list[Finding], refs: dict)
     return {
         "schema": REPORT_SCHEMA,
         "manifest_schema": manifest.get("schema"),
-        "repo_root": "." if root in (".", "") or os.path.abspath(root) == os.path.abspath(".") else os.path.basename(os.path.abspath(root)),
+        "repo_root": os.path.abspath(root),
         "refs": {
             "release_ref": refs.get("release_ref"),
             "release_commit": refs.get("release_commit"),
@@ -280,6 +309,7 @@ def build_report(root: str, manifest: dict, findings: list[Finding], refs: dict)
             "release_contained": 0,
             "external": 0,
             "external_cited_by_release": 0,
+            "external_declared_by_release": 0,
         },
         "findings": [f.as_dict() for f in findings],
         "artifacts": [],
@@ -349,9 +379,12 @@ def main(argv: list[str] | None = None) -> int:
                 summary["release_contained"] += 1
             else:
                 summary["external"] += 1
-                if any(e.get("reference_confirmed") and e.get("doc_commit") == refs.get("release_commit")
-                       for e in rec["referenced_by"]):
+                cited = [e for e in rec["referenced_by"]
+                         if e.get("reference_confirmed") and e.get("release_side")]
+                if cited:
                     summary["external_cited_by_release"] += 1
+                    if all(e.get("notice_confirmed") or e.get("external_declared") for e in cited):
+                        summary["external_declared_by_release"] += 1
     summary["failures"] = len(findings)
     summary["references_unchecked"] = len(unchecked)
     report["references_unchecked"] = unchecked
@@ -382,11 +415,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  WARN cross-reference not checked: {note}")
         print(f"SUMMARY: {summary['failures']} failure(s), "
               f"{summary['release_contained']} release-contained, {summary['external']} external "
-              f"({summary['external_cited_by_release']} cited by a release document); "
+              f"({summary['external_cited_by_release']} cited by a release document, "
+              f"{summary['external_declared_by_release']} of them declared external there); "
               f"{summary['references_unchecked']} cross-reference(s) unchecked; "
               f"report -> {out_path}")
 
     return 0 if summary["verified"] else 1
+
+
+# The wording this repository uses to declare that an artifact is not part of the judge release.
+DEFAULT_EXTERNAL_NOTICE = ["external experiment branch", "not deployed into"]
 
 
 if __name__ == "__main__":

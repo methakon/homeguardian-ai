@@ -661,7 +661,7 @@ Provisioning (split storage — note the three directories):
 
 ```bash
 tools/provision_ca.sh init --ca-dir ~/offline-ca --runtime-dir deploy/docker/certs \
-  --device-dir ~/device-keys --server-names "DNS:homeguardian.local,IP:192.168.1.10"
+  --device-dir ~/device-keys --server-names "DNS:homeguardian.local,IP:10.20.30.10"
 tools/provision_ca.sh issue <device-id> --ca-dir ~/offline-ca \
   --runtime-dir deploy/docker/certs --device-dir ~/device-keys
 ```
