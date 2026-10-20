@@ -554,6 +554,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_observation_integration.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_skill_gaps.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_device_transport.cpp
+        ${CMAKE_SOURCE_DIR}/tests/net/test_panasonic_node_receiver.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_network_contract_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_producer_and_reliability.cpp
         ${CMAKE_SOURCE_DIR}/tests/integration/test_network_sensor_to_mcp.cpp
@@ -636,6 +637,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/net/DeviceProtocol.cpp
         ${CMAKE_SOURCE_DIR}/src/net/DeviceRegistry.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ObservationIngest.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/PanasonicNodeReceiver.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ReplayState.cpp
         ${CMAKE_SOURCE_DIR}/src/net/IngressConfigPolicy.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/PwAudioCaptureDevice.cpp
