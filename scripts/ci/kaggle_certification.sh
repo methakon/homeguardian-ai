@@ -79,6 +79,23 @@ cat > "$STAGE/kernel-metadata.json" <<JSON
   "competition_sources": []
 }
 JSON
+# ---- syntax gate: never push a notebook that cannot execute -------------------
+python3 - "$STAGE/kaggle_certification.ipynb" <<'PYGATE'
+import json, ast, sys
+nb = json.load(open(sys.argv[1]))
+bad = []
+for i, c in enumerate(nb["cells"]):
+    if c["cell_type"] != "code":
+        continue
+    try:
+        ast.parse("".join(c["source"]))
+    except SyntaxError as e:
+        bad.append((i, e.msg, e.lineno))
+if bad:
+    sys.exit("REFUSING TO PUSH: unparseable notebook cells: %s" % bad)
+print("syntax gate: all code cells parse")
+PYGATE
+
 echo "staged kernel: $USER/$SLUG  (gpu=$USE_GPU, internet=true, private=true)"
 
 # ---- push --------------------------------------------------------------------
