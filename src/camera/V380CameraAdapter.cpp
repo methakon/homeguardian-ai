@@ -127,9 +127,14 @@ bool V380CameraAdapter::register_into_inventory(CameraInventory& inventory,
         if (reason != nullptr) *reason = "invalid logical device id";
         return false;
     }
-    const auto fp = HardwareFingerprint::from_mac(options.hardware_mac);
-    if (!fp.valid() || fp.is_randomized()) {
-        if (reason != nullptr) *reason = "invalid or randomized hardware MAC";
+    HardwareFingerprint fp;
+    std::string norm_err;
+    if (!HardwareFingerprint::normalize(options.hardware_mac, &fp, &norm_err)) {
+        if (reason != nullptr) *reason = norm_err;
+        return false;
+    }
+    if (!fp.durable()) {
+        if (reason != nullptr) *reason = "fingerprint is randomized; cannot ground durable device identity";
         return false;
     }
     CameraObservation obs;
