@@ -1,7 +1,7 @@
 # HomeGuardian AI — Official Devpost Submission Entry
 
 > [!NOTE]
-> **HACKATHON CANDIDATE CERTIFIED (HG-NET-02 / HG-SEC-06D):** This submission release candidate (`release/hackathon-2026-mcp-candidate` @ [PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has completed all security remediation stages (HG-SEC-01 through HG-SEC-06D), loopback ingress hardening, outbound MCP coordinator bridge verification, clean-clone validation, and independent regression test suites (527 C++ tests / 38,926 assertions, 161 UI/dashboard tests, 73 MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, 44 route policy tests). Fully certified for judge evaluation on local workstation loopback.
+> **HACKATHON RELEASE CANDIDATE (HG-NET-02 / HG-SEC-06D):** This submission release candidate (`release/hackathon-2026-mcp-candidate` @ [PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has completed all security remediation stages (HG-SEC-01 through HG-SEC-06D), loopback ingress hardening, outbound MCP coordinator bridge verification, clean-clone validation, and independent regression test suites (527 C++ tests / 38,929 assertions, 161 UI/dashboard tests, 73 MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, 44 route policy tests). Prepared for judge evaluation and independent audit on local workstation loopback.
 
 **Project Title:** HomeGuardian AI — Privacy-First Whole-Home Intelligence  
 **Tagline:** Local-first, consent-gated home safety intelligence with native C++ core, Model Context Protocol (spec 2025-11-25) Streamable HTTP server, and Alexa-style demonstration client.  
@@ -56,7 +56,7 @@ We engineered HomeGuardian AI as a high-performance, three-tier architecture:
 
 ### Accomplishments We're Proud Of
 - **Zero Cloud Exfiltration:** Achieved complete home monitoring and anomaly detection without sending a single byte of telemetry or media to external cloud infrastructure.
-- **Extensive Test Coverage & Rigor:** The system is validated by **527 native C++ test cases with 38,926 assertions**, 161 WebRTC and dashboard tests, 26 MCP client tests, 73 native MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, and 44 Android route security tests — 100% passing with zero failures.
+- **Extensive Test Coverage & Rigor:** The system is validated by **527 native C++ test cases with 38,929 assertions**, 161 WebRTC and dashboard tests, 26 MCP client tests, 73 native MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, and 44 Android route security tests — 100% passing with zero failures.
 - **Clean Memory Footprint:** The combined idle footprint of the C++ core and MCP server is under 15 MB RSS, making it fully deployable on edge devices, low-power Raspberry Pis, and low-spec cloud instances.
 - **Open Standards Alignment:** Built against open, royalty-free standards: Apache-2.0 licensing, Model Context Protocol 2025-11-25, WebRTC, and SQLite.
 

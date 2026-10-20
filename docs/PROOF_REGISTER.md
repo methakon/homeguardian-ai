@@ -41,7 +41,7 @@ Every test referenced below executes cleanly with exit code 0 under standard Lin
 ## 3. Summary of Aggregate Evidence
 
 - **Total C++ Test Cases:** 527
-- **Total C++ Assertions:** 38,926
+- **Total C++ Assertions:** 38,929
 - **Dashboard / WebRTC Integration Tests:** 161
 - **MCP Client Tests:** 26
 - **Native MCP Protocol Conformance Tests:** 73

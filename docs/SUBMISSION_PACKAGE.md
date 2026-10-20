@@ -67,7 +67,7 @@ see the consent gate refuse to deliver anything once capture is turned off.
 |---|---|---|
 | Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter, synthetic detection + fusion stage (activity-energy detector, explainable anomaly detection, confidence-aware fusion — all synthetic), and a **detection-driven alert rule** (an alert is raised only when the fused detector evidence qualifies; raw observations never alert) | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference (face/pose/lip/voice), an **Alexa+/Amazon** MCP integration (account linking, live Amazon identity — the local MCP server delivered in HG-MCP-01 is not one), Ring integration |
 
-**Testing.** 527 C++ test cases (38,926 assertions), 161 UI/dashboard tests, 73 MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, ASan/UBSan clean, and a reproducible out-of-source build — all green at submission.
+**Testing.** 527 C++ test cases (38,929 assertions), 161 UI/dashboard tests, 73 MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, ASan/UBSan clean, and a reproducible out-of-source build — all green at submission.
 
 ---
 
@@ -85,7 +85,7 @@ expected outputs.
 | **1:00–1:20** | Alert timeline, then ask **"Is everything okay?"** | "The alert is persisted with its id, rule, and severity. And the answer comes from the real backend, not from the web page." |
 | **1:20–1:45** | Ask **"Is capture enabled?"**; click **Run synthetic scenario** again | "Consent-first. If capture or consent is withdrawn, the gate blocks everything and nothing reaches the pipeline — I can demonstrate that with the capture-off config." |
 | **1:45–2:05** | Run the scenario against `config/homeguardian.json` (capture off) — show `events_processed: 0` | "Zero events. The consent gate refused every observation. That fail-closed behaviour is the core privacy guarantee." |
-| **2:05–2:25** | The privacy card; then the terminal running `npm test` / the C++ suite | "Local-first, no cloud, no raw media — only alert metadata is stored. And it is tested: 527 C++ cases (38,926 assertions), full regression suites, sanitizers clean, reproducible build." |
+| **2:05–2:25** | The privacy card; then the terminal running `npm test` / the C++ suite | "Local-first, no cloud, no raw media — only alert metadata is stored. And it is tested: 527 C++ cases (38,929 assertions), full regression suites, sanitizers clean, reproducible build." |
 | **2:25–2:50** | Back to the UI, ask **"What can you do?"** | "It reports home status, alerts, and consent state, and runs synthetic scenarios — read-only, so it can never enable a sensor or change configuration." |
 | **2:50–3:00** | Close on the repo README | "A simulated Alexa+ experience built on a real, tested, privacy-first backend. Thank you." |
 

@@ -70,13 +70,13 @@ To reproduce the security verification suite:
 # 1. Build C++ tools and test suites
 cmake --build build --target homeguardian_tests hg_device_registry_cli hg_mcp_server hg_alexa_bridge -j4
 
-# 2. Run full C++ regression test suite (38,926 assertions in 526 test cases)
+# 2. Run full C++ regression test suite (38,929 assertions in 527 test cases)
 ./build/homeguardian_tests
 
-# 3. Run HG-UI-03 & HG-SEC-06/06B/06C Node & C++ integration suite (154 assertions)
+# 3. Run HG-UI-03 & HG-SEC-06/06B/06C Node & C++ integration suite (161 assertions)
 node web_mcp/test_devices_dashboard.js
 
-# 4. Run native MCP streamable HTTP suite (71 assertions)
+# 4. Run native MCP streamable HTTP suite (73 assertions)
 bash scripts/verify_mcp.sh
 
 # 5. Run independent security gate verification (15 assertions)

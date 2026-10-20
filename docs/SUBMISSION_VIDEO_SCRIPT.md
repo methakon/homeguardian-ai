@@ -1,7 +1,7 @@
 # HomeGuardian AI — Official Hackathon Video Script (2m 45s)
 
 > [!NOTE]
-> **HACKATHON CANDIDATE CERTIFIED (HG-NET-02 / HG-SEC-06D):** Release candidate `release/hackathon-2026-mcp-candidate` ([PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has passed all C++ core, MCP protocol, and outbound bridge test suites. Every claim in this script refers to what this build contains.
+> **HACKATHON RELEASE CANDIDATE (HG-NET-02 / HG-SEC-06D):** Release candidate `release/hackathon-2026-mcp-candidate` ([PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has passed all C++ core, MCP protocol, and outbound bridge test suites. Every claim in this script refers to what this build contains.
 
 **Submission Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server with Alexa-Style Demonstration Client**  
 **Target Duration:** Exactly 2 minutes 45 seconds (165 seconds)  
@@ -96,7 +96,7 @@
 
 ### Act 6: Verification Rigor, Disclosures & Closing (2:25 – 2:45 / 20s)
 - **Visual:**
-  - Fast montage: C++ test suite finishing 527 tests / 38,926 assertions; 15 independent security gates green; GitHub repository and Apache 2.0 license.
+  - Fast montage: C++ test suite finishing 527 tests / 38,929 assertions; 15 independent security gates green; GitHub repository and Apache 2.0 license.
   - Final screen displaying:
     - GitHub: https://github.com/methakon/homeguardian-ai
     - Transparent Disclosure: Real Native C++ MCP 2025-11-25 | Alexa-Style Demonstration Client | Synthetic Evaluation Boundary | Zero Cloud Exfiltration

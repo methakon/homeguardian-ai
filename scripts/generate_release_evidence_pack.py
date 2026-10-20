@@ -414,7 +414,7 @@ def main() -> int:
         "artifacts": {},
         "test_metrics": {
             "cxx_test_cases": 527,
-            "cxx_assertions": 38926,
+            "cxx_assertions": 38929,
             "mcp_protocol_checks": 73,
             "judge_release_smoke_checks": 27,
             "outbound_mcp_bridge_checks": 46,

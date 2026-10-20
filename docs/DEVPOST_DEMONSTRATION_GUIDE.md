@@ -1,7 +1,7 @@
 # HomeGuardian AI — Devpost Demonstration & Judge Reproduction Guide
 
 > [!NOTE]
-> **HACKATHON CANDIDATE CERTIFIED (HG-NET-02 / HG-SEC-06D):** This release candidate (`release/hackathon-2026-mcp-candidate`) has completed all security remediation stages (HG-SEC-01 through HG-SEC-06D), out-of-band operator authorization, loopback network ingress hardening, outbound authenticated MCP coordinator bridge verification, and all independent regression test suites (Catch2 C++ tests, UI/device dashboard tests, MCP protocol tests, and E2E Java-C++ bridge tests). Certified for judge evaluation on local workstation loopback with zero external cloud or private VPN dependencies.
+> **HACKATHON RELEASE CANDIDATE (HG-NET-02 / HG-SEC-06D):** This release candidate (`release/hackathon-2026-mcp-candidate`) has completed all security remediation stages (HG-SEC-01 through HG-SEC-06D), out-of-band operator authorization, loopback network ingress hardening, outbound authenticated MCP coordinator bridge verification, and all independent regression test suites (Catch2 C++ tests, UI/device dashboard tests, MCP protocol tests, and E2E Java-C++ bridge tests). Prepared for judge evaluation and independent audit on local workstation loopback with zero external cloud or private VPN dependencies.
 
 **Submission Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server with Alexa-Style Demonstration Client** (AmazonAppDev 2026)  
 **Evaluator Target:** Hackathon Judges, Security Auditors & Community Evaluators  
@@ -239,7 +239,7 @@ All security boundaries are continuously asserted by automated test suites:
 | Suite Name | Execution Command | Test Scope & Invariants Verified | Passed / Total |
 |---|---|---|---|
 | **Automated Judge Smoke** | `bash scripts/verify_judge_release.sh` | Deterministic one-command judge smoke: C++, MCP handshake, tools, security, coordinator | **PASS (27/27)** |
-| **C++ Core & Sanitizers** | `HG_SOURCE_DIR=$(pwd) ./build/homeguardian_tests` | Catch2 suite: contract bounds, SQLite WAL retention, CSPRNG stress loop | **527 / 527** (38,926 assertions) |
+| **C++ Core & Sanitizers** | `HG_SOURCE_DIR=$(pwd) ./build/homeguardian_tests` | Catch2 suite: contract bounds, SQLite WAL retention, CSPRNG stress loop | **527 / 527** (38,929 assertions) |
 | **Independent Security Gate** | `bash scripts/test_hg_sec_01_independent.sh` | HG-SEC-01 threat model: method restriction, CSRF token replay, zero-mutation SQLite invariant | **15 / 15** |
 | **MCP Hardening & Isolation** | `bash scripts/verify_mcp.sh` | 256-bit session entropy, Bob vs Alice session isolation, slowloris read deadlines, overload drain | **73 / 73** |
 | **WebRTC & Devices Gate** | `node web_mcp/test_devices_dashboard.js` | Origin validation, fail-closed consent, CSPRNG device pairing, sequence replay protection | **161 / 161** |

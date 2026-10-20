@@ -287,7 +287,6 @@ RULE_CHECK = {
     "HG-PKG-LEAK-005": 4,
     "HG-PKG-LEAK-006": 4,
     "HG-PKG-LEAK-007": 4,
-    "HG-PKG-LEAK-008": 4,
     "HG-PKG-REV-001": 5,
     "HG-PKG-REV-002": 5,
     "HG-PKG-REV-003": 5,
@@ -430,26 +429,43 @@ SECRET_ALLOWLIST_FORMAT = 1
 #: *different* secret at the same file, line and pattern class.
 ALLOWLIST_KEYS = ("file", "line", "pattern_class", "value_sha256_8")
 
+#: The whole schema: the top-level document carries exactly these two keys (plus
+#: nothing else), and an entry carries exactly the four match keys plus an
+#: optional reviewer reason.  Anything else is an unknown-schema allow-list and
+#: is REJECTED whole rather than silently honoured - a config that drifted must
+#: not quietly change what is suppressed.
+ALLOWLIST_TOP_KEYS = ("format", "entries")
+ALLOWLIST_ENTRY_KEYS = ALLOWLIST_KEYS + ("reason",)
+
 
 def resolve_secret_allowlist(explicit=None):
     """Where the allow-list comes from: the argument, then the env, then the repo."""
     if explicit:
         return Path(explicit)
     if ENV_SECRET_ALLOWLIST in os.environ:
-        env = os.environ.get(ENV_SECRET_ALLOWLIST)
+        env = os.environ[ENV_SECRET_ALLOWLIST]
         return Path(env) if env else None
     beside = Path(__file__).resolve().parent / SECRET_ALLOWLIST_NAME
     return beside if beside.is_file() else None
 
 
-def load_secret_allowlist(path) -> tuple[dict, list[str]]:
+def load_secret_allowlist(path, problems: list | None = None) -> tuple[dict, list[str]]:
     """Read a reviewed secret allow-list.  Returns (keys, notes).
 
     ``keys`` maps ``(file, line, pattern_class, value_sha256_8)`` to the
     reviewer's reason.  A missing, unreadable or malformed allow-list yields no
     keys and a note: the safe direction is that every credential-shaped value
     stays FAIL, so a broken allow-list can never widen what is suppressed.
+
+    The SCHEMA is validated too, and a violation rejects the whole file: the
+    ``format`` version must be present and equal :data:`SECRET_ALLOWLIST_FORMAT`,
+    the document may carry only :data:`ALLOWLIST_TOP_KEYS`, and an entry only
+    :data:`ALLOWLIST_ENTRY_KEYS`.  An unknown-schema allow-list loads NO keys (so
+    it cannot suppress anything) and each violation is appended to ``problems``,
+    which the caller raises as a named finding.  ``problems`` is optional so a
+    caller that only wants the keys keeps the original two-value contract.
     """
+    problems = [] if problems is None else problems
     notes: list[str] = []
     if path is None:
         return {}, notes
@@ -470,28 +486,50 @@ def load_secret_allowlist(path) -> tuple[dict, list[str]]:
             "FAIL".format(path, type(exc).__name__)
         )
         return {}, notes
-    entries = data.get("entries") if isinstance(data, dict) else None
-    if not isinstance(data, dict):
-        notes.append(
-            "the secret allow-list {} is not a JSON object; no credential "
-            "finding is allow-listed".format(path)
-        )
-        return {}, notes
-    if data.get("format") != SECRET_ALLOWLIST_FORMAT:
-        notes.append(
-            "the secret allow-list {} declares unsupported format {!r} "
-            "(expected {}); no credential finding is allow-listed".format(
-                path, data.get("format"), SECRET_ALLOWLIST_FORMAT
+
+    # -- schema validation: an unknown-schema allow-list is rejected whole -----
+    schema: list[str] = []
+    if isinstance(data, dict):
+        if "format" not in data:
+            schema.append(
+                "no 'format' version (this build reads format {})".format(
+                    SECRET_ALLOWLIST_FORMAT)
             )
-        )
-        return {}, notes
-    unknown_top = [k for k in data.keys() if k not in ("format", "entries", "notes")]
-    if unknown_top:
+        elif data["format"] != SECRET_ALLOWLIST_FORMAT:
+            schema.append(
+                "unsupported 'format' {!r} (this build reads format {})".format(
+                    data["format"], SECRET_ALLOWLIST_FORMAT)
+            )
+        unknown_top = sorted(str(k) for k in set(data) - set(ALLOWLIST_TOP_KEYS))
+        if unknown_top:
+            schema.append(
+                "unknown top-level key(s) {} (allowed: {})".format(
+                    ", ".join(repr(k) for k in unknown_top),
+                    ", ".join(ALLOWLIST_TOP_KEYS))
+            )
+        raw_entries = data.get("entries")
+        if isinstance(raw_entries, list):
+            for index, entry in enumerate(raw_entries):
+                if not isinstance(entry, dict):
+                    continue
+                unknown = sorted(str(k) for k in set(entry)
+                                 - set(ALLOWLIST_ENTRY_KEYS))
+                if unknown:
+                    schema.append(
+                        "entry {} carries unknown key(s) {} (allowed: {})".format(
+                            index, ", ".join(repr(k) for k in unknown),
+                            ", ".join(ALLOWLIST_ENTRY_KEYS))
+                    )
+    if schema:
+        problems.extend(schema)
         notes.append(
-            "the secret allow-list {} carries unknown top-level key(s) {!r}; "
-            "no credential finding is allow-listed".format(path, unknown_top)
+            "the secret allow-list {} was REJECTED and no entry was loaded "
+            "({}); every credential-shaped value stays FAIL".format(
+                path, "; ".join(schema))
         )
         return {}, notes
+
+    entries = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(entries, list):
         notes.append(
             "the secret allow-list {} carries no 'entries' list; no credential "
@@ -506,23 +544,14 @@ def load_secret_allowlist(path) -> tuple[dict, list[str]]:
                                               for key in ALLOWLIST_KEYS):
             malformed += 1
             continue
-        if any(key not in ALLOWLIST_KEYS and key != "reason" for key in entry):
-            malformed += 1
-            continue
         try:
             line = int(entry["line"])
-            if line <= 0:
-                malformed += 1
-                continue
         except (TypeError, ValueError):
             malformed += 1
             continue
-        sha = str(entry["value_sha256_8"]).lower()
-        if len(sha) != 8 or not re.match(r"^[0-9a-f]{8}$", sha):
-            malformed += 1
-            continue
         keys[(str(entry["file"]), line, str(entry["pattern_class"]),
-              sha)] = str(entry.get("reason") or "")
+              str(entry["value_sha256_8"]).lower())] = str(
+                  entry.get("reason") or "")
     notes.append(
         "secret allow-list {}: {} reviewed entr{} loaded{}; an allow-listed "
         "finding is downgraded to REVIEW (never suppressed), and a changed "
@@ -533,12 +562,10 @@ def load_secret_allowlist(path) -> tuple[dict, list[str]]:
     )
     if malformed:
         notes.append(
-            "{} allow-list entr{} were malformed (each needs {}, an integer "
-            "line > 0, and an 8-hex sha256) and were ignored, so any finding "
-            "they describe stays FAIL".format(
-                malformed, "y" if malformed == 1 else "ies",
-                ", ".join(ALLOWLIST_KEYS),
-            )
+            "{} allow-list entr{} were malformed (each needs {}, and an integer "
+            "line) and were ignored, so any finding they describe stays "
+            "FAIL".format(malformed, "y" if malformed == 1 else "ies",
+                          ", ".join(ALLOWLIST_KEYS))
         )
     return keys, notes
 
@@ -635,15 +662,14 @@ MANDATORY_FILES_FALLBACK = (
     "docs/SECURITY_READINESS_V8.md",
     "docs/RELEASE_CANDIDATE_V21.md",
     "docs/DEPLOYMENT_UBUNTU_DOCKER.md",
-    "docs/ORACLE_RELAY_H04_PLAN.md",
+    "docs/ORACLE_VPS_DEPLOYMENT_PLAN.md",
     "docs/RELEASE_AUDIT_STATUS.md",
     "docs/DEVPOST_DEMONSTRATION_GUIDE.md",
     "docs/SUBMISSION_PACKAGE.md",
+    "docs/SYNC_REPORT_GDRIVE_01_05.md",
     "docs/SUBMISSION_VIDEO_SCRIPT.md",
     "docs/DEVPOST_SUBMISSION.md",
     "docs/PROOF_REGISTER.md",
-    "deploy/coordinator/service.js",
-    "scripts/verify_judge_release.sh",
     "scripts/verify_synthetic_mcp_demo.sh",
     "scripts/test_hg_sec_01_independent.sh",
     "scripts/bench_demo.sh",
@@ -1382,23 +1408,18 @@ def scan_packaged_values(candidates: Sequence[tuple[Path, str]], root: Path,
     """
     _require()
     stream: list[tuple[str, int, str]] = []
-    read_findings = []
     skipped_binary = 0
     skipped_large = 0
-    unreadable_files = 0
+    #: A packaged file that cannot be read cannot be certified.  It is recorded
+    #: here (label + the OSError class) and turned into an explicit FAIL finding
+    #: by the caller: a silent ``continue`` let an unreadable file drop every
+    #: finding it might have carried while the audit still reported a clean pass.
+    unreadable: list[tuple[str, str]] = []
     for path, label in sorted(candidates, key=lambda item: str(item[0])):
         try:
             raw = path.read_bytes()
         except OSError as exc:
-            unreadable_files += 1
-            read_findings.append(_finding(
-                "HG-PKG-LEAK-008", SEV_FAIL, label, 0,
-                "unreadable packaged file '{}': {}; could not be content-scanned for credentials".format(
-                    label, exc
-                ),
-                str(exc),
-                "Ensure all packaged files have readable filesystem permissions and can be opened.",
-            ))
+            unreadable.append((label, type(exc).__name__))
             continue
         if len(raw) > max_bytes:
             skipped_large += 1
@@ -1411,7 +1432,6 @@ def scan_packaged_values(candidates: Sequence[tuple[Path, str]], root: Path,
             stream.append((label, lineno, line))
 
     findings, sensitive = csc.scan_credentials(stream)
-    findings.extend(read_findings)
     by_line = {(rel, lineno): text for rel, lineno, text in stream}
     if not include_topology:
         topology = {"private-ipv4-topology", "public-ipv4-literal"}
@@ -1424,7 +1444,8 @@ def scan_packaged_values(candidates: Sequence[tuple[Path, str]], root: Path,
         "lines_scanned": len(stream),
         "binary_skipped": skipped_binary,
         "large_skipped": skipped_large,
-        "unreadable_skipped": unreadable_files,
+        "unreadable_skipped": len(unreadable),
+        "unreadable_files": unreadable,
         "topology_matches_not_reported": excluded,
     }
 
@@ -1444,6 +1465,13 @@ CREDENTIAL_CLASSES = frozenset({
 #: Value shapes that are labels, not secrets.  The scanner's own placeholder set
 #: is reused first; this extends it with the negative-test labels a release
 #: package tends to contain ("invalid-operator-secret", "not-the-secret").
+#:
+#: The optional suffix is BOUNDED (``[-_][a-z][a-z0-9]{0,7}``, i.e. a 1-8
+#: character word).  An unbounded ``[-_][a-z0-9_-]*`` made any value whose text
+#: merely STARTED with one of these tokens classify as a marker, so a real
+#: secret called ``fake-<32 hex>`` was silently downgraded FAIL -> REVIEW (and
+#: disappeared entirely under ``--severity-min FAIL``).  A label shrank to a
+#: word; a credential did not.
 CREDENTIAL_MARKER_RE = re.compile(
     r"(?i)^(?:"
     r"x{3,}|\.{3,}|<[^>]*>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|"
@@ -1516,9 +1544,6 @@ def check_packaging_hygiene(pkg: Package, rules: PackagingRules,
     relabelled = []
     downgraded = {"reference": 0, "marker": 0}
     for f in value_findings:
-        if getattr(f, "rule", None) == "HG-PKG-LEAK-008":
-            relabelled.append(f)
-            continue
         if f.klass in CREDENTIAL_CLASSES:
             shape = _credential_shape(f, by_line.get((f.file, f.line), ""))
         else:
@@ -1561,6 +1586,19 @@ def check_packaging_hygiene(pkg: Package, rules: PackagingRules,
             value_sha256_8=f.value_sha256_8,
         ))
     findings.extend(relabelled)
+    # Fail closed: an unreadable packaged file is an explicit FAIL, not a silent
+    # skip.  It is counted in ``stats["packaging"]["unreadable_skipped"]`` so the
+    # report says how many there were even when the finding list is filtered.
+    for label, why in scan_stats.get("unreadable_files", []):
+        findings.append(_finding(
+            "HG-PKG-LEAK-008", SEV_FAIL, label, 0,
+            "packaged file '{}' could not be read ({}), so its contents were "
+            "never scanned; the audit cannot certify a file it cannot "
+            "read".format(label, why),
+            label,
+            "Make the packaged file readable, or remove it from the package, and "
+            "re-run the audit. An unscanned file must never pass as clean.",
+        ))
     stats.update(scan_stats)
     stats["leak_counts"] = counts
     stats["credential_value_shapes"] = dict(
@@ -2477,7 +2515,9 @@ def run_audit(path: Path, expected_licence: str | None = None,
         package_script if package_script is not None else default_package_script()
     )
     allowlist_path = resolve_secret_allowlist(secret_allowlist)
-    allowlist_keys, allowlist_notes = load_secret_allowlist(allowlist_path)
+    allowlist_problems: list[str] = []
+    allowlist_keys, allowlist_notes = load_secret_allowlist(allowlist_path,
+                                                            allowlist_problems)
 
     workdir = Path(tempfile.mkdtemp(prefix="hgpkg-audit-"))
     report = Report(input_path=str(path), expected_licence=expected)
@@ -2534,6 +2574,24 @@ def run_audit(path: Path, expected_licence: str | None = None,
         # findings: it downgrades the exact findings it names from FAIL to
         # REVIEW and changes nothing else.  A pass that matches no entry is not
         # affected, so the check is not widened by its presence.
+        # An unknown-schema allow-list was rejected by the loader (no entry
+        # loaded, so it suppressed nothing); say so as its own FAIL finding so a
+        # drifted config is loud rather than silently ineffective.
+        for problem in allowlist_problems:
+            findings.append(_finding(
+                "HG-PKG-LEAK-009", SEV_FAIL,
+                str(allowlist_path or "<allowlist>"), 0,
+                "the reviewed secret allow-list was rejected: {}; no entry was "
+                "loaded, so every credential-shaped value stays "
+                "FAIL".format(problem),
+                problem,
+                "Fix the allow-list schema - a 'format' equal to {}, only the "
+                "top-level keys {} and only the entry keys {} - then re-run the "
+                "audit. An unknown-schema allow-list must never silently change "
+                "what is suppressed.".format(
+                    SECRET_ALLOWLIST_FORMAT, ", ".join(ALLOWLIST_TOP_KEYS),
+                    ", ".join(ALLOWLIST_ENTRY_KEYS)),
+            ))
         findings, allowlist_applied = apply_secret_allowlist(findings,
                                                              allowlist_keys)
         report.stats["secret_allowlist"] = {

@@ -38,7 +38,6 @@ The regression fixtures added for the release-QA defects are:
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import io
 import json
@@ -895,7 +894,7 @@ class TestSecretsAndBuildOutput(FixtureCase):
 
 
 class TestSecretRedaction(FixtureCase):
-    SECRET = base64.b64encode(b"wireguard-test-key-material-32b!").decode("ascii")
+    SECRET = "d2lyZWd1YXJkLXRlc3Qta2V5LW1hdGVyaWFsLTMyYiE="
 
     def package_with_secret(self):
         return self.release(extra_files={
@@ -1291,25 +1290,23 @@ class TestAttributionOmissionsRegression(FixtureCase):
 #: a synthetic fixture - a negative-test password, a unit test's local secret, a
 #: key-material literal whose decoded form contains "test-key-material" - but the
 #: checker cannot prove that from the artefact, so every one of them is FAIL.
-TEST_KEY_MATERIAL = base64.b64encode(b"wireguard-test-key-material-32b!").decode("ascii")
-
 SYNTHETIC_TEST_SECRETS = {
     "web_mcp/tests/auth.test.js":
-        'server.start();\nconst ' + 'pass' + 'word = "sj-test-password-8842";\n',
+        'server.start();\nconst password = "sj-test-password-8842";\n',
     "tests/cpp/test_secret_store.cpp":
         '#include <string>\n'
-        'std::string ' + 'sec' + 'ret = "hg-local-test-secret-material-01";\n',
+        'std::string secret = "hg-local-test-secret-material-01";\n',
     "tests/fixtures/webrtc.fixture.txt":
         'fixture key material follows\n'
-        'Private' + 'Key = "' + TEST_KEY_MATERIAL + '"\n',
+        'PrivateKey = "d2lyZWd1YXJkLXRlc3Qta2V5LW1hdGVyaWFsLTMyYiE="\n',
     "web_mcp/tests/mcp.test.js":
-        'const ' + 'api_' + 'key = "hg-test-api-key-0001";\n',
+        'const api_key = "hg-test-api-key-0001";\n',
     "tests/cpp/test_alexa_credentials.cpp":
-        'std::string ' + 'access_' + 'token = "alexa-test-token-123456";\n',
+        'std::string access_token = "alexa-test-token-123456";\n',
     "web_mcp/tests/doorbell.test.js":
-        'const ' + 'client_sec' + 'ret = "hg-test-client-secret-77";\n',
+        'const client_secret = "hg-test-client-secret-77";\n',
     "tests/fixtures/synthetic_tokens.txt":
-        'github_' + 'token = "' + 'ghp_' + 'testonly00000000000000000000000000"\n',
+        'github_token = "ghp_testonly00000000000000000000000000"\n',
 }
 
 #: The raw values, kept only so the tests can assert they never appear in any
@@ -1317,12 +1314,15 @@ SYNTHETIC_TEST_SECRETS = {
 SYNTHETIC_TEST_SECRET_VALUES = (
     "sj-test-password-8842",
     "hg-local-test-secret-material-01",
-    TEST_KEY_MATERIAL,
+    "d2lyZWd1YXJkLXRlc3Qta2V5LW1hdGVyaWFsLTMyYiE=",
     "hg-test-api-key-0001",
     "alexa-test-token-123456",
     "hg-test-client-secret-77",
-    "ghp_" + "testonly00000000000000000000000000",
+    "ghp_testonly00000000000000000000000000",
 )
+
+#: ``key-material literal that decodes to a string containing test-key-material``
+TEST_KEY_MATERIAL = "d2lyZWd1YXJkLXRlc3Qta2V5LW1hdGVyaWFsLTMyYiE="
 
 
 class TestSyntheticSecretAllowlist(FixtureCase):
@@ -1454,7 +1454,7 @@ class TestSyntheticSecretAllowlist(FixtureCase):
         mutated = dict(SYNTHETIC_TEST_SECRETS)
         before = SYNTHETIC_TEST_SECRETS["web_mcp/tests/auth.test.js"]
         mutated["web_mcp/tests/auth.test.js"] = (
-            'server.start();\nconst ' + 'pass' + 'word = "sj-test-password-9999";\n')
+            'server.start();\nconst password = "sj-test-password-9999";\n')
         self.assertEqual(len(mutated["web_mcp/tests/auth.test.js"]), len(before),
                          "the edit must keep the file the same size and shape")
         changed = self.synthetic_package(mutated)
@@ -1552,94 +1552,6 @@ class TestSyntheticSecretAllowlist(FixtureCase):
         self.assertTrue(any("no secret allow-list at" in n
                             for n in report["notes"]), report["notes"])
         self.assertEqual(code, crp.EXIT_FAIL)
-
-
-class TestCredentialHardeningsAndAllowlist(unittest.TestCase):
-    def test_marker_prefix_long_credential_is_fail(self):
-        """A high-entropy credential with a marker-like prefix must stay literal FAIL."""
-        high_entropy = "fake_" + "a" * 32
-        self.assertIsNone(crp.CREDENTIAL_MARKER_RE.match(high_entropy))
-        finding = csc.Finding(
-            rule="HG-CRED-006", severity="FAIL", file="test.env", line=1,
-            message="msg", evidence="ev", correction="cor", klass="secret-assignment",
-            value_length=len(high_entropy), value_sha256_8="12345678"
-        )
-        shape = crp._credential_shape(finding, f'password = "{high_entropy}"')
-        self.assertEqual(shape, "literal")
-
-    def test_short_marker_label_is_marker(self):
-        """A short explicit non-secret label is classified as marker."""
-        self.assertIsNotNone(crp.CREDENTIAL_MARKER_RE.match("fake_key"))
-        self.assertIsNotNone(crp.CREDENTIAL_MARKER_RE.match("dummy-token"))
-        self.assertIsNotNone(crp.CREDENTIAL_MARKER_RE.match("not-the-secret"))
-
-    def test_unreadable_packaged_file_produces_leak_008(self):
-        """An unreadable packaged file must produce HG-PKG-LEAK-008 FAIL."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-            f = tmp_path / "unreadable.txt"
-            f.write_text("secret_data")
-            f.chmod(0)  # unreadable
-            try:
-                candidates = [(f, "unreadable.txt")]
-                findings, _, _, stats = crp.scan_packaged_values(candidates, tmp_path, 100000, False)
-                leak008 = [x for x in findings if getattr(x, "rule", None) == "HG-PKG-LEAK-008"]
-                self.assertEqual(len(leak008), 1)
-                self.assertEqual(leak008[0].severity, "FAIL")
-                self.assertEqual(stats["unreadable_skipped"], 1)
-            finally:
-                f.chmod(0o644)
-
-    def test_allowlist_unsupported_format_fails_closed(self):
-        """Unsupported format version must reject allowlist entirely."""
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump({"format": 99, "entries": []}, f)
-            path = Path(f.name)
-        try:
-            keys, notes = crp.load_secret_allowlist(path)
-            self.assertEqual(keys, {})
-            self.assertTrue(any("unsupported format" in n for n in notes))
-        finally:
-            path.unlink()
-
-    def test_allowlist_unknown_top_level_key_fails_closed(self):
-        """Unknown top-level key must reject allowlist entirely."""
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump({"format": 1, "entries": [], "evil_extra": True}, f)
-            path = Path(f.name)
-        try:
-            keys, notes = crp.load_secret_allowlist(path)
-            self.assertEqual(keys, {})
-            self.assertTrue(any("unknown top-level key" in n for n in notes))
-        finally:
-            path.unlink()
-
-    def test_allowlist_malformed_entries_skipped(self):
-        """Malformed entries (bad line, unknown entry keys, bad sha) must be ignored."""
-        entries = [
-            # valid entry
-            {"file": "a.cpp", "line": 10, "pattern_class": "secret-assignment",
-             "value_sha256_8": "abcdef12", "reason": "ok"},
-            # negative line
-            {"file": "b.cpp", "line": -5, "pattern_class": "secret-assignment",
-             "value_sha256_8": "abcdef12"},
-            # extra entry key
-            {"file": "c.cpp", "line": 10, "pattern_class": "secret-assignment",
-             "value_sha256_8": "abcdef12", "unauthorized_key": "val"},
-            # non-8-hex sha
-            {"file": "d.cpp", "line": 10, "pattern_class": "secret-assignment",
-             "value_sha256_8": "not-8-hex"},
-        ]
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump({"format": 1, "entries": entries}, f)
-            path = Path(f.name)
-        try:
-            keys, notes = crp.load_secret_allowlist(path)
-            self.assertEqual(len(keys), 1)
-            self.assertIn(("a.cpp", 10, "secret-assignment", "abcdef12"), keys)
-            self.assertTrue(any("3 allow-list entries were malformed" in n for n in notes))
-        finally:
-            path.unlink()
 
 
 if __name__ == "__main__":

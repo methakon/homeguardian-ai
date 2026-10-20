@@ -275,7 +275,7 @@ Controls now in force:
   state route is disabled (503 state_route_disabled).
 
 Evidence:
-- complete C++ suite: 526 test cases, 38926 assertions, exit code 0 (prior ~[mcp] subset was 503 test cases, 5817 assertions)
+- complete C++ suite: 527 test cases, 38929 assertions, exit code 0 (prior ~[mcp] subset was 503 test cases, 5817 assertions)
 - native_http_security: 11 cases, 74 assertions, exit code 0
 - nativehttp: 25 cases, 143 assertions, exit code 0
 - native_http_persist: 1 case, 48 assertions, exit code 0 - fresh temporary SQLite
