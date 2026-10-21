@@ -237,18 +237,65 @@ TEST_CASE("panasonic receiver: falsy provenance claims are refused, and absence 
         REQUIRE(h.delivered.size() == 1);
         REQUIRE(h.delivered[0].provenance == Provenance::synthetic);
     }
-    SECTION("a synthetic claim on a REAL session is accepted and NARROWED") {
+    SECTION("a synthetic claim on a REAL session is accepted and NARROWED (the REVERSE direction)") {
+        // The reciprocal case to `provenance_claim_widens_session`: a node honestly declaring its own data
+        // simulated. Narrowing is always allowed, so this direction must ACCEPT - an honest declaration is
+        // never punished as if it were a falsy claim.
         Harness h;
         PanasonicNodeReceiver::Config cfg;
         cfg.session_is_synthetic = false;
         PanasonicNodeReceiver receiver(*h.ingest, cfg);
-        REQUIRE(receiver.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.2, true, "synthetic"),
-                                     h.sink)
-                    .accepted);
+        json honest;
+        honest["source_type"] = "motion";
+        honest["observation_type"] = "motion-changed-fraction";
+        honest["value"] = 0.2;
+        honest["provenance"] = "synthetic";
+        const auto r = receiver.accept_line(h.peer(), honest.dump(), h.sink);
+        INFO("reason=" << r.reason << " detail=" << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(r.reason == "accepted");
+        REQUIRE(receiver.provenance_refused() == 0);
+        REQUIRE(receiver.lines_refused() == 0);
+        REQUIRE(receiver.lines_accepted() == 1);
         REQUIRE(receiver.provenance_narrowed() == 1);
+        REQUIRE(r.detail == "recorded_provenance=real");   // the caller is told what was RECORDED, not claimed
+        REQUIRE(h.delivered.size() == 1);
         // MEASURED: the hub records the provenance ITS session model supports. A claim can never inflate it -
         // and it cannot deflate it either, which is an interface asymmetry recorded in the contract rather
         // than hidden by making this adapter pretend to overrule the hub.
+        REQUIRE(h.delivered[0].provenance == Provenance::real);
+        // The claim is not DISCARDED, though: it stays on the record verbatim, beside the acquisition mode
+        // that decided the hub's own field. That is what keeps the asymmetry auditable instead of a silent
+        // overwrite - and it is the difference between "narrowed" and "ignored".
+        REQUIRE(h.delivered[0].features["provenance_claim"].get<std::string>() == "synthetic");
+        REQUIRE(h.delivered[0].features["acquisition_mode"].get<std::string>() == "live");
+    }
+    SECTION("a synthetic claim that AGREES with a synthetic session is accepted, and is not a narrowing") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest);   // synthetic session: the fail-closed default
+        const auto r = receiver.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.2, true,
+                                                              "synthetic"),
+                                            h.sink);
+        INFO("reason=" << r.reason << " detail=" << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(receiver.provenance_narrowed() == 0);   // session and claim agree: nothing was narrowed
+        REQUIRE(receiver.provenance_refused() == 0);
+        REQUIRE(h.delivered.size() == 1);
+        REQUIRE(h.delivered[0].provenance == Provenance::synthetic);
+        REQUIRE(h.delivered[0].features["provenance_claim"].get<std::string>() == "synthetic");
+    }
+    SECTION("an explicit real claim on a REAL session is accepted, and moves no provenance counter") {
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        REQUIRE(receiver.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.2, true,
+                                                         "real_device"),
+                                     h.sink)
+                    .accepted);
+        REQUIRE(receiver.provenance_narrowed() == 0);
+        REQUIRE(receiver.provenance_refused() == 0);
+        REQUIRE(h.delivered.size() == 1);
         REQUIRE(h.delivered[0].provenance == Provenance::real);
     }
     SECTION("an invented claim string is refused") {
@@ -451,5 +498,34 @@ TEST_CASE("producer/receiver compatibility: the producer's real line shape", "[p
         PanasonicNodeReceiver receiver(*h.ingest, cfg);
         REQUIRE(receiver.accept_line(h.peer(), producer_line("real_device", 0), h.sink).accepted);
         REQUIRE(receiver.schema_version_absent() == 1);
+    }
+    SECTION("the REVERSE direction in the producer's own shape: an explicit `synthetic` claim on a REAL session") {
+        // The honest node: same line shape, but the producer declares its own output simulated instead of
+        // defaulting it to `real_device`. This is the direction the rule must never break - narrowing is
+        // always permitted - so the pairing that the section above records as BROKEN works here, and the
+        // only thing the hub refuses is a claim that WIDENS a session, never one that narrows it.
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        const auto r = receiver.accept_line(h.peer(), producer_line("synthetic", 0), h.sink);
+        INFO(r.reason << " / " << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(r.reason == "accepted");
+        REQUIRE(r.detail == "recorded_provenance=real");
+        REQUIRE(receiver.provenance_narrowed() == 1);
+        REQUIRE(receiver.provenance_refused() == 0);   // an honest declaration is not a falsy claim
+        REQUIRE(receiver.lines_accepted() == 1);
+        REQUIRE(receiver.lines_refused() == 0);
+        REQUIRE(h.delivered.size() == 1);
+        REQUIRE(h.delivered[0].device_id == h.device_id);   // identity still from the session, not the payload
+        // The hub's own field follows the SESSION (this is a live-acquisition session), so the claim cannot
+        // deflate it either - and the claim itself survives on the record so the asymmetry stays auditable.
+        REQUIRE(h.delivered[0].provenance == Provenance::real);
+        REQUIRE(h.delivered[0].features["provenance_claim"].get<std::string>() == "synthetic");
+        REQUIRE(h.delivered[0].features["acquisition_mode"].get<std::string>() == "live");
+        // The rest of the producer's shape is unaffected by the provenance field: no version, no state.
+        REQUIRE(receiver.schema_version_absent() == 1);
+        REQUIRE(receiver.state_unmapped() == 0);
     }
 }

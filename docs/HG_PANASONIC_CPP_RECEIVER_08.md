@@ -78,8 +78,9 @@ audio sample, a transcript or a biometric template could be carried.
 
 ## 3. Phase C — test coverage (`tests/net/test_panasonic_node_receiver.cpp`, tag `[panasonic]`)
 
-**136 assertions / 8 cases, all passing.** Deterministic mock input only: every line and peer context is
-constructed in the file, no socket, no certificate, no device.
+**234 assertions / 10 cases, all passing** under `'[panasonic]'`; the producer-shape case is additionally tagged
+`[compat]` and reports **44 assertions / 1 case** on its own. Deterministic mock input only: every line and peer
+context is constructed in the file, no socket, no certificate, no device.
 
 | Required case | Covered |
 |---|---|
@@ -110,6 +111,21 @@ constructed in the file, no socket, no certificate, no device.
 - An **absent** claim on a synthetic session stays synthetic (the producer's own default would have made it
   real).
 - An invented claim string is refused (`unknown_provenance_claim`).
+- **The REVERSE direction is tested, and it is the direction that must never break.** An explicit `synthetic`
+  claim on a **real** session is **accepted** — narrowing is always permitted — counted in
+  `provenance_narrowed`, and **never** counted as a refusal: a node honestly declaring its own data simulated is
+  not treated as a falsy claim, and there is no reciprocal `provenance_claim_narrows_session` refusal. This is
+  asserted twice: once on the documented line (`[panasonic][provenance]`), and once on the shape the producer
+  actually emits (`[panasonic][compat]`, an honest `producer_line("synthetic", …)` on a live session), so the
+  direction is pinned for both the contract document and the producer's real output.
+- **The claim survives on the record even when the hub's own field disagrees.** An accepted observation keeps
+  `provenance_claim` and `acquisition_mode` beside the hub's `provenance`, which is what makes the asymmetry
+  below auditable instead of a silent overwrite. Both are asserted, not assumed. The 2×2 matrix around the
+  rule — claim agrees with the session (neither counter moves), claim narrows it (accepted, `narrowed`),
+  claim widens it (refused, `provenance_refused`), claim absent (session's own value) — is asserted cell by
+  cell, so a one-directional fix on either side now fails loudly.
+- **Mutation-checked:** inverting the rule (refusing a synthetic claim when the session is real) fails **1
+  assertion in each** of the two reverse-direction tests, so neither is vacuous.
 - **Measured asymmetry, recorded rather than hidden:** the hub records the provenance *its own session model*
   supports. A claim can never **inflate** it — good — but in the measurement it could not **deflate** it either:
   a `synthetic` claim on a session the hub regards as real was recorded as `real`. The hub is the authority;
@@ -144,9 +160,10 @@ side lightweight, and let the hub's existing bounds carry the backpressure.
 ## 7. Test commands
 
 ```sh
-HG_SOURCE_DIR=$PWD ./build/homeguardian_tests '[panasonic]'   # 136 assertions / 8 cases
-HG_SOURCE_DIR=$PWD ./build/homeguardian_tests                 # full suite
-ctest --test-dir build                                        # 2/3 (see the note below)
+HG_SOURCE_DIR=$PWD ./build/homeguardian_tests '[panasonic]'   # 234 assertions / 10 cases
+HG_SOURCE_DIR=$PWD ./build/homeguardian_tests '[compat]'      # 44 assertions / 1 case (producer-shape)
+HG_SOURCE_DIR=$PWD ./build/homeguardian_tests                 # full suite: 10096 assertions / 752 cases
+ctest --test-dir build                                        # 3/3
 ```
 
 ## 8. Hardware acceptance contract (Phase E — for the later joint test)
