@@ -239,7 +239,7 @@
       "evidence_type": "documentation",
       "reference_token": "SUBMISSION_VIDEO_SCRIPT.md",
       "content_markers": [
-        "HACKATHON CANDIDATE CERTIFIED"
+        "HACKATHON RELEASE CANDIDATE"
       ],
       "note": "Release-contained control artifact: proves the release scope check passes for a file that is genuinely in the release."
     },
