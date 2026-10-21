@@ -68,6 +68,12 @@ The hub records the provenance **its own session model** supports. A producer's 
 4. **A claim may not deflate the hub either** (measured): a `synthetic` claim on a session the hub regards as
    real is still recorded as real. The receiver reports the *recorded* value in its result detail, so a caller
    can never mistake a claim for a fact.
+5. **An absent claim is ALWAYS sent as synthetic** (agreed with the producer side, and stricter than "the
+   session decides"): absence must never travel as a real-evidence claim in the message, whatever the session
+   is. Consequence worth stating plainly, because the current producer omits the field on the default path: the
+   *recorded* provenance still follows the hub's session model, so physical evidence is not lost — but the
+   claim carried in the message is synthetic and may be flagged unsubstantiated by the hub. Producers should
+   send an explicit claim rather than relying on this default.
 
 ## 5. Refusal vocabulary
 
@@ -76,12 +82,19 @@ Refusals are named, never booleans, and the words are the hub's own (`reject_rea
 `not_paired`, `consent_missing`, `consent_withdrawn`, `capture_disabled`, `credential_mismatch`, `replay`,
 `stale`, `future_skew`, `out_of_order`, `queue_full`, and the receiver's own additions
 `malformed_payload`, `unsupported_schema_version`, `provenance_claim_widens_session`,
-`unknown_provenance_claim`.
+`unknown_provenance_claim`, and `missing_schema_version` (only when strict mode is enabled — see §6.3).
 
 A refusal is **not** a negative observation: a node that is absent, refused or disconnected produces **no
 observation at all**. Nothing in this contract may be used to turn missing data into "no activity".
 
 ## 6. Open items (deliberately not settled here)
+
+### 6.3 `require_schema_version` (strict mode) — agreed, needs a flip condition
+The receiver carries a `require_schema_version` flag, **default false**, so today a line without
+`schema_version` is accepted *and counted* (legacy v0). With it true, an absent version is refused as
+`missing_schema_version`. The flag exists so enforcement can tighten without breaking the running producer, but
+the flip condition must be explicit and bilateral: it turns on when the producer actually sends
+`schema_version: 1` on every line, and it is recorded here when it does.
 
 ### 6.1 `state` has no hub-side field
 The producer sends it; the hub's wire type has no counterpart. Options: add a bounded string field to the wire
