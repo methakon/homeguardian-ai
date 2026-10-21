@@ -19,8 +19,16 @@ package org.homeguardian.harness;
 public interface WakeLockHolder {
 
     /**
-     * Take the lock. Implementations must tolerate being asked twice and must not throw: a failure
-     * to take the lock must not fail the link.
+     * Take the lock, or re-arm it if it has lapsed.
+     *
+     * Implementations must tolerate being asked twice and must not throw: a failure to take the lock
+     * must not fail the link.
+     *
+     * RE-ARMING IS PART OF THE CONTRACT, not an optimisation. A held lock is not necessarily a live
+     * lock - Android releases a TIMED wake lock by itself when the timeout elapses and reports
+     * nothing - so `acquire()` on an already-held lock must establish whether it is still really held
+     * and take a fresh one if not. It is called on every pump tick, so it must be cheap when the lock
+     * is comfortably valid.
      */
     void acquire();
 

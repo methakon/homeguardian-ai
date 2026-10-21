@@ -194,6 +194,13 @@ public final class NodeTransportHost {
         if (!running) {
             return;
         }
+        // KEEP THE LOCK ALIVE. This scheduler is the only thing running on a long-lived link, so it
+        // is where the lock gets re-armed. Android releases a TIMED wake lock on its own when the
+        // timeout elapses and tells nobody, so a lock taken once at start() silently stops existing
+        // half an hour later - the node keeps "working" while the CPU is free to sleep. acquire() is
+        // a no-op while the lock is comfortably valid and re-takes it near the timeout, so calling
+        // it on every tick is cheap and idempotent.
+        renewWakeLock();
         try {
             link.pump(ndjson);
         } catch (RuntimeException e) {
@@ -289,8 +296,37 @@ public final class NodeTransportHost {
         sLinkPort = port;
     }
 
+    /**
+     * Take the lock for a starting link. TOLERANT, because the interface says a lock failure must not
+     * fail the link - and until now nothing enforced that.
+     *
+     * The interface documents `acquire()` as "must not throw", and {@link AndroidWakeLock} honours it
+     * by catching internally. But that made the guarantee a property of one implementation rather than
+     * of the host: a holder that DID throw propagated straight out of {@link #start()} and failed the
+     * whole link, so losing a wake lock lost the transport. The class comment claimed the opposite.
+     *
+     * Behaviourally this matches {@link #renewWakeLock} - the two are the same operation at different
+     * points in the session, and it was incoherent for one to be defended and the other not.
+     */
     private void acquireWakeLock() {
-        wakeLock.acquire();
+        try {
+            wakeLock.acquire();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "wake lock acquire threw (continuing without it): " + e);
+        }
+    }
+
+    /**
+     * Re-arm the lock from the pump tick. Deliberately tolerant: failing to renew must never fail the
+     * pump, because a link that stops carrying observations is worse than a lock that lapses, and the
+     * existing release paths still bound the damage either way.
+     */
+    private void renewWakeLock() {
+        try {
+            wakeLock.acquire();
+        } catch (RuntimeException e) {
+            Log.w(TAG, "wake lock renew threw (continuing): " + e);
+        }
     }
 
     private void releaseWakeLock(String why) {
