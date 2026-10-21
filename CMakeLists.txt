@@ -214,6 +214,9 @@ if(OpenSSL_FOUND)
         src/core/AnomalyMonitor.cpp
         src/core/Pipeline.cpp
         src/core/DetectionFusionRule.cpp
+        # Defines ActivityEpisodeSelector::best(), called by DetectionFusionRule.cpp above. (Shared by the
+        # D-03 ingress/client/probe targets, which is why it belongs here and not in one target.)
+        src/core/ActivityEpisode.cpp
         src/core/FusionEngine.cpp
         src/core/AlertPolicy.cpp
         src/core/PersistenceAudit.cpp
