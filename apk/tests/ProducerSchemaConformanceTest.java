@@ -91,6 +91,7 @@ public final class ProducerSchemaConformanceTest {
         section4_gapsAreNotErrors();
         driftGuard_contractMatchesWire();
         driftGuard_producerDocDoesNotContradict();
+        guardJniLoadOrder();
 
         System.out.println();
         System.out.println("=== " + passed + " passed, " + failed + " failed"
@@ -341,6 +342,89 @@ public final class ProducerSchemaConformanceTest {
         check("doc EVERY type pair the producer doc states is allowlisted by the contract",
                 offenders.isEmpty(), "off contract: " + offenders + " (stated: " + stated + ")");
         System.out.println("        doc states: " + stated);
+    }
+
+    /**
+     * JNI LOAD-ORDER GUARD.
+     *
+     * A `native` method called before its library is loaded throws UnsatisfiedLinkError. That is not
+     * hypothetical on this workstream: the service-side natives were once committed without their JNI
+     * definitions, and the class that declares them was once reachable from a path that never ran a
+     * loader.
+     *
+     * `System.loadLibrary` is PROCESS-global, so what matters is not that every declaring class loads
+     * it, but that no declaring class can be *reached* without some loader having been initialised.
+     * This checks that for every class declaring natives: either it loads the library itself, or
+     * something that calls it does.
+     *
+     * DETECTION IS DELIBERATELY TIGHT. An earlier ad-hoc scan of this same tree tested for the
+     * substring "native" anywhere in the file and produced a false positive on a class that only
+     * mentioned the word in a log message. Prose about natives is not a native declaration, and a
+     * guard that cries wolf gets ignored, so this matches real declarations only.
+     */
+    private static void guardJniLoadOrder() {
+        final String root = System.getProperty("hg.root");
+        if (root == null || root.isEmpty()) {
+            skip("jni load order", "hg.root not set");
+            return;
+        }
+        final java.nio.file.Path srcDir = Paths.get(root, "apk/src");
+        if (!Files.isDirectory(srcDir)) {
+            skip("jni load order", "apk/src not found under hg.root");
+            return;
+        }
+
+        final Pattern decl = Pattern.compile(
+                "^\\s*(?:public|private|protected|static|\\s)*\\bnative\\b\\s+"
+                + "[A-Za-z_][\\w<>\\[\\], .]*\\s+([A-Za-z_]\\w*)\\s*\\(", Pattern.MULTILINE);
+
+        final List<java.nio.file.Path> files = new ArrayList<java.nio.file.Path>();
+        try {
+            Files.walk(srcDir).filter(new java.util.function.Predicate<java.nio.file.Path>() {
+                public boolean test(java.nio.file.Path q) { return q.toString().endsWith(".java"); }
+            }).forEach(files::add);
+        } catch (IOException e) {
+            skip("jni load order", "could not walk apk/src: " + e);
+            return;
+        }
+
+        final List<String> declaring = new ArrayList<String>();
+        final List<String> loading = new ArrayList<String>();
+        final java.util.Map<String, String> bodies = new java.util.HashMap<String, String>();
+
+        for (java.nio.file.Path f : files) {
+            String src;
+            try {
+                src = new String(Files.readAllBytes(f), StandardCharsets.UTF_8);
+            } catch (IOException e) { continue; }
+            bodies.put(f.getFileName().toString(), src);
+            // Strip comments so prose cannot be mistaken for a declaration.
+            String code = src.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("//[^\\n]*", "");
+            if (decl.matcher(code).find()) declaring.add(f.getFileName().toString());
+            if (src.contains("System.loadLibrary")) loading.add(f.getFileName().toString());
+        }
+
+        check("jni at least one class declares natives", !declaring.isEmpty(),
+                "found 0 classes declaring native methods under apk/src");
+        check("jni at least one class loads the library", !loading.isEmpty(),
+                "nothing calls System.loadLibrary - every native would throw UnsatisfiedLinkError");
+
+        // A declaring class is safe if it loads, or if a loader class references it.
+        final List<String> unsafe = new ArrayList<String>();
+        for (String cls : declaring) {
+            if (loading.contains(cls)) continue;
+            final String simple = cls.substring(0, cls.length() - ".java".length());
+            boolean reachableFromLoader = false;
+            for (String loader : loading) {
+                final String body = bodies.get(loader);
+                if (body != null && body.contains(simple)) { reachableFromLoader = true; break; }
+            }
+            if (!reachableFromLoader) unsafe.add(cls);
+        }
+        check("jni every class declaring natives is initialisable from a loader",
+                unsafe.isEmpty(),
+                "these declare natives but no loader references them: " + unsafe);
+        System.out.println("        declaring: " + declaring + " | loading: " + loading);
     }
 
     /**
