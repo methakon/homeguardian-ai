@@ -1,162 +1,117 @@
-# Producer observation schema — contract v1
+# Producer observation schema — producer-side implementation notes
 
 **Owner:** Hermes 2 (Panasonic Android service / producer)
-**Consumer:** Hermes 3 (C++ receiver / provenance enforcement)
-**Status:** FROZEN v1. Additive changes only; a breaking change requires a major bump and both sides
-moving together.
+**Status:** SUBSIDIARY to the canonical contract. Read that first.
 
-This is the shared interface between the two workstreams. It describes what the Android producer
-actually emits today — taken from the emitting code, not from intent — so the receiver can be built
-against it without either side guessing.
+> ## The line shape is NOT defined here
+>
+> **Canonical contract: `docs/NODE_OBSERVATION_SCHEMA_V1.md` (Hermes 3).** It declares itself *"the
+> single source of truth for the line shape"*, and it is. The field table, the closed vocabularies,
+> the provenance rules, the refusal vocabulary and the versioning policy all live there.
+>
+> This file previously duplicated some of that and **drifted from the wire**. It asserted *"there is
+> no per-line version field"* while the producer was emitting `schema_version`; it showed a
+> `source_type` of `camera` after the vocabulary had closed to `motion`; and it documented a
+> `provenance` default of `real_device` after that default had been corrected to `synthetic`. Two
+> documents disagreeing about one wire format is worse than one document, because each side can cite
+> the one that suits it.
+>
+> **If this file and the canonical contract ever disagree, the canonical contract wins and this file
+> is the defect.** Nothing about the line shape may be defined or redefined here.
+
+What remains is only what a producer-side implementer needs and the canonical contract does not
+cover: **how the emitter actually behaves, and the constraints that imposes on a receiver.**
 
 ---
 
-## 1. Wire form
+## 1. What the producer emits
 
-**Transport:** mutual TLS, node dials out, nothing listens on the node.
-**Framing:** `uint32` big-endian payload length, then that many bytes of UTF-8.
-**Payload:** NDJSON — **one JSON object per line**, `\n`-terminated (a trailing newline is normal but
-not required; a final line without one is accepted).
-**Hard frame cap:** `kMaxFrameBytes = 4096`. Exceeding it is refused *before* allocation.
-
-A drain may carry **zero or more** lines in one frame. Zero is normal and must not be treated as an
-error: it means the node had nothing to report this tick.
-
-## 2. The observation object
+Taken from the emitting code, not from intent:
 
 ```json
-{"source_type":"camera","observation_type":"motion_score","value":0.42,"unit":"ratio",
- "state":"ok","confidence":0.9,"acquired_at_ms":1761000000000,"provenance":"real_device"}
+{"schema_version":1,"source_type":"motion","observation_type":"motion-changed-fraction",
+ "value":0.42,"unit":"fraction","state":"ok","confidence":1.0,
+ "acquired_at_ms":1761000000000,"provenance":"synthetic"}
 ```
 
-| field | JSON type | required | notes |
-|---|---|---|---|
-| `source_type` | string | **YES** | which sensor produced it |
-| `observation_type` | string | **YES** | what was measured |
-| `value` | number | **YES** | finite; the measurement |
-| `acquired_at_ms` | integer | recommended | epoch ms, device clock. `<= 0` is replaced by receive time |
-| `unit` | string | optional | defaults to `""` |
-| `state` | string | optional | defaults to `""` |
-| `confidence` | number | optional | defaults to `0.0` |
-| `provenance` | string | optional | a **CLAIM** only — see §5 |
+- `schema_version` is emitted as the **first** field, value `1`.
+- Field order is not significant; a receiver must not depend on it.
+- The vocabulary in use today is a subset of the canonical closed lists:
+  `motion` / `motion-changed-fraction`, `presence` / `audio-rms`, `presence` / `audio-peak`,
+  `presence` / `audio-zero-crossing-rate`.
+- The `provenance` default for an absent value is **`synthetic`**, never `real_device`. The canonical
+  contract §6.2 names the old default a producer-side defect; it is fixed.
+- One line per observation. A drain may carry **zero or more** lines; zero is normal and means the
+  node had nothing to report this tick.
 
-**Field order is not significant.** The producer emits the order above; a receiver must not depend on it.
+## 2. How the emitter parses — the constraints that follow
 
-### 2.1 A line is DROPPED when
-- any of `source_type`, `observation_type` is absent, **or**
-- `value` is absent or unparseable.
+These are properties of the producer's field extractor. They are the reason this file still exists:
+they are not discoverable from the field list.
 
-The producer counts these and reports `parse_failures`. A dropped line is **not** sent as an error
-frame — it never reaches the receiver. If the receiver sees a gap in sequence numbers that is expected;
-see §4.
+### 2.1 String fields carry no escaping
 
-## 3. Producer-side constraints the receiver MUST be built for
+The extractor is a substring scan, not a JSON parser: it reads a value as everything up to the next `"`.
 
-These are properties of the emitting code. They are listed because a receiver built on assumptions
-that ignore them will break in a way that looks like corruption.
+```
+{"source_type":"cam\"era", ...}   ->  parses as "cam\"   (truncated)
+```
 
-### 3.1 String fields contain no escaping
+**A receiver must treat an embedded quote as a hard parse failure, not attempt to un-escape it.** The
+current values come from closed enumerations, so this cannot bite today — but a future value
+containing a quote would silently **truncate** rather than fail, which is the dangerous direction.
 
-The producer's field extractor is a deliberate substring scan, not a JSON parser. It reads a value as
-everything up to the next `"`.
+### 2.2 Numeric fields are plain decimal
 
-**Therefore a string field MUST NOT contain `"` or `\`.** They do not occur in the current values
-(`source_type`, `observation_type`, `unit`, `state`, `provenance` are all drawn from closed
-enumerations). A receiver should treat an embedded quote as a hard parse failure rather than trying to
-un-escape it.
+The scanner accepts `[0-9] [+\-] [.] [eE]` only. `NaN`, `Infinity` and hex are never emitted and must
+be **refused rather than coerced**.
 
-### 3.2 Numeric fields are plain decimal
+### 2.3 Absence is `null`/`NaN`, never `""`/`0.0`
 
-The scanner accepts `[0-9] [+\-] [.] [eE]`. `NaN`, `Infinity` and hex are **not** emitted. A receiver
-that encounters them should reject the line, not coerce.
+Absence must stay distinguishable from a real zero, because a dropped line that reads as `0.0` is a
+fabricated measurement. This is the producer-side counterpart to the canonical contract's *"absence is
+never real"* rule.
 
-### 3.3 There is no per-line version field
+### 2.4 A line is DROPPED locally when a required field is absent
 
-Version negotiation happens once, at session level, not per observation. Do not look for a version key
-on the object. See §7.
+`source_type`, `observation_type` and a finite `value` are required. A line missing any of them is
+dropped by the producer and counted in `parse_failures` — **it never reaches the receiver.** A
+receiver should therefore expect sequence gaps; see §3.
 
-## 4. Identity, sequencing and what the receiver can rely on
+## 3. Sequencing and bounds
 
 | property | producer behaviour |
 |---|---|
-| `observation_id` | `<device_id>-<sequence>`, or `node-<sequence>` when the id is not yet known |
+| `observation_id` | `<device_id>-<sequence>`, or `node-<sequence>` before the id is known |
 | `sequence` | strictly increasing per device, starts at 1, never reused or rewound |
-| `acquisition_mode` | **always the literal `"live"`** for this producer |
 | queue depth | **bounded at 128** |
 | overflow policy | **oldest is dropped**, counted separately as `dropped` |
 
-**Consequences for the receiver:**
-- **Sequence gaps are expected and are not errors.** A gap means either a local drop (§3.1/§2.1) or a
-  bounded-queue overflow. Treat a gap as lost data to account for, never as corruption.
-- **Ordering is producer-side ascending, but the receiver must not assume delivery ordering.**
-  Reorder within a bounded window; a sequence below the high-water mark is stale, not an attack.
-- **`dropped` and a permanent refusal are different things.** A permanent refusal (§5) means the peer
-  was told the frame is unusable; `dropped` means the node discarded it locally before sending.
+**A gap is lost data, not corruption.** It means a local drop (§2.4) or a bounded-queue overflow.
+`dropped` (discarded locally before sending) and a permanent refusal (the peer was told the line is
+unusable) are different events and must not be conflated.
 
-## 5. Provenance — a claim, never a fact
+## 4. Conformance
 
-`provenance` on the wire is **untrusted input**. The producer's own documentation says so, and the
-hub derives real provenance from:
+`apk/tests/ProducerSchemaConformanceTest.java` pins the producer-side rules in §2 — required-field
+rejection, no-escape, plain-decimal, absence-not-zero — and asserts the emitter emits
+`schema_version`. Run with:
 
-```
-(authenticated peer certificate) x (device paired) x (device consent) x (declared acquisition mode)
+```bash
+bash apk/tests/run_isolated_tests.sh
 ```
 
-**The receiver must ignore the claimed value for any trust decision** and record an unsubstantiated
-claim where it differs from the derived result. A attacker-controlled payload must not be able to
-assert that it came from a real device.
+**Cross-language seam rule.** A seam spanning two languages must be verified by counting **both**
+sides. A Java compile and a JVM suite both pass while the JNI half is missing, because injected fakes
+never load the native library. That happened on this workstream: the producer's `native`
+declarations were committed without their JNI definitions and would have thrown
+`UnsatisfiedLinkError` on the first pump tick. The real check is `apk/build_apk.sh`, which compares
+every Java `native` declaration against the compiled ELF.
 
-## 6. Refusals the receiver may send back
+## 5. Change policy
 
-Stable strings. A refusal is either **permanent** (retrying is pointless) or **retryable**.
+Additive by default. An incompatible change bumps the major version **in the canonical contract
+first**, then in `kNodeSchemaVersion` on the receiver, then here. A change made only in code is a
+defect; a change made only in a document is a wish.
 
-**Permanent — the producer stops retrying that observation:**
-```
-bad_frame  bad_version  bad_json  oversized  unknown_kind
-unknown_source_type  unknown_observation_type  invalid_value
-malformed_timestamp  replayed_sequence  duplicate_observation
-device_unknown  device_revoked  device_unpaired  identity_mismatch
-consent_missing  consent_withdrawn  capture_disabled  unauthorized
-```
-
-**Retryable — the producer backs off and retries:**
-```
-queue_full  processing_failed
-```
-
-**Authorization-class refusals (`device_revoked`, `device_unpaired`, `consent_withdrawn`,
-`capture_disabled`, `unauthorized`) are terminal for the session.** The producer HOLDS its queue and
-does not reconnect through them; it waits for an explicit operator restore. A receiver should not
-expect a reconnect after one of these unless an operator acted.
-
-**`processing_failed` must never be reported as success.** A downstream failure that returns an
-acceptance would let the producer advance its watermark past data that was never durably handled, and
-the observation could never be retried.
-
-## 7. Version policy
-
-- **Major bump** = the receiver MUST refuse. Breaking: removing/renaming a required field, changing a
-  type, changing the framing.
-- **Minor bump** = additive only (a new optional field). A receiver must ignore unknown keys rather
-  than refusing the frame.
-- Negotiation happens **once at session start**, echoed in the welcome. A peer with a different major
-  is refused with `bad_version` — the whole session, not one observation.
-
-## 8. What is NOT in this schema
-
-Deliberately absent, and a receiver must not expect them:
-- **no raw media** — no frame, no PCM, no pixel buffer, no transcript, no biometric template. The
-  transport has no path for them by construction.
-- **no credentials or key material** — never in a payload.
-- **no commands** — this is a one-way producer→hub observation channel. Control flows elsewhere.
-- **no free-form text** — values come from closed enumerations.
-
-## 9. Conformance
-
-The producer side asserts this contract in `apk/tests/`. A receiver-side conformance test should
-mirror §2, §3.1, §3.2 and §4: required-field rejection, no-escape, plain-decimal, and gap-is-not-error.
-
-**Cross-language seam rule (learned the hard way on this workstream):** a seam spanning two languages
-must be verified by counting BOTH sides. A Java compile and JVM tests pass happily while the native
-half is missing, because injected fakes never load the library. Whoever changes the wire form must
-confirm producer emits and receiver accepts, not just that one side builds.
+**If you are editing the line shape, edit `docs/NODE_OBSERVATION_SCHEMA_V1.md` — not this file.**

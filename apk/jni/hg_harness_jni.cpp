@@ -307,7 +307,7 @@ std::string stats_string(Node& n) {
         }
         std::string out;
         for (const auto& o : taken) {
-            out += "{\"source_type\":\"" + o.source_type + "\",\"observation_type\":\"" +
+            out += "{\"schema_version\":1,\"source_type\":\"" + o.source_type + "\",\"observation_type\":\"" +
                    o.observation_type + "\",\"value\":" + num_str(o.value) + ",\"unit\":\"" +
                    o.unit + "\",\"state\":\"" + o.state + "\",\"confidence\":" +
                    num_str(o.confidence) +
@@ -558,9 +558,7 @@ Java_org_homeguardian_harness_Camera1Bridge_nativeOnPreviewFrame(JNIEnv* env, jo
                 env->ReleaseByteArrayElements(data, raw, JNI_ABORT);  // read-only: nothing copied back
                 const int64_t ms = now_ms();
                 if (have_pair && due_for_emission(n, ms, /*camera=*/true)) {
-                    push_observation(n, "camera", "motion_fraction", mf.changed_fraction, "fraction",
-                                     "ok", 1.0, ms);
-                    push_observation(n, "camera", "motion_mean_delta", mf.mean_delta, "delta_ratio",
+                    push_observation(n, "motion", "motion-changed-fraction", mf.changed_fraction, "fraction",
                                      "ok", 1.0, ms);
                     uint64_t emitted_total = 0;
                     if (due_for_motion_diag(n, ms, emitted_total)) {
@@ -630,9 +628,9 @@ Java_org_homeguardian_harness_MainActivity_nativeStartMic(JNIEnv* env, jobject /
         if (!f.valid) return;
         const int64_t ms = now_ms();
         if (!due_for_emission(n, ms, /*camera=*/false)) return;
-        push_observation(n, "microphone", "audio_energy_rms", f.rms, "rms", "ok", 1.0, ms);
-        push_observation(n, "microphone", "audio_peak", f.peak, "amplitude", "ok", 1.0, ms);
-        push_observation(n, "microphone", "audio_zero_crossing_rate", f.zero_crossing_rate, "rate",
+        push_observation(n, "presence", "audio-rms", f.rms, "rms", "ok", 1.0, ms);
+        push_observation(n, "presence", "audio-peak", f.peak, "amplitude", "ok", 1.0, ms);
+        push_observation(n, "presence", "audio-zero-crossing-rate", f.zero_crossing_rate, "rate",
                          "ok", 1.0, ms);
     });
 

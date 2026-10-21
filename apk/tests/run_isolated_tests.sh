@@ -48,10 +48,12 @@ echo "==> 4/4 run (stubs first on the classpath)"
 echo
 # The stubs MUST come first: that is what shadows android.jar's throwing stubs off-device.
 CP="$OUT/stubs:$OUT/prod:$OUT/test"
+# hg.root lets the schema test read the canonical contract and the emitter source and assert they
+# agree. Without it the drift guard degrades to SKIP rather than failing spuriously.
 rc=0
-java -classpath "$CP" org.homeguardian.harness.NodeTransportHostTest || rc=1
+java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.NodeTransportHostTest || rc=1
 echo
-java -classpath "$CP" org.homeguardian.harness.ProducerSchemaConformanceTest || rc=1
+java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ProducerSchemaConformanceTest || rc=1
 echo
 echo "==> exit code: $rc"
 exit $rc
