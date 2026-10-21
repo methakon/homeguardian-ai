@@ -69,8 +69,24 @@ CORE_SRC=(
 )
 INC=( -I"$ROOT/src" -I"$ROOT/src/core" -I"$ROOT/src/backend/android"
       -I"$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" )
-JSON_DIR="$(find "$ROOT"/hg_build/_deps -type d -path '*nlohmann_json*/include' 2>/dev/null | head -1 || true)"
-[ -n "$JSON_DIR" ] || { echo "nlohmann_json include dir not found"; exit 1; }
+# The FetchContent tree is not in the repo (it is gitignored), so a FRESH WORKTREE has no
+# hg_build/_deps and this script could not run at all. HG_DEPS_DIR lets a worktree point at any
+# already-populated tree, and it defaults to the historical location so existing checkouts are
+# unaffected. Both headers are checked, so a wrong path fails here with a clear message instead of
+# failing later inside the compiler.
+DEPS_DIR="${HG_DEPS_DIR:-$ROOT/hg_build/_deps}"
+JSON_DIR="$(find "$DEPS_DIR" -type d -path '*nlohmann_json*/include' 2>/dev/null | head -1 || true)"
+SPDLOG_INC_DIR="$(find "$DEPS_DIR" -type d -path '*spdlog*/include' 2>/dev/null | head -1 || true)"
+[ -n "$JSON_DIR" ] || {
+    echo "nlohmann_json include dir not found under: $DEPS_DIR"
+    echo "  set HG_DEPS_DIR to a FetchContent tree, or populate hg_build/_deps first."
+    exit 1
+}
+[ -n "$SPDLOG_INC_DIR" ] || {
+    echo "spdlog include dir not found under: $DEPS_DIR"
+    echo "  set HG_DEPS_DIR to a FetchContent tree, or populate hg_build/_deps first."
+    exit 1
+}
 
 "$CXX" -std=c++20 -fPIC -DHOMEGUARDIAN_ANDROID=1 -O1 -g \
   "${INC[@]}" -I"$JSON_DIR" \
