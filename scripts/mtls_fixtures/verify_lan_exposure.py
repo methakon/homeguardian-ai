@@ -95,10 +95,17 @@ def run_checks(host: str, obs_port: int, mcp_port: int, ca: str,
     """Returns rows of (label, status, required, detail). status is PASS / FAIL / SKIP."""
     rows: list[tuple[str, str, bool, str]] = []
 
+    icmp = icmp_informational(host)
     reachable = tcp_reachable(host, obs_port)
+    if reachable:
+        d1 = "TCP connect OK"
+    elif icmp == "replies":
+        d1 = "host answers ICMP but nothing listens on that port - a closed port, not a network fault"
+    else:
+        d1 = ("no ICMP reply and no TCP - the host is not reachable at all: routing, subnet or "
+              "filtering, NOT a closed port")
     rows.append(("1 receiver reachable on the LAN address",
-                 PASS if reachable else FAIL, True,
-                 "TCP connect OK" if reachable else "no listener on the LAN address"))
+                 PASS if reachable else FAIL, True, d1))
 
     if not reachable:
         rows.append(("2 fail-closed without a client certificate", SKIP, False,
@@ -119,7 +126,8 @@ def run_checks(host: str, obs_port: int, mcp_port: int, ca: str,
                  FAIL if mcp_open else PASS, True,
                  "REACHABLE - loopback-only violated" if mcp_open else "closed on the LAN address"))
 
-    rows.append(("5 ICMP (informational only)", icmp_informational(host), False, ""))
+    rows.append(("5 ICMP (informational only)", PASS, False,
+                 f"link probe: {icmp} - never a proof of authentication"))
     return rows
 
 
