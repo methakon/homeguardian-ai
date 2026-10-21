@@ -95,7 +95,7 @@ public final class NodeSession {
                     "live", acquiredAtMs > 0 ? acquiredAtMs : System.currentTimeMillis(), sequence,
                     value, unit == null ? "" : unit, state == null ? "" : state,
                     Double.isNaN(confidence) ? 0.0 : confidence,
-                    provenance == null ? "real_device" : provenance));
+                    provenance == null ? "synthetic" : provenance));
             queued++;
         }
         queuedTotal += queued;

@@ -670,6 +670,7 @@ public class ObservationTransport {
 
     private JSONObject observationToJson(PendingObservation observation) throws Exception {
         final JSONObject message = new JSONObject();
+        message.put("schema_version", 1);
         message.put("protocol_version_major", PROTOCOL_VERSION_MAJOR);
         message.put("protocol_version_minor", PROTOCOL_VERSION_MINOR);
         message.put("kind", "observation");

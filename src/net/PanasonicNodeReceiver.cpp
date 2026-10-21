@@ -140,10 +140,16 @@ PanasonicNodeReceiver::Result PanasonicNodeReceiver::accept_line(const PeerConte
         return out;
     }
 
-    // Schema handling. The current producer sends NO version field, so that case is counted and accepted as
-    // the documented shape; any version this receiver does not implement is refused rather than guessed at.
+    // Schema handling.
     if (parsed.schema_version == kSchemaVersionAbsent) {
         ++schema_absent_;
+        if (cfg_.require_schema_version) {
+            out.reason = "missing_schema_version";
+            out.detail = "schema_version is required under finalized contract (expected " +
+                         std::to_string(kNodeSchemaVersion) + ")";
+            ++refused_;
+            return out;
+        }
     } else if (parsed.schema_version != kNodeSchemaVersion) {
         out.reason = "unsupported_schema_version";
         out.detail = "this receiver implements schema version " + std::to_string(kNodeSchemaVersion);
@@ -179,8 +185,8 @@ PanasonicNodeReceiver::Result PanasonicNodeReceiver::accept_line(const PeerConte
         effective = claim_is_synthetic(parsed.provenance_claim) ? "synthetic" : "real";
         if (claim_is_synthetic(parsed.provenance_claim) && !cfg_.session_is_synthetic) ++narrowed_;
     } else {
-        // The producer's own default would make this "real_device". Here it stays what the session proves.
-        effective = cfg_.session_is_synthetic ? "synthetic" : "real";
+        // Missing provenance must never imply real physical evidence: always defaults to synthetic
+        effective = "synthetic";
     }
 
     // ---- shape it into the wire type the existing ingest consumes ----

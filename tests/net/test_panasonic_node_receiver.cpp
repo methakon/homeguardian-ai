@@ -211,6 +211,24 @@ TEST_CASE("panasonic receiver: malformed, oversized and mis-versioned lines are 
         REQUIRE_FALSE(r.accepted);
         REQUIRE(r.reason == "unsupported_schema_version");
     }
+    SECTION("finalized protocol: schema_version is required when configured") {
+        PanasonicNodeReceiver::Config strict_cfg;
+        strict_cfg.require_schema_version = true;
+        PanasonicNodeReceiver strict_recv(*h.ingest, strict_cfg);
+        // without schema -> refused
+        const auto r1 = strict_recv.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.1, false, "synthetic", false), h.sink);
+        REQUIRE_FALSE(r1.accepted);
+        REQUIRE(r1.reason == "missing_schema_version");
+
+        // with schema_version: 1 -> accepted
+        const auto r2 = strict_recv.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.1, false, "synthetic", true, 1), h.sink);
+        REQUIRE(r2.accepted);
+
+        // with unsupported schema_version: 2 -> refused
+        const auto r3 = strict_recv.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.1, false, "synthetic", true, 2), h.sink);
+        REQUIRE_FALSE(r3.accepted);
+        REQUIRE(r3.reason == "unsupported_schema_version");
+    }
 }
 
 TEST_CASE("panasonic receiver: falsy provenance claims are refused, and absence is never 'real'",
@@ -232,6 +250,15 @@ TEST_CASE("panasonic receiver: falsy provenance claims are refused, and absence 
         REQUIRE(receiver.accept_line(h.peer(), node_line(), h.sink).accepted);
         REQUIRE(h.delivered.size() == 1);
         REQUIRE(h.delivered[0].provenance == Provenance::synthetic);
+    }
+    SECTION("an ABSENT claim on a REAL session defaults to synthetic, never real") {
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false; // real session
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        // line without provenance claim
+        REQUIRE(receiver.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.2, false), h.sink).accepted);
+        REQUIRE(receiver.provenance_narrowed() == 1); // narrowed from real session to synthetic
     }
     SECTION("a synthetic claim on a REAL session is accepted and NARROWED") {
         Harness h;
