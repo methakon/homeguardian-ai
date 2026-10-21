@@ -143,6 +143,61 @@ public class ObservationTransport {
 
     private static final int MAX_ATTEMPTS_PER_OBSERVATION = 4;
 
+    /** The bounded backoff between retries. A constant, not a spin: a phone that cannot reach the
+     *  hub must retry slowly rather than burning battery and radio. */
+    private static final long RETRY_BACKOFF_MS = 3000L;
+
+    /** Verdicts produced by {@link #classifyReason}. */
+    static final String RETRY = "RETRY";
+    static final String PERMANENT = "PERMANENT";
+    static final String SUSPEND = "SUSPEND";
+
+    /**
+     * Classify the hub's refusal reason into the action the transport must take.
+     *
+     * This is the single place the precedence is decided, and it is package-visible so it can be
+     * tested without a socket. The order is load-bearing:
+     *
+     *   1. SUSPENDING wins over PERMANENT. Five reasons are in both sets (device_revoked,
+     *      device_unknown, device_unpaired, identity_mismatch, unauthorized). They must SUSPEND -
+     *      dropping one observation and continuing to push to a hub that has just revoked this
+     *      device is the wrong answer.
+     *   2. RETRYABLE is checked after the two terminal cases. The sets are disjoint from RETRYABLE,
+     *      which is asserted by the test, so this order cannot contradict them.
+     *   3. AN UNKNOWN REASON IS PERMANENT (fail closed). Retrying a refusal whose meaning is unknown
+     *      is how a node ends up in a loop.
+     */
+    static String classifyReason(String reason) {
+        if (reason == null) {
+            return PERMANENT;
+        }
+        if (SUSPENDING_REASONS.contains(reason)) {
+            return SUSPEND;
+        }
+        if (PERMANENT_REASONS.contains(reason)) {
+            return PERMANENT;
+        }
+        if (RETRYABLE_REASONS.contains(reason)) {
+            return RETRY;
+        }
+        return PERMANENT;
+    }
+
+    /** The retry bound, exposed for the test so the number cannot drift unnoticed. */
+    static int maxAttemptsPerObservation() {
+        return MAX_ATTEMPTS_PER_OBSERVATION;
+    }
+
+    /** The bounded backoff between retries, exposed for the test. */
+    static long retryBackoffMs() {
+        return RETRY_BACKOFF_MS;
+    }
+
+    /** The queue bound, exposed for the test. */
+    static int maxQueueDepth() {
+        return MAX_QUEUE_DEPTH;
+    }
+
     private final Config config;
     private final ArrayDeque<PendingObservation> queue = new ArrayDeque<>();
     private final Object lock = new Object();
@@ -382,7 +437,7 @@ public class ObservationTransport {
                     retryableRejections++;
                     Log.w(TAG, "dropped an observation after " + next.attempts + " attempts");
                 }
-                sleepQuietly(3000);
+                sleepQuietly(RETRY_BACKOFF_MS);
             }
         }
     }
@@ -430,27 +485,27 @@ public class ObservationTransport {
             }
 
             // Refused. Classify it: the three cases need different behaviour.
+            //
+            // The precedence lives in classifyReason() so it is testable. Getting it wrong is
+            // silent: an overlapping reason (device_revoked is both SUSPENDING and PERMANENT) that
+            // is classified PERMANENT only drops the one observation instead of suspending the
+            // transport, which is the difference between "stop and wait for the operator" and
+            // "keep pushing to a hub that has revoked this device".
             final String reason = parsed.optString("reason");
             refused++;
-            if (SUSPENDING_REASONS.contains(reason)) {
+            final String verdict = classifyReason(reason);
+            if (RETRY.equals(verdict)) {
+                Log.w(TAG, "hub could not take the observation (" + reason + "); will retry");
+                return false;
+            }
+            if (SUSPEND.equals(verdict)) {
                 suspended = true;
                 suspensionReason = reason;
                 Log.w(TAG, "hub refused the observation (" + reason + "); transport suspended");
                 return true;  // the message is resolved: it was decided, not lost
             }
-            if (PERMANENT_REASONS.contains(reason)) {
-                terminalFailure = true;
-                Log.w(TAG, "hub refused the observation permanently: " + reason);
-                return true;
-            }
-            if (RETRYABLE_REASONS.contains(reason)) {
-                Log.w(TAG, "hub could not take the observation (" + reason + "); will retry");
-                return false;
-            }
-            // An unrecognised reason is treated as PERMANENT: retrying a refusal whose
-            // meaning is unknown is how a node ends up in a loop.
             terminalFailure = true;
-            Log.w(TAG, "hub refused the observation for an unknown reason: " + reason);
+            Log.w(TAG, "hub refused the observation permanently: " + reason);
             return true;
         } catch (Exception e) {
             // Never log the exception message verbatim if it could carry key
