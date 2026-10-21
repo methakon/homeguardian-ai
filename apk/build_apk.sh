@@ -24,12 +24,21 @@ NDK="$ANDROID_NDK_HOME"
 SDK="$ANDROID_HOME"
 BT="$SDK/build-tools/27.0.0"
 [ -d "$BT" ] || BT="$SDK/build-tools/27.0.3"
-PLATFORM="$SDK/platforms/android-27"
-ABI="armeabi-v7a"
-API=27
+PLATFORM="${HG_PLATFORM:-$SDK/platforms/android-27}"
+ABI="${HG_ABI:-armeabi-v7a}"
+API="${HG_API:-27}"
 
 TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-CXX="$TOOLCHAIN/armv7a-linux-androideabi${API}-clang++"
+# ABI/API are overridable (HG_ABI / HG_API / HG_PLATFORM) so the same script can build the
+# arm64-v8a / API 28 Panasonic variant without forking it. Defaults are unchanged, so the
+# H-03 harness build behaves exactly as before. The NDK ships both compilers:
+# armv7a-linux-androideabi27-clang++ and aarch64-linux-android28-clang++.
+case "$ABI" in
+  armeabi-v7a) CXX_TRIPLE="armv7a-linux-androideabi"; LIBCXX_DIR="arm-linux-androideabi" ;;
+  arm64-v8a)   CXX_TRIPLE="aarch64-linux-android";     LIBCXX_DIR="aarch64-linux-android" ;;
+  *) echo "unsupported HG_ABI='$ABI' (expected armeabi-v7a or arm64-v8a)"; exit 1 ;;
+esac
+CXX="$TOOLCHAIN/${CXX_TRIPLE}${API}-clang++"
 
 KEYSTORE="$HOME/.homeguardian-apk-keystore/harness-debug.keystore"
 KS_ALIAS="harnessdebug"
@@ -100,7 +109,7 @@ echo "==> Add classes.dex and native lib"
 cp "$BUILD_DIR/dex/classes.dex" "$BUILD_DIR/gen/classes.dex"
 cp "$BUILD_DIR/lib/libhg_harness.so" "$BUILD_DIR/gen/lib/$ABI/libhg_harness.so"
 # Bundle the NDK C++ runtime so the app does not depend on a system libc++_shared.
-LIBCXX="$(ls "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so" 2>/dev/null || true)"
+LIBCXX="$(ls "$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/${LIBCXX_DIR}/libc++_shared.so" 2>/dev/null || true)"
 if [ -n "$LIBCXX" ]; then
   cp "$LIBCXX" "$BUILD_DIR/gen/lib/$ABI/libc++_shared.so"
   echo "bundled libc++_shared.so"

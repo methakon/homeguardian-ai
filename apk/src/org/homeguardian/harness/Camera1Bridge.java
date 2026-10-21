@@ -154,10 +154,10 @@ public class Camera1Bridge {
             applyFrameRate(params, targetFps);
             camera.setParameters(params);
 
-            // Dummy texture: a valid surface for setPreviewTexture keeps frames
-            // flowing to the callback without rendering anything on screen.
-            dummyTexture = new SurfaceTexture(0);
-            camera.setPreviewTexture(dummyTexture);
+            // Preview surface: see the note where startPreview() is called, below the callback
+            // registration. The callback is registered FIRST so no early frame can arrive before
+            // the bridge is ready to account it.
+            dummyTexture = null;
 
             activeWidth = best.width;
             activeHeight = best.height;
@@ -184,7 +184,25 @@ public class Camera1Bridge {
                 }
             });
 
-            camera.startPreview();
+            // Start preview. MEASURED on the ELUGA I7 (MT6739 / Android 9): attaching a bare
+            // `new SurfaceTexture(0)` made the vendor pipeline configure a HW_TEXTURE stream whose
+            // buffers were "released w/o using" (MtkCam: mNonReleasedNum==0), so NO preview callback
+            // ever fired and the camera client closed ~0.2 s later. The Camera1 callback does not
+            // need a consumer, so try WITHOUT a surface first and fall back to the dummy texture only
+            // if the device refuses to start preview that way.
+            boolean started = false;
+            try {
+                camera.startPreview();
+                started = true;
+            } catch (RuntimeException e) {
+                Log.i(TAG, "startPreview without a surface failed; retrying with a dummy texture: "
+                        + e.getMessage());
+            }
+            if (!started) {
+                dummyTexture = new SurfaceTexture(0);
+                camera.setPreviewTexture(dummyTexture);
+                camera.startPreview();
+            }
             capturing = true;
             return "camera1: capturing " + activeWidth + "x" + activeHeight + " @ "
                     + activeFps + "fps (id=" + cameraId + ", delivery-gated)";

@@ -4,15 +4,34 @@
     android:versionCode="2"
     android:versionName="0.2.0">
 
-    <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="27" />
+    <!-- targetSdk 28 (raised from 27): the dedicated CCTV node needs Android 9's documented
+         background-capture path, which is a foreground service. Compiling still happens
+         against android-27 because that is the platform jar installed here; targetSdkVersion
+         is a manifest property, not a property of the jar. Raising it does not affect the
+         API 27 device used by the H-03 harness, since targetSdk only changes behaviour on
+         devices at or above that API level. minSdk stays 27. -->
+    <uses-sdk android:minSdkVersion="27" android:targetSdkVersion="28" />
 
     <!-- Camera and microphone permissions are requested at RUNTIME only, after
          an explicit operator action (Grant consent + Start). The app never
-         starts capture on launch, and never captures in the background: leaving
-         the activity stops and releases every device. No foreground service is
-         declared because no background capture is implemented. -->
+         starts capture on launch. The foreground service (CctvService) owns the
+         lifetime needed for screen-off operation; it is started only by an explicit
+         operator action and does not start itself at boot. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Required for a foreground service on API 28+. Normal permission: no runtime prompt,
+         no user data. This is the Android 9 documented fix for background camera/mic access. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Required to CREATE A SOCKET AT ALL on Android, including a loopback-only one: binding a
+         ServerSocket without INTERNET fails with "socket failed: EACCES (Permission denied)".
+         MEASURED on hardware (HG-CAM-08D), not assumed.
+
+         This is a network-capability grant, so record its scope honestly: the only socket this app
+         opens is MediaSink, which binds 127.0.0.1 explicitly (never 0.0.0.0), requires a bearer
+         token before sending a byte, and emits already-encoded frames only. There is no outbound
+         connection, no public exposure, no reverse proxy and no VPS routing anywhere in this app.
+         Flagged for operator review because it widens the app's declared surface. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Normal permission (no runtime prompt, no user data): without it
          ConnectivityManager.getActiveNetworkInfo() throws SecurityException, which is why the
          panel reported "wi-fi: unknown". The SSID is deliberately NOT read: on API 27+ that
@@ -25,14 +44,29 @@
     <application
         android:label="HomeGuardian Node"
         android:allowBackup="false">
+        <!-- launchMode="singleTop" is REQUIRED for the attended start/stop control to be
+             deterministic. With the default "standard" mode, re-issuing the same action did
+             not reliably reach onCreate or onNewIntent, so a start/stop/start cycle silently
+             failed to restart the service (measured on hardware, 2026-10-17). singleTop
+             guarantees a repeat intent is delivered to the existing instance via onNewIntent. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:label="HomeGuardian Node">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground service that will own the CCTV capture lifetime. In this step it
+             stands up and survives screen-off WITHOUT opening the camera or microphone:
+             media wiring needs separate owner approval and is not enabled here. No
+             android:foregroundServiceType is declared because that attribute is API 29+,
+             and targeting 28 is deliberate. -->
+        <service
+            android:name=".CctvService"
+            android:exported="false" />
     </application>
 </manifest>

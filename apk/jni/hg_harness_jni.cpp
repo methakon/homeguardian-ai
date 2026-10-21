@@ -293,6 +293,43 @@ std::string stats_string(Node& n) {
     return s;
 }
 
+    // H-03 / HG-PANASONIC-SERVICE-TRANSPORT-06: the observation drain, factored out of the JNI
+    // entry point so that BOTH the Activity declaration and the service-side ObservationSource
+    // declaration read from the same engine, the same queue and the same consent gate. There is
+    // deliberately no second source: a service that drained a different queue would be a second
+    // node, not the same node reached from a different owner.
+    std::string drain_observations_json() {
+        auto& n = node();
+        std::deque<Node::Observation> taken;
+        {
+            std::lock_guard<std::mutex> lk(n.m);
+            taken.swap(n.observations);
+        }
+        std::string out;
+        for (const auto& o : taken) {
+            out += "{\"source_type\":\"" + o.source_type + "\",\"observation_type\":\"" +
+                   o.observation_type + "\",\"value\":" + num_str(o.value) + ",\"unit\":\"" +
+                   o.unit + "\",\"state\":\"" + o.state + "\",\"confidence\":" +
+                   num_str(o.confidence) +
+                   ",\"acquired_at_ms\":" + std::to_string(o.acquired_at_ms) +
+                   ",\"provenance\":\"" + o.provenance + "\"}\n";
+        }
+        return out;
+    }
+
+    // Live consent state, factored for the same reason. Reads the gate; changes nothing.
+    std::string consent_state_string() {
+        auto& n = node();
+        auto describe = [&](const char* label, const char* purpose, const char* category) {
+            const GateDecision d = n.gate->check(AcquisitionRequest{"node", purpose, category});
+            std::string out = std::string(label) + "=" + ConsentGate::reason_to_string(d.reason);
+            if (!d.authorized) out += " (" + d.explanation + ")";
+            return out;
+        };
+        return "consent: " + describe("camera", "camera_acquire", "camera") + " | " +
+               describe("microphone", "mic_acquire", "audio");
+    }
+
 }  // namespace
 
 extern "C" {
@@ -734,37 +771,37 @@ extern "C" {
 // extern "C" region on purpose: a definition outside it is C++-mangled and JNI cannot resolve it.
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeConsentState(JNIEnv* env, jobject /*thiz*/) {
-    auto& n = node();
-    auto describe = [&](const char* label, const char* purpose, const char* category) {
-        const GateDecision d = n.gate->check(AcquisitionRequest{"node", purpose, category});
-        std::string out = std::string(label) + "=" + ConsentGate::reason_to_string(d.reason);
-        if (!d.authorized) out += " (" + d.explanation + ")";
-        return out;
-    };
-    const std::string state = "consent: " + describe("camera", "camera_acquire", "camera") + " | " +
-                              describe("microphone", "mic_acquire", "audio");
+    const std::string state = consent_state_string();
     __android_log_print(ANDROID_LOG_INFO, "HGNode", "%s", state.c_str());
     return to_jstring(env, state);
 }
 
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_harness_MainActivity_nativeDrainObservations(JNIEnv* env, jobject /*thiz*/) {
-    auto& n = node();
-    std::deque<Node::Observation> taken;
-    {
-        std::lock_guard<std::mutex> lk(n.m);
-        taken.swap(n.observations);
-    }
-    std::string out;
-    for (const auto& o : taken) {
-        out += "{\"source_type\":\"" + o.source_type + "\",\"observation_type\":\"" +
-               o.observation_type + "\",\"value\":" + num_str(o.value) + ",\"unit\":\"" +
-               o.unit + "\",\"state\":\"" + o.state + "\",\"confidence\":" +
-               num_str(o.confidence) +
-               ",\"acquired_at_ms\":" + std::to_string(o.acquired_at_ms) +
-               ",\"provenance\":\"" + o.provenance + "\"}\n";
-    }
-    return to_jstring(env, out);
+    return to_jstring(env, drain_observations_json());
+}
+
+// ---- service-side observation seam (HG-PANASONIC-SERVICE-TRANSPORT-06) ------------------------
+// The foreground service owns the transport lifecycle now, so it needs the drain when the
+// Activity is absent. These are DECLARATION-SITE aliases, not a second engine: each one calls
+// the same helper above, over the same process-global node(). They live INSIDE this extern "C"
+// region for the documented reason - a definition outside it is C++-mangled and JNI cannot
+// resolve it, which surfaces as an UnsatisfiedLinkError on the first tick.
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_ObservationSource_nativeDrainObservations(JNIEnv* env, jclass /*clazz*/) {
+    return to_jstring(env, drain_observations_json());
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_ObservationSource_nativeStats(JNIEnv* env, jclass /*clazz*/) {
+    return to_jstring(env, stats_string(node()));
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_homeguardian_harness_ObservationSource_nativeConsentState(JNIEnv* env, jclass /*clazz*/) {
+    const std::string state = consent_state_string();
+    __android_log_print(ANDROID_LOG_INFO, "HGNode", "%s", state.c_str());
+    return to_jstring(env, state);
 }
 
 // The observation sampling interval (ms). Bounded so a caller cannot ask for an unbounded rate.
