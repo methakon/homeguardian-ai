@@ -137,6 +137,7 @@ add_executable(homeguardian
     src/core/SimulatedEventSource.cpp
     src/core/TimeWindowCorrelation.cpp
     src/core/DetectionFusionRule.cpp
+    src/core/ActivityEpisode.cpp
     src/core/ImpactClassifier.cpp
     src/core/SyntheticImpactRule.cpp
     src/core/Pipeline.cpp
