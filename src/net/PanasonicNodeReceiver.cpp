@@ -110,6 +110,19 @@ NodeObservationLine parse_node_observation_line(const std::string& line) {
         return out;
     }
 
+    // The producer's extractor is a substring scan that reads a value up to the next quote, so a value
+    // containing one is TRUNCATED on its side while parsing cleanly on ours: the two sides would disagree
+    // about the same observation. Documented as a hard parse failure for a receiver (SCHEMA_PRODUCER_V1 §2.1).
+    for (const std::string* field : {&out.source_type, &out.observation_type, &out.unit, &out.state,
+                                     &out.provenance_claim}) {
+        for (const unsigned char c : *field) {
+            if (c == '"' || c < 0x20) {
+                out.reason = "a string field contains a quote or control character the producer cannot escape";
+                return out;
+            }
+        }
+    }
+
     out.valid = true;
     return out;
 }

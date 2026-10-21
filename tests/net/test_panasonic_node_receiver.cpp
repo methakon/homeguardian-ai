@@ -449,8 +449,12 @@ std::string producer_line(const std::string& provenance_field, int64_t acquired_
 
 }  // namespace
 
-TEST_CASE("producer/receiver compatibility: the producer's real line shape", "[panasonic][compat]") {
-    SECTION("the canonical producer line is REFUSED on a synthetic session — an interop finding, not a bug") {
+// LEGACY SHAPE, kept as a negative case. It is NOT what the emitter sends today: this shape omits
+// schema_version and defaults provenance to "real_device", both of which the producer has since corrected.
+// The CURRENT emitter's bytes live in tests/fixtures/producer_fixture.ndjson (see the [fixture] suites).
+TEST_CASE("producer/receiver compatibility: the LEGACY producer line shape is refused where it must be",
+          "[panasonic][compat][legacy]") {
+    SECTION("LEGACY: a real_device claim on a synthetic session is REFUSED, not downgraded") {
         Harness h;
         PanasonicNodeReceiver receiver(*h.ingest);
         const auto r = receiver.accept_line(h.peer(), producer_line("real_device", 0), h.sink);
@@ -491,7 +495,7 @@ TEST_CASE("producer/receiver compatibility: the producer's real line shape", "[p
         REQUIRE(receiver.accept_line(h.peer(), j.dump(), h.sink).accepted);
         REQUIRE(receiver.state_unmapped() == 1);
     }
-    SECTION("the producer sends no schema_version, and that omission is counted, not assumed") {
+    SECTION("LEGACY: no schema_version - counted as absent, never assumed to be the implemented version") {
         Harness h;
         PanasonicNodeReceiver::Config cfg;
         cfg.session_is_synthetic = false;
@@ -773,5 +777,194 @@ TEST_CASE("provenance: closed vocabulary, no type smuggling, exact counters", "[
         REQUIRE(receiver.schema_version_absent() == 1);
         REQUIRE(receiver.provenance_narrowed() == 1);
         REQUIRE(receiver.provenance_refused() == 0);                          // nothing tried to widen a real session
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// HG-CPP-PRODUCER-CONTRACT-10: the REAL emitter's bytes, through this receiver, in STRICT mode.
+// The fixture is NOT hand-written: scripts/gen_producer_fixture.py extracts the emitter's own functions
+// (num_str, struct Observation, push_observation, drain_observations_json) VERBATIM from
+// apk/jni/hg_harness_jni.cpp, compiles that text on the host, drives it, and writes what it emitted. If the
+// emitter changes its wire form, the fixture changes with it, so this cannot stay green while the producer
+// moves underneath it.
+// ---------------------------------------------------------------------------------------------------------
+namespace {
+
+std::string source_root() {
+    const char* root = std::getenv("HG_SOURCE_DIR");
+    return root != nullptr ? std::string(root) : std::string(".");
+}
+
+std::vector<std::string> read_fixture_lines(const std::string& relative) {
+    std::vector<std::string> lines;
+    std::ifstream in(source_root() + "/" + relative);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty()) {
+            lines.push_back(line);
+        }
+    }
+    return lines;
+}
+
+// The fixture carries the generator's own synthetic timestamps (1761000000000...), so a replayer must DRIVE
+// time rather than depend on when it happens to run - which is exactly why the ingest takes a clock. Without
+// this the canonical fixture is refused as `malformed_timestamp / acquisition timestamp is too old`: a real
+// property of a deterministic fixture, discovered the first time these tests ran.
+constexpr int64_t kFixtureNowMs = 1761000000005;
+
+struct FixtureHarness {
+    DeviceRegistry registry;
+    std::vector<SecurityObservation> delivered;
+    std::unique_ptr<ObservationIngest> ingest;
+    std::unique_ptr<PanasonicNodeReceiver> receiver;
+    std::function<void(const SecurityObservation&)> sink;
+
+    FixtureHarness(const std::vector<std::string>& device_ids, bool strict, bool real_session) {
+        for (const auto& id : device_ids) {
+            DeviceRegistry::Device d;
+            d.device_id = id;
+            d.display_name = "producer fixture node";
+            d.device_type = "camera";
+            d.credential_id = id + "-cred";
+            d.paired = true;
+            d.capabilities = {"camera"};
+            d.has_camera = true;
+            std::string why;
+            REQUIRE(registry.pair(d, &why));
+            REQUIRE(registry.set_consent(id, true, id, "security_monitor", kFixtureNowMs));
+            REQUIRE(registry.set_capture_enabled(id, true));
+        }
+        ObservationIngest::Config ingest_cfg = ObservationIngest::defaults();
+        ingest = std::make_unique<ObservationIngest>(registry, ingest_cfg, [] { return kFixtureNowMs; });
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = !real_session;
+        cfg.require_schema_version = strict;
+        cfg.clock = [] { return kFixtureNowMs; };
+        receiver = std::make_unique<PanasonicNodeReceiver>(*ingest, cfg);
+        sink = [this](const SecurityObservation& o) { delivered.push_back(o); };
+    }
+
+    PeerContext peer(const std::string& id) const {
+        PeerContext p;
+        p.authenticated_device_id = id;
+        p.credential_id = id + "-cred";
+        p.peer_authenticated = true;
+        p.device_paired = true;
+        p.device_consent_granted = true;
+        p.capture_enabled = true;
+        return p;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("producer fixture: the real emitter's lines pass this receiver in STRICT mode",
+          "[panasonic][fixture]") {
+    const auto lines = read_fixture_lines("tests/fixtures/producer_fixture.ndjson");
+    REQUIRE(lines.size() == 4);            // the fixture's own contract: 4 emitted, the NaN one dropped
+
+    FixtureHarness h({"hg-fixture0001"}, /*strict=*/true, /*real_session=*/true);
+    for (const auto& line : lines) {
+        const auto r = h.receiver->accept_line(h.peer("hg-fixture0001"), line, h.sink);
+        INFO("line: " << line << " reason: " << r.reason << " detail: " << r.detail);
+        REQUIRE(r.accepted);
+    }
+    // The producer emits schema_version=1 first on every line, so STRICT is compatible with it TODAY. If this
+    // fails, the flip condition in the canonical contract (6.3) has stopped being met and strict mode must not
+    // be enabled - which is precisely the fact worth failing on.
+    REQUIRE(h.receiver->schema_version_absent() == 0);
+    REQUIRE(h.receiver->lines_accepted() == 4);
+    REQUIRE(h.receiver->lines_refused() == 0);
+    REQUIRE(h.delivered.size() == 4);
+    // The producer claims "synthetic" and the session is real: an honest narrowing, counted, never widened.
+    REQUIRE(h.receiver->provenance_narrowed() == 4);
+    REQUIRE(h.receiver->provenance_refused() == 0);
+    // The producer emits a `state` field the hub's wire type has no slot for: counted as an interface gap.
+    REQUIRE(h.receiver->state_unmapped() == 4);
+}
+
+TEST_CASE("producer fixture: identity and ordering stay isolated across two interleaved peers",
+          "[panasonic][fixture]") {
+    const auto lines = read_fixture_lines("tests/fixtures/producer_fixture.ndjson");
+    REQUIRE(lines.size() == 4);
+
+    FixtureHarness h({"hg-fixture0001", "hg-fixture0002"}, true, true);
+    // Both nodes emit the SAME bytes. Their observations must stay distinguishable and correctly attributed:
+    // an id or counter derived from the payload alone would collide here.
+    for (const auto& line : lines) {
+        REQUIRE(h.receiver->accept_line(h.peer("hg-fixture0001"), line, h.sink).accepted);
+        REQUIRE(h.receiver->accept_line(h.peer("hg-fixture0002"), line, h.sink).accepted);
+    }
+    REQUIRE(h.receiver->lines_accepted() == 8);
+    REQUIRE(h.delivered.size() == 8);
+
+    std::map<std::string, std::vector<int64_t>> by_device;
+    std::map<std::string, size_t> distinct;
+    for (const auto& o : h.delivered) {
+        INFO("delivered device_id: " << o.device_id);
+        REQUIRE((o.device_id == "hg-fixture0001" || o.device_id == "hg-fixture0002"));  // from the session
+        REQUIRE_FALSE(o.features.empty());                                             // the value lands
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(o.acquired_at.time_since_epoch())
+                            .count();
+        by_device[o.device_id].push_back(ms);
+        ++distinct[o.device_id + "@" + std::to_string(ms)];
+    }
+    REQUIRE(by_device.size() == 2);
+    REQUIRE(distinct.size() == 8);
+    for (auto& [device, stamps] : by_device) {
+        INFO("device: " << device);
+        REQUIRE(stamps.size() == 4);
+        REQUIRE(std::is_sorted(stamps.begin(), stamps.end()));
+    }
+}
+
+TEST_CASE("producer contract: the emitter's documented rules the receiver must honour",
+          "[panasonic][producer-contract]") {
+    SECTION("a real ZERO measurement is accepted; an ABSENT value is refused (absence is not 0.0)") {
+        FixtureHarness h({"hg-fixture0001"}, false, true);
+        json zero = json::parse(read_fixture_lines("tests/fixtures/producer_fixture.ndjson").front());
+        zero["value"] = 0.0;
+        REQUIRE(h.receiver->accept_line(h.peer("hg-fixture0001"), zero.dump(), h.sink).accepted);
+        REQUIRE(h.delivered.size() == 1);
+
+        json absent = json::parse(read_fixture_lines("tests/fixtures/producer_fixture.ndjson").front());
+        absent.erase("value");
+        REQUIRE_FALSE(h.receiver->accept_line(h.peer("hg-fixture0001"), absent.dump(), h.sink).accepted);
+        REQUIRE(h.delivered.size() == 1);            // nothing fabricated from the absence
+    }
+    SECTION("a value the emitter cannot produce is refused, never coerced") {
+        const std::string base = read_fixture_lines("tests/fixtures/producer_fixture.ndjson").front();
+        for (const char* bad : {"NaN", "Infinity", "-Infinity", "0x10"}) {
+            FixtureHarness h({"hg-fixture0001"}, false, true);
+            std::string line = base;
+            const auto at = line.find("\"value\":");
+            line = line.substr(0, at) + "\"value\":" + bad + line.substr(line.find(',', at));
+            const auto r = h.receiver->accept_line(h.peer("hg-fixture0001"), line, h.sink);
+            INFO("value: " << bad << " reason: " << r.reason);
+            REQUIRE_FALSE(r.accepted);
+            REQUIRE(h.delivered.empty());
+        }
+    }
+    SECTION("a string the emitter cannot escape (embedded quote) is a hard parse failure") {
+        FixtureHarness h({"hg-fixture0001"}, false, true);
+        json line = json::parse(read_fixture_lines("tests/fixtures/producer_fixture.ndjson").front());
+        line["unit"] = "frac\"tion";      // the emitter's scanner would truncate this to "frac
+        const auto r = h.receiver->accept_line(h.peer("hg-fixture0001"), line.dump(), h.sink);
+        INFO(r.reason << " / " << r.detail);
+        REQUIRE_FALSE(r.accepted);
+        // This receiver keeps a STABLE reason vocabulary and puts the specifics in `detail`, so the quoted
+        // escape is refused as malformed_payload and the reason why is named in the detail.
+        REQUIRE(r.reason == "malformed_payload");
+        REQUIRE(r.detail.find("cannot escape") != std::string::npos);
+        REQUIRE(h.delivered.empty());
+    }
+    SECTION("repeated identical lines are accepted, not mistaken for replays") {
+        FixtureHarness h({"hg-fixture0001"}, false, true);
+        const std::string line = read_fixture_lines("tests/fixtures/producer_fixture.ndjson").front();
+        for (int i = 0; i < 3; ++i) {
+            REQUIRE(h.receiver->accept_line(h.peer("hg-fixture0001"), line, h.sink).accepted);
+        }
+        REQUIRE(h.receiver->lines_accepted() == 3);
     }
 }
