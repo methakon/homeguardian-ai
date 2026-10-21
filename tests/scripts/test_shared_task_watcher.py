@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if REPO_ROOT not in sys.path:
@@ -284,6 +285,24 @@ class TestSharedTaskWatcherWorkflow(unittest.TestCase):
             self.assertEqual(res2["remaining_queue"], 0)
         finally:
             shutil.rmtree(ag_temp, ignore_errors=True)
+
+
+
+
+class TestGithubCliResolver(unittest.TestCase):
+    def test_falls_back_to_path_when_no_absolute_candidate_exists(self):
+        # Regression: resolve_gh_bin previously raised NameError (missing shutil).
+        from scripts.orchestration.shared_task_watcher import resolve_gh_bin
+        with mock.patch("scripts.orchestration.shared_task_watcher.os.path.isfile", return_value=False), \\
+             mock.patch("scripts.orchestration.shared_task_watcher.shutil.which", return_value="/custom/bin/gh") as which:
+            self.assertEqual(resolve_gh_bin(), "/custom/bin/gh")
+            which.assert_called_once_with("gh")
+
+    def test_falls_back_to_literal_when_gh_is_unavailable(self):
+        from scripts.orchestration.shared_task_watcher import resolve_gh_bin
+        with mock.patch("scripts.orchestration.shared_task_watcher.os.path.isfile", return_value=False), \\
+             mock.patch("scripts.orchestration.shared_task_watcher.shutil.which", return_value=None):
+            self.assertEqual(resolve_gh_bin(), "gh")
 
 
 if __name__ == "__main__":
