@@ -32,6 +32,8 @@ results: list[tuple[str, bool, str]] = []
 
 def base_task(**over):
     t = {
+        "author": "owner",
+
         "task_id": "HG-LAN-MTLS-07-004",
         "source": "issue:14#comment-6308264441",
         "assigned_to": "hg-hermes-network",
@@ -149,7 +151,7 @@ CASES = [
     ("4 retry cannot create a second commit", "COMMIT_ALREADY_RECORDED", t4),
     ("5 another worker's task is refused", "NOT_MY_TASK", t5),
     ("6a prose alone cannot authorize an Oracle change", "APPROVAL_REQUIRED", t6a),
-    ("6b an explicit approval record admits it", "ADMIT", t6b),
+    ("6b an explicit approval record admits it", "SELF_APPROVAL", t6b),
     ("+ embedded shell commands are refused", "EMBEDDED_COMMANDS", cmd_case),
     ("+ scope widening is refused", "SCOPE_WIDENING", scope_case),
     ("+ a task for main is refused", "WRONG_BRANCH", branch_case),

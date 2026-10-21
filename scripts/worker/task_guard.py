@@ -152,6 +152,12 @@ def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
     for field in REQUIRED_FIELDS:
         if not task.get(field):
             raise Refused("MISSING_FIELD", f"task is missing required field '{field}'")
+    # Author validation
+    author = task.get('author')
+    if not author:
+        raise Refused("MISSING_AUTHOR", "task is missing required field 'author'")
+    if author not in cfg.get('approvers', []):
+        raise Refused("UNAUTHORIZED_AUTHOR", f"author '{author}' not in trusted approvers")
 
     if task["assigned_to"] != cfg["worker_id"]:
         raise Refused("NOT_MY_TASK", f"assigned to '{task['assigned_to']}', this worker is "
@@ -172,17 +178,59 @@ def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
                       f"task text contains command-shaped content ({len(hits)} pattern(s)); "
                       f"commands in task text are never executed")
 
+        # Approval records validation
+    approvals = task.get('approvals', {})
+    # Verify each approval is from a trusted approver and not self-approval
+    for act, record in approvals.items():
+        approver = record.split(':', 1)[0]
+        if approver not in cfg.get('approvers', []):
+            raise Refused("UNAUTHORIZED_APPROVER",
+                          f"approver '{approver}' for action '{act}' not in trusted approvers")
+        if approver == author:
+            raise Refused("SELF_APPROVAL",
+                          f"author '{author}' cannot approve their own action '{act}'")
+    # ---- Approval checks ----
+    requested = set(task.get("requires_approval") or [])
+    for action in requested:
+        if action not in approvals:
+            raise Refused("APPROVAL_REQUIRED",
+                          f"'{action}' needs an explicit approval record, not prose in a task")
+
     requested = set(task.get("requires_approval") or [])
     for action in requested:
         if action not in (task.get("approvals") or {}):
             raise Refused("APPROVAL_REQUIRED",
                           f"'{action}' needs an explicit approval record, not prose in a task")
 
+    # ---- Duplicate / lease checks ----
     tid = task["task_id"]
     if ledger.state(tid) == "COMPLETE":
         raise Refused("DUPLICATE_COMPLETE", f"{tid} is already COMPLETE - not repeating it")
     if ledger.live_lease(tid):
         raise Refused("ALREADY_RUNNING", f"{tid} holds a live lease - single-worker concurrency")
+
+    # ---- Prohibited actions enforcement ----
+    prohibited = set(task.get("prohibited_actions") or [])
+    required = set(task.get("requires_approval") or [])
+    # If no explicit required approvals, any prohibited action is treated as a request and must be approved
+    actions_to_check = prohibited if not required else prohibited & required
+    for action in actions_to_check:
+        if action not in (task.get("approvals") or {}):
+            raise Refused("PROHIBITED_ACTION",
+                          f"'{action}' is prohibited and requires an explicit approval record")
+
+
+
+
+
+
+    # ---- Author authentication ----
+    # Ensure the task author is present and authorized according to cfg["approvers"]
+    author = task.get("author")
+    if not author:
+        raise Refused("MISSING_AUTHOR", "task is missing required field 'author'")
+    if author not in cfg.get("approvers", []):
+        raise Refused("UNAUTHORIZED_AUTHOR", f"author '{author}' is not an authorized approver")
 
     return {"decision": "ADMIT", "task_id": tid, "state": ledger.state(tid) or "QUEUED",
             "commit_sha": ledger.get(tid).get("commit_sha")}
