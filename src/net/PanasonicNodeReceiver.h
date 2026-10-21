@@ -62,10 +62,17 @@ struct NodeObservationLine {
     bool has_confidence = false;
     int64_t acquired_at_ms = 0;
     bool has_acquired_at = false;
-    int schema_version = 0;         // 0 = the field is ABSENT in the producer's current output
+    int schema_version = 0;
+    // Presence is tracked EXPLICITLY, not inferred from a sentinel value. `kSchemaVersionAbsent = 0` used to
+    // double as "the field is missing", but 0 is also a value a producer can legitimately send - and it was
+    // silently read as absence: accepted as the documented legacy shape, counted as an interface gap that was
+    // not real, and under strict mode refused with the WRONG reason (missing_schema_version when the producer
+    // had in fact sent a version). A magic value cannot distinguish "absent" from "present and unsupported".
+    bool has_schema_version = false;
 };
 
 inline constexpr int kNodeSchemaVersion = 1;
+// Retained for reference only: NOT a discriminator. Use NodeObservationLine::has_schema_version.
 inline constexpr int kSchemaVersionAbsent = 0;
 
 // Strict parse of ONE line. Refuses anything it cannot fully understand rather than filling a default in:

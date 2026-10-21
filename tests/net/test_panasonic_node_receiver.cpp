@@ -653,3 +653,152 @@ TEST_CASE("schema version: absent is counted, never assumed", "[panasonic][schem
         REQUIRE_FALSE(r.reason.empty());
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// REGRESSION: schema-version type/boundary confusion, and the provenance vocabulary/counters.
+// The first section of this suite exists because a sentinel value (0 == absent) collided with a legitimate
+// present value, so a producer sending schema_version 0 was read as "no version at all".
+// ---------------------------------------------------------------------------------------------------------
+TEST_CASE("schema version: type and boundary confusion cannot become a version", "[panasonic][schema]") {
+    SECTION("a PRESENT version of 0 is refused as unsupported, and is NOT counted as absent") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        const auto r = receiver.accept_line(h.peer(), schema_line(true, 0), h.sink);
+        INFO(r.reason);
+        REQUIRE_FALSE(r.accepted);
+        REQUIRE(r.reason == "unsupported_schema_version");
+        REQUIRE(receiver.schema_version_absent() == 0);   // the producer DID send a version
+        REQUIRE(h.delivered.empty());
+    }
+    SECTION("strict mode reports the RIGHT reason for a present-but-unsupported version") {
+        Harness h;
+        auto cfg = real_session();
+        cfg.require_schema_version = true;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        const auto r = receiver.accept_line(h.peer(), schema_line(true, 0), h.sink);
+        REQUIRE_FALSE(r.accepted);
+        REQUIRE(r.reason == "unsupported_schema_version");   // NOT missing_schema_version
+    }
+    SECTION("null, bool, float and string are refused as non-integer, never coerced") {
+        const json variants[4] = {nullptr, true, 1.0, "1"};
+        for (const auto& v : variants) {
+            Harness h;
+            PanasonicNodeReceiver receiver(*h.ingest, real_session());
+            json line = json::parse(schema_line(true, kNodeSchemaVersion));
+            line["schema_version"] = v;
+            const auto r = receiver.accept_line(h.peer(), line.dump(), h.sink);
+            INFO("variant: " << v.dump());
+            REQUIRE_FALSE(r.accepted);
+            REQUIRE_FALSE(r.reason.empty());
+            REQUIRE(receiver.schema_version_absent() == 0);
+            REQUIRE(h.delivered.empty());
+        }
+    }
+    SECTION("negative and large integers are unsupported, not absent") {
+        for (const int v : {-1, 2, 999999}) {
+            Harness h;
+            PanasonicNodeReceiver receiver(*h.ingest, real_session());
+            const auto r = receiver.accept_line(h.peer(), schema_line(true, v), h.sink);
+            INFO("version: " << v);
+            REQUIRE_FALSE(r.accepted);
+            REQUIRE(r.reason == "unsupported_schema_version");
+            REQUIRE(receiver.schema_version_absent() == 0);
+        }
+    }
+    SECTION("only a genuinely absent field bumps the absent counter") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(false, 0), h.sink).accepted);
+        REQUIRE_FALSE(receiver.accept_line(h.peer(), schema_line(true, 0), h.sink).accepted);
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(true, kNodeSchemaVersion), h.sink).accepted);
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(false, 0), h.sink).accepted);
+        REQUIRE(receiver.schema_version_absent() == 2);   // the two absent ones, and nothing else
+        REQUIRE(receiver.lines_accepted() == 3);
+        REQUIRE(receiver.lines_refused() == 1);
+    }
+}
+
+TEST_CASE("provenance: closed vocabulary, no type smuggling, exact counters", "[panasonic][provenance]") {
+    SECTION("a non-string claim is ABSENCE, not a claim - on both session kinds") {
+        const json variants[4] = {nullptr, 1, true, json::object()};
+        for (const auto& v : variants) {
+            Harness h;
+            PanasonicNodeReceiver receiver(*h.ingest, real_session());
+            json line = json::parse(schema_line(true, kNodeSchemaVersion));
+            line["provenance"] = v;
+            const auto r = receiver.accept_line(h.peer(), line.dump(), h.sink);
+            INFO("variant: " << v.dump() << " reason: " << r.reason);
+            REQUIRE(r.accepted);
+            REQUIRE(receiver.provenance_narrowed() == 0);
+            REQUIRE(receiver.provenance_refused() == 0);
+        }
+        Harness h2;
+        PanasonicNodeReceiver synthetic_session(*h2.ingest);        // fail-closed default: synthetic
+        json line = json::parse(schema_line(true, kNodeSchemaVersion));
+        line["provenance"] = 7;
+        const auto r = synthetic_session.accept_line(h2.peer(), line.dump(), h2.sink);
+        REQUIRE(r.accepted);
+        REQUIRE(r.detail.find("recorded_provenance=synthetic") != std::string::npos);
+    }
+    SECTION("case, whitespace and empty strings are refused - the vocabulary is exact") {
+        for (const char* claim : {"Real", "REAL_DEVICE", "Synthetic", " real", "real ", "", "physical"}) {
+            Harness h;
+            PanasonicNodeReceiver receiver(*h.ingest, real_session());
+            json line = json::parse(schema_line(true, kNodeSchemaVersion));
+            line["provenance"] = claim;
+            const auto r = receiver.accept_line(h.peer(), line.dump(), h.sink);
+            INFO("claim: '" << claim << "' reason: " << r.reason);
+            REQUIRE_FALSE(r.accepted);
+            REQUIRE(r.reason == "unknown_provenance_claim");
+            REQUIRE(h.delivered.empty());
+        }
+    }
+    SECTION("widening bumps provenance_refused; an unknown claim does not") {
+        Harness h;
+        PanasonicNodeReceiver synthetic_session(*h.ingest);         // synthetic session
+        json widening = json::parse(schema_line(true, kNodeSchemaVersion));
+        widening["provenance"] = "real_device";
+        REQUIRE_FALSE(synthetic_session.accept_line(h.peer(), widening.dump(), h.sink).accepted);
+        REQUIRE(synthetic_session.provenance_refused() == 1);
+        json invented = json::parse(schema_line(true, kNodeSchemaVersion));
+        invented["provenance"] = "trust_me";
+        REQUIRE_FALSE(synthetic_session.accept_line(h.peer(), invented.dump(), h.sink).accepted);
+        REQUIRE(synthetic_session.provenance_refused() == 1);        // unchanged: a different failure kind
+        REQUIRE(synthetic_session.lines_refused() == 2);
+    }
+    SECTION("an accepted line reports the RECORDED provenance, so a claim is never a fact") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        json line = json::parse(schema_line(true, kNodeSchemaVersion));
+        line["provenance"] = "synthetic";                            // honest self-downgrade
+        const auto r = receiver.accept_line(h.peer(), line.dump(), h.sink);
+        REQUIRE(r.accepted);
+        REQUIRE(receiver.provenance_narrowed() == 1);
+        REQUIRE(r.detail.find("recorded_provenance=") != std::string::npos);
+        REQUIRE(r.detail.find("recorded_provenance=synthetic") == std::string::npos);  // the session is real
+    }
+    SECTION("exact counter invariants across a mixed sequence") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());    // real session
+        auto send = [&](const char* claim, bool has_version, int version) {
+            json line = json::parse(schema_line(has_version, version));
+            if (claim != nullptr) {
+                line["provenance"] = claim;
+            } else {
+                line.erase("provenance");
+            }
+            return receiver.accept_line(h.peer(), line.dump(), h.sink);
+        };
+        REQUIRE(send("real_device", true, kNodeSchemaVersion).accepted);      // 1 accepted
+        REQUIRE(send("synthetic", true, kNodeSchemaVersion).accepted);        // 2 accepted, 1 narrowed
+        REQUIRE(send(nullptr, true, kNodeSchemaVersion).accepted);            // 3 accepted, absent claim
+        REQUIRE(send("nope", true, kNodeSchemaVersion).accepted == false);    // refused (unknown claim)
+        REQUIRE(send("real_device", true, 42).accepted == false);             // refused (unsupported)
+        REQUIRE(send(nullptr, false, 0).accepted);                            // 4 accepted, 1 absent version
+        REQUIRE(receiver.lines_accepted() == 4);
+        REQUIRE(receiver.lines_refused() == 2);
+        REQUIRE(receiver.schema_version_absent() == 1);
+        REQUIRE(receiver.provenance_narrowed() == 1);
+        REQUIRE(receiver.provenance_refused() == 0);                          // nothing tried to widen a real session
+    }
+}
