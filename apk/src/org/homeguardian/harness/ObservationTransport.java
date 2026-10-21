@@ -188,6 +188,64 @@ public class ObservationTransport {
         return MAX_ATTEMPTS_PER_OBSERVATION;
     }
 
+    /** The protocol major version this build speaks, exposed for the tests. */
+    static int protocolVersionMajor() {
+        return PROTOCOL_VERSION_MAJOR;
+    }
+
+    /**
+     * Decide a welcome frame without a socket, so the handshake is testable.
+     *
+     * The handshake was previously unreachable from a test — `expectWelcome` takes an SSLSocket — so
+     * nothing verified what happens when the hub sends no welcome, the wrong kind, or a different
+     * protocol version. That is the worst place to have no coverage: the welcome carries the resume
+     * watermark, which is the only field a restarted node depends on to avoid replaying from 1.
+     *
+     * Returns a verdict string; production maps anything other than {@link #WELCOME_OK} to a failed
+     * handshake. Kept deliberately free of logging-side effects so a test can drive it directly.
+     */
+    static String welcomeVerdict(String frame) {
+        if (frame == null || frame.length() == 0) {
+            return "REJECT_no_frame";
+        }
+        final JSONObject parsed;
+        try {
+            parsed = new JSONObject(frame);
+        } catch (Exception e) {
+            return "REJECT_unreadable";
+        }
+        if (!"welcome".equals(parsed.optString("kind"))) {
+            return "REJECT_not_welcome";
+        }
+        if (parsed.optInt("protocol_version_major", -1) != PROTOCOL_VERSION_MAJOR) {
+            return "REJECT_version";
+        }
+        return WELCOME_OK;
+    }
+
+    static final String WELCOME_OK = "ACCEPT";
+
+    /**
+     * The resume watermark the welcome asks this device to continue above.
+     *
+     * The wire name is `last_sequence`. The canonical JSON schema calls the field
+     * `resume_after_sequence`, which is the C++ struct's name — the receiver's own serialiser writes
+     * `out["last_sequence"]`. Reading the schema's name would silently yield 0, the watermark would
+     * never be adopted, and every observation after a restart would be refused as a replay.
+     */
+    static long resumeWatermark(String frame) {
+        try {
+            return new JSONObject(frame).optLong("last_sequence", 0L);
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    /** Adopt a watermark only when it moves the counter forward; a lower one must never rewind it. */
+    static long adoptedSequence(long current, long watermark) {
+        return watermark > current ? watermark : current;
+    }
+
     /** The bounded backoff between retries, exposed for the test. */
     static long retryBackoffMs() {
         return RETRY_BACKOFF_MS;
@@ -702,22 +760,18 @@ public class ObservationTransport {
 
     private boolean expectWelcome(SSLSocket socket) throws Exception {
         final String frame = readFrame(socket);
-        if (frame == null) {
-            return false;
-        }
-        final JSONObject parsed = new JSONObject(frame);
-        if (!"welcome".equals(parsed.optString("kind"))) {
+        final String verdict = welcomeVerdict(frame);
+        if (!WELCOME_OK.equals(verdict)) {
+            Log.w(TAG, "handshake refused: " + verdict);
             return false;
         }
         // The hub states the highest sequence it has already accepted from this device.
         // Adopting it is what lets the application restart legitimately: a new process
         // otherwise starts at 1 and every observation it sends looks like a replay.
-        final long watermark = parsed.optLong("last_sequence", 0L);
+        final long watermark = resumeWatermark(frame);
         if (watermark > 0L) {
             synchronized (lock) {
-                if (watermark > sequenceCounter) {
-                    sequenceCounter = watermark;
-                }
+                sequenceCounter = adoptedSequence(sequenceCounter, watermark);
             }
         }
         return true;

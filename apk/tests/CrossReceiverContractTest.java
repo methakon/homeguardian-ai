@@ -282,6 +282,52 @@ public final class CrossReceiverContractTest {
         check("X9 negative control: an invented receiver token is detected as unknown",
                 detected, "if this is false, X1a proves nothing");
 
+        // ---- H: the handshake, which had NO coverage before this --------------------------------
+        // `expectWelcome` takes an SSLSocket, so nothing could drive it. That is the worst place to
+        // have a gap: the welcome carries the resume watermark, the one field a restarted node needs
+        // in order not to replay from 1 and be refused as a replay on every line.
+        final int MAJOR = ObservationTransport.protocolVersionMajor();
+        String ok = "{\"kind\":\"welcome\",\"protocol_version_major\":" + MAJOR
+                + ",\"protocol_version_minor\":0,\"last_sequence\":41}";
+
+        check("H1 a well-formed welcome is ACCEPT",
+                ObservationTransport.WELCOME_OK.equals(ObservationTransport.welcomeVerdict(ok)),
+                "got " + ObservationTransport.welcomeVerdict(ok));
+        check("H2 no frame at all is refused, not treated as an empty welcome",
+                "REJECT_no_frame".equals(ObservationTransport.welcomeVerdict(null)));
+        check("H3 an unparseable frame is refused rather than throwing",
+                "REJECT_unreadable".equals(ObservationTransport.welcomeVerdict("{not json")));
+        check("H4 a non-welcome kind is refused",
+                "REJECT_not_welcome".equals(
+                        ObservationTransport.welcomeVerdict("{\"kind\":\"ack\"}")));
+        check("H5 a welcome with the WRONG MAJOR VERSION is refused",
+                "REJECT_version".equals(ObservationTransport.welcomeVerdict(
+                        "{\"kind\":\"welcome\",\"protocol_version_major\":" + (MAJOR + 1) + "}")),
+                "this is the defect this section was added for: the ack path checked the version and "
+                        + "the welcome path did not");
+        check("H6 a welcome with NO version field is refused (fails closed, not defaulted)",
+                "REJECT_version".equals(
+                        ObservationTransport.welcomeVerdict("{\"kind\":\"welcome\"}")));
+
+        // The watermark, and the regression it prevents.
+        check("H7 the resume watermark is read from the wire name the receiver actually sends",
+                ObservationTransport.resumeWatermark(ok) == 41L,
+                "got " + ObservationTransport.resumeWatermark(ok));
+        check("H8 a schema-named 'resume_after_sequence' is NOT the wire field (doc drift, asserted)",
+                ObservationTransport.resumeWatermark(
+                        "{\"kind\":\"welcome\",\"resume_after_sequence\":99}") == 0L,
+                "the receiver serialises out[\"last_sequence\"]; the schema calls it "
+                        + "resume_after_sequence, which is the C++ struct field name");
+        check("H9 a watermark advances the counter",
+                ObservationTransport.adoptedSequence(0L, 41L) == 41L);
+        check("H10 a watermark never rewinds the counter",
+                ObservationTransport.adoptedSequence(100L, 5L) == 100L);
+        check("H11 an absent watermark leaves the counter alone",
+                ObservationTransport.adoptedSequence(7L, 0L) == 7L);
+        check("H12 negative control: resuming from 1 after a watermark would be a replay",
+                ObservationTransport.adoptedSequence(0L, 41L) != 0L,
+                "if this were 0 the node would restart at 1 and every line would be replays");
+
         System.out.println();
         if (failed > 0) {
             System.out.println("  FAILED: " + failed + " of " + (passed + failed));
