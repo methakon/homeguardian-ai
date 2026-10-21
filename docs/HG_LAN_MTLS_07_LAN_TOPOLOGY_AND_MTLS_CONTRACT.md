@@ -167,6 +167,13 @@ bound to all interfaces, receiver bound to loopback) correctly.
 
 ---
 
+`scripts/mtls_fixtures/test_revocation_and_identity.py` covers the certificate lifecycle and identity
+isolation: revocation takes effect on the **next connection with no restart** (the registry is re-read
+per connection), revocation can be **lifted**, an unpaired device is refused, a device absent from the
+registry is refused, and a certificate carrying a **known device's CN but a different key** is refused
+— the binding is the certificate fingerprint and never the CN. Reason-level assertions check the stable
+refusal reason, not only the verdict.
+
 ## F. Scope boundaries
 
 No handset network configuration, router setting, Oracle DNS/NSG/firewall/forwarding/mail/certificate

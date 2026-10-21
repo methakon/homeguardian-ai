@@ -47,10 +47,10 @@ sign_server server-good-SAN  "$SAN_GOOD"  "$CA"
 sign_server server-wrong-SAN "$SAN_WRONG" "$CA"
 sign_server server-no-SAN    ""           "$CA"
 
-sign_client() { # $1=device-id $2=ca-dir
-  local id=$1 ca=$2
+sign_client() { # $1=file-id $2=ca-dir $3=CN (defaults to $1)
+  local id=$1 ca=$2 cn=${3:-$1}
   openssl genrsa -out "$D/$id.key" 2048 2>/dev/null
-  openssl req -new -key "$D/$id.key" -out "$R/$id.csr" -subj "/CN=$id"
+  openssl req -new -key "$D/$id.key" -out "$R/$id.csr" -subj "/CN=$cn"
   {
     echo "basicConstraints=CA:FALSE"
     echo "keyUsage=critical,digitalSignature"
@@ -63,6 +63,8 @@ sign_client() { # $1=device-id $2=ca-dir
 sign_client eluga-i7-01 "$CA"      # the initiating device
 sign_client mi-a3-01    "$CA"
 sign_client foreign-01  "$OTHER"   # NEGATIVE: signed by an untrusted CA
+sign_client unscanned-01 "$CA"     # NEGATIVE: trusted CA, but absent from the registry
+sign_client eluga-dup   "$CA" eluga-i7-01   # NEGATIVE: CN=eluga-i7-01, DIFFERENT key/fingerprint
 
 # NEGATIVE: an EXPIRED client certificate, minted with explicit past validity dates.
 mkdir -p "$CA/db/newcerts"; : > "$CA/db/index.txt"; echo 1000 > "$CA/db/serial"
