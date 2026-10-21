@@ -28,7 +28,7 @@ import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-DEFAULT_STATE_DIR = os.environ.get("HG_ORCHESTRATOR_STATE_DIR") or os.path.expanduser("~/.hermes/cache/scratch/hg-orchestrator")
+DEFAULT_STATE_DIR = os.environ.get("HG_ORCHESTRATOR_STATE_DIR") or os.path.expanduser("~/.hermes/state/hg-orchestrator/state")
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 DEFAULT_REGISTRY_PATH = os.path.join(SCRIPT_DIR, "worker_registry.json")
 
@@ -368,14 +368,27 @@ class TaskDispatcher:
             return True, f"dry-run simulated dispatch to {worker_id}"
 
         if dispatch_type == "hermes_resume":
-            cmd = dispatch_info.get("command_template", "").format(assignment_summary=summary)
-            logger.info(f"Executing Hermes dispatch: {cmd}")
-            # Non-blocking / subprocess invocation
+            session_id = worker_info.get("session_id")
+            if not session_id:
+                return False, "Missing session_id in worker registry"
+            cmd_args = ["hermes", "--resume", session_id, "-z", summary]
+            logger.info(f"Executing Hermes dispatch (safe argv, shell=False): {cmd_args}")
             try:
-                proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                proc = subprocess.Popen(cmd_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 return True, f"dispatched to Hermes session PID {proc.pid}"
             except Exception as e:
                 return False, f"Hermes dispatch failed: {e}"
+
+        elif dispatch_type == "antigravity_worker":
+            logger.info(f"Antigravity worker queue accepted: {summary}")
+            runner_script = dispatch_info.get("runner_script")
+            if runner_script and os.path.isfile(runner_script):
+                cmd_args = [sys.executable, runner_script, "poll", "--enqueue-only"]
+                try:
+                    subprocess.run(cmd_args, capture_output=True, text=True, timeout=10)
+                except Exception as ex:
+                    logger.warning(f"Failed to invoke antigravity runner: {ex}")
+            return True, "queued in antigravity inbox"
 
         elif dispatch_type == "assistant_orchestrator":
             logger.info(f"Antigravity Coordinator internal task queue accepted: {summary}")
@@ -484,6 +497,20 @@ class SharedTaskWatcher:
                         # Validate worker assignment matches issue recipient
                         if task_worker != worker_id:
                             rej = f"WORKER_MISMATCH: Task assigned to '{task_worker}' but posted on #{issue_num} (owned by '{worker_id}')"
+                            logger.warning(f"[REJECTED] {rej}")
+                            state["rejected_events"].append({
+                                "issue": issue_num,
+                                "comment_id": comment_id,
+                                "reason": rej,
+                                "timestamp": now_iso
+                            })
+                            rejected_count += 1
+                            continue
+
+                        # Validate task scope against worker's authorized remit
+                        objective_text = str(task.get("objective", "")).lower() + " " + str(task.get("detail", "")).lower()
+                        if worker_id == "hg-hermes-android" and any(k in objective_text for k in ["wireguard", "vpn", "nsg", "oracle"]):
+                            rej = f"SCOPE_MISMATCH: Worker '{worker_id}' refused task with wireguard/network scope"
                             logger.warning(f"[REJECTED] {rej}")
                             state["rejected_events"].append({
                                 "issue": issue_num,

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "coordinator": "hg-antigravity-integration",
   "repository": "methakon/homeguardian-ai",
   "integration_branch": "dev/production-integration",
@@ -17,7 +17,7 @@
   "workers": {
     "hg-hermes-network": {
       "worker_id": "hg-hermes-network",
-      "session_id": "local-39f07d6fc4fa643c8a4c0909876865f6507845f10fb9a97c9edf2b452dd7d621",
+      "session_id": "20261009_174946_2dfba7",
       "role": "NETWORK_SECURITY",
       "issue_number": 14,
       "also_accepts_issues": [],
@@ -34,14 +34,15 @@
       ],
       "status_source": {
         "type": "file_lock_and_pid",
-        "lock_file": "/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg-worker-network/lock",
-        "state_file": "/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg-worker-network/ledger.json"
+        "lock_file": "/home/swarna-sekhar-dhar/.hermes/state/hg-hermes-network/lock",
+        "state_file": "/home/swarna-sekhar-dhar/.hermes/state/hg-hermes-network/state.json"
       },
       "dispatch_mechanism": {
         "type": "hermes_resume",
-        "command_template": "hermes --resume local-39f07d6fc4fa643c8a4c0909876865f6507845f10fb9a97c9edf2b452dd7d621 -z \"{assignment_summary}\""
+        "command_template": "hermes --resume 20261009_174946_2dfba7 -z \"{assignment_summary}\"",
+        "requires_session_idle": true
       },
-      "last_completed_task": "8fc052b7338350e768d20bf2899f205c357481ff",
+      "last_completed_task": "d599eacb6e06b72dca6bdf0cbb91845180cb9664",
       "recovery_policy": {
         "stale_lock_timeout_seconds": 1800,
         "max_retries": 3,
@@ -51,7 +52,7 @@
     },
     "hg-hermes-android": {
       "worker_id": "hg-hermes-android",
-      "session_id": "20261009_174946_2dfba7",
+      "session_id": "local-8d61817af2cd4c61d60b33c84230543d035305518e6e7a62a2f91c766de798c9",
       "role": "ANDROID_EDGE_SERVICE",
       "issue_number": 12,
       "also_accepts_issues": [],
@@ -73,9 +74,10 @@
       },
       "dispatch_mechanism": {
         "type": "hermes_resume",
-        "command_template": "hermes --resume 20261009_174946_2dfba7 -z \"{assignment_summary}\""
+        "command_template": "hermes --resume local-8d61817af2cd4c61d60b33c84230543d035305518e6e7a62a2f91c766de798c9 -z \"{assignment_summary}\"",
+        "requires_session_idle": true
       },
-      "last_completed_task": "c293658da6f3ace50d4bee0bfd289af0f8f8e95e",
+      "last_completed_task": "a5b580fd0e3291a84c13492e62910a9a78e98a97",
       "recovery_policy": {
         "stale_lock_timeout_seconds": 1800,
         "max_retries": 3,
@@ -85,7 +87,7 @@
     },
     "hg-hermes-cpp": {
       "worker_id": "hg-hermes-cpp",
-      "session_id": "local-8d61817af2cd4c61d60b33c84230543d035305518e6e7a62a2f91c766de798c9",
+      "session_id": "local-39f07d6fc4fa643c8a4c0909876865f6507845f10fb9a97c9edf2b452dd7d621",
       "role": "CPP_ENGINE",
       "issue_number": 19,
       "also_accepts_issues": [16],
@@ -107,9 +109,10 @@
       },
       "dispatch_mechanism": {
         "type": "hermes_resume",
-        "command_template": "hermes --resume local-8d61817af2cd4c61d60b33c84230543d035305518e6e7a62a2f91c766de798c9 -z \"{assignment_summary}\""
+        "command_template": "hermes --resume local-39f07d6fc4fa643c8a4c0909876865f6507845f10fb9a97c9edf2b452dd7d621 -z \"{assignment_summary}\"",
+        "requires_session_idle": true
       },
-      "last_completed_task": "da87b3b6c9a7018a02996806abf46f51caac2a6d",
+      "last_completed_task": "ea6f5f9920ef0f329972c676d47eb3889b9d7945",
       "recovery_policy": {
         "stale_lock_timeout_seconds": 1800,
         "max_retries": 3,
@@ -136,19 +139,19 @@
       ],
       "status_source": {
         "type": "file_lock_and_pid",
-        "lock_file": "/home/swarna-sekhar-dhar/.gemini/antigravity-cli/brain/44d0b99c-0ce7-463f-ba3e-61c52579e936/lock",
-        "state_file": "/home/swarna-sekhar-dhar/.gemini/antigravity-cli/brain/44d0b99c-0ce7-463f-ba3e-61c52579e936/state.json"
+        "lock_file": "/home/swarna-sekhar-dhar/.hermes/state/hg-antigravity/worker.lock",
+        "state_file": "/home/swarna-sekhar-dhar/.hermes/state/hg-antigravity/state.json"
       },
       "dispatch_mechanism": {
-        "type": "assistant_orchestrator",
-        "command_template": "antigravity dispatch {task_id}"
+        "type": "antigravity_worker",
+        "runner_script": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/antigravity-prod-dev/scripts/orchestration/antigravity_worker.py"
       },
-      "last_completed_task": "9e38e6253c0560cbd357684913b5b8e8b2ae5a29",
+      "last_completed_task": "6f9749c0df2650fe1e1488c5efb9c2409ae22fa3",
       "recovery_policy": {
         "stale_lock_timeout_seconds": 1800,
         "max_retries": 3,
         "retry_backoff_base_seconds": 30,
-        "on_crash": "notify_coordinator"
+        "on_crash": "check_pid_and_resume"
       }
     }
   }

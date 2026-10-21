@@ -242,5 +242,49 @@ class TestSharedTaskWatcherWorkflow(unittest.TestCase):
             ResourcePressureGuard.is_under_pressure = orig_check
 
 
+    def test_scope_mismatch_android_wireguard_rejected(self):
+        mock_comments = {
+            12: [
+                {
+                    "id": 9994,
+                    "user": {"login": "msekhardhar-cell"},
+                    "body": """```hg-task
+{"mission": "HG-SCOPE-FAIL", "worker": "hg-hermes-android", "action": "test", "objective": "Configure WireGuard VPN tunnel on Oracle host"}
+```"""
+                }
+            ]
+        }
+        res = self.watcher.poll_once(comments_override=mock_comments)
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["dispatched"], 0)
+        self.assertEqual(res["rejected"], 1)
+
+        state = self.watcher.state_mgr.load()
+        self.assertIn("SCOPE_MISMATCH", state["rejected_events"][0]["reason"])
+
+    def test_antigravity_worker_busy_queue_and_auto_resume(self):
+        from scripts.orchestration.antigravity_worker import AntigravityWorker
+        ag_temp = tempfile.mkdtemp(prefix="hg-test-ag-worker-")
+        try:
+            worker = AntigravityWorker(state_dir=ag_temp, dry_run=True)
+            t1 = {"mission": "HG-TEST-AG-1", "worker": "hg-antigravity-integration", "action": "report", "objective": "status"}
+            t2 = {"mission": "HG-TEST-AG-2", "worker": "hg-antigravity-integration", "action": "test", "objective": "selftest"}
+
+            # Acquire lock to simulate running task
+            worker.state_mgr.acquire_lock()
+            res1 = worker.process_cycle(incoming_tasks_override=[t1, t2])
+            self.assertEqual(res1["status"], "BUSY")
+            self.assertEqual(res1["queue_depth"], 2)
+
+            # Release lock, now second cycle must claim and complete all queued
+            worker.state_mgr.release_lock()
+            res2 = worker.process_cycle(incoming_tasks_override=[])
+            self.assertEqual(res2["status"], "SUCCESS")
+            self.assertEqual(len(res2["executed"]), 2)
+            self.assertEqual(res2["remaining_queue"], 0)
+        finally:
+            shutil.rmtree(ag_temp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
