@@ -136,6 +136,17 @@ fi
   "$JAVA_HOME/bin/jar" uf base.apk classes.dex 2>/dev/null || zip -j base.apk classes.dex >/dev/null )
 ( cd "$BUILD_DIR/gen" && zip -r base.apk lib >/dev/null )
 
+echo "==> Normalise ZIP metadata (reproducible builds)"
+# The zip calls above stamp classes.dex, lib/ and META-INF with the build wall-clock, while aapt
+# already normalises the entries it writes. Without this step two builds of IDENTICAL source
+# produce different whole-file SHA-256 values, which makes "verify the artifact hash" meaningless.
+# MUST run before zipalign and signing: the signature covers the archive, so normalising after
+# signing would invalidate it (zipalign preserves entry timestamps).
+[ -f "$ROOT/scripts/normalize_apk_zip.py" ] || {
+    echo "missing $ROOT/scripts/normalize_apk_zip.py - reproducibility step cannot run"; exit 1
+}
+python3 "$ROOT/scripts/normalize_apk_zip.py" "$BUILD_DIR/gen/base.apk"
+
 echo "==> zipalign"
 "$BT/zipalign" -f 4 "$BUILD_DIR/gen/base.apk" "$BUILD_DIR/app-aligned.apk"
 
