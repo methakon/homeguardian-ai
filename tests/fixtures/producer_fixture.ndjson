@@ -1,0 +1,4 @@
+{"schema_version":1,"source_type":"motion","observation_type":"motion-changed-fraction","value":0.420000,"unit":"fraction","state":"ok","confidence":1.000000,"acquired_at_ms":1761000000000,"provenance":"synthetic"}
+{"schema_version":1,"source_type":"presence","observation_type":"audio-rms","value":0.013700,"unit":"rms","state":"ok","confidence":1.000000,"acquired_at_ms":1761000000001,"provenance":"synthetic"}
+{"schema_version":1,"source_type":"presence","observation_type":"audio-peak","value":0.210000,"unit":"amplitude","state":"ok","confidence":1.000000,"acquired_at_ms":1761000000002,"provenance":"synthetic"}
+{"schema_version":1,"source_type":"presence","observation_type":"audio-zero-crossing-rate","value":0.004300,"unit":"rate","state":"ok","confidence":1.000000,"acquired_at_ms":1761000000003,"provenance":"synthetic"}
