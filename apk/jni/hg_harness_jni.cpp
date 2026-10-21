@@ -123,7 +123,19 @@ struct Node {
         double value = 0.0;
         double confidence = 0.0;
         int64_t acquired_at_ms = 0;
-        std::string provenance = "real_device";
+        // NEVER DEFAULT TO A CLAIM OF PHYSICAL ORIGIN.
+        //
+        // This was "real_device", and push_observation() below never assigns the field - so EVERY
+        // observation this emitter produced claimed to come from physical hardware, whether or not it
+        // did. The receiver refuses a real claim on a session it knows to be synthetic
+        // (provenance_claim_widens_session), so the two sides were mutually incompatible: the
+        // producer asserted real on every line and the receiver rejected exactly that.
+        //
+        // "synthetic" is the correct default because it is the NON-CLAIMING one: it can never widen a
+        // session's provenance, only defer to it. Provenance the hub derives from the authenticated
+        // peer, pairing and consent is authoritative; this field is a claim, and an unset claim must
+        // stay the weakest one. Matches the Java-side default in NodeSession.
+        std::string provenance = "synthetic";
     };
     std::deque<Observation> observations;
     uint64_t observations_emitted = 0;
