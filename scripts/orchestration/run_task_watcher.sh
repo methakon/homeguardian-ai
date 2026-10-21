@@ -12,16 +12,25 @@ STATE_DIR="${REPO_ROOT}/.hg_orchestrator"
 mkdir -p "${STATE_DIR}/logs"
 LOG_FILE="${STATE_DIR}/logs/watcher.log"
 
-# Default to --dry-run unless explicitly specified by caller
-DRY_RUN_ARG=""
-if [[ "$*" != *"--live"* ]]; then
-  DRY_RUN_ARG="--dry-run"
+ARGS=()
+if [[ "$*" == *"--live"* ]]; then
+  ARGS+=("--live")
+  MODE_STR="live"
+else
+  ARGS+=("--dry-run")
+  MODE_STR="dry-run"
 fi
 
-echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Invoking Shared Task Watcher (mode: ${DRY_RUN_ARG:-live})" >> "${LOG_FILE}"
+for arg in "$@"; do
+  if [[ "$arg" != "--live" && "$arg" != "--dry-run" ]]; then
+    ARGS+=("$arg")
+  fi
+done
+
+echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Invoking Shared Task Watcher (mode: ${MODE_STR})" >> "${LOG_FILE}"
 
 # Execute watcher poll cycle
-python3 "${SCRIPT_DIR}/shared_task_watcher.py" poll ${DRY_RUN_ARG} "$@" >> "${LOG_FILE}" 2>&1
+python3 "${SCRIPT_DIR}/shared_task_watcher.py" poll "${ARGS[@]}" >> "${LOG_FILE}" 2>&1
 EXIT_CODE=$?
 
 if [[ ${EXIT_CODE} -ne 0 ]]; then

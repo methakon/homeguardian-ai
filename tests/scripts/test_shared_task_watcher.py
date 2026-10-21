@@ -198,6 +198,49 @@ class TestSharedTaskWatcherWorkflow(unittest.TestCase):
         self.assertEqual(res2["dispatched"], 0)
         self.assertEqual(res2["rejected"], 0)
 
+    def test_hermes_pause_engaged_halts_dispatch(self):
+        estop_file = os.path.join(self.temp_dir, "ESTOP")
+        os.environ["HERMES_ESTOP_FILE"] = estop_file
+        try:
+            with open(estop_file, "w") as f:
+                f.write("Emergency maintenance in progress")
+
+            mock_comments = {
+                19: [
+                    {
+                        "id": 9993,
+                        "user": {"login": "msekhardhar-cell"},
+                        "body": """```hg-task
+{"mission": "HG-PAUSE-TEST", "worker": "hg-hermes-cpp", "action": "test"}
+```"""
+                    }
+                ]
+            }
+            res = self.watcher.poll_once(comments_override=mock_comments)
+            self.assertEqual(res["status"], "paused")
+            self.assertIn("emergency stop", res["reason"])
+            self.assertEqual(res["dispatched"], 0)
+        finally:
+            os.environ.pop("HERMES_ESTOP_FILE", None)
+
+    def test_resource_pressure_defers_heavy_task(self):
+        # Dispatch a task marked is_heavy when under simulated pressure
+        from scripts.orchestration.shared_task_watcher import ResourcePressureGuard
+        orig_check = ResourcePressureGuard.is_under_pressure
+        ResourcePressureGuard.is_under_pressure = classmethod(lambda cls: (True, "Simulated host memory saturation"))
+        try:
+            task = {
+                "mission": "HG-HEAVY-01",
+                "worker": "hg-hermes-cpp",
+                "action": "test",
+                "is_heavy": True
+            }
+            ok, msg = self.watcher.dispatcher.dispatch("hg-hermes-cpp", task)
+            self.assertFalse(ok)
+            self.assertIn("DEFERRED_RESOURCE_PRESSURE", msg)
+        finally:
+            ResourcePressureGuard.is_under_pressure = orig_check
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -236,6 +236,55 @@ class TaskValidator:
         return tasks, rejections
 
 
+def is_hermes_paused() -> Tuple[bool, str]:
+    """Checks whether the global emergency stop (hermes pause) is engaged via ESTOP sentinel."""
+    estop_path = os.environ.get("HERMES_ESTOP_FILE") or os.path.expanduser("~/.hermes/ESTOP")
+    if os.path.isfile(estop_path):
+        reason = "global emergency stop engaged"
+        try:
+            with open(estop_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    reason = f"global emergency stop: {content}"
+        except Exception:
+            pass
+        return True, reason
+    return False, "operational"
+
+
+class ResourcePressureGuard:
+    """Monitors host memory and load average to prevent RAM exhaustion."""
+
+    @staticmethod
+    def get_host_memory_available_gb() -> float:
+        try:
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        kb = int(line.split()[1])
+                        return kb / (1024.0 * 1024.0)
+        except Exception:
+            pass
+        return 8.0
+
+    @staticmethod
+    def get_load_average_1m() -> float:
+        try:
+            return os.getloadavg()[0]
+        except Exception:
+            return 1.0
+
+    @classmethod
+    def is_under_pressure(cls, min_free_ram_gb: float = 2.0, max_load_1m: float = 12.0) -> Tuple[bool, str]:
+        free_ram = cls.get_host_memory_available_gb()
+        load_1m = cls.get_load_average_1m()
+        if free_ram < min_free_ram_gb:
+            return True, f"Low RAM: {free_ram:.2f} GiB available < threshold {min_free_ram_gb:.2f} GiB"
+        if load_1m > max_load_1m:
+            return True, f"High load average: {load_1m:.2f} > threshold {max_load_1m:.2f}"
+        return False, "Host resources healthy"
+
+
 class TaskDispatcher:
     """Dispatches validated tasks to worker sessions or records queue entries."""
 
@@ -282,11 +331,37 @@ class TaskDispatcher:
         if action not in self.registry.allowed_actions:
             return False, f"Action '{action}' is not in allowed actions: {self.registry.allowed_actions}"
 
+        # Resource Pressure Guard check for heavy tasks
+        is_heavy = task.get("is_heavy", False) or action in ("build", "sanitizer")
+        under_pressure, pressure_msg = ResourcePressureGuard.is_under_pressure()
+        if is_heavy and under_pressure:
+            logger.warning(f"Task deferred due to host resource pressure: {pressure_msg}")
+            return False, f"DEFERRED_RESOURCE_PRESSURE: {pressure_msg}"
+
         dispatch_info = worker_info.get("dispatch_mechanism", {})
         dispatch_type = dispatch_info.get("type")
 
         mission = task.get("mission", "unknown-mission")
         summary = f"[{worker_id}] Task {mission}: {action} - {task.get('objective', '')}"
+
+        # Sync to Hermes Kanban if board is available
+        kanban_board = task.get("kanban_board", "hg-orchestration")
+        idempotency_key = f"{mission}-{task.get('id', int(time.time()))}"
+        title = f"[{worker_id}] {mission}: {action}"
+        body = f"Objective: {task.get('objective', '')}\nPayload: {json.dumps(task)}"
+        try:
+            kanban_cmd = [
+                "hermes", "kanban", "--board", kanban_board, "create",
+                "--assignee", worker_id,
+                "--idempotency-key", idempotency_key,
+                title,
+                "--body", body,
+                "--json"
+            ]
+            if not self.dry_run:
+                subprocess.run(kanban_cmd, capture_output=True, text=True, timeout=10)
+        except Exception as ke:
+            logger.warning(f"Kanban sync warning (non-fatal): {ke}")
 
         if self.dry_run:
             logger.info(f"[DRY-RUN] Would dispatch to {worker_id} ({dispatch_type}): {summary}")
@@ -342,6 +417,11 @@ class SharedTaskWatcher:
             return {"status": "locked", "dispatched": 0}
 
         try:
+            is_paused, pause_reason = is_hermes_paused()
+            if is_paused:
+                logger.warning(f"SharedTaskWatcher: Dispatch paused ({pause_reason})")
+                return {"status": "paused", "reason": pause_reason, "dispatched": 0, "rejected": 0}
+
             state = self.state_mgr.load()
             dispatched_count = 0
             rejected_count = 0
@@ -361,8 +441,8 @@ class SharedTaskWatcher:
                 worker_id = worker_info["worker_id"]
 
                 # Fetch comments
-                if comments_override and issue_num in comments_override:
-                    comments = comments_override[issue_num]
+                if comments_override is not None:
+                    comments = comments_override.get(issue_num, [])
                 else:
                     last_since = state["last_poll_timestamps"].get(str(issue_num))
                     comments = self.fetch_comments_via_gh(issue_num, since=last_since)
@@ -466,6 +546,7 @@ def main() -> None:
 
     poll_parser = subparsers.add_parser("poll", help="Run a single poll cycle")
     poll_parser.add_argument("--dry-run", action="store_true", help="Parse without executing dispatches")
+    poll_parser.add_argument("--live", action="store_true", help="Explicit live dispatch mode")
     poll_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
 
     status_parser = subparsers.add_parser("status", help="Show orchestrator and worker status")
