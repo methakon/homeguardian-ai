@@ -96,6 +96,40 @@ else
   no "anonymous-client negative control" "endpoint unreachable"
 fi
 
+say "5b. APPLICATION ACK: an authenticated device client sends an observation and is acknowledged"
+# TLS proves a handshake. It does NOT prove the application accepted anything, so this runs the repo's own
+# hg_device_client against the local receiver. An ACK here is application-level evidence; a failure to run the
+# client is reported as NOT OBSERVED with the reason, never as a pass.
+ACK_STATUS="not-observed"
+if [ "$REACHABLE" = "1" ]; then
+  C="$(docker ps --format '{{.Names}}' | grep -iE 'ingress' | head -1)"
+  if [ -n "$C" ] && docker exec "$C" sh -lc 'command -v hg_device_client >/dev/null 2>&1'; then
+    DEV_ID="$(basename "${DEVCRT:-hg-device}" | sed 's/\.[^.]*$//')"
+    ACK=$(docker exec "$C" sh -lc "hg_device_client --ca /etc/homeguardian/certs/ca/ca.crt \
+          --cert /etc/homeguardian/certs/devices/${DEV_ID}.crt \
+          --key  /etc/homeguardian/device-keys/${DEV_ID}.key \
+          --device-id ${DEV_ID} --host 127.0.0.1 --port 8443 --count 1 --mode normal 2>&1" || true)
+    ACK_STATUS="ran"
+    if printf '%s' "$ACK" | grep -qiE 'ack|accepted|ok'; then
+      ok "application ACK received: $(printf '%s' "$ACK" | tr '\n' ' ' | tail -c 100)"
+    else
+      bad "application ACK" "$(printf '%s' "$ACK" | tr '\n' ' ' | tail -c 140)"
+    fi
+    echo "   -- negative control: a replay of the same frame must be refused --"
+    NEG2=$(docker exec "$C" sh -lc "hg_device_client --ca /etc/homeguardian/certs/ca/ca.crt \
+           --cert /etc/homeguardian/certs/devices/${DEV_ID}.crt \
+           --key  /etc/homeguardian/device-keys/${DEV_ID}.key \
+           --device-id ${DEV_ID} --host 127.0.0.1 --port 8443 --count 1 --mode replay 2>&1" || true)
+    if printf '%s' "$NEG2" | grep -qiE 'reject|refus|replay'; then
+      ok "a replayed frame was refused"
+    else
+      no "replay control" "$(printf '%s' "$NEG2" | tr '\n' ' ' | tail -c 100)"
+    fi
+  else
+    no "application ACK" "no ingress container with hg_device_client on PATH"
+  fi
+fi
+
 say "5. did a DEVICE produce an observation? (never inferred from a handshake)"
 echo "   This script cannot and will not answer that. It needs the device leg (#24) or a camera, and evidence"
 echo "   must come from the ingress's own durable counters:"
@@ -117,8 +151,8 @@ say "summary"
 printf '  PASS %d · FAIL %d · NOT OBSERVED %d\n' "$PASS" "$FAIL" "$NOTOBS"
 if [ -n "$EVIDENCE" ]; then
   {
-    printf '{"endpoint":"%s:%s","reachable":%s,"pass":%d,"fail":%d,"not_observed":%d,"sha":"%s","at":"%s"}\n' \
-      "$HOST" "$PORT" "$([ "$REACHABLE" = 1 ] && echo true || echo false)" "$PASS" "$FAIL" "$NOTOBS" \
+    printf '{"endpoint":"%s:%s","reachable":%s,"application_ack":"%s","pass":%d,"fail":%d,"not_observed":%d,"sha":"%s","at":"%s"}\n' \
+      "$HOST" "$PORT" "$([ "$REACHABLE" = 1 ] && echo true || echo false)" "$ACK_STATUS" "$PASS" "$FAIL" "$NOTOBS" \
       "$(git rev-parse HEAD 2>/dev/null || echo unknown)" "$(date -Is)"
   } > "$EVIDENCE"
   echo "  evidence -> $EVIDENCE"
