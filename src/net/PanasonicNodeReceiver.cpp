@@ -142,11 +142,12 @@ PanasonicNodeReceiver::Result PanasonicNodeReceiver::accept_line(const PeerConte
 
     // Schema handling.
     if (parsed.schema_version == kSchemaVersionAbsent) {
+        // Counted, never ASSUMED: an absent version is not silently read as the version this receiver
+        // implements. Under strict mode it is refused outright.
         ++schema_absent_;
         if (cfg_.require_schema_version) {
             out.reason = "missing_schema_version";
-            out.detail = "schema_version is required under finalized contract (expected " +
-                         std::to_string(kNodeSchemaVersion) + ")";
+            out.detail = "strict mode: the producer must send schema_version on every line";
             ++refused_;
             return out;
         }

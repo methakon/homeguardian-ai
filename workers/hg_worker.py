@@ -47,7 +47,8 @@ ALLOWED_ACTIONS = {"implement", "test", "review", "report", "investigate"}
 STATES = ["QUEUED", "CLAIMED", "RUNNING", "TESTING", "COMMITTED", "REPORTED", "COMPLETE", "BLOCKED", "FAILED"]
 MARKER = "hg-task"
 # SPOOFING: the payload being well-formed is NOT authorization. Only these GitHub accounts may issue tasks.
-AUTHORIZED_ISSUERS = {u.strip() for u in (os.environ.get("HG_WORKER_ISSUERS") or "methakon").split(",") if u.strip()}
+AUTHORIZED_ISSUERS = {u.strip() for u in (os.environ.get("HG_WORKER_ISSUERS")
+                                          or "methakon,msekhardhar-cell").split(",") if u.strip()}
 # The native Hermes Kanban board this worker mirrors its lifecycle onto (a board is rows in the existing
 # kanban.db - not a second database, and not a second scheduler).
 KANBAN_BOARD = os.environ.get("HG_WORKER_KANBAN_BOARD") or "hg-orchestration"
@@ -62,12 +63,53 @@ IN_FLIGHT = ("CLAIMED", "RUNNING", "TESTING", "COMMITTED", "REPORTED")
 # silently stopped watching is the worst failure this loop can have. So a dispatch that the board never picked
 # up is released back to BLOCKED after this window, loudly, instead of stalling the worker in silence.
 DISPATCH_STALE_SECONDS = 900
+# FOUND BY RUNNING IT: a dispatched run spawned and then died at once - `worker_result {exit_code: 75}` with
+# `last_output` saying the free tier of gemini-3.6-flash was exhausted. The dispatcher inherited a provider
+# that cannot sustain an agent session, so the work never happened. A dispatch must therefore NAME the provider
+# it needs instead of inheriting whatever happens to be default.
+DISPATCH_MODEL = os.environ.get("HG_WORKER_DISPATCH_MODEL") or "deepseek/deepseek-v4-flash"
+DISPATCH_PROVIDER = os.environ.get("HG_WORKER_DISPATCH_PROVIDER") or "commandcode"
 # Memory pressure: a heavy C++ build is deferred rather than started when the host is already loaded.
 PRESSURE_MIN_AVAILABLE_MB = 2048
 PRESSURE_MAX_LOAD_FRACTION = 0.8
+# ONE heavy local job across ALL workers. Deliberately NOT per-worker state: the point of a global limit is
+# that two workers cannot each decide they are the only one running.
+HEAVY_SLOT = os.path.join(os.environ.get("HG_RESOURCE_DIR") or os.path.expanduser("~/.hermes/state/hg-resources"),
+                          "heavy.lock")
+HEAVY_SLOT_MAX_HOLD_S = 3600
 
 
 # ----------------------------------------------------------------------------- state (one JSON file, atomic)
+
+def _which(name: str) -> str:
+    """Resolve a binary WITHOUT depending on PATH.
+
+    FOUND BY THE SCHEDULER, not by me: run from an interactive shell the watcher had `gh` on PATH, but the
+    gateway spawns cron jobs with a minimal environment and every tick died with
+    `No such file or directory: 'gh'`. A watcher that only works when a human is logged in is not a watcher.
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+    for folder in ("~/.local/bin", "~/.hermes/bin", "~/.nvm/versions/node", "/usr/local/bin",
+                   "/usr/bin", "/bin", "/snap/bin"):
+        candidate = os.path.join(os.path.expanduser(folder), name)
+        if os.path.exists(candidate):
+            return candidate
+        if folder.startswith("~/.nvm"):            # nvm keeps bins one glob deep
+            base = os.path.expanduser(folder)
+            if os.path.isdir(base):
+                for version in sorted(os.listdir(base), reverse=True):
+                    deeper = os.path.join(base, version, "bin", name)
+                    if os.path.exists(deeper):
+                        return deeper
+    return name                                    # unresolved: fail loudly at the call site, not silently
+
+
+GH = _which("gh")
+HERMES_BIN = _which("hermes")
+KAGGLE_BIN = _which("kaggle")
+
 
 def _paths():
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -316,7 +358,7 @@ def defer_if_pressured(state: dict, mission: str, reader=None) -> bool:
 
 def kanban_argv(action: str, *args) -> list:
     """The exact command shape this worker shells out to. Pure, so it is asserted offline."""
-    base = ["hermes", "kanban", "--board", KANBAN_BOARD]
+    base = [HERMES_BIN, "kanban", "--board", KANBAN_BOARD]
     return base + [action] + [str(a) for a in args]
 
 
@@ -368,7 +410,7 @@ def kaggle_verify(ref: str, status_provider=None, success_token: str = "complete
     that is somehow still queued is not 'released', and this refuses to call that a success."""
     if status_provider is None:
         def status_provider(r):
-            out = subprocess.run(["kaggle", "kernels", "status", r], capture_output=True, text=True, timeout=90)
+            out = subprocess.run([KAGGLE_BIN, "kernels", "status", r], capture_output=True, text=True, timeout=90)
             return (out.stdout or "") + (out.stderr or "")
     try:
         text = (status_provider(ref) or "").lower()
@@ -382,6 +424,57 @@ def kaggle_verify(ref: str, status_provider=None, success_token: str = "complete
         if busy in text and busy != success_token:
             return False, f"still {busy} after completion: resources not released"
     return True, f"complete and released: {text.strip()[:120]}"
+
+
+# --------------------------------------------------- the global heavy-job slot (cross-worker resource limit)
+
+def _slot_info() -> dict:
+    try:
+        with open(HEAVY_SLOT, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def heavy_slot_holder(now=None) -> str:
+    """"" when the slot is free, else a description of the holder. A slot whose holder is gone, or whose hold
+    has expired, is not a holder - a crashed worker must never wedge the whole fleet."""
+    info = _slot_info()
+    if not info:
+        return ""
+    now = now or time.time()
+    held_for = now - float(info.get("at") or 0)
+    if held_for > HEAVY_SLOT_MAX_HOLD_S:
+        return ""
+    pid = int(info.get("pid") or 0)
+    if pid and not _pid_alive(pid):
+        # A finished dispatch leaves no live pid; the slot is released by mission instead (see release below).
+        return f"{info.get('worker','?')}:{info.get('mission','?')} (holder pid {pid} has exited)"
+    return f"{info.get('worker','?')}:{info.get('mission','?')}"
+
+
+def acquire_heavy_slot(mission: str, now=None) -> tuple:
+    os.makedirs(os.path.dirname(HEAVY_SLOT), exist_ok=True)
+    holder = heavy_slot_holder(now)
+    if holder:
+        return False, holder
+    tmp = HEAVY_SLOT + f".{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"worker": WORKER_ID, "mission": mission, "pid": os.getpid(),
+                   "at": now or time.time()}, fh)
+    os.replace(tmp, HEAVY_SLOT)                      # atomic: two workers cannot both think they won
+    return True, "acquired"
+
+
+def release_heavy_slot(mission: str) -> bool:
+    info = _slot_info()
+    if info.get("mission") == mission and info.get("worker") == WORKER_ID:
+        try:
+            os.unlink(HEAVY_SLOT)
+        except OSError:
+            return False
+        return True
+    return False
 
 
 # --------------------------------------------- the other direction: tasks the board assigns TO this worker
@@ -434,6 +527,24 @@ def kanban_intake(state: dict, lister=None) -> tuple:
 
 # ------------------------------------------------------------------ the watcher loop (detect -> dispatch)
 
+def claim_execution(state: dict, mission: str, executor: str) -> tuple:
+    """Exactly one executor per task. Returns (ok, detail).
+
+    Seen for real: a task can be reachable by more than one path - the Kanban dispatcher spawns a run AND the
+    session can decide to do the work itself. Nothing about either path knows about the other, so the claim is
+    recorded on the task and a second executor is refused. Re-claiming as the SAME executor is idempotent.
+    """
+    task = state.get("tasks", {}).get(mission)
+    if task is None:
+        return False, "unknown mission"
+    prior = task.get("executor")
+    if prior and prior != executor:
+        return False, f"already executed by {prior}"
+    task["executor"] = executor
+    task["updated_at"] = time.time()
+    return True, "already claimed by this executor" if prior else "claimed"
+
+
 def is_inflight(task: dict) -> bool:
     """RUNNING means work is happening. CLAIMED only means the assignment was taken up: a claimed task that has
     NOT been dispatched yet is waiting to start, not running. Treating the two as the same was a real defect -
@@ -464,25 +575,83 @@ def _kanban_show_status(task_id: str) -> str:
     return ""
 
 
-def release_stale_dispatches(state: dict, now=None, status_fn=None, window: int = DISPATCH_STALE_SECONDS) -> list:
-    """Return the list of missions released from a dispatch that never took effect."""
-    released = []
+def _kanban_run_failure(task_id: str) -> str:
+    """A short reason if the board recorded a FAILED worker run for this task, else "".
+
+    The board can leave a dead run marked `running` (observed: exit_code 75 while the run stayed active), and a
+    zombie like that would hold the busy gate shut forever. A failed run is authoritative over the status."""
+    if not task_id:
+        return ""
+    ok, out = _kanban_run(kanban_argv("show", task_id))
+    if not ok:
+        return ""
+    for line in out.splitlines():
+        if "spawn_failed" in line or "gave_up" in line:
+            short = re.search(r"error['\"]?:\s*['\"]?(.{0,120})", line)
+            return f"spawn failed - {short.group(1)}" if short else "spawn failed"
+        if "worker_result" in line and "'exit_code'" in line:
+            match = re.search(r"'exit_code':\s*(-?\d+)", line)
+            if match and int(match.group(1)) != 0:
+                tail = re.search(r"'last_output':\s*'(.{0,140})", line)
+                return f"exit_code {match.group(1)}" + (f" - {tail.group(1)}" if tail else "")
+    return ""
+
+
+def release_stale_dispatches(state: dict, now=None, status_fn=None, failure_fn=None,
+                             window: int = DISPATCH_STALE_SECONDS) -> tuple:
+    """Reconcile dispatches against the board. Returns (released, completed).
+
+    This is what CLOSES the loop: the work is done by whoever the dispatcher spawned, and nothing tells this
+    worker when that happens - so the board is the source of truth. `done` means the work finished and the
+    watcher must resume; a task the board never picked up is released LOUDLY to BLOCKED rather than quietly
+    holding the gate shut forever.
+    """
+    released, completed = [], []
     now = now or time.time()
-    for mission, task in state.get("tasks", {}).items():
+    for mission, task in sorted(state.get("tasks", {}).items()):
         dispatched = task.get("dispatched")
         if not dispatched or task.get("state") != "CLAIMED":
             continue
-        age = now - float(dispatched.get("at") or 0)
-        if age < window:
+        # Age unknown (a malformed record) is NOT treated as infinitely old: that would block a task that may
+        # well be running. This worker always writes `at`, so this is only about damaged state.
+        at = float(dispatched.get("at") or task.get("updated_at") or 0)
+        board_now = (status_fn or _kanban_show_status)(dispatched.get("kanban_task_id", ""))
+        failure_now = (failure_fn or _kanban_run_failure)(dispatched.get("kanban_task_id", ""))
+        # A board VERDICT is immediate, whatever the clock says. Waiting the full window for a spawn failure or
+        # a blocked task is exactly how this worker sat idle while two queued tasks were stuck: the state said
+        # "in flight" (observed: spawn_failed x2 -> gave_up -> blocked) and the watcher stayed inactive.
+        verdict = bool(failure_now) or board_now in ("blocked", "failed", "archived")
+        if not verdict and (at <= 0 or now - at < window):
             continue
-        board = (status_fn or _kanban_show_status)(dispatched.get("kanban_task_id", ""))
-        if board in ("running", "done", "review"):
-            continue                              # the executor really does have it: leave it in flight
+        failure = failure_now
+        if failure:
+            # A run that died is not "in flight", whatever the board's status still says.
+            task["state"] = "BLOCKED"
+            task["blocked_reason"] = f"the dispatched run failed ({failure})"
+            task["updated_at"] = now
+            released.append(mission)
+            continue
+        board = board_now
+        if board in ("blocked", "failed", "archived"):
+            task["state"] = "BLOCKED"
+            task["blocked_reason"] = f"the board marked this {board}: the dispatch did not run"
+            task["updated_at"] = now
+            released.append(mission)
+            continue
+        if board in ("running", "review"):
+            continue                                   # the executor really does have it: leave it in flight
+        release_heavy_slot(mission)
+        if board == "done":
+            task["state"] = "COMPLETE"
+            task["completed_by"] = "board: the dispatched run finished"
+            task["updated_at"] = now
+            completed.append(mission)
+            continue
         task["state"] = "BLOCKED"
-        task["blocked_reason"] = (f"dispatched {int(age)}s ago but the board shows "
+        task["blocked_reason"] = (f"dispatched {int(now - at)}s ago but the board shows "
                                   f"'{board or 'absent'}' - the dispatch never took effect")
         released.append(mission)
-    return released
+    return released, completed
 
 
 def dispatch_argv(mode: str, mission: str, detail: str, branch: str, task_id: str = "") -> list:
@@ -495,14 +664,20 @@ def dispatch_argv(mode: str, mission: str, detail: str, branch: str, task_id: st
     """
     brief = (f"{mission}\n\n{detail}\n\nWork in the worktree {WORKTREE} (branch {branch}) of "
              f"methakon/homeguardian-ai. "
-             f"Run the focused suites, record the exact SHA, and report to issue #{ISSUE} with the "
+             f"If this work is ALREADY on the branch (check the recent commit log first), do NOT do it again - "
+             f"verify it and report that instead. Run the focused suites, record the exact SHA, and report to issue #{ISSUE} with the "
              f"WORKER/TASK/SHA/TESTS format. Commit and push to the assigned branch. Never merge to main.")
     if mode == "kanban":
+        # `--workspace worktree --branch` is what puts the spawned worker in the REAL project worktree. Without
+        # it the run happens in a scratch dir and cannot commit to the assigned branch - which is how the flag
+        # error ("--branch is only valid with --workspace worktree") turned out to be a design hint, not noise.
         return kanban_argv("create", "--json", "--idempotency-key", f"{WORKER_ID}:{mission}",
-                           "--assignee", "default", "--created-by", WORKER_ID, "--body", brief,
+                           "--assignee", "default", "--created-by", WORKER_ID,
+                           "--workspace", f"worktree:{WORKTREE}", "--branch", branch,
+                           "--model", DISPATCH_MODEL, "--provider", DISPATCH_PROVIDER, "--body", brief,
                            f"[{WORKER_ID}] {mission}")
     if mode == "resume":
-        return ["hermes", "--resume", SESSION_ID, "-z", brief]
+        return [HERMES_BIN, "--resume", SESSION_ID, "-z", brief]
     raise ValueError(f"unknown dispatch mode: {mode}")
 
 
@@ -516,18 +691,33 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
     Returns (status, detail) with status in {busy, idle, dispatched, failed}.
     """
     fetch = fetch or fetch_comments_gh
-    released = release_stale_dispatches(state, now=now)      # a stalled dispatch must never freeze the loop
+    released, completed = release_stale_dispatches(state, now=now)   # closes the loop and unsticks it
     inflight = inflight_tasks(state)
     if inflight:
         # Busy gate FIRST, before any network call: while work is running the watcher must not even look.
         return "busy", f"in flight: {', '.join(inflight)} — inactive until it completes"
 
-    try:
-        comments = fetch()
-    except Exception as exc:                                     # noqa: BLE001 - reported, never swallowed
-        return "failed", f"could not read the queue: {exc}"
+    head = issue_head() if fetch is fetch_comments_gh else {}
+    if head and queue_unchanged(state, head):
+        # nothing has changed on the issue: skip the full paginated read entirely (light idle polling)
+        try:
+            intake_started, intake_detail = kanban_intake(state, lister)
+        except Exception:                                        # noqa: BLE001
+            intake_started, intake_detail = 0, "board not readable"
+        pending_queued = [m for m in sorted(state["tasks"])
+                          if state["tasks"][m].get("state") == "CLAIMED" and not state["tasks"][m].get("dispatched")]
+        if not pending_queued:
+            return "idle", f"queue unchanged (#{head.get('comments')} comments) — no full fetch"
+        comments = []
+        head = {}
+    else:
+        try:
+            comments = fetch()
+        except Exception as exc:                                 # noqa: BLE001 - reported, never swallowed
+            return "failed", f"could not read the queue: {exc}"
 
     poll(comments, state, issue=ISSUE)
+    state["issue_head"] = head
     intake_started, _intake_detail = kanban_intake(state, lister)
     pending = [m for m in sorted(state["tasks"])
                if state["tasks"][m].get("state") == "CLAIMED" and not state["tasks"][m].get("dispatched")]
@@ -538,11 +728,36 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
         state["deferred_missions"] = pending[1:]
     mission = pending[0]
     task = state["tasks"][mission]
+    # GLOBAL limit: one heavy local job across the workers. A task needing the slot waits QUEUED, not dropped.
+    holder = heavy_slot_holder(now)
+    if holder and holder.split(":")[-1] not in ("", mission):
+        task["queued_reason"] = f"heavy slot held by {holder}"
+        return "idle", f"{mission} waits: heavy slot held by {holder}"
+    executor = f"dispatch:{mode}"
+    allowed, why = claim_execution(state, mission, executor)
+    if not allowed:
+        return "idle", f"{mission} not dispatched: {why}"
     if mode == "dry-run":
         return "dispatched", "dry-run: " + " ".join(dispatch_argv("kanban", mission, task.get("notes", ""), BRANCH))
+    if not acquire_heavy_slot(mission, now)[0]:
+        task["queued_reason"] = "heavy slot taken between check and acquire"
+        return "idle", f"{mission} queued: heavy slot unavailable"
     argv = dispatch_argv(mode, mission, task.get("notes", ""), BRANCH)
     runner = runner or _kanban_run
     ok, out = runner(argv)
+    if mode == "kanban" and ok:
+        # FOUND ON LIVE DATA: when the idempotency key matches an existing task, `create` returns that task
+        # WITHOUT applying --model/--provider, so a retry silently inherits the provider that just failed.
+        # `set-model` is the documented verb for pinning an existing task's worker.
+        try:
+            blob = (out or "").strip()
+            existing = json.loads(blob[blob.index("{"):]).get("id")
+        except (ValueError, IndexError):
+            existing = None
+        if existing:
+            fixed, _note = _kanban_run(kanban_argv("set-model", existing, DISPATCH_MODEL,
+                                                   "--provider", DISPATCH_PROVIDER))
+            task["model_pinned"] = bool(fixed)
     kid = ""
     try:
         blob = (out or "").strip()
@@ -569,9 +784,10 @@ def _try(fn):
 
 def selftest() -> int:
     """Offline validation matrix. No network, no gh, no git mutation."""
-    global STATE_DIR
-    old = STATE_DIR
+    global STATE_DIR, HEAVY_SLOT
+    old, old_slot = STATE_DIR, HEAVY_SLOT
     STATE_DIR = tempfile.mkdtemp(prefix="hg-worker-selftest-")
+    HEAVY_SLOT = os.path.join(STATE_DIR, "heavy.lock")   # isolate the GLOBAL slot too, or the test reads live state
     failures = []
 
     def check(name, condition, detail=""):
@@ -702,10 +918,19 @@ def selftest() -> int:
     # 13. KANBAN MIRROR: the native queue, addressed as the CLI actually documents it
     argv = kanban_argv("create", "--json", "--idempotency-key", f"{WORKER_ID}:M1", "title")
     check("kanban command shape is the documented one",
-          argv[:3] == ["hermes", "kanban", "--board"] and argv[3] == KANBAN_BOARD and argv[4] == "create", str(argv))
+          argv[0].endswith("hermes") and argv[1:3] == ["kanban", "--board"]
+          and argv[3] == KANBAN_BOARD and argv[4] == "create", str(argv))
+    # THE SCHEDULER BUG: binaries must resolve without PATH, because the gateway spawns jobs with a minimal env
+    check("gh is resolved to an ABSOLUTE path (the scheduler has no PATH)",
+          os.path.isabs(GH), GH)
+    check("hermes is resolved to an ABSOLUTE path", os.path.isabs(HERMES_BIN), HERMES_BIN)
+    check("the fetch uses the resolved gh, never the bare name",
+          comments_argv()[0] == GH and "/" in comments_argv()[0], comments_argv()[0])
+    check("the head call uses the resolved gh too", issue_head_argv()[0] == GH, issue_head_argv()[0])
     check("the mirror carries a native idempotency key", f"{WORKER_ID}:M1" in argv)
     check("lifecycle verbs are the documented ones",
-          kanban_argv("claim", "t1")[:4] == ["hermes", "kanban", "--board", KANBAN_BOARD]
+          kanban_argv("claim", "t1")[0].endswith("hermes")
+          and kanban_argv("claim", "t1")[1:4] == ["kanban", "--board", KANBAN_BOARD]
           and kanban_argv("claim", "t1")[4] == "claim")
     check("block carries a reason", kanban_argv("block", "t1", "tests failed")[4:] == ["block", "t1", "tests failed"])
 
@@ -737,7 +962,7 @@ def selftest() -> int:
     check("watcher dispatches a new assignment", status == "dispatched", f"{status}: {detail}")
     check("dry-run dispatch does not touch kanban", "kanban" in detail and "create" in detail, detail)
     # after a real dispatch the task is in flight, so the watcher goes INACTIVE and must not even fetch
-    loop_state["tasks"]["LOOP-1"]["dispatched"] = {"mode": "kanban", "ok": True}
+    loop_state["tasks"]["LOOP-1"]["dispatched"] = {"mode": "kanban", "ok": True, "at": time.time()}
     calls = []
     status, detail = watch(loop_state, fetch=lambda: calls.append(1) or [], mode="dry-run")
     check("watcher is inactive while a task is in flight", status == "busy", f"{status}: {detail}")
@@ -765,7 +990,7 @@ def selftest() -> int:
     check("once the first completes, the held-back task starts (the loop resumes)",
           watch(st3, fetch=lambda: [], mode="dry-run")[0] == "dispatched", str(watch(st3, fetch=lambda: [], mode="dry-run")))
     # idempotent across a repeated tick: the same task is never dispatched twice
-    seen = {"tasks": {"LOOP-3": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "ok": True}}},
+    seen = {"tasks": {"LOOP-3": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "ok": True, "at": time.time()}}},
             "processed": {}, "rejected": []}
     calls = []
     watch(seen, fetch=lambda: [], runner=lambda a: (calls.append(a), (True, "ok"))[1], mode="kanban")
@@ -775,17 +1000,22 @@ def selftest() -> int:
           watch(empty, fetch=lambda: [], mode="dry-run")[0] == "idle")
     # the two dispatch modes are the documented command shapes and nothing else
     check("kanban dispatch uses the native dispatcher",
-          dispatch_argv("kanban", "M", "d", BRANCH)[:5] == ["hermes", "kanban", "--board", KANBAN_BOARD, "create"])
+          dispatch_argv("kanban", "M", "d", BRANCH)[0].endswith("hermes")
+          and dispatch_argv("kanban", "M", "d", BRANCH)[1:5] == ["kanban", "--board", KANBAN_BOARD, "create"])
     check("resume dispatch wakes an explicit session id, never 'latest'",
-          dispatch_argv("resume", "M", "d", BRANCH)[:4] == ["hermes", "--resume", SESSION_ID, "-z"])
+          dispatch_argv("resume", "M", "d", BRANCH)[1:4] == ["--resume", SESSION_ID, "-z"])
     check("the dispatch brief forbids merging to main",
           "Never merge to main" in dispatch_argv("kanban", "M", "d", BRANCH)[-2])
+    check("dispatch puts the worker in the real worktree, not a scratch dir",
+          any(a.startswith("worktree:") for a in dispatch_argv("kanban", "M", "d", BRANCH))
+          and BRANCH in dispatch_argv("kanban", "M", "d", BRANCH),
+          str(dispatch_argv("kanban", "M", "d", BRANCH)))
     check("unknown dispatch modes are refused", _try(lambda: dispatch_argv("whatever", "M", "d", BRANCH)) is False)
 
     # 17b. LIVENESS: a dispatch that never started must not freeze the watcher forever
     stale = {"tasks": {"S-1": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time() - 4000,
                                                                    "ok": True, "kanban_task_id": "t_dead"}}}}
-    rel = release_stale_dispatches(stale, status_fn=lambda t: "ready")
+    rel, done = release_stale_dispatches(stale, status_fn=lambda t: "ready")
     check("a dispatch the board never picked up is released", rel == ["S-1"], str(rel))
     check("it is released to BLOCKED with a reason, not retried blindly",
           stale["tasks"]["S-1"]["state"] == "BLOCKED" and "never took effect" in stale["tasks"]["S-1"]["blocked_reason"])
@@ -794,9 +1024,58 @@ def selftest() -> int:
     live = {"tasks": {"S-2": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time() - 4000,
                                                                   "ok": True, "kanban_task_id": "t_live"}}}}
     check("a dispatch the board IS running is left in flight",
-          release_stale_dispatches(live, status_fn=lambda t: "running") == [] and inflight_tasks(live) == ["S-2"])
+          release_stale_dispatches(live, status_fn=lambda t: "running") == ([], []) and inflight_tasks(live) == ["S-2"])
     fresh = {"tasks": {"S-3": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time(), "ok": True}}}}
-    check("a fresh dispatch is not released", release_stale_dispatches(fresh, status_fn=lambda t: "ready") == [])
+    check("a fresh dispatch is not released", release_stale_dispatches(fresh, status_fn=lambda t: "ready") == ([], []))
+    # THE LOOP CLOSES: the dispatched run finished, and the board is what says so
+    fin = {"tasks": {"S-4": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time() - 4000,
+                                                                 "ok": True, "kanban_task_id": "t_fin"}}}}
+    rel, done = release_stale_dispatches(fin, status_fn=lambda t: "done")
+    check("a finished dispatched run closes the task", done == ["S-4"] and fin["tasks"]["S-4"]["state"] == "COMPLETE")
+    check("the watcher resumes once the executed work is finished", inflight_tasks(fin) == [])
+    damaged = {"tasks": {"S-5": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "ok": True, "kanban_task_id": "t_x"}}}}
+    # a DEAD run must release the gate even while the board still calls it running
+    dead = {"tasks": {"S-6": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time() - 4000,
+                                                                 "ok": True, "kanban_task_id": "t_deadrun"}}}}
+    rel, _ = release_stale_dispatches(dead, status_fn=lambda t: "running",
+                                      failure_fn=lambda t: "exit_code 75 - free tier exhausted")
+    check("a failed dispatched run releases the gate", rel == ["S-6"], str(rel))
+    check("the failure reason is recorded on the task",
+          "dispatched run failed" in dead["tasks"]["S-6"]["blocked_reason"], dead["tasks"]["S-6"]["blocked_reason"])
+    check("a dead run is not left holding the watcher inactive", inflight_tasks(dead) == [])
+    check("dispatch NAMES its provider instead of inheriting a broken default",
+          "--provider" in dispatch_argv("kanban", "M", "d", BRANCH)
+          and "--model" in dispatch_argv("kanban", "M", "d", BRANCH),
+          str(dispatch_argv("kanban", "M", "d", BRANCH)[:14]))
+    check("a record with no timestamp is not presumed stalled",
+          release_stale_dispatches(damaged, status_fn=lambda t: "ready") == ([], []))
+
+    # 17a. THE STALL THE OWNER SPOTTED: a board verdict must release at once, not after the window
+    stuck = {"tasks": {"S-B": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time(),
+                                                                   "ok": True, "kanban_task_id": "t_blk"}}}}
+    rel, _ = release_stale_dispatches(stuck, status_fn=lambda t: "blocked", failure_fn=lambda t: "")
+    check("a board-blocked task releases immediately, not after the stale window", rel == ["S-B"], str(rel))
+    check("and it no longer holds the watcher inactive", inflight_tasks(stuck) == [])
+    spawn = {"tasks": {"S-S": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time(),
+                                                                  "ok": True, "kanban_task_id": "t_sp"}}}}
+    rel, _ = release_stale_dispatches(spawn, status_fn=lambda t: "ready",
+                                      failure_fn=lambda t: "spawn failed - no workspace_path")
+    check("a spawn failure releases immediately", rel == ["S-S"], str(rel))
+    check("the spawn failure reason is recorded",
+          "spawn failed" in spawn["tasks"]["S-S"]["blocked_reason"], spawn["tasks"]["S-S"]["blocked_reason"])
+    check("dispatch names an ABSOLUTE worktree path, as the dispatcher requires",
+          f"worktree:{WORKTREE}" in dispatch_argv("kanban", "M", "d", BRANCH)
+          and os.path.isabs(WORKTREE), str([a for a in dispatch_argv("kanban", "M", "d", BRANCH) if "worktree" in a]))
+
+    # 16b. DUPLICATE EXECUTION: one executor per task, idempotent for the same one, refused for another
+    dup = {"tasks": {"D-1": {"state": "CLAIMED"}}, "processed": {}, "rejected": []}
+    check("the first executor may claim", claim_execution(dup, "D-1", "dispatch:kanban")[0] is True)
+    ok, why = claim_execution(dup, "D-1", "session")
+    check("a SECOND executor is refused", ok is False and "dispatch:kanban" in why, why)
+    check("the same executor re-claiming is idempotent", claim_execution(dup, "D-1", "dispatch:kanban")[1].startswith("already"))
+    check("an unknown mission cannot be claimed", claim_execution(dup, "NOPE", "session")[0] is False)
+    check("the dispatch brief tells a worker not to duplicate work already on the branch",
+          "do NOT do it again" in dispatch_argv("kanban", "M", "d", BRANCH)[-2])
 
     # 17. KANBAN -> WORKER intake (the direction the dispatcher cannot serve: it logs skipped_nonspawnable)
     kb = {"tasks": {}, "processed": {}, "rejected": []}
@@ -814,12 +1093,61 @@ def selftest() -> int:
     status, _ = watch(kb3, fetch=lambda: [], lister=lambda: contracted, mode="dry-run")
     check("the watcher starts a board-assigned task too", status == "dispatched", status)
 
-    STATE_DIR = old
+    # 18. the mission's added requirements
+    check("the coordinator account is authorized", "msekhardhar-cell" in AUTHORIZED_ISSUERS, str(AUTHORIZED_ISSUERS))
+    check("the owner account is authorized", "methakon" in AUTHORIZED_ISSUERS)
+    check("idle polling asks for ONE small head call, not the whole issue",
+          "--paginate" not in issue_head_argv() and "comments" in issue_head_argv()[-1])
+    check("an unchanged queue is detected", queue_unchanged({"issue_head": {"comments": 34, "updated_at": "t"}},
+                                                            {"comments": 34, "updated_at": "t"}) is True)
+    check("a changed queue is not mistaken for unchanged",
+          queue_unchanged({"issue_head": {"comments": 34, "updated_at": "t"}},
+                          {"comments": 35, "updated_at": "t"}) is False)
+    check("a fresh state is never 'unchanged'", queue_unchanged({}, {"comments": 1, "updated_at": "t"}) is False)
+    check("the heavy slot starts free", heavy_slot_holder() == "")
+    ok1, _ = acquire_heavy_slot("MINE-1")
+    check("the heavy slot can be taken", ok1)
+    ok2, holder = acquire_heavy_slot("OTHER-2")
+    check("a second worker CANNOT take the heavy slot", ok2 is False and "MINE-1" in holder, holder)
+    check("the slot is attributed to the holder", WORKER_ID in heavy_slot_holder())
+    check("releasing someone else's slot is refused", release_heavy_slot("NOT-MINE") is False)
+    check("releasing your own slot works", release_heavy_slot("MINE-1") is True)
+    check("the slot is free again", heavy_slot_holder() == "")
+    check("set-model is used so an EXISTING task still gets the pinned provider",
+          kanban_argv("set-model", "t_x", DISPATCH_MODEL)[4] == "set-model"
+          and "--provider" in kanban_argv("set-model", "t_x", DISPATCH_MODEL, "--provider", DISPATCH_PROVIDER))
+    check("dispatch pins a provider that can actually sustain a session",
+          DISPATCH_PROVIDER and DISPATCH_MODEL, f"{DISPATCH_PROVIDER}/{DISPATCH_MODEL}")
+
+    STATE_DIR, HEAVY_SLOT = old, old_slot
     print(f"\nselftest: {len(failures)} failure(s)")
     return 1 if failures else 0
 
 
 # ---------------------------------------------------------------------------------------------------- CLI
+
+def issue_head_argv() -> list:
+    """ONE small call to decide whether the expensive paginated fetch is needed at all. The mission requires
+    idle polling to stay lightweight, and re-reading 34 comments every minute to learn nothing has changed is
+    not lightweight."""
+    return [GH, "api", f"repos/methakon/homeguardian-ai/issues/{ISSUE}",
+            "--jq", "{comments: .comments, updated_at: .updated_at}"]
+
+
+def issue_head(head_fn=None) -> dict:
+    head_fn = head_fn or (lambda: json.loads(subprocess.run(issue_head_argv(), capture_output=True,
+                                                           text=True, check=True).stdout))
+    try:
+        return head_fn()
+    except Exception:                                # noqa: BLE001 - an unreadable head means "fetch properly"
+        return {}
+
+
+def queue_unchanged(state: dict, head: dict) -> bool:
+    previous = state.get("issue_head") or {}
+    return bool(head) and previous.get("comments") == head.get("comments") \
+        and previous.get("updated_at") == head.get("updated_at")
+
 
 def comments_argv() -> list:
     """The fetch shape, kept pure so the self-test can assert `--paginate` never quietly disappears.
@@ -828,7 +1156,7 @@ def comments_argv() -> list:
     oldest-first. The unpaginated call therefore returned only the OLDEST 30 and the newest assignments -
     including the very task being demonstrated - were never fetched at all. A worker that silently cannot see
     new work is worse than one that fails loudly, so pagination is asserted below."""
-    return ["gh", "api", "--paginate", f"repos/methakon/homeguardian-ai/issues/{ISSUE}/comments",
+    return [GH, "api", "--paginate", f"repos/methakon/homeguardian-ai/issues/{ISSUE}/comments",
             "--jq", ".[] | {id: .id, body: .body, user: .user.login}"]
 
 

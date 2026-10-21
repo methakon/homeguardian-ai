@@ -201,7 +201,7 @@ TEST_CASE("panasonic receiver: malformed, oversized and mis-versioned lines are 
         REQUIRE(r.reason == "unknown_source_type");
     }
     SECTION("oversized line") {
-        PanasonicNodeReceiver small(*h.ingest, PanasonicNodeReceiver::Config{true, 64, 1, 0, nullptr});
+        PanasonicNodeReceiver small(*h.ingest, PanasonicNodeReceiver::Config{.session_is_synthetic = true, .max_line_bytes = 64, .protocol_version_major = 1, .protocol_version_minor = 0});
         REQUIRE_FALSE(small.accept_line(h.peer(), node_line(), h.sink).accepted);
     }
     SECTION("schema version absent is accepted AND counted (the producer sends none today)") {
@@ -264,18 +264,65 @@ TEST_CASE("panasonic receiver: falsy provenance claims are refused, and absence 
         REQUIRE(receiver.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.2, false), h.sink).accepted);
         REQUIRE(receiver.provenance_narrowed() == 1); // narrowed from real session to synthetic
     }
-    SECTION("a synthetic claim on a REAL session is accepted and NARROWED") {
+    SECTION("a synthetic claim on a REAL session is accepted and NARROWED (the REVERSE direction)") {
+        // The reciprocal case to `provenance_claim_widens_session`: a node honestly declaring its own data
+        // simulated. Narrowing is always allowed, so this direction must ACCEPT - an honest declaration is
+        // never punished as if it were a falsy claim.
         Harness h;
         PanasonicNodeReceiver::Config cfg;
         cfg.session_is_synthetic = false;
         PanasonicNodeReceiver receiver(*h.ingest, cfg);
-        REQUIRE(receiver.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.2, true, "synthetic"),
-                                     h.sink)
-                    .accepted);
+        json honest;
+        honest["source_type"] = "motion";
+        honest["observation_type"] = "motion-changed-fraction";
+        honest["value"] = 0.2;
+        honest["provenance"] = "synthetic";
+        const auto r = receiver.accept_line(h.peer(), honest.dump(), h.sink);
+        INFO("reason=" << r.reason << " detail=" << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(r.reason == "accepted");
+        REQUIRE(receiver.provenance_refused() == 0);
+        REQUIRE(receiver.lines_refused() == 0);
+        REQUIRE(receiver.lines_accepted() == 1);
         REQUIRE(receiver.provenance_narrowed() == 1);
+        REQUIRE(r.detail == "recorded_provenance=real");   // the caller is told what was RECORDED, not claimed
+        REQUIRE(h.delivered.size() == 1);
         // MEASURED: the hub records the provenance ITS session model supports. A claim can never inflate it -
         // and it cannot deflate it either, which is an interface asymmetry recorded in the contract rather
         // than hidden by making this adapter pretend to overrule the hub.
+        REQUIRE(h.delivered[0].provenance == Provenance::real);
+        // The claim is not DISCARDED, though: it stays on the record verbatim, beside the acquisition mode
+        // that decided the hub's own field. That is what keeps the asymmetry auditable instead of a silent
+        // overwrite - and it is the difference between "narrowed" and "ignored".
+        REQUIRE(h.delivered[0].features["provenance_claim"].get<std::string>() == "synthetic");
+        REQUIRE(h.delivered[0].features["acquisition_mode"].get<std::string>() == "live");
+    }
+    SECTION("a synthetic claim that AGREES with a synthetic session is accepted, and is not a narrowing") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest);   // synthetic session: the fail-closed default
+        const auto r = receiver.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.2, true,
+                                                              "synthetic"),
+                                            h.sink);
+        INFO("reason=" << r.reason << " detail=" << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(receiver.provenance_narrowed() == 0);   // session and claim agree: nothing was narrowed
+        REQUIRE(receiver.provenance_refused() == 0);
+        REQUIRE(h.delivered.size() == 1);
+        REQUIRE(h.delivered[0].provenance == Provenance::synthetic);
+        REQUIRE(h.delivered[0].features["provenance_claim"].get<std::string>() == "synthetic");
+    }
+    SECTION("an explicit real claim on a REAL session is accepted, and moves no provenance counter") {
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        REQUIRE(receiver.accept_line(h.peer(), node_line("motion", "motion-changed-fraction", 0.2, true,
+                                                         "real_device"),
+                                     h.sink)
+                    .accepted);
+        REQUIRE(receiver.provenance_narrowed() == 0);
+        REQUIRE(receiver.provenance_refused() == 0);
+        REQUIRE(h.delivered.size() == 1);
         REQUIRE(h.delivered[0].provenance == Provenance::real);
     }
     SECTION("an invented claim string is refused") {
@@ -478,5 +525,131 @@ TEST_CASE("producer/receiver compatibility: the producer's real line shape", "[p
         PanasonicNodeReceiver receiver(*h.ingest, cfg);
         REQUIRE(receiver.accept_line(h.peer(), producer_line("real_device", 0), h.sink).accepted);
         REQUIRE(receiver.schema_version_absent() == 1);
+    }
+    SECTION("the REVERSE direction in the producer's own shape: an explicit `synthetic` claim on a REAL session") {
+        // The honest node: same line shape, but the producer declares its own output simulated instead of
+        // defaulting it to `real_device`. This is the direction the rule must never break - narrowing is
+        // always permitted - so the pairing that the section above records as BROKEN works here, and the
+        // only thing the hub refuses is a claim that WIDENS a session, never one that narrows it.
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        const auto r = receiver.accept_line(h.peer(), producer_line("synthetic", 0), h.sink);
+        INFO(r.reason << " / " << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(r.reason == "accepted");
+        REQUIRE(r.detail == "recorded_provenance=real");
+        REQUIRE(receiver.provenance_narrowed() == 1);
+        REQUIRE(receiver.provenance_refused() == 0);   // an honest declaration is not a falsy claim
+        REQUIRE(receiver.lines_accepted() == 1);
+        REQUIRE(receiver.lines_refused() == 0);
+        REQUIRE(h.delivered.size() == 1);
+        REQUIRE(h.delivered[0].device_id == h.device_id);   // identity still from the session, not the payload
+        // The hub's own field follows the SESSION (this is a live-acquisition session), so the claim cannot
+        // deflate it either - and the claim itself survives on the record so the asymmetry stays auditable.
+        REQUIRE(h.delivered[0].provenance == Provenance::real);
+        REQUIRE(h.delivered[0].features["provenance_claim"].get<std::string>() == "synthetic");
+        REQUIRE(h.delivered[0].features["acquisition_mode"].get<std::string>() == "live");
+        // The rest of the producer's shape is unaffected by the provenance field: no version, no state.
+        REQUIRE(receiver.schema_version_absent() == 1);
+        REQUIRE(receiver.state_unmapped() == 0);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// HG-SCHEMA-EDGE-2 / HG-SCHEMA-EDGE-3: an absent schema_version is COUNTED, never assumed, and strict mode
+// refuses it. Non-strict keeps the current producer working; the flag flips only when the producer sends the
+// field on every line (contract section 6.3).
+// ---------------------------------------------------------------------------------------------------------
+namespace {
+
+std::string schema_line(bool has_version, int version, int64_t acquired_ms = 0) {
+    json j;
+    j["source_type"] = "motion";
+    j["observation_type"] = "motion-changed-fraction";
+    j["value"] = 0.42;
+    j["unit"] = "";
+    j["state"] = "";
+    j["confidence"] = 0.9;
+    j["acquired_at_ms"] = acquired_ms > 0 ? acquired_ms : clock_ms();
+    j["provenance"] = "real_device";
+    if (has_version) {
+        j["schema_version"] = version;
+    }
+    return j.dump();
+}
+
+PanasonicNodeReceiver::Config real_session() {
+    PanasonicNodeReceiver::Config cfg;
+    cfg.session_is_synthetic = false;
+    return cfg;
+}
+
+}  // namespace
+
+TEST_CASE("schema version: absent is counted, never assumed", "[panasonic][schema]") {
+    SECTION("non-strict: an absent version is accepted AND counted, not read as the implemented version") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        const auto r = receiver.accept_line(h.peer(), schema_line(false, 0), h.sink);
+        INFO(r.reason << " / " << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(receiver.schema_version_absent() == 1);
+        REQUIRE(h.delivered.size() == 1);
+    }
+    SECTION("the absent counter counts ONLY absent lines") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(false, 0), h.sink).accepted);
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(true, kNodeSchemaVersion), h.sink).accepted);
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(false, 0), h.sink).accepted);
+        REQUIRE(receiver.schema_version_absent() == 2);
+        REQUIRE(receiver.lines_accepted() == 3);
+    }
+    SECTION("strict mode: an absent version is refused as missing_schema_version") {
+        Harness h;
+        auto cfg = real_session();
+        cfg.require_schema_version = true;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        const auto r = receiver.accept_line(h.peer(), schema_line(false, 0), h.sink);
+        REQUIRE_FALSE(r.accepted);
+        REQUIRE(r.reason == "missing_schema_version");
+        REQUIRE(h.delivered.empty());           // nothing reached the ingest
+        REQUIRE(receiver.schema_version_absent() == 1);   // still counted: the gap is measured, not hidden
+    }
+    SECTION("strict mode: a producer that sends the implemented version is accepted") {
+        Harness h;
+        auto cfg = real_session();
+        cfg.require_schema_version = true;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        const auto r = receiver.accept_line(h.peer(), schema_line(true, kNodeSchemaVersion), h.sink);
+        INFO(r.reason);
+        REQUIRE(r.accepted);
+        REQUIRE(receiver.schema_version_absent() == 0);
+    }
+    SECTION("an unsupported version is refused in BOTH modes, and no version is guessed") {
+        Harness h;
+        PanasonicNodeReceiver lenient(*h.ingest, real_session());
+        const auto a = lenient.accept_line(h.peer(), schema_line(true, kNodeSchemaVersion + 1), h.sink);
+        REQUIRE_FALSE(a.accepted);
+        REQUIRE(a.reason == "unsupported_schema_version");
+
+        Harness h2;
+        auto cfg = real_session();
+        cfg.require_schema_version = true;
+        PanasonicNodeReceiver strict(*h2.ingest, cfg);
+        const auto b = strict.accept_line(h2.peer(), schema_line(true, kNodeSchemaVersion + 1), h2.sink);
+        REQUIRE_FALSE(b.accepted);
+        REQUIRE(b.reason == "unsupported_schema_version");
+    }
+    SECTION("a non-integer version is refused rather than coerced") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        json j = json::parse(schema_line(true, kNodeSchemaVersion));
+        j["schema_version"] = "1";
+        const auto r = receiver.accept_line(h.peer(), j.dump(), h.sink);
+        REQUIRE_FALSE(r.accepted);
+        REQUIRE_FALSE(r.reason.empty());
     }
 }

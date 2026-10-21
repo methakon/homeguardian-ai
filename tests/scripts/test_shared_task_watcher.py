@@ -293,14 +293,14 @@ class TestGithubCliResolver(unittest.TestCase):
     def test_falls_back_to_path_when_no_absolute_candidate_exists(self):
         # Regression: resolve_gh_bin previously raised NameError (missing shutil).
         from scripts.orchestration.shared_task_watcher import resolve_gh_bin
-        with mock.patch("scripts.orchestration.shared_task_watcher.os.path.isfile", return_value=False), \\
+        with mock.patch("scripts.orchestration.shared_task_watcher.os.path.isfile", return_value=False), \
              mock.patch("scripts.orchestration.shared_task_watcher.shutil.which", return_value="/custom/bin/gh") as which:
             self.assertEqual(resolve_gh_bin(), "/custom/bin/gh")
             which.assert_called_once_with("gh")
 
     def test_falls_back_to_literal_when_gh_is_unavailable(self):
         from scripts.orchestration.shared_task_watcher import resolve_gh_bin
-        with mock.patch("scripts.orchestration.shared_task_watcher.os.path.isfile", return_value=False), \\
+        with mock.patch("scripts.orchestration.shared_task_watcher.os.path.isfile", return_value=False), \
              mock.patch("scripts.orchestration.shared_task_watcher.shutil.which", return_value=None):
             self.assertEqual(resolve_gh_bin(), "gh")
 
