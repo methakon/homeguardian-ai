@@ -808,7 +808,7 @@ def selftest() -> int:
     live = {"tasks": {"S-2": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time() - 4000,
                                                                   "ok": True, "kanban_task_id": "t_live"}}}}
     check("a dispatch the board IS running is left in flight",
-          release_stale_dispatches(live, status_fn=lambda t: "running") == [] and inflight_tasks(live) == ["S-2"])
+          release_stale_dispatches(live, status_fn=lambda t: "running") == ([], []) and inflight_tasks(live) == ["S-2"])
     fresh = {"tasks": {"S-3": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time(), "ok": True}}}}
     check("a fresh dispatch is not released", release_stale_dispatches(fresh, status_fn=lambda t: "ready") == ([], []))
     # THE LOOP CLOSES: the dispatched run finished, and the board is what says so
