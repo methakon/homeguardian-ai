@@ -20,7 +20,7 @@
       "session_id": "20261009_174946_2dfba7",
       "role": "NETWORK_SECURITY",
       "issue_number": 14,
-      "also_accepts_issues": [],
+      "also_accepts_issues": [23],
       "owned_branch": "experiment/hg-lan-mtls-07",
       "worktree_path": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-s1-lan-mtls-07",
       "allowed_task_types": [
@@ -55,7 +55,7 @@
       "session_id": "local-8d61817af2cd4c61d60b33c84230543d035305518e6e7a62a2f91c766de798c9",
       "role": "ANDROID_EDGE_SERVICE",
       "issue_number": 12,
-      "also_accepts_issues": [],
+      "also_accepts_issues": [24],
       "owned_branch": "experiment/hg-panasonic-service-transport-06",
       "worktree_path": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-s2-svc-transport06",
       "allowed_task_types": [
@@ -69,8 +69,8 @@
       ],
       "status_source": {
         "type": "file_lock_and_pid",
-        "lock_file": "/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg-worker-android/lock",
-        "state_file": "/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg-worker-android/ledger.json"
+        "lock_file": "/home/swarna-sekhar-dhar/.hermes/state/hg-hermes-android/lock",
+        "state_file": "/home/swarna-sekhar-dhar/.hermes/state/hg-hermes-android/poller-state.json"
       },
       "dispatch_mechanism": {
         "type": "hermes_resume",
@@ -90,7 +90,7 @@
       "session_id": "local-39f07d6fc4fa643c8a4c0909876865f6507845f10fb9a97c9edf2b452dd7d621",
       "role": "CPP_ENGINE",
       "issue_number": 19,
-      "also_accepts_issues": [16],
+      "also_accepts_issues": [16, 25],
       "owned_branch": "experiment/hg-panasonic-cpp-receiver-08",
       "worktree_path": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-v380-09",
       "allowed_task_types": [
@@ -125,7 +125,7 @@
       "session_id": "44d0b99c-0ce7-463f-ba3e-61c52579e936",
       "role": "INTEGRATION_COORDINATOR",
       "issue_number": 17,
-      "also_accepts_issues": [],
+      "also_accepts_issues": [26],
       "owned_branch": "dev/production-integration",
       "worktree_path": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/antigravity-prod-dev",
       "allowed_task_types": [
