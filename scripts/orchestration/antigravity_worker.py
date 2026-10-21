@@ -34,6 +34,13 @@ ALLOWED_AUTHORS = ["msekhardhar-cell", "methakon"]
 ALLOWED_ACTIONS = ["implement", "test", "review", "report", "investigate"]
 
 
+def resolve_gh_bin() -> str:
+    for candidate in ["/snap/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh", "/bin/gh"]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return shutil.which("gh") or "gh"
+
+
 class AntigravityState:
     """Atomic state storage and file locking for Antigravity worker."""
 
@@ -203,7 +210,7 @@ class AntigravityWorker:
         endpoint = f"repos/methakon/homeguardian-ai/issues/{ISSUE_NUMBER}/comments"
         if since:
             endpoint += f"?since={since}"
-        cmd = ["gh", "api", endpoint, "--paginate"]
+        cmd = [resolve_gh_bin(), "api", endpoint, "--paginate"]
 
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, check=True)

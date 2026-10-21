@@ -1,6 +1,6 @@
 {
   "envelope_tag": "hg-task",
-  "allowed_authors": ["methakon"],
+  "allowed_authors": ["methakon", "msekhardhar-cell"],
   "hard_prohibited": [
     "main_write",
     "unattended_execution",

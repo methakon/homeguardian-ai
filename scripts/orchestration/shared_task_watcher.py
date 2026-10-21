@@ -72,6 +72,13 @@ class SafeLogFormatter(logging.Formatter):
 logger = logging.getLogger("hg_task_watcher")
 
 
+def resolve_gh_bin() -> str:
+    for candidate in ["/snap/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh", "/bin/gh"]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return shutil.which("gh") or "gh"
+
+
 def setup_logging(verbose: bool = False) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(SafeLogFormatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -411,7 +418,7 @@ class SharedTaskWatcher:
         endpoint = f"repos/{repo}/issues/{issue_number}/comments"
         if since:
             endpoint += f"?since={since}"
-        cmd = ["gh", "api", endpoint, "--paginate"]
+        cmd = [resolve_gh_bin(), "api", endpoint, "--paginate"]
 
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, check=True)
