@@ -154,7 +154,25 @@ and TLS 1.3**, plus the two registry-level cases (revoked device, credential mis
 
 Reproduce: `bash scripts/mtls_fixtures/generate_dev_fixtures.sh && python3 scripts/mtls_fixtures/test_mtls_validation.py`
 
+`scripts/mtls_fixtures/verify_lan_exposure.py` turns the procedure above into an **executable gate**.
+Dialling the receiver on its **LAN** address it asserts: (1) the receiver is reachable there;
+(2) a handshake **without** a client certificate is refused; (3) a valid client certificate completes
+**and receives an application ACK**; (4) the MCP port is **not** reachable on the LAN address. When no
+LAN listener exists, checks 2–3 report **SKIP, never PASS** — a refused connection is not evidence of
+fail-closed behaviour, and counting it as one would be a pass for the wrong reason.
+
+`--self-test` proves the gate itself: it builds mock receivers locally and confirms the gate
+classifies a compliant layout and three non-compliant ones (receiver accepting any certificate, MCP
+bound to all interfaces, receiver bound to loopback) correctly.
+
 ---
+
+`scripts/mtls_fixtures/test_revocation_and_identity.py` covers the certificate lifecycle and identity
+isolation: revocation takes effect on the **next connection with no restart** (the registry is re-read
+per connection), revocation can be **lifted**, an unpaired device is refused, a device absent from the
+registry is refused, and a certificate carrying a **known device's CN but a different key** is refused
+— the binding is the certificate fingerprint and never the CN. Reason-level assertions check the stable
+refusal reason, not only the verdict.
 
 ## F. Scope boundaries
 
