@@ -19,6 +19,9 @@ AuthorizationOutcome RegistryAuthorizer::authorize(const LogicalDeviceId& id,
     if (!id.valid()) return AuthorizationOutcome::unknown_device;
 
     const auto* device = registry_.find(id.device_id);
+    if (device == nullptr) {
+        device = registry_.find(id.canonical());
+    }
     if (device == nullptr) return AuthorizationOutcome::unknown_device;
 
     // Revocation first: a revoked device must be reported as revoked even if its
@@ -34,7 +37,7 @@ AuthorizationOutcome RegistryAuthorizer::authorize(const LogicalDeviceId& id,
     if (device->credential_id.empty() || credential_id.empty()) {
         return AuthorizationOutcome::credential_mismatch;
     }
-    switch (registry_.authenticate(id.device_id, credential_id)) {
+    switch (registry_.authenticate(device->device_id, credential_id)) {
         case homeguardian::net::DeviceRegistry::AuthResult::ok:
             break;
         case homeguardian::net::DeviceRegistry::AuthResult::revoked:

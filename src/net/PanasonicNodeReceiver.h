@@ -81,9 +81,9 @@ public:
         size_t max_line_bytes = kMaxFrameBytes;   // the transport's frame bound, reused rather than reinvented
         uint16_t protocol_version_major = kProtocolVersionMajor;
         uint16_t protocol_version_minor = kProtocolVersionMinor;
-        bool require_schema_version = false;     // true enforces finalized contract (schema_version == 1 mandatory)
         // Supplied by the caller so a test can drive time; defaults to the system clock in the constructor.
-        std::function<int64_t()> clock;
+        std::function<int64_t()> clock = nullptr;
+        bool require_schema_version = false;     // true enforces finalized contract (schema_version == 1 mandatory)
     };
 
     struct Result {

@@ -3,6 +3,7 @@
 #include "core/Aes128Ecb.h"
 
 #include <cstring>
+#include <atomic>
 
 namespace homeguardian {
 namespace v380 {
@@ -247,14 +248,14 @@ ChunkAssembler::~ChunkAssembler() {
 
 ChunkAssembler::ChunkAssembler(ChunkAssembler&& other) noexcept
     : cfg_(other.cfg_),
+      buffer_(std::move(other.buffer_)),
       expected_total_(other.expected_total_),
       next_index_(other.next_index_),
       chunks_in_frame_(other.chunks_in_frame_),
-      last_type_(other.last_type_),
       frames_completed_(other.frames_completed_),
       chunks_dropped_(other.chunks_dropped_),
       keepalives_seen_(other.keepalives_seen_),
-      buffer_(std::move(other.buffer_)) {
+      last_type_(other.last_type_) {
     other.expected_total_ = 0;
     other.next_index_ = 0;
     other.chunks_in_frame_ = 0;
