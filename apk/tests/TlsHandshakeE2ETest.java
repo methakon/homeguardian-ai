@@ -147,6 +147,98 @@ public final class TlsHandshakeE2ETest {
         }
     }
 
+    /**
+     * A peer that accepts several connections and records how many hellos arrived on each.
+     *
+     * Needed for the restart-safety case: the question is not whether ONE connection works, but
+     * whether a second start produces exactly one more connection. A worker left over from a previous
+     * generation would show up here as an extra connection or an extra hello, which is the duplicate
+     * transmission the generation counter exists to prevent.
+     */
+    static class MultiPeer implements AutoCloseable {
+        private final SSLServerSocket serverSocket;
+        private final List<Integer> hellosPerConnection = new ArrayList<Integer>();
+        private final int maxConnections;
+        private final Thread thread;
+
+        MultiPeer(String dir, final int maxConnections) throws Exception {
+            this.maxConnections = maxConnections;
+            final char[] pw = "testonly".toCharArray();
+            final KeyStore ks = KeyStore.getInstance("PKCS12");
+            try (InputStream in = new FileInputStream(dir + "/server.p12")) {
+                ks.load(in, pw);
+            }
+            final KeyManagerFactory kmf =
+                    KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(ks, pw);
+            final SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(kmf.getKeyManagers(), null, null);
+            serverSocket = (SSLServerSocket) ctx.getServerSocketFactory().createServerSocket(0);
+
+            thread = new Thread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        serverSocket.setSoTimeout(6000);
+                        for (int i = 0; i < maxConnections; i++) {
+                            SSLSocket s = (SSLSocket) serverSocket.accept();
+                            // Record the connection IMMEDIATELY, and count hellos as they arrive.
+                            // Recording only after the stream closes does not work: the transport
+                            // holds the connection open waiting for a welcome, so a close-then-count
+                            // design observes nothing while the test is running - which is how an
+                            // earlier version of this reported connections=0.
+                            synchronized (hellosPerConnection) {
+                                hellosPerConnection.add(Integer.valueOf(0));
+                            }
+                            final int slot = i;
+                            s.startHandshake();
+                            DataInputStream in = new DataInputStream(s.getInputStream());
+                            String f = readFrame(in);
+                            while (f != null) {
+                                if (f.contains("\"hello\"")) {
+                                    synchronized (hellosPerConnection) {
+                                        Integer cur = hellosPerConnection.get(slot);
+                                        hellosPerConnection.set(slot, Integer.valueOf(cur.intValue() + 1));
+                                    }
+                                }
+                                f = readFrame(in);
+                            }
+                            s.close();
+                        }
+                    } catch (Exception ignored) {
+                        // accept() times out once the test is finished; that is the normal path out
+                    }
+                }
+            });
+            thread.setDaemon(true);
+        }
+
+        int port() { return serverSocket.getLocalPort(); }
+        void start() { thread.start(); }
+        void await(long ms) throws InterruptedException { thread.join(ms); }
+        int connectionCount() { synchronized (hellosPerConnection) { return hellosPerConnection.size(); } }
+        String hellosPerConnection() {
+            synchronized (hellosPerConnection) { return hellosPerConnection.toString(); }
+        }
+        int minHellosPerConnection() {
+            synchronized (hellosPerConnection) {
+                int m = Integer.MAX_VALUE;
+                for (Integer i : hellosPerConnection) { m = Math.min(m, i.intValue()); }
+                return m == Integer.MAX_VALUE ? -1 : m;
+            }
+        }
+        int maxHellosPerConnection() {
+            synchronized (hellosPerConnection) {
+                int m = -1;
+                for (Integer i : hellosPerConnection) { m = Math.max(m, i.intValue()); }
+                return m;
+            }
+        }
+
+        @Override public void close() {
+            try { serverSocket.close(); } catch (Exception ignored) { }
+        }
+    }
+
     static String readFrame(DataInputStream in) {
         try {
             int len = in.readInt();
@@ -338,6 +430,81 @@ public final class TlsHandshakeE2ETest {
             check("T5 a peer whose certificate the client does NOT trust is rejected before any frame",
                     sent == 0 && !peer.result.tlsHandshakeCompleted,
                     "sent=" + sent + " peerHandshake=" + peer.result.tlsHandshakeCompleted);
+        }
+
+        // ---- T6: restart safety - a stale worker must not survive a stop/start (process death) ----
+        // `generation` exists so that a worker left over from a previous run notices it is stale. If
+        // it did not, a service restart would leave two workers racing on the same queue and sending
+        // duplicate observations. That is the process-death/restart case, and it was untested.
+        {
+            MultiPeer mp = new MultiPeer(dir, 3);
+            mp.start();
+            ObservationTransport t = new ObservationTransport(config(dir, mp.port()));
+            // An observation MUST be queued: the loop blocks on the queue and only then opens the
+            // socket. Without this the transport never connects, and the test observes zero
+            // connections while looking like a product failure - which is what an earlier version of
+            // this case did.
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            Thread.sleep(600);
+            t.stop();                     // generation++ : any live worker is now stale
+            Thread.sleep(250);
+            t.start();                    // a fresh worker reconnects and retries the held observation
+            Thread.sleep(600);
+            t.stop();
+            Thread.sleep(300);
+            mp.close();
+            mp.await(1500);
+
+            // Each start should produce exactly ONE connection and ONE hello. A surviving
+            // stale worker would show up as an extra connection.
+            check("T6a exactly one connection per start survives a stop/start cycle",
+                    mp.connectionCount() == 2,
+                    "connections=" + mp.connectionCount() + " (a stale worker would add a third)");
+            check("T6b every connection carried exactly one hello, so no worker raced",
+                    mp.minHellosPerConnection() == 1 && mp.maxHellosPerConnection() == 1,
+                    "hellos per connection=" + mp.hellosPerConnection());
+        }
+
+        // ---- T7: a missing credential must FAIL CLOSED, not silently succeed --------------------
+        // Stands in for a permission/credential being denied: the keystore password file is absent.
+        // The transport must refuse rather than open an unauthenticated connection or report success.
+        {
+            Peer peer = new Peer(dir,
+                    "{\"kind\":\"welcome\",\"protocol_version_major\":1,\"last_sequence\":0}", null);
+            peer.start();
+            Config c = config(dir, peer.port());
+            c.pkcs12PasswordFile = dir + "/definitely-absent.pw";
+            ObservationTransport t = new ObservationTransport(c);
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            Thread.sleep(800);
+            t.stop();
+            peer.await(2000);
+            peer.close();
+            check("T7 a missing credential fails closed: no TLS handshake completes",
+                    !peer.result.tlsHandshakeCompleted,
+                    "peerHandshake=" + peer.result.tlsHandshakeCompleted
+                            + " (a completed handshake would mean it connected without its identity)");
+            check("T7b and no frame is sent to the peer",
+                    peer.result.frames.isEmpty(), "frames=" + peer.result.frames);
+            check("T7c and the failure is reported, not swallowed as success",
+                    t.sentCount() == 0, "sentCount=" + t.sentCount());
+        }
+
+        // ---- T8: a stalled peer must not be reported as a success -------------------------------
+        {
+            Peer peer = new Peer(dir, null, null);   // closes immediately after the hello
+            peer.start();
+            ObservationTransport t = new ObservationTransport(config(dir, peer.port()));
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            Thread.sleep(900);
+            t.stop();
+            peer.await(2000);
+            peer.close();
+            check("T8 a peer that closes the connection is not counted as a delivered observation",
+                    t.sentCount() == 0, "sentCount=" + t.sentCount());
         }
 
         System.out.println();
