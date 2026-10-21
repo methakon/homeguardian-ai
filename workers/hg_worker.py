@@ -527,6 +527,24 @@ def kanban_intake(state: dict, lister=None) -> tuple:
 
 # ------------------------------------------------------------------ the watcher loop (detect -> dispatch)
 
+def claim_execution(state: dict, mission: str, executor: str) -> tuple:
+    """Exactly one executor per task. Returns (ok, detail).
+
+    Seen for real: a task can be reachable by more than one path - the Kanban dispatcher spawns a run AND the
+    session can decide to do the work itself. Nothing about either path knows about the other, so the claim is
+    recorded on the task and a second executor is refused. Re-claiming as the SAME executor is idempotent.
+    """
+    task = state.get("tasks", {}).get(mission)
+    if task is None:
+        return False, "unknown mission"
+    prior = task.get("executor")
+    if prior and prior != executor:
+        return False, f"already executed by {prior}"
+    task["executor"] = executor
+    task["updated_at"] = time.time()
+    return True, "already claimed by this executor" if prior else "claimed"
+
+
 def is_inflight(task: dict) -> bool:
     """RUNNING means work is happening. CLAIMED only means the assignment was taken up: a claimed task that has
     NOT been dispatched yet is waiting to start, not running. Treating the two as the same was a real defect -
@@ -646,7 +664,8 @@ def dispatch_argv(mode: str, mission: str, detail: str, branch: str, task_id: st
     """
     brief = (f"{mission}\n\n{detail}\n\nWork in the worktree {WORKTREE} (branch {branch}) of "
              f"methakon/homeguardian-ai. "
-             f"Run the focused suites, record the exact SHA, and report to issue #{ISSUE} with the "
+             f"If this work is ALREADY on the branch (check the recent commit log first), do NOT do it again - "
+             f"verify it and report that instead. Run the focused suites, record the exact SHA, and report to issue #{ISSUE} with the "
              f"WORKER/TASK/SHA/TESTS format. Commit and push to the assigned branch. Never merge to main.")
     if mode == "kanban":
         # `--workspace worktree --branch` is what puts the spawned worker in the REAL project worktree. Without
@@ -714,6 +733,10 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
     if holder and holder.split(":")[-1] not in ("", mission):
         task["queued_reason"] = f"heavy slot held by {holder}"
         return "idle", f"{mission} waits: heavy slot held by {holder}"
+    executor = f"dispatch:{mode}"
+    allowed, why = claim_execution(state, mission, executor)
+    if not allowed:
+        return "idle", f"{mission} not dispatched: {why}"
     if mode == "dry-run":
         return "dispatched", "dry-run: " + " ".join(dispatch_argv("kanban", mission, task.get("notes", ""), BRANCH))
     if not acquire_heavy_slot(mission, now)[0]:
@@ -1043,6 +1066,16 @@ def selftest() -> int:
     check("dispatch names an ABSOLUTE worktree path, as the dispatcher requires",
           f"worktree:{WORKTREE}" in dispatch_argv("kanban", "M", "d", BRANCH)
           and os.path.isabs(WORKTREE), str([a for a in dispatch_argv("kanban", "M", "d", BRANCH) if "worktree" in a]))
+
+    # 16b. DUPLICATE EXECUTION: one executor per task, idempotent for the same one, refused for another
+    dup = {"tasks": {"D-1": {"state": "CLAIMED"}}, "processed": {}, "rejected": []}
+    check("the first executor may claim", claim_execution(dup, "D-1", "dispatch:kanban")[0] is True)
+    ok, why = claim_execution(dup, "D-1", "session")
+    check("a SECOND executor is refused", ok is False and "dispatch:kanban" in why, why)
+    check("the same executor re-claiming is idempotent", claim_execution(dup, "D-1", "dispatch:kanban")[1].startswith("already"))
+    check("an unknown mission cannot be claimed", claim_execution(dup, "NOPE", "session")[0] is False)
+    check("the dispatch brief tells a worker not to duplicate work already on the branch",
+          "do NOT do it again" in dispatch_argv("kanban", "M", "d", BRANCH)[-2])
 
     # 17. KANBAN -> WORKER intake (the direction the dispatcher cannot serve: it logs skipped_nonspawnable)
     kb = {"tasks": {}, "processed": {}, "rejected": []}
