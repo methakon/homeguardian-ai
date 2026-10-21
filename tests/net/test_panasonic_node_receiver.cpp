@@ -377,3 +377,79 @@ TEST_CASE("node observation contract: the document and the code cannot drift apa
     REQUIRE(doc.find("Absence is never real") != std::string::npos);
     REQUIRE(doc.find("may never widen") != std::string::npos);
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// PHASE 5 / producer-receiver compatibility. These lines are built to the shape the producer ACTUALLY emits
+// (NodeSession.pump in the Android harness): it requires source_type/observation_type/value, substitutes ""
+// for unit and state, 0.0 for confidence, the current time for acquired_at_ms, and DEFAULTS provenance to
+// "real_device" when the field is absent. Nothing here is a physical Panasonic test: it is what the producer's
+// code produces, checked against the receiver's rules.
+// ---------------------------------------------------------------------------------------------------------
+namespace {
+
+std::string producer_line(const std::string& provenance_field, int64_t acquired_at_ms) {
+    json j;
+    j["source_type"] = "motion";
+    j["observation_type"] = "motion-changed-fraction";
+    j["value"] = 0.42;
+    j["unit"] = "";                  // the producer substitutes "" when the field is absent
+    j["state"] = "";                 // ...and "" here too
+    j["confidence"] = 0.9;
+    j["acquired_at_ms"] = acquired_at_ms > 0 ? acquired_at_ms : clock_ms();
+    if (!provenance_field.empty()) j["provenance"] = provenance_field;
+    return j.dump();
+}
+
+}  // namespace
+
+TEST_CASE("producer/receiver compatibility: the producer's real line shape", "[panasonic][compat]") {
+    SECTION("the canonical producer line is REFUSED on a synthetic session — an interop finding, not a bug") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest);
+        const auto r = receiver.accept_line(h.peer(), producer_line("real_device", 0), h.sink);
+        // The producer defaults provenance to "real_device", and the receiver will not let a synthetic session
+        // assert physical provenance. One of the two sides must change for this pairing to work in a test
+        // environment — the producer should send an explicit claim, or a synthetic session needs its own value.
+        REQUIRE_FALSE(r.accepted);
+        REQUIRE(r.reason == "provenance_claim_widens_session");
+        REQUIRE(h.delivered.empty());
+    }
+    SECTION("the same line is accepted on a REAL session") {
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        const auto r = receiver.accept_line(h.peer(), producer_line("real_device", 0), h.sink);
+        INFO(r.reason << " / " << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(h.delivered.size() == 1);
+    }
+    SECTION("the producer's substitutions are accepted, and its empty state is counted not mapped") {
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        REQUIRE(receiver.accept_line(h.peer(), producer_line("real_device", clock_ms()), h.sink).accepted);
+        REQUIRE(receiver.state_unmapped() == 0);   // an EMPTY state is not a gap; a present one is
+        const auto r = receiver.accept_line(h.peer(), producer_line("real_device", 0), h.sink);
+        REQUIRE(r.accepted);
+    }
+    SECTION("a present `state` is counted as the interface gap it is") {
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        json j = json::parse(producer_line("real_device", 0));
+        j["state"] = "active";
+        REQUIRE(receiver.accept_line(h.peer(), j.dump(), h.sink).accepted);
+        REQUIRE(receiver.state_unmapped() == 1);
+    }
+    SECTION("the producer sends no schema_version, and that omission is counted, not assumed") {
+        Harness h;
+        PanasonicNodeReceiver::Config cfg;
+        cfg.session_is_synthetic = false;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        REQUIRE(receiver.accept_line(h.peer(), producer_line("real_device", 0), h.sink).accepted);
+        REQUIRE(receiver.schema_version_absent() == 1);
+    }
+}
