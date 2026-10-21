@@ -102,28 +102,49 @@ say "5b. APPLICATION ACK: an authenticated device client sends an observation an
 # client is reported as NOT OBSERVED with the reason, never as a pass.
 ACK_STATUS="not-observed"
 if [ "$REACHABLE" = "1" ]; then
+  # Run the repo's own client in a ONE-OFF container AS THIS USER, on the stack's network. Running it as the
+  # container's own non-root user cannot read the mounted key (first attempt: "could not load the client
+  # private key: Permission denied") - and loosening a private key's permissions to make a test pass is not an
+  # option, so the process adopts the identity that already owns the key.
   C="$(docker ps --format '{{.Names}}' | grep -iE 'ingress' | head -1)"
-  if [ -n "$C" ] && docker exec "$C" sh -lc 'command -v hg_device_client >/dev/null 2>&1'; then
-    DEV_ID="$(basename "${DEVCRT:-hg-device}" | sed 's/\.[^.]*$//')"
-    ACK=$(docker exec "$C" sh -lc "hg_device_client --ca /etc/homeguardian/certs/ca/ca.crt \
-          --cert /etc/homeguardian/certs/devices/${DEV_ID}.crt \
-          --key  /etc/homeguardian/device-keys/${DEV_ID}.key \
-          --device-id ${DEV_ID} --host 127.0.0.1 --port 8443 --count 1 --mode normal 2>&1" || true)
+  NET="host"
+  IMG="$(docker inspect "$C" --format '{{.Config.Image}}' 2>/dev/null)"
+  DEV_ID="$(basename "${DEVCRT:-hg-device}" | sed 's/\.[^.]*$//')"
+  if [ -n "$NET" ] && [ -n "$IMG" ]; then
     ACK_STATUS="ran"
-    if printf '%s' "$ACK" | grep -qiE 'ack|accepted|ok'; then
-      ok "application ACK received: $(printf '%s' "$ACK" | tr '\n' ' ' | tail -c 100)"
-    else
-      bad "application ACK" "$(printf '%s' "$ACK" | tr '\n' ' ' | tail -c 140)"
+    # Probe by a name the SERVER's certificate actually identifies. `openssl` accepting the chain is not the
+    # same as the client accepting the name, and the first honest run failed here with
+    # "the hub's certificate does not identify 127.0.0.1: IP address mismatch (exit 5)".
+    ACK_HOST="${HG_ACK_HOST:-}"
+    if [ -z "$ACK_HOST" ] && [ -f "${CERTS}/server.crt" ]; then
+      if openssl x509 -in "${CERTS}/server.crt" -noout -ext subjectAltName 2>/dev/null | grep -q 'DNS:localhost'; then
+        ACK_HOST="localhost"
+      fi
     fi
-    echo "   -- negative control: a replay of the same frame must be refused --"
-    NEG2=$(docker exec "$C" sh -lc "hg_device_client --ca /etc/homeguardian/certs/ca/ca.crt \
-           --cert /etc/homeguardian/certs/devices/${DEV_ID}.crt \
-           --key  /etc/homeguardian/device-keys/${DEV_ID}.key \
-           --device-id ${DEV_ID} --host 127.0.0.1 --port 8443 --count 1 --mode replay 2>&1" || true)
-    if printf '%s' "$NEG2" | grep -qiE 'reject|refus|replay'; then
-      ok "a replayed frame was refused"
+    ACK_HOST="${ACK_HOST:-$HOST}"
+    ack_cmd="hg_device_client --ca /certs/ca/ca.crt --cert /certs/devices/${DEV_ID}.crt \
+             --key /keys/${DEV_ID}.key --device-id ${DEV_ID} --host ${ACK_HOST} --port ${PORT} \
+             --count 1 --mode normal; echo RC=\$?"
+    # --entrypoint sh is REQUIRED: without it the image's own entrypoint runs (the hub) and prints an error that
+    # a loose grep happily matches. The verdict is the CLIENT's exit status, not a word in the output - the
+    # first version of this step reported a false PASS from a probe that never ran.
+    ack_raw=$(timeout "$TIMEOUT" docker run --rm --entrypoint sh --user "$(id -u):$(id -g)" --network host \
+              -v "${CERTS}:/certs:ro" -v "${DEVKEYS}:/keys:ro" "$IMG" -lc "$ack_cmd" 2>&1 || true)
+    ack_rc=$(printf '%s' "$ack_raw" | grep -oE 'RC=[0-9]+' | tail -1 | cut -d= -f2)
+    if [ "$ack_rc" = "0" ]; then
+      ok "application ACK: the client's own exit status is 0 (observation accepted)"
+      printf '%s' "$ack_raw" | grep -viE '^RC=' | tail -2 | sed 's/^/     /'
     else
-      no "replay control" "$(printf '%s' "$NEG2" | tr '\n' ' ' | tail -c 100)"
+      bad "application ACK" "client exit=${ack_rc:-none} · $(printf '%s' "$ack_raw" | tr '\n' ' ' | tail -c 130)"
+    fi
+    rep_cmd="${ack_cmd/--mode normal/--mode replay --expect-reject}"
+    rep_raw=$(timeout "$TIMEOUT" docker run --rm --entrypoint sh --user "$(id -u):$(id -g)" --network host \
+              -v "${CERTS}:/certs:ro" -v "${DEVKEYS}:/keys:ro" "$IMG" -lc "$rep_cmd" 2>&1 || true)
+    rep_rc=$(printf '%s' "$rep_raw" | grep -oE 'RC=[0-9]+' | tail -1 | cut -d= -f2)
+    if [ "$rep_rc" = "0" ]; then
+      ok "replay control: a replayed frame was refused (client exit 0 with --expect-reject)"
+    else
+      no "replay control" "client exit=${rep_rc:-none} · $(printf '%s' "$rep_raw" | tr '\n' ' ' | tail -c 110)"
     fi
   else
     no "application ACK" "no ingress container with hg_device_client on PATH"
