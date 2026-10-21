@@ -69,8 +69,30 @@ CORE_SRC=(
 )
 INC=( -I"$ROOT/src" -I"$ROOT/src/core" -I"$ROOT/src/backend/android"
       -I"$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" )
-JSON_DIR="$(find "$ROOT"/hg_build/_deps -type d -path '*nlohmann_json*/include' 2>/dev/null | head -1 || true)"
-[ -n "$JSON_DIR" ] || { echo "nlohmann_json include dir not found"; exit 1; }
+# The FetchContent tree is not in the repo (it is gitignored), so a FRESH WORKTREE has no
+# hg_build/_deps and this script could not run at all. HG_DEPS_DIR lets a worktree point at any
+# already-populated tree, and it defaults to the historical location so existing checkouts are
+# unaffected. Both headers are checked, so a wrong path fails here with a clear message instead of
+# failing later inside the compiler.
+#
+# CAVEAT - symlinked CHILDREN do not work. The lookups below use `find`, which does not descend a
+# symlink. A symlinked HG_DEPS_DIR root IS followed (find starts there), but a directory whose
+# children are symlinks - e.g. `_deps/nlohmann_json-src -> /elsewhere/...` - yields ZERO matches and
+# this reports "not found" even though the headers are reachable. Materialise real directories, or
+# point at a tree that already has them. Cost an hour to diagnose once; written down so it is once.
+DEPS_DIR="${HG_DEPS_DIR:-$ROOT/hg_build/_deps}"
+JSON_DIR="$(find "$DEPS_DIR" -type d -path '*nlohmann_json*/include' 2>/dev/null | head -1 || true)"
+SPDLOG_INC_DIR="$(find "$DEPS_DIR" -type d -path '*spdlog*/include' 2>/dev/null | head -1 || true)"
+[ -n "$JSON_DIR" ] || {
+    echo "nlohmann_json include dir not found under: $DEPS_DIR"
+    echo "  set HG_DEPS_DIR to a FetchContent tree, or populate hg_build/_deps first."
+    exit 1
+}
+[ -n "$SPDLOG_INC_DIR" ] || {
+    echo "spdlog include dir not found under: $DEPS_DIR"
+    echo "  set HG_DEPS_DIR to a FetchContent tree, or populate hg_build/_deps first."
+    exit 1
+}
 
 "$CXX" -std=c++20 -fPIC -DHOMEGUARDIAN_ANDROID=1 -O1 -g \
   "${INC[@]}" -I"$JSON_DIR" \
@@ -119,6 +141,17 @@ fi
 ( cd "$BUILD_DIR/gen" && \
   "$JAVA_HOME/bin/jar" uf base.apk classes.dex 2>/dev/null || zip -j base.apk classes.dex >/dev/null )
 ( cd "$BUILD_DIR/gen" && zip -r base.apk lib >/dev/null )
+
+echo "==> Normalise ZIP metadata (reproducible builds)"
+# The zip calls above stamp classes.dex, lib/ and META-INF with the build wall-clock, while aapt
+# already normalises the entries it writes. Without this step two builds of IDENTICAL source
+# produce different whole-file SHA-256 values, which makes "verify the artifact hash" meaningless.
+# MUST run before zipalign and signing: the signature covers the archive, so normalising after
+# signing would invalidate it (zipalign preserves entry timestamps).
+[ -f "$ROOT/scripts/normalize_apk_zip.py" ] || {
+    echo "missing $ROOT/scripts/normalize_apk_zip.py - reproducibility step cannot run"; exit 1
+}
+python3 "$ROOT/scripts/normalize_apk_zip.py" "$BUILD_DIR/gen/base.apk"
 
 echo "==> zipalign"
 "$BT/zipalign" -f 4 "$BUILD_DIR/gen/base.apk" "$BUILD_DIR/app-aligned.apk"
