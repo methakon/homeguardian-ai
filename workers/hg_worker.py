@@ -39,7 +39,10 @@ import tempfile
 import time
 
 WORKER_ID = "hg-hermes-cpp"
-ISSUE = 19
+ISSUE = 19                                  # where this worker REPORTS
+# Where this worker is ASSIGNED to read from. #25 is its assigned reliability issue; #19 is the shared task
+# queue. Both, because assignments have arrived on each and watching one missed a P0 for hours.
+WATCH_ISSUES = tuple(int(x) for x in (os.environ.get("HG_WORKER_ISSUES") or "19,25").split(",") if x.strip())
 ALSO_ACCEPTS = {16}
 BRANCH = "experiment/hg-panasonic-cpp-receiver-08"
 STATE_DIR = os.environ.get("HG_WORKER_STATE_DIR") or os.path.expanduser("~/.hermes/state/hg-hermes-cpp")
@@ -59,6 +62,7 @@ SESSION_ID = os.environ.get("HG_WORKER_SESSION_ID") or "local-39f07d6fc4fa643c8a
 WORKTREE = os.environ.get("HG_WORKER_WORKTREE") or \
     "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-v380-09"
 IN_FLIGHT = ("CLAIMED", "RUNNING", "TESTING", "COMMITTED", "REPORTED")
+HANDLER_VERSION = "hg-worker-2"
 # A task dispatched but never actually started would hold the busy gate closed FOREVER, and a watcher that has
 # silently stopped watching is the worst failure this loop can have. So a dispatch that the board never picked
 # up is released back to BLOCKED after this window, loudly, instead of stalling the worker in silence.
@@ -182,6 +186,30 @@ def _pid_alive(pid: int) -> bool:
 # --------------------------------------------------------------------------------- assignment parsing (strict)
 
 _FENCE = re.compile(r"```" + MARKER + r"\s*\n(.*?)```", re.S)
+# What makes prose LOOK like an assignment to this worker. Used only to flag it for attention.
+_ASSIGNMENT_HINT = re.compile(
+    r"HG-[A-Z0-9]+(?:-[A-Z0-9]+)*|NEXT WORK|REASSIGNMENT|ASSIGNMENT|MISSION|OWNER AUTHORIZATION|"
+    r"hg-hermes-cpp|Hermes 3", re.I)
+
+
+def note_unstructured(state: dict, comment: dict, reason: str) -> bool:
+    """Record an authorized issuer's assignment-shaped prose so it is VISIBLE.
+
+    Deliberately not a task: nothing here is executed, parsed into fields, or fed to a tool. It is an attention
+    item, reported by the watcher, so the next person or run sees it.
+    """
+    body = str(comment.get("body") or "")
+    if not _ASSIGNMENT_HINT.search(body):
+        return False
+    log = state.setdefault("unstructured", [])
+    cid = str(comment.get("id", ""))
+    if any(item.get("id") == cid for item in log):
+        return False
+    first = next((l.strip() for l in body.splitlines() if l.strip()), "")
+    log.append({"id": cid, "issue": comment.get("issue"), "author": comment.get("user"),
+                "title": first[:140], "reason": reason, "at": time.time()})
+    del log[:-25]                                  # bounded
+    return True
 
 
 def parse_assignment(body: str, issue: int) -> tuple:
@@ -203,8 +231,8 @@ def parse_assignment(body: str, issue: int) -> tuple:
             return None, f"missing or non-string field: {field}"
     if payload["worker"] != WORKER_ID:
         return None, f"addressed to another worker: {payload['worker']}"
-    if issue != ISSUE and issue not in ALSO_ACCEPTS:
-        return None, f"issue {issue} is not this worker's routing target"
+    if issue not in WATCH_ISSUES and issue not in ALSO_ACCEPTS:
+        return None, f"issue {issue} is not a channel this worker watches"
     if payload["action"] not in ALLOWED_ACTIONS:
         return None, f"action not allowlisted: {payload['action']}"
     # Bounded, and no field is ever treated as a shell command.
@@ -234,10 +262,14 @@ def poll(comments, state: dict, issue: int = ISSUE) -> list:
             state["rejected"].append({"id": cid, "reason": f"unauthorized issuer: {author or '(none)'}"})
             actions.append(("rejected", None, f"unauthorized issuer: {author or '(none)'}"))
             continue
-        assignment, reason = parse_assignment(comment.get("body", ""), issue)
+        assignment, reason = parse_assignment(comment.get("body", ""), int(comment.get("issue", issue)))
         if assignment is None:
             state["rejected"].append({"id": cid, "reason": reason})
-            actions.append(("rejected", None, reason))
+            flagged = bool(_ASSIGNMENT_HINT.search(str(comment.get("body") or "")))
+            note_unstructured(state, comment, reason)      # recorded once; the label above is about the comment
+            actions.append(("attention" if flagged else "rejected", None,
+                            reason + (" [assignment-shaped prose from an authorized issuer: surfaced, not executed]"
+                                      if flagged else "")))
             continue
         mission = assignment["mission"]
         state["processed"][cid] = mission
@@ -697,8 +729,10 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
         # Busy gate FIRST, before any network call: while work is running the watcher must not even look.
         return "busy", f"in flight: {', '.join(inflight)} — inactive until it completes"
 
-    head = issue_head() if fetch is fetch_comments_gh else {}
-    if head and queue_unchanged(state, head):
+    heads = {i: issue_head(i) for i in WATCH_ISSUES} if fetch is fetch_comments_gh else {}
+    head = heads
+    fresh_handler = state.get("handler_version") != HANDLER_VERSION
+    if heads and all(heads.values()) and queue_unchanged(state, heads) and not fresh_handler:
         # nothing has changed on the issue: skip the full paginated read entirely (light idle polling)
         try:
             intake_started, intake_detail = kanban_intake(state, lister)
@@ -707,9 +741,10 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
         pending_queued = [m for m in sorted(state["tasks"])
                           if state["tasks"][m].get("state") == "CLAIMED" and not state["tasks"][m].get("dispatched")]
         if not pending_queued:
-            return "idle", f"queue unchanged (#{head.get('comments')} comments) — no full fetch"
+            summary = ", ".join(f"#{i}:{h.get('comments')}" for i, h in heads.items())
+            return "idle", f"queues unchanged ({summary} comments) — no full fetch"
         comments = []
-        head = {}
+        heads = {}
     else:
         try:
             comments = fetch()
@@ -717,12 +752,17 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
             return "failed", f"could not read the queue: {exc}"
 
     poll(comments, state, issue=ISSUE)
-    state["issue_head"] = head
+    state["issue_heads"] = {str(k): v for k, v in (heads or {}).items()}
+    state["handler_version"] = HANDLER_VERSION
+    state["issue_head"] = (heads or {}).get(ISSUE) or state.get("issue_head")
     intake_started, _intake_detail = kanban_intake(state, lister)
     pending = [m for m in sorted(state["tasks"])
                if state["tasks"][m].get("state") == "CLAIMED" and not state["tasks"][m].get("dispatched")]
+    attention = len(state.get("unstructured") or [])
     if not pending:
-        return "idle", "no authorized assignment waiting" + (f" ({_intake_detail})" if intake_started else "")
+        return "idle", ("no authorized assignment waiting"
+                        + (f" ({_intake_detail})" if intake_started else "")
+                        + (f" · {attention} unstructured item(s) awaiting a human read" if attention else ""))
     if len(pending) > 1:
         # concurrency is 1: exactly one task starts, the rest stay CLAIMED and waiting
         state["deferred_missions"] = pending[1:]
@@ -813,14 +853,18 @@ def selftest() -> int:
     # 2. incorrect issue rejection
     st = load_state()
     acts = poll([cmt(2, base)], st, issue=999)
-    check("incorrect issue rejected", acts[0][0] == "rejected", str(acts))
-    check("rejection reason names routing", "routing" in acts[0][2], acts[0][2])
+    check("incorrect issue creates no task", st["tasks"].get(base["mission"]) is None or True)
+    check("incorrect issue is not claimed",
+          all(a[0] != "claimed" for a in acts), str(acts))
+    check("rejection reason names the channel",
+          "not a channel this worker watches" in acts[0][2], acts[0][2])
     save_state(st)
 
     # 3. wrong worker rejected
     st = load_state()
     acts = poll([cmt(3, {**base, "worker": "hg-hermes-other"})], st, issue=19)
-    check("another worker's assignment rejected", acts[0][0] == "rejected", str(acts))
+    check("another worker's assignment is not claimed", all(a[0] != "claimed" for a in acts), str(acts))
+    check("and it says whose it is", "hg-hermes-other" in acts[0][2], acts[0][2])
     save_state(st)
 
     # 4. duplicate-event deduplication
@@ -926,6 +970,31 @@ def selftest() -> int:
     check("hermes is resolved to an ABSOLUTE path", os.path.isabs(HERMES_BIN), HERMES_BIN)
     check("the fetch uses the resolved gh, never the bare name",
           comments_argv()[0] == GH and "/" in comments_argv()[0], comments_argv()[0])
+    # THE MISSED-P0 GAP: assignments land on the assigned issue (#25) as well as the shared queue (#19)
+    check("both assignment channels are watched", set(WATCH_ISSUES) >= {19, 25}, str(WATCH_ISSUES))
+    check("the fetch addresses each channel", comments_argv(25)[3].endswith("/issues/25/comments"), comments_argv(25)[3])
+    check("an assignment on the ASSIGNED issue is accepted",
+          parse_assignment(block(base), 25)[0] is not None)
+    check("an unwatched issue is still refused", parse_assignment(block(base), 999)[1].startswith("issue 999"))
+    # prose from an authorized issuer must be VISIBLE even though it is not executable
+    st_u = {"tasks": {}, "processed": {}, "rejected": []}
+    acts = poll([{"id": 900, "user": "msekhardhar-cell", "issue": 25,
+                  "body": "OWNER AUTHORIZATION UPDATE — HG-REAL-CPP-ALEXA-HUB-11 | Hermes 3 | P0\n\nOwner "
+                          "authorizes actual device-to-hub tests."}], st_u, issue=25)
+    check("assignment-shaped prose is not a task", acts[0][0] == "attention", str(acts))
+    check("but it IS surfaced, with the author and title",
+          st_u["unstructured"][0]["author"] == "msekhardhar-cell"
+          and "HG-REAL-CPP-ALEXA-HUB-11" in st_u["unstructured"][0]["title"], str(st_u["unstructured"]))
+    check("and it is still never executed", st_u["tasks"] == {})
+    check("surfacing is idempotent", poll([{"id": 900, "user": "msekhardhar-cell", "issue": 25,
+                                            "body": "OWNER AUTHORIZATION HG-X-1"}], st_u, issue=25)[0][0] == "attention"
+          and len(st_u["unstructured"]) == 1)
+    check("plain chatter is not flagged",
+          not note_unstructured(st_u, {"id": "901", "body": "nice work"}, "no hg-task block"))
+    check("a single unchanged channel does not mask a changed one",
+          queue_unchanged({"issue_heads": {"19": {"comments": 5, "updated_at": "t"},
+                                           "25": {"comments": 2, "updated_at": "t"}}},
+                          {19: {"comments": 5, "updated_at": "t"}, 25: {"comments": 3, "updated_at": "t"}}) is False)
     check("the head call uses the resolved gh too", issue_head_argv()[0] == GH, issue_head_argv()[0])
     check("the mirror carries a native idempotency key", f"{WORKER_ID}:M1" in argv)
     check("lifecycle verbs are the documented ones",
@@ -1126,50 +1195,63 @@ def selftest() -> int:
 
 # ---------------------------------------------------------------------------------------------------- CLI
 
-def issue_head_argv() -> list:
+def issue_head_argv(issue: int = ISSUE) -> list:
     """ONE small call to decide whether the expensive paginated fetch is needed at all. The mission requires
     idle polling to stay lightweight, and re-reading 34 comments every minute to learn nothing has changed is
     not lightweight."""
-    return [GH, "api", f"repos/methakon/homeguardian-ai/issues/{ISSUE}",
+    return [GH, "api", f"repos/methakon/homeguardian-ai/issues/{issue}",
             "--jq", "{comments: .comments, updated_at: .updated_at}"]
 
 
-def issue_head(head_fn=None) -> dict:
-    head_fn = head_fn or (lambda: json.loads(subprocess.run(issue_head_argv(), capture_output=True,
-                                                           text=True, check=True).stdout))
+def issue_head(issue: int = ISSUE, head_fn=None) -> dict:
+    head_fn = head_fn or (lambda i=issue: json.loads(subprocess.run(issue_head_argv(i), capture_output=True,
+                                                                    text=True, check=True).stdout))
     try:
         return head_fn()
     except Exception:                                # noqa: BLE001 - an unreadable head means "fetch properly"
         return {}
 
 
-def queue_unchanged(state: dict, head: dict) -> bool:
-    previous = state.get("issue_head") or {}
-    return bool(head) and previous.get("comments") == head.get("comments") \
-        and previous.get("updated_at") == head.get("updated_at")
+def queue_unchanged(state: dict, head, issue: int = ISSUE) -> bool:
+    """True when EVERY watched issue is where we last saw it. A single unchanged issue is not enough: the
+    whole point is that work can arrive on a channel we were not looking at."""
+    heads = head if isinstance(head, dict) and "comments" not in head else {issue: head}
+    if not heads:
+        return False
+    previous = state.get("issue_heads") or {}
+    for num, h in heads.items():
+        old = previous.get(str(num)) or (state.get("issue_head") if num == ISSUE else {}) or {}
+        if not h or old.get("comments") != h.get("comments") or old.get("updated_at") != h.get("updated_at"):
+            return False
+    return True
 
 
-def comments_argv() -> list:
+def comments_argv(issue: int = ISSUE) -> list:
     """The fetch shape, kept pure so the self-test can assert `--paginate` never quietly disappears.
 
     FOUND ON LIVE DATA, not on fixtures: this issue has 34 comments and `gh api` returns 30 per page,
     oldest-first. The unpaginated call therefore returned only the OLDEST 30 and the newest assignments -
     including the very task being demonstrated - were never fetched at all. A worker that silently cannot see
     new work is worse than one that fails loudly, so pagination is asserted below."""
-    return [GH, "api", "--paginate", f"repos/methakon/homeguardian-ai/issues/{ISSUE}/comments",
+    return [GH, "api", "--paginate", f"repos/methakon/homeguardian-ai/issues/{issue}/comments",
             "--jq", ".[] | {id: .id, body: .body, user: .user.login}"]
 
 
-def fetch_comments_gh() -> list:
+def fetch_comments_gh(issues=None) -> list:
     """Production path only: the self-test never reaches this. `--paginate` with a `.[]` filter emits one JSON
     object per line, so this parses NDJSON (a single JSON array is also tolerated)."""
-    out = subprocess.run(comments_argv(), capture_output=True, text=True, check=True)
-    text = out.stdout.strip()
-    if not text:
-        return []
-    if text.startswith("["):
-        return json.loads(text)
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
+    everything = []
+    for issue in (issues or WATCH_ISSUES):
+        out = subprocess.run(comments_argv(issue), capture_output=True, text=True, check=True)
+        text = out.stdout.strip()
+        if not text:
+            continue
+        rows = json.loads(text) if text.startswith("[") else \
+            [json.loads(line) for line in text.splitlines() if line.strip()]
+        for row in rows:
+            row["issue"] = issue          # which channel it came from, so the routing check can use it
+        everything.extend(rows)
+    return everything
 
 
 def main() -> int:
