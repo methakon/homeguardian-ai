@@ -332,6 +332,10 @@ add_executable(hg_alexa_bridge
     src/core/Pipeline.cpp
     src/core/TimeWindowCorrelation.cpp
     src/core/DetectionFusionRule.cpp
+    # ActivityEpisode.cpp defines ActivityEpisodeSelector::best(), which DetectionFusionRule calls.
+    # The hub target links it; this target did not, so the bridge failed at LINK time with an
+    # undefined reference while everything else built. Found by running the Alexa simulation.
+    src/core/ActivityEpisode.cpp
     src/core/ImpactClassifier.cpp
     src/core/SyntheticImpactRule.cpp
     src/core/Observation.cpp
