@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""HG-WORKER-WATCHER-ACTIVATION-S1 - trusted task-envelope parsing.
+
+A GitHub issue comment is UNTRUSTED INPUT. On a public repository anyone can comment, so the
+channel that delivers tasks is also the channel an attacker would use to deliver instructions.
+This module is the boundary:
+
+  * only a fenced ```hg-task block is treated as a task - PROSE IS NEVER INSTRUCTIONS;
+  * the comment's AUTHOR must be on an allowlist, otherwise nothing in it is acted on;
+  * the envelope must carry every required field;
+  * command-shaped text anywhere in the envelope is a REFUSAL, never something to execute;
+  * actions listed as hard-prohibited can never be authorized by an envelope at all, no matter
+    who wrote it - they need an owner decision outside this channel;
+  * everything else is delegated to task_guard, so scope, branch, approval and duplicate rules
+    have exactly one implementation.
+
+Fail-closed: any ambiguity (missing tag, malformed JSON, unknown author) refuses. There is no
+path from a comment to an executed command.
+
+Stdlib only. Run: python3 scripts/worker/task_envelope.py --comment <json> [--json]
+The comment JSON is data only: {"author": {"login": "..."}, "body": "..."}
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+from task_guard import Ledger, Refused, validate          # noqa: E402
+
+DEFAULT_POLICY = os.path.join(HERE, "watcher-policy.json")
+DEFAULT_IDENTITY = os.path.join(HERE, "identity.json")
+
+
+class EnvelopeRefused(Exception):
+    def __init__(self, code: str, detail: str):
+        super().__init__(f"{code}: {detail}")
+        self.code, self.detail = code, detail
+
+
+def extract_envelope(body: str, tag: str) -> dict:
+    """Pull the single fenced task block out of a comment body. Prose is ignored entirely."""
+    if not body or not body.strip():
+        raise EnvelopeRefused("NO_ENVELOPE", "comment body is empty")
+    blocks = re.findall(r"```" + re.escape(tag) + r"[ \t]*\r?\n(.*?)```", body, re.S)
+    if not blocks:
+        raise EnvelopeRefused("NO_ENVELOPE",
+                              f"no ```{tag} block found - a comment without a structured envelope "
+                              f"is prose and is never executed")
+    if len(blocks) > 1:
+        raise EnvelopeRefused("AMBIGUOUS_ENVELOPE",
+                              f"{len(blocks)} ```{tag} blocks - exactly one is required")
+    try:
+        env = json.loads(blocks[0])
+    except ValueError as exc:
+        raise EnvelopeRefused("MALFORMED_ENVELOPE", f"envelope is not valid JSON: {exc}") from exc
+    if not isinstance(env, dict):
+        raise EnvelopeRefused("MALFORMED_ENVELOPE", "envelope must be a JSON object")
+    return env
+
+
+def admit(comment: dict, policy: dict, identity: dict, ledger: Ledger) -> dict:
+    """Returns the admission decision. Raises EnvelopeRefused for anything that must not proceed."""
+    author = ((comment.get("author") or {}).get("login") or "").strip()
+    if not author:
+        raise EnvelopeRefused("NO_AUTHOR", "comment has no author login")
+    if author not in policy["allowed_authors"]:
+        raise EnvelopeRefused("AUTHOR_NOT_ALLOWED",
+                              f"'{author}' is not on the task-author allowlist; nothing in this "
+                              f"comment is actionable")
+
+    env = extract_envelope(comment.get("body", ""), policy["envelope_tag"])
+
+    # Resolve the task FIRST: the request fields live inside it, not at the envelope root.
+    # Reading them from the envelope root silently skipped the hard-prohibited block below.
+    task = env["task"] if isinstance(env.get("task"), dict) else env
+    if not isinstance(task, dict):
+        raise EnvelopeRefused("MALFORMED_ENVELOPE", "envelope carries no task object")
+
+    # `requires_approval` is a REQUEST and is the escalation path that must be hard-blocked.
+    # `prohibited_actions` is the task's own safety DECLARATION - declaring a dangerous action
+    # as forbidden is good hygiene, so it is recorded, never treated as a request.
+    requested = set(task.get("requires_approval") or [])
+    hard = requested & set(policy["hard_prohibited"])
+    if hard:
+        raise EnvelopeRefused("HARD_PROHIBITED",
+                              f"{sorted(hard)} can never be authorized through a task envelope, "
+                              f"regardless of author or approval record")
+
+    verdict = validate(task, identity, ledger)          # scope, branch, approval, duplicates
+    verdict["declared_prohibited"] = sorted(set(task.get("prohibited_actions") or []))
+    verdict["author"] = author
+    verdict["source"] = env.get("source", comment.get("url", "issue:14"))
+    return verdict
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--comment", required=True, help="comment JSON (author + body); data only")
+    ap.add_argument("--policy", default=DEFAULT_POLICY)
+    ap.add_argument("--identity", default=DEFAULT_IDENTITY)
+    ap.add_argument("--ledger", default=os.path.expanduser("~/.hermes/cache/scratch/hg-worker/ledger.json"))
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+
+    policy = json.load(open(a.policy))
+    identity = json.load(open(a.identity))
+    comment = json.load(open(a.comment))
+    try:
+        out = admit(comment, policy, identity, Ledger(a.ledger))
+        code = "ADMIT"
+    except (EnvelopeRefused, Refused) as exc:
+        out, code = {"decision": "REFUSE", "code": exc.code, "detail": exc.detail}, "REFUSE"
+    print(json.dumps(out, indent=2) if a.json else f"{code} [{out.get('code','-')}] {out.get('detail') or ''}")
+    return 0 if code == "ADMIT" else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
