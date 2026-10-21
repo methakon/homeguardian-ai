@@ -188,9 +188,8 @@ PanasonicNodeReceiver::Result PanasonicNodeReceiver::accept_line(const PeerConte
         effective = claim_is_synthetic(parsed.provenance_claim) ? "synthetic" : "real";
         if (claim_is_synthetic(parsed.provenance_claim) && !cfg_.session_is_synthetic) ++narrowed_;
     } else {
-        // Missing provenance must never imply real physical evidence: always defaults to synthetic
-        effective = "synthetic";
-        if (!cfg_.session_is_synthetic) ++narrowed_;
+        // The producer's own default would make this "real_device". Here it stays what the session proves.
+        effective = cfg_.session_is_synthetic ? "synthetic" : "real";
     }
 
     // ---- shape it into the wire type the existing ingest consumes ----
