@@ -1,91 +1,10 @@
-# Build context exclusions for the hub image (deploy/docker/Dockerfile).
-# Keep this list tight: the image must build from a clean clone.
-#
-# PURPOSE (distinct from .gitignore): this file decides what is sent to the Docker
-# daemon as the build context. Anything here is still in the working tree and still
-# in git's view - it just never reaches an image layer. Secrets must be excluded
-# here as well as in .gitignore, because a key that is not committed can still end
-# up baked into a layer.
-
-# --- build trees (large, host-specific, contain downloaded deps) ---
-hg_build/
-hg_asan/
-hg_asan_e/
-hg_asan_f1/
-hg_asan_f21/
-hg_verify/
-hg_f1_verify/
-hg_f21_verify/
-hg_android/
-hg_android27/
-hg_apk_build/
-hg_asan_f22/
-hg_asan_f22b/
+# Build trees must never enter the build context. Without this the context carries build/ and build_sensor/
+# (GBs of CMake objects, fetched deps and binaries), which makes every docker build transfer and hash data it
+# can never use. Added while running the Alexa simulation in a container.
 build/
-build_final/
-apk/
-cmake-build-*/
-
-# --- VCS + editors ---
+build_sensor/
+build-*/
 .git/
-.gitignore
-.vscode/
-.idea/
-
-# --- untracked local material that must never enter an image ---
-example/
-node_modules/
-
-# --- runtime artefacts: databases, WAL/SHM sidecars, logs, credentials ---
-*.db
-*.db-wal
-*.db-shm
-*.db-journal
-*.log
-homeguardian.log
-deploy/docker/secrets/creds.json
-
-# --- D-03 certificate material and device credentials (NEVER in a layer) ---
-# The ingress reads certificates from a READ-ONLY bind mount at run time. Baking
-# them in would put a private key in an image layer, where it survives in docker
-# history and in every copy of the image, and make rotation a rebuild.
-deploy/docker/certs/
-certs/
-**/certs/
-# Private keys and certificate material of EVERY kind, at ANY depth. The `**/`
-# prefix is not decoration: `*.key` matches only at the context root in Docker's
-# matcher, so a key one directory down leaked into the context (this was caught by
-# building a probe image and looking for the file, not by reading the rules).
-**/*.key
-**/*.pem
-**/*.crt
-**/*.cer
-**/*.csr
-**/*.srl
-**/*.p12
-**/*.pfx
-**/*.jks
-**/*.keystore
-**/*.keytab
-# Provisioned device credentials and operator registries: these carry credential
-# fingerprints and consent records, which identify real devices.
-**/devices.json
-**/devices.*.json
-**/revocations.json
-**/revocations.*.json
-**/ca.srl
-# Locally generated secrets and temporary credential/provisioning directories.
-**/*.secret
-**/*.secrets
-**/*.secret.json
-**/secrets/
-**/.secrets/
-**/credentials/
-**/private/
-**/tmp-certs/
-**/tmp_creds/
-**/provisioned/
-
-# --- misc ---
-**/*.swp
-.DS_Store
+*.o
+*.a
+tests/media/

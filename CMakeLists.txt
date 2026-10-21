@@ -126,6 +126,10 @@ add_executable(homeguardian
     src/core/SimulatedEventSource.cpp
     src/core/TimeWindowCorrelation.cpp
     src/core/DetectionFusionRule.cpp
+    # ActivityEpisode.cpp defines ActivityEpisodeSelector::best(), which DetectionFusionRule calls.
+    # Same omission as hg_alexa_bridge had: the symbol was declared, called, and defined in a file no
+    # target listed, so the hub binary could not LINK. Found by the in-container build, not locally.
+    src/core/ActivityEpisode.cpp
     src/core/ImpactClassifier.cpp
     src/core/SyntheticImpactRule.cpp
     src/core/Pipeline.cpp
@@ -397,6 +401,8 @@ target_link_libraries(hg_alexa_bridge PRIVATE
         src/core/Pipeline.cpp
         src/core/TimeWindowCorrelation.cpp
         src/core/DetectionFusionRule.cpp
+    # Defines ActivityEpisodeSelector::best(), called by DetectionFusionRule.cpp above.
+    src/core/ActivityEpisode.cpp
         src/core/ImpactClassifier.cpp
         src/core/SyntheticImpactRule.cpp
         src/core/Observation.cpp
