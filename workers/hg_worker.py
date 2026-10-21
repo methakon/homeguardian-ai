@@ -860,7 +860,7 @@ def selftest() -> int:
                                       failure_fn=lambda t: "exit_code 75 - free tier exhausted")
     check("a failed dispatched run releases the gate", rel == ["S-6"], str(rel))
     check("the failure reason is recorded on the task",
-          "dispatch run failed" in dead["tasks"]["S-6"]["blocked_reason"], dead["tasks"]["S-6"]["blocked_reason"])
+          "dispatched run failed" in dead["tasks"]["S-6"]["blocked_reason"], dead["tasks"]["S-6"]["blocked_reason"])
     check("a dead run is not left holding the watcher inactive", inflight_tasks(dead) == [])
     check("dispatch NAMES its provider instead of inheriting a broken default",
           "--provider" in dispatch_argv("kanban", "M", "d", BRANCH)
