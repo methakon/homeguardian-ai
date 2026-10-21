@@ -62,6 +62,12 @@ IN_FLIGHT = ("CLAIMED", "RUNNING", "TESTING", "COMMITTED", "REPORTED")
 # silently stopped watching is the worst failure this loop can have. So a dispatch that the board never picked
 # up is released back to BLOCKED after this window, loudly, instead of stalling the worker in silence.
 DISPATCH_STALE_SECONDS = 900
+# FOUND BY RUNNING IT: a dispatched run spawned and then died at once - `worker_result {exit_code: 75}` with
+# `last_output` saying the free tier of gemini-3.6-flash was exhausted. The dispatcher inherited a provider
+# that cannot sustain an agent session, so the work never happened. A dispatch must therefore NAME the provider
+# it needs instead of inheriting whatever happens to be default.
+DISPATCH_MODEL = os.environ.get("HG_WORKER_DISPATCH_MODEL") or "deepseek/deepseek-v4-flash"
+DISPATCH_PROVIDER = os.environ.get("HG_WORKER_DISPATCH_PROVIDER") or "commandcode"
 # Memory pressure: a heavy C++ build is deferred rather than started when the host is already loaded.
 PRESSURE_MIN_AVAILABLE_MB = 2048
 PRESSURE_MAX_LOAD_FRACTION = 0.8
@@ -464,7 +470,27 @@ def _kanban_show_status(task_id: str) -> str:
     return ""
 
 
-def release_stale_dispatches(state: dict, now=None, status_fn=None, window: int = DISPATCH_STALE_SECONDS) -> tuple:
+def _kanban_run_failure(task_id: str) -> str:
+    """A short reason if the board recorded a FAILED worker run for this task, else "".
+
+    The board can leave a dead run marked `running` (observed: exit_code 75 while the run stayed active), and a
+    zombie like that would hold the busy gate shut forever. A failed run is authoritative over the status."""
+    if not task_id:
+        return ""
+    ok, out = _kanban_run(kanban_argv("show", task_id))
+    if not ok:
+        return ""
+    for line in out.splitlines():
+        if "worker_result" in line and "'exit_code'" in line:
+            match = re.search(r"'exit_code':\s*(-?\d+)", line)
+            if match and int(match.group(1)) != 0:
+                tail = re.search(r"'last_output':\s*'(.{0,140})", line)
+                return f"exit_code {match.group(1)}" + (f" - {tail.group(1)}" if tail else "")
+    return ""
+
+
+def release_stale_dispatches(state: dict, now=None, status_fn=None, failure_fn=None,
+                             window: int = DISPATCH_STALE_SECONDS) -> tuple:
     """Reconcile dispatches against the board. Returns (released, completed).
 
     This is what CLOSES the loop: the work is done by whoever the dispatcher spawned, and nothing tells this
@@ -482,6 +508,14 @@ def release_stale_dispatches(state: dict, now=None, status_fn=None, window: int 
         # well be running. This worker always writes `at`, so this is only about damaged state.
         at = float(dispatched.get("at") or task.get("updated_at") or 0)
         if at <= 0 or now - at < window:
+            continue
+        failure = (failure_fn or _kanban_run_failure)(dispatched.get("kanban_task_id", ""))
+        if failure:
+            # A run that died is not "in flight", whatever the board's status still says.
+            task["state"] = "BLOCKED"
+            task["blocked_reason"] = f"the dispatched run failed ({failure})"
+            task["updated_at"] = now
+            released.append(mission)
             continue
         board = (status_fn or _kanban_show_status)(dispatched.get("kanban_task_id", ""))
         if board in ("running", "review"):
@@ -513,7 +547,8 @@ def dispatch_argv(mode: str, mission: str, detail: str, branch: str, task_id: st
              f"WORKER/TASK/SHA/TESTS format. Commit and push to the assigned branch. Never merge to main.")
     if mode == "kanban":
         return kanban_argv("create", "--json", "--idempotency-key", f"{WORKER_ID}:{mission}",
-                           "--assignee", "default", "--created-by", WORKER_ID, "--body", brief,
+                           "--assignee", "default", "--created-by", WORKER_ID,
+                           "--model", DISPATCH_MODEL, "--provider", DISPATCH_PROVIDER, "--body", brief,
                            f"[{WORKER_ID}] {mission}")
     if mode == "resume":
         return ["hermes", "--resume", SESSION_ID, "-z", brief]
@@ -818,6 +853,19 @@ def selftest() -> int:
     check("a finished dispatched run closes the task", done == ["S-4"] and fin["tasks"]["S-4"]["state"] == "COMPLETE")
     check("the watcher resumes once the executed work is finished", inflight_tasks(fin) == [])
     damaged = {"tasks": {"S-5": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "ok": True, "kanban_task_id": "t_x"}}}}
+    # a DEAD run must release the gate even while the board still calls it running
+    dead = {"tasks": {"S-6": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time() - 4000,
+                                                                 "ok": True, "kanban_task_id": "t_deadrun"}}}}
+    rel, _ = release_stale_dispatches(dead, status_fn=lambda t: "running",
+                                      failure_fn=lambda t: "exit_code 75 - free tier exhausted")
+    check("a failed dispatched run releases the gate", rel == ["S-6"], str(rel))
+    check("the failure reason is recorded on the task",
+          "dispatch run failed" in dead["tasks"]["S-6"]["blocked_reason"], dead["tasks"]["S-6"]["blocked_reason"])
+    check("a dead run is not left holding the watcher inactive", inflight_tasks(dead) == [])
+    check("dispatch NAMES its provider instead of inheriting a broken default",
+          "--provider" in dispatch_argv("kanban", "M", "d", BRANCH)
+          and "--model" in dispatch_argv("kanban", "M", "d", BRANCH),
+          str(dispatch_argv("kanban", "M", "d", BRANCH)[:14]))
     check("a record with no timestamp is not presumed stalled",
           release_stale_dispatches(damaged, status_fn=lambda t: "ready") == ([], []))
 
