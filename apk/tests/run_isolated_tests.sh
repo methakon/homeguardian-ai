@@ -42,8 +42,21 @@ echo "==> 3/4 compile the isolated tests"
 javac --release 8 -Xlint:-options -classpath "$OUT/prod:$AJ" -d "$OUT/test" \
     "$APK_DIR/tests/NodeTransportHostTest.java" \
     "$APK_DIR/tests/ProducerSchemaConformanceTest.java" \
-    "$APK_DIR/tests/ObservationTransportPolicyTest.java"
+    "$APK_DIR/tests/ObservationTransportPolicyTest.java" \
+    "$APK_DIR/tests/CrossReceiverContractTest.java"
 echo "    test classes: $(find "$OUT/test" -name '*.class' | wc -l)"
+
+echo "==> 3b/4 generate the cross-receiver fixture from the C++ receiver source"
+# The fixture is DERIVED state and lives under a gitignored path, so it is regenerated here rather
+# than committed. If it cannot be generated the cross-receiver test would SKIP, and a skipped check
+# must never read as cleaner than the check - so a failure here is a hard failure.
+if ! python3 "$ROOT/scripts/gen_cross_receiver_fixture.py" > "$OUT/fixture-gen.log" 2>&1; then
+    echo "    FIXTURE GENERATION FAILED - refusing to run with a silently-skipping cross-receiver test"
+    sed 's/^/      /' "$OUT/fixture-gen.log"
+    exit 1
+fi
+grep -E 'only on the|RESULT' "$OUT/fixture-gen.log" | sed 's/^/    /'
+echo
 
 echo "==> 4/4 run (stubs first on the classpath)"
 echo
@@ -56,6 +69,7 @@ java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.NodeTransportHo
 echo
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ProducerSchemaConformanceTest || rc=1
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ObservationTransportPolicyTest || rc=1
+java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.CrossReceiverContractTest || rc=1
 echo
 echo "==> exit code: $rc"
 exit $rc
