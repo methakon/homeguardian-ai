@@ -75,22 +75,56 @@ class TestTaskValidatorSecurity(unittest.TestCase):
         self.assertEqual(len(rejections), 1)
         self.assertIn("MISSING_REQUIRED_FIELDS", rejections[0])
 
+    def test_underspecified_dialect_a_rejected(self):
+        comment = """```hg-task
+{"mission": "HG-TEST-01", "worker": "hg-hermes-cpp", "action": "test"}
+```"""
+        tasks, rejections = TaskValidator.extract_tasks(comment, "methakon", self.allowed_authors)
+        self.assertEqual(len(tasks), 0)
+        self.assertEqual(len(rejections), 1)
+        self.assertIn("MISSING_REQUIRED_FIELDS", rejections[0])
+        self.assertIn("under-specified Dialect A is refused", rejections[0])
+
+    def test_aliased_legacy_with_full_security_fields_accepted(self):
+        comment = """```hg-task
+{
+  "mission": "HG-ALIASED-01",
+  "source": "https://github.com/methakon/homeguardian-ai/issues/19#issuecomment-2",
+  "worker": "hg-hermes-cpp",
+  "expected_branch": "hermes/cpp-stabilization",
+  "allowed_scope": ["src/video/"],
+  "notes": "Verify observation receiver regression matrix",
+  "acceptance_tests": ["ctest"],
+  "prohibited_actions": ["main_write"]
+}
+```"""
+        tasks, rejections = TaskValidator.extract_tasks(comment, "msekhardhar-cell", self.allowed_authors)
+        self.assertEqual(len(rejections), 0)
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["task_id"], "HG-ALIASED-01")
+        self.assertEqual(tasks[0]["assigned_to"], "hg-hermes-cpp")
+        self.assertEqual(tasks[0]["objective"], "Verify observation receiver regression matrix")
+
     def test_valid_task_accepted(self):
         comment = """Hello worker, here is your next task:
 ```hg-task
 {
-  "mission": "HG-VALID-01",
-  "worker": "hg-hermes-cpp",
-  "action": "test",
-  "objective": "Verify observation receiver regression matrix"
+  "task_id": "HG-VALID-01",
+  "source": "https://github.com/methakon/homeguardian-ai/issues/19#issuecomment-1",
+  "assigned_to": "hg-hermes-cpp",
+  "expected_branch": "hermes/cpp-stabilization",
+  "allowed_scope": ["src/video/", "tests/"],
+  "objective": "Verify observation receiver regression matrix",
+  "acceptance_tests": ["ctest"],
+  "prohibited_actions": ["main_write"]
 }
 ```
 Thanks!"""
         tasks, rejections = TaskValidator.extract_tasks(comment, "msekhardhar-cell", self.allowed_authors)
         self.assertEqual(len(rejections), 0)
         self.assertEqual(len(tasks), 1)
-        self.assertEqual(tasks[0]["mission"], "HG-VALID-01")
-        self.assertEqual(tasks[0]["worker"], "hg-hermes-cpp")
+        self.assertEqual(tasks[0]["task_id"], "HG-VALID-01")
+        self.assertEqual(tasks[0]["assigned_to"], "hg-hermes-cpp")
         self.assertEqual(tasks[0]["action"], "test")
 
 
@@ -163,7 +197,16 @@ class TestSharedTaskWatcherWorkflow(unittest.TestCase):
                     "id": 9991,
                     "user": {"login": "msekhardhar-cell"},
                     "body": """```hg-task
-{"mission": "HG-NET-01", "worker": "hg-hermes-network", "action": "test"}
+{
+  "task_id": "HG-NET-01",
+  "source": "https://github.com/methakon/homeguardian-ai/issues/19#issuecomment-9991",
+  "assigned_to": "hg-hermes-network",
+  "expected_branch": "hermes/network-failover",
+  "allowed_scope": ["src/net/"],
+  "objective": "Test network failover",
+  "acceptance_tests": ["ctest"],
+  "prohibited_actions": ["main_write"]
+}
 ```"""
                 }
             ]
@@ -176,6 +219,36 @@ class TestSharedTaskWatcherWorkflow(unittest.TestCase):
         state = self.watcher.state_mgr.load()
         self.assertIn("WORKER_MISMATCH", state["rejected_events"][0]["reason"])
 
+    def test_wrong_branch_rejected(self):
+        # Issue 19 is hg-hermes-cpp whose owned_branch is hermes/cpp-stabilization.
+        mock_comments = {
+            19: [
+                {
+                    "id": 9995,
+                    "user": {"login": "msekhardhar-cell"},
+                    "body": """```hg-task
+{
+  "task_id": "HG-BRANCH-FAIL",
+  "source": "https://github.com/methakon/homeguardian-ai/issues/19#issuecomment-9995",
+  "assigned_to": "hg-hermes-cpp",
+  "expected_branch": "main",
+  "allowed_scope": ["src/video/"],
+  "objective": "Direct commit to main check",
+  "acceptance_tests": ["ctest"],
+  "prohibited_actions": ["main_write"]
+}
+```"""
+                }
+            ]
+        }
+        res = self.watcher.poll_once(comments_override=mock_comments)
+        self.assertEqual(res["status"], "ok")
+        self.assertEqual(res["dispatched"], 0)
+        self.assertEqual(res["rejected"], 1)
+
+        state = self.watcher.state_mgr.load()
+        self.assertIn("WRONG_BRANCH", state["rejected_events"][0]["reason"])
+
     def test_valid_task_dispatch_and_deduplication(self):
         mock_comments = {
             19: [
@@ -183,7 +256,16 @@ class TestSharedTaskWatcherWorkflow(unittest.TestCase):
                     "id": 9992,
                     "user": {"login": "msekhardhar-cell"},
                     "body": """```hg-task
-{"mission": "HG-CPP-TEST-01", "worker": "hg-hermes-cpp", "action": "test", "objective": "Run CTest matrix"}
+{
+  "task_id": "HG-CPP-TEST-01",
+  "source": "https://github.com/methakon/homeguardian-ai/issues/19#issuecomment-9992",
+  "assigned_to": "hg-hermes-cpp",
+  "expected_branch": "experiment/hg-panasonic-cpp-receiver-08",
+  "allowed_scope": ["src/video/", "tests/"],
+  "objective": "Run CTest matrix",
+  "acceptance_tests": ["ctest"],
+  "prohibited_actions": ["main_write"]
+}
 ```"""
                 }
             ]
@@ -250,7 +332,16 @@ class TestSharedTaskWatcherWorkflow(unittest.TestCase):
                     "id": 9994,
                     "user": {"login": "msekhardhar-cell"},
                     "body": """```hg-task
-{"mission": "HG-SCOPE-FAIL", "worker": "hg-hermes-android", "action": "test", "objective": "Configure WireGuard VPN tunnel on Oracle host"}
+{
+  "task_id": "HG-SCOPE-FAIL",
+  "source": "https://github.com/methakon/homeguardian-ai/issues/12#issuecomment-9994",
+  "assigned_to": "hg-hermes-android",
+  "expected_branch": "experiment/hg-panasonic-service-transport-06",
+  "allowed_scope": ["android/", "wireguard"],
+  "objective": "Configure WireGuard VPN tunnel on Oracle host",
+  "acceptance_tests": ["gradle test"],
+  "prohibited_actions": ["main_write"]
+}
 ```"""
                 }
             ]

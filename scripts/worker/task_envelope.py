@@ -82,6 +82,19 @@ def admit(comment: dict, policy: dict, identity: dict, ledger: Ledger) -> dict:
     if not isinstance(task, dict):
         raise EnvelopeRefused("MALFORMED_ENVELOPE", "envelope carries no task object")
 
+    # Explicit alias migration: map legacy keys into canonical fields
+    task = dict(task)
+    if "mission" in task and "task_id" not in task:
+        task["task_id"] = task["mission"]
+    if "worker" in task and "assigned_to" not in task:
+        task["assigned_to"] = task["worker"]
+    if "detail" in task and "objective" not in task:
+        task["objective"] = task["detail"]
+    elif "notes" in task and "objective" not in task:
+        task["objective"] = task["notes"]
+    if "source" not in task and "source" in env:
+        task["source"] = env["source"]
+
     # `requires_approval` is a REQUEST and is the escalation path that must be hard-blocked.
     # `prohibited_actions` is the task's own safety DECLARATION - declaring a dangerous action
     # as forbidden is good hygiene, so it is recorded, never treated as a request.

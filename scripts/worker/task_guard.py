@@ -137,6 +137,16 @@ class Ledger:
 
 def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
     """Returns a decision dict. Raises Refused for every violation."""
+    task = dict(task)
+    if "mission" in task and "task_id" not in task:
+        task["task_id"] = task["mission"]
+    if "worker" in task and "assigned_to" not in task:
+        task["assigned_to"] = task["worker"]
+    if "detail" in task and "objective" not in task:
+        task["objective"] = task["detail"]
+    elif "notes" in task and "objective" not in task:
+        task["objective"] = task["notes"]
+
     for field in REQUIRED_FIELDS:
         if not task.get(field):
             raise Refused("MISSING_FIELD", f"task is missing required field '{field}'")

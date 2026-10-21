@@ -232,14 +232,46 @@ class TaskValidator:
                 rejections.append("INVALID_TASK_SHAPE: task must be a JSON object")
                 continue
 
-            # 3. Required fields validation
-            required = ["mission", "worker", "action"]
-            missing = [f for f in required if f not in task_data]
-            if missing:
-                rejections.append(f"MISSING_REQUIRED_FIELDS: {missing}")
+            # 3. Canonical validation & alias normalization
+            task_obj = task_data.get("task") if isinstance(task_data.get("task"), dict) else task_data
+            if not isinstance(task_obj, dict):
+                rejections.append("INVALID_TASK_SHAPE: task payload must be a JSON object")
                 continue
 
-            tasks.append(task_data)
+            normalized = dict(task_obj)
+            if "mission" in normalized and "task_id" not in normalized:
+                normalized["task_id"] = normalized["mission"]
+            if "worker" in normalized and "assigned_to" not in normalized:
+                normalized["assigned_to"] = normalized["worker"]
+            if "detail" in normalized and "objective" not in normalized:
+                normalized["objective"] = normalized["detail"]
+            elif "notes" in normalized and "objective" not in normalized:
+                normalized["objective"] = normalized["notes"]
+            if "source" not in normalized and "source" in task_data:
+                normalized["source"] = task_data["source"]
+
+            canonical_required = [
+                "task_id",
+                "source",
+                "assigned_to",
+                "expected_branch",
+                "allowed_scope",
+                "objective",
+                "acceptance_tests",
+                "prohibited_actions",
+            ]
+            missing = [f for f in canonical_required if not normalized.get(f)]
+            if missing:
+                rejections.append(f"MISSING_REQUIRED_FIELDS: missing {missing} (under-specified Dialect A is refused)")
+                continue
+
+            # Backwards compatibility aliases for internal consumers
+            normalized["mission"] = normalized["task_id"]
+            normalized["worker"] = normalized["assigned_to"]
+            if "action" not in normalized:
+                normalized["action"] = "test"
+
+            tasks.append(normalized)
 
         return tasks, rejections
 
@@ -515,9 +547,25 @@ class SharedTaskWatcher:
                             rejected_count += 1
                             continue
 
+                        # Validate expected_branch matches worker's owned branch
+                        expected_branch = task.get("expected_branch")
+                        owned_branch = worker_info.get("owned_branch")
+                        if expected_branch and owned_branch and expected_branch != owned_branch:
+                            rej = f"WRONG_BRANCH: Task expects branch '{expected_branch}' but worker '{worker_id}' owns '{owned_branch}'"
+                            logger.warning(f"[REJECTED] {rej}")
+                            state["rejected_events"].append({
+                                "issue": issue_num,
+                                "comment_id": comment_id,
+                                "reason": rej,
+                                "timestamp": now_iso
+                            })
+                            rejected_count += 1
+                            continue
+
                         # Validate task scope against worker's authorized remit
-                        objective_text = str(task.get("objective", "")).lower() + " " + str(task.get("detail", "")).lower()
-                        if worker_id == "hg-hermes-android" and any(k in objective_text for k in ["wireguard", "vpn", "nsg", "oracle"]):
+                        allowed_scope = task.get("allowed_scope", [])
+                        scope_text = " ".join(allowed_scope).lower() + " " + str(task.get("objective", "")).lower()
+                        if worker_id == "hg-hermes-android" and any(k in scope_text for k in ["wireguard", "vpn", "nsg", "oracle"]):
                             rej = f"SCOPE_MISMATCH: Worker '{worker_id}' refused task with wireguard/network scope"
                             logger.warning(f"[REJECTED] {rej}")
                             state["rejected_events"].append({

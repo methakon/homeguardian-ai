@@ -207,35 +207,83 @@ class AntigravityWorker:
             return False, None
 
     def fetch_issue_tasks(self, since: Optional[str] = None) -> List[Dict[str, Any]]:
-        endpoint = f"repos/methakon/homeguardian-ai/issues/{ISSUE_NUMBER}/comments"
-        if since:
-            endpoint += f"?since={since}"
-        cmd = [resolve_gh_bin(), "api", endpoint, "--paginate"]
-
-        try:
-            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            comments = json.loads(res.stdout)
-        except Exception as e:
-            logger.warning(f"Could not fetch comments from Issue #{ISSUE_NUMBER}: {e}")
-            return []
-
         tasks = []
-        for c in comments:
-            author = c.get("user", {}).get("login", "")
-            if author not in ALLOWED_AUTHORS:
+        issues_to_check = [17, 26]
+        for issue_num in issues_to_check:
+            endpoint = f"repos/methakon/homeguardian-ai/issues/{issue_num}/comments"
+            if since:
+                endpoint += f"?since={since}"
+            cmd = [resolve_gh_bin(), "api", endpoint, "--paginate"]
+
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                comments = json.loads(res.stdout)
+            except Exception as e:
+                logger.warning(f"Could not fetch comments from Issue #{issue_num}: {e}")
                 continue
 
-            body = c.get("body", "")
-            # Look for ```hg-task block
-            matches = re.findall(r"```hg-task\s*(\{.*?\})\s*```", body, re.DOTALL)
-            for m in matches:
-                try:
-                    data = json.loads(m)
-                    if data.get("worker") == WORKER_ID:
-                        data["comment_id"] = str(c.get("id"))
-                        tasks.append(data)
-                except Exception:
-                    pass
+            for c in comments:
+                author = c.get("user", {}).get("login", "")
+                if author not in ALLOWED_AUTHORS:
+                    continue
+
+                body = c.get("body", "")
+                # Look for ```hg-task or ```json:hg-task block
+                matches = re.findall(r"```(?:hg-task|json:hg-task)\s*([\s\S]*?)```", body)
+                for m in matches:
+                    try:
+                        raw_data = json.loads(m.strip())
+                        task_obj = raw_data.get("task") if isinstance(raw_data.get("task"), dict) else raw_data
+                        if not isinstance(task_obj, dict):
+                            continue
+
+                        # Alias normalization
+                        normalized = dict(task_obj)
+                        if "mission" in normalized and "task_id" not in normalized:
+                            normalized["task_id"] = normalized["mission"]
+                        if "worker" in normalized and "assigned_to" not in normalized:
+                            normalized["assigned_to"] = normalized["worker"]
+                        if "detail" in normalized and "objective" not in normalized:
+                            normalized["objective"] = normalized["detail"]
+                        elif "notes" in normalized and "objective" not in normalized:
+                            normalized["objective"] = normalized["notes"]
+                        if "source" not in normalized and "source" in raw_data:
+                            normalized["source"] = raw_data["source"]
+                        if "source" not in normalized:
+                            normalized["source"] = f"issue:{issue_num}"
+
+                        # Canonical required security fields
+                        canonical_required = [
+                            "task_id",
+                            "source",
+                            "assigned_to",
+                            "expected_branch",
+                            "allowed_scope",
+                            "objective",
+                            "acceptance_tests",
+                            "prohibited_actions",
+                        ]
+                        missing = [f for f in canonical_required if not normalized.get(f)]
+                        if missing:
+                            logger.warning(f"Rejecting under-specified task envelope {normalized.get('task_id')}: missing {missing}")
+                            continue
+
+                        if normalized.get("assigned_to") != WORKER_ID:
+                            continue
+
+                        if normalized.get("expected_branch") != OWNED_BRANCH:
+                            logger.warning(f"Rejecting task {normalized.get('task_id')}: expected_branch '{normalized.get('expected_branch')}' != '{OWNED_BRANCH}'")
+                            continue
+
+                        # Backwards compatibility aliases
+                        normalized["mission"] = normalized["task_id"]
+                        normalized["worker"] = normalized["assigned_to"]
+                        if "action" not in normalized:
+                            normalized["action"] = "test"
+                        normalized["comment_id"] = str(c.get("id"))
+                        tasks.append(normalized)
+                    except Exception as ex:
+                        logger.warning(f"Failed parsing hg-task in Issue #{issue_num}: {ex}")
         return tasks
 
     def process_cycle(self, incoming_tasks_override: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
