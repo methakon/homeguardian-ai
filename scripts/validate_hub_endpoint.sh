@@ -26,6 +26,10 @@ set -uo pipefail
 HOST="${HG_INGRESS_HOST:-127.0.0.1}"
 PORT="${HG_INGRESS_PORT:-8443}"
 CERTS="${HG_CERTS_DIR:-$HOME/hg_h03/deploy-runtime}"
+# Device keys live OUTSIDE the runtime dir in this provisioning (deploy-runtime/ carries the cert, the key sits
+# in a sibling device-keys/). Discovered, not assumed - the first version reported NOT OBSERVED for a key that
+# was one directory away.
+DEVKEYS="${HG_DEVICE_KEYS_DIR:-$(dirname "$CERTS")/device-keys}"
 TIMEOUT="${HG_PROBE_TIMEOUT:-6}"
 EVIDENCE=""
 while [ $# -gt 0 ]; do
@@ -61,7 +65,8 @@ for c in "$CERTS"/devices/*.crt; do [ -f "$c" ] && DEVCRT="$c" && break; done
 # certificate's basename - and only then fall back to any key in the directory. Guessing "NOT OBSERVED" when a
 # key is right there would understate what the endpoint can actually be validated with.
 base="$(basename "${DEVCRT:-x}" | sed 's/\.[^.]*$//')"
-for k in "${CERTS}/devices/${base}.key" "${CERTS}/devices/${base}"*.key "${CERTS}/devices/"*.key \
+for k in "${DEVKEYS}/${base}.key" "${DEVKEYS}"/*.key \
+         "${CERTS}/devices/${base}.key" "${CERTS}/devices/${base}"*.key "${CERTS}/devices/"*.key \
          "${CERTS}/devices/${base}.pem" "${CERTS}/devices/"*.pem; do
   [ -f "$k" ] && [ "$k" != "$DEVCRT" ] && DEVKEY="$k" && break
 done
