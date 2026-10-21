@@ -18,6 +18,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+
 #include <chrono>
 #include <memory>
 #include <string>
@@ -355,4 +359,48 @@ TEST_CASE("panasonic receiver: nothing to consume fabricates nothing", "[panason
                       .accepted);
     REQUIRE(h.delivered.empty());
     REQUIRE(receiver.lines_accepted() == 0);
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// The drift guard: the CONTRACT DOCUMENT and the CODE must agree, and a change on either side must fail
+// loudly here rather than silently skew `docs/NODE_OBSERVATION_SCHEMA_V1.md` away from what actually runs.
+//
+// It reads the document at test time (the suite already locates repo files through HG_SOURCE_DIR) and asserts
+// three things: the receiver's declared schema version matches the document's; every source type the hub
+// allows is listed in the document; and every observation type the hub allows is listed there too. A new
+// allowlisted type added to the hub without a contract edit, or a version bump on one side only, fails.
+// ---------------------------------------------------------------------------------------------------------
+TEST_CASE("node observation contract: the document and the code cannot drift apart", "[panasonic][contract]") {
+    const char* dir = std::getenv("HG_SOURCE_DIR");
+    if (dir == nullptr || *dir == '\0') {
+        WARN("HG_SOURCE_DIR is unset: skipping the document half of the drift guard");
+        REQUIRE(kNodeSchemaVersion == 1);
+        return;
+    }
+    std::ifstream in(std::string(dir) + "/docs/NODE_OBSERVATION_SCHEMA_V1.md");
+    REQUIRE(in.good());                                  // the contract must exist where the code claims it does
+    const std::string doc((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE(doc.size() > 500);
+
+    // 1. declared version
+    REQUIRE(doc.find("Version:** 1.0.0") != std::string::npos);
+    REQUIRE(kNodeSchemaVersion == 1);
+    REQUIRE(doc.find("kNodeSchemaVersion = 1") != std::string::npos);
+
+    // 2. the vocabularies the hub actually enforces are the ones the contract publishes
+    const auto cfg = ObservationIngest::defaults();
+    REQUIRE(cfg.allowed_source_types.size() == 8);
+    REQUIRE(cfg.allowed_observation_types.size() == 12);
+    for (const auto& t : cfg.allowed_source_types) {
+        INFO("source type missing from the contract: " << t);
+        REQUIRE(doc.find(t) != std::string::npos);
+    }
+    for (const auto& t : cfg.allowed_observation_types) {
+        INFO("observation type missing from the contract: " << t);
+        REQUIRE(doc.find(t) != std::string::npos);
+    }
+
+    // 3. the honesty rules the document states are stated in the code too
+    REQUIRE(doc.find("Absence is never real") != std::string::npos);
+    REQUIRE(doc.find("may never widen") != std::string::npos);
 }
