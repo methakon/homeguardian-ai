@@ -20,11 +20,11 @@ set -o pipefail
 
 IFACE=wg0
 ADDR=192.168.77.2/32                 # this workstation's overlay address (server side: /32 only)
-OVERLAY_ONLY=192.168.77.0/24         # NOT 0.0.0.0/0 - a default-route hijack is the classic VPN mistake
+OVERLAY_ONLY=192.168.77.1/32         # server only, NOT 0.0.0.0/0 - matches the existing config
 ENDPOINT=${HG_WG_ENDPOINT:-161.33.146.238:51820}   # literal address: no DNS record exists
 MTU=1420
 STATE=${HG_WG_STATE:-$HOME/.hermes/cache/scratch/hg-wg-preflight}
-CONF=${HG_WG_CONF:-$HOME/.wireguard/hg-workstation.conf}   # supplied by the operator; never tracked
+CONF=${HG_WG_CONF:-$HOME/.wireguard/hg-net-02a/wg0.conf}   # the EXISTING authorised peer config (0600, untracked; never rewritten)
 DEADMAN_MIN=${HG_WG_DEADMAN_MIN:-15}
 EXECUTE=0
 MODE=preflight
@@ -79,6 +79,9 @@ delta_since() {
   else fail "nat table DIFFERS from $tag"; bad=1; fi
   [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" = "$(cat "$STATE/fwd.$tag" 2>/dev/null)" ] \
     && pass "ip_forward unchanged" || { fail "ip_forward CHANGED"; bad=1; }
+  # the script captured resolv.conf but never compared it: a resolver change would have passed unseen
+  [ "$(md5sum /etc/resolv.conf 2>/dev/null | awk '{print $1}')" = "$(cat "$STATE/resolv.$tag" 2>/dev/null)" ] \
+    && pass "resolv.conf unchanged (no DNS takeover)" || { fail "resolv.conf CHANGED"; bad=1; }
   if ! command -v wg >/dev/null; then return $bad; fi
   return $bad
 }
@@ -139,11 +142,16 @@ up() {
   systemd-run --user --on-active="${DEADMAN_MIN}m" --unit="hg-wg-deadman-$$" \
     "$(readlink -f "$0")" down --execute >/dev/null 2>&1 \
     && say "dead-man armed (hg-wg-deadman-$$)" || say "WARN: dead-man not armed - tear down manually"
+  if grep -q NOT_TESTED "$STATE/net.pre" 2>/dev/null || [ ! -s "$STATE/net.pre" ]; then
+    fail "baseline routes/interfaces could not be captured - refusing to change state (restoration would be unprovable)"
+    return 6
+  fi
   echo "== bringing up $IFACE (least privilege) =="
   sudo ip link add "$IFACE" type wireguard || exit 5
   sudo wg setconf "$IFACE" "$CONF" || { sudo ip link del "$IFACE"; exit 5; }
   sudo ip -4 addr add "$ADDR" dev "$IFACE" || true
   sudo ip link set "$IFACE" mtu "$MTU" up || exit 5
+  date -u +%FT%TZ > "$STATE/created"   # ownership marker: 'down' refuses without it
   sudo ip route add "$OVERLAY_ONLY" dev "$IFACE" 2>/dev/null || true
   say "up. verifying a REAL handshake..."
   local hs=0
@@ -184,12 +192,23 @@ verify() {
 
 down() {
   need_execute
+  if ! ip -br link show dev "$IFACE" >/dev/null 2>&1; then
+    say "$IFACE absent - nothing to tear down"
+  elif [ ! -f "$STATE/created" ]; then
+    fail "REFUSING to delete $IFACE: this run did not create it (no marker).
+       Deleting an interface another tool owns is exactly the destructive cleanup we must not do."
+    return 6
+  fi
   snapshot post
   echo "== tearing down $IFACE =="
   sudo ip link del "$IFACE" 2>/dev/null && say "interface removed" || say "nothing to remove"
   systemctl --user list-units 'hg-wg-deadman-*' --no-legend 2>/dev/null | awk '{print $1}' | while read -r u; do
     systemctl --user stop "$u" 2>/dev/null; say "dead-man $u cancelled"
   done
+  # verified, not assumed
+  if systemctl --user list-units 'hg-wg-deadman-*' --no-legend 2>/dev/null | grep -q .; then
+    fail "a dead-man unit is still loaded - it could fire against an already-torn-down tunnel"; bad=1
+  else pass "no dead-man unit left armed"; fi
   sudo systemctl reset-failed "hg-wg-deadman-$$" 2>/dev/null || true
   echo "== reversibility proof =="
   local bad=0
@@ -204,6 +223,7 @@ down() {
   else fail "nat table differs"; bad=1; fi
   [ "$(sysctl -n net.ipv4.ip_forward)" = "$(cat "$STATE/fwd.pre" 2>/dev/null)" ] \
     && pass "ip_forward restored" || { fail "ip_forward differs"; bad=1; }
+  [ $bad = 0 ] && rm -f "$STATE/created"
   echo "  down result: $([ $bad = 0 ] && echo PASS || echo FAIL)"
   return $bad
 }
