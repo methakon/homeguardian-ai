@@ -58,6 +58,29 @@ fi
 grep -E 'only on the|RESULT' "$OUT/fixture-gen.log" | sed 's/^/    /'
 echo
 
+echo "==> 3c/4 guard: the suite must never assert PHYSICAL media"
+# These tests run on a host with no camera and no microphone. A test that asserts a real frame, a real
+# audio sample or a physical capture would be asserting something the harness cannot do here - and a
+# green run would then read as physical evidence. This guard fails the suite if such a claim appears,
+# so "no assertion of physical media" is enforced rather than remembered.
+# Scan ASSERTIONS, not prose. A comment that DISCLAIMS physical media ("must never be labelled as
+# real camera evidence") contains the same words as a claim that MAKES one, and an earlier version of
+# this guard failed the suite on exactly such a comment. Strip comments first, then require the phrase
+# to appear inside an assertion call.
+CLAIMS='real (camera|frame|video|audio|mic)|physical (camera|capture)|actual (camera|frame|video)|live camera|real device produced|captured (a )?(real|actual) (frame|video|audio)'
+for f in "$APK_DIR"/tests/*.java; do
+    # drop block comments, then trailing line comments, then keep only assertion lines
+    sed -e ':a' -e 's|/\*[^*]*\*/||g' -e '/\/\*/,/\*\//d' -e 's|//.*||' "$f" \
+      | grep -inE 'check\(|assert|System\.out' \
+      | grep -iE "$CLAIMS" >> "$OUT/media-claims.txt" || true
+done
+if [ -s "$OUT/media-claims.txt" ]; then
+    echo "    FAIL an assertion in the tests claims physical media:"
+    sed 's/^/      /' "$OUT/media-claims.txt"
+    exit 1
+fi
+echo "    OK: no ASSERTION claims physical media (a disclaimer comment is correctly ignored)"
+
 echo "==> 4/4 run (stubs first on the classpath)"
 echo
 # The stubs MUST come first: that is what shadows android.jar's throwing stubs off-device.
