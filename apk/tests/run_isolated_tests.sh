@@ -42,7 +42,8 @@ echo "==> 3/4 compile the isolated tests"
 javac --release 8 -Xlint:-options -classpath "$OUT/prod:$AJ" -d "$OUT/test" \
     "$APK_DIR/tests/NodeTransportHostTest.java" \
     "$APK_DIR/tests/ProducerSchemaConformanceTest.java" \
-    "$APK_DIR/tests/ObservationTransportPolicyTest.java"
+    "$APK_DIR/tests/ObservationTransportPolicyTest.java" \
+    "$APK_DIR/tests/CrossReceiverContractTest.java"
 echo "    test classes: $(find "$OUT/test" -name '*.class' | wc -l)"
 
 echo "==> 4/4 run (stubs first on the classpath)"
@@ -56,6 +57,7 @@ java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.NodeTransportHo
 echo
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ProducerSchemaConformanceTest || rc=1
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ObservationTransportPolicyTest || rc=1
+java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.CrossReceiverContractTest || rc=1
 echo
 echo "==> exit code: $rc"
 exit $rc
