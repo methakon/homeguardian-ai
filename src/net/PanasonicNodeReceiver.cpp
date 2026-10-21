@@ -99,6 +99,7 @@ NodeObservationLine parse_node_observation_line(const std::string& line) {
             return out;
         }
         out.schema_version = it->get<int>();
+        out.has_schema_version = true;
     } else {
         out.schema_version = kSchemaVersionAbsent;
     }
@@ -142,7 +143,7 @@ PanasonicNodeReceiver::Result PanasonicNodeReceiver::accept_line(const PeerConte
 
     // Schema handling. The current producer sends NO version field, so that case is counted and accepted as
     // the documented shape; any version this receiver does not implement is refused rather than guessed at.
-    if (parsed.schema_version == kSchemaVersionAbsent) {
+    if (!parsed.has_schema_version) {
         // Counted, never ASSUMED: an absent version is not silently read as the version this receiver
         // implements. Under strict mode it is refused outright.
         ++schema_absent_;
