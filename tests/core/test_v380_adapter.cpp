@@ -18,7 +18,7 @@ using namespace homeguardian;
 namespace {
 
 V380SourceAdapter::Config config(const std::string& identity = "hg-v380-ec39-01",
-                                 const std::string& host = "192.168.1.19") {
+                                 const std::string& host = "10.20.30.19") {
     V380SourceAdapter::Config cfg;
     cfg.enrolled_identity = identity;
     cfg.endpoint_host = host;
@@ -66,7 +66,7 @@ TEST_CASE("v380: it refuses with a code and an owner action instead of guessing 
 
 TEST_CASE("v380: an address is not an identity", "[v380][identity]") {
     SECTION("no enrolled identity is refused even with consent and a reachable address") {
-        auto cfg = config(/*identity=*/"", /*host=*/"192.168.1.19");
+        auto cfg = config(/*identity=*/"", /*host=*/"10.20.30.19");
         V380SourceAdapter adapter(cfg);
         std::string error;
         REQUIRE(adapter.open(&error) == V380Refusal::identity_unverified);
@@ -74,7 +74,7 @@ TEST_CASE("v380: an address is not an identity", "[v380][identity]") {
     }
     SECTION("a DHCP change does not change the logical source") {
         // docs/HG_V380_07_NETWORK_CHANGE_REDISCOVERY.md records this exact problem: the camera moved from
-        // 192.168.0.164 to 192.168.1.20. The identity must survive that.
+        // 192.168.0.164 to 10.20.30.20. The identity must survive that.
         auto cfg = config();
         cfg.synthetic_fixture = true;                 // so a frame path exists without the device
         V380SourceAdapter adapter(cfg);
@@ -82,7 +82,7 @@ TEST_CASE("v380: an address is not an identity", "[v380][identity]") {
         REQUIRE(adapter.open(&error) == V380Refusal::ok);
         const std::string before = adapter.identity();
 
-        adapter.update_endpoint("192.168.1.42");      // a new lease
+        adapter.update_endpoint("10.20.30.42");      // a new lease
         REQUIRE(adapter.identity() == before);        // unchanged: identity is the enrolled id
         MediaFrame frame;
         REQUIRE(adapter.read_frame(&frame, nullptr, nullptr));

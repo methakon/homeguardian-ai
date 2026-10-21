@@ -569,6 +569,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_observation_integration.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_skill_gaps.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_device_transport.cpp
+        ${CMAKE_SOURCE_DIR}/tests/net/test_panasonic_node_receiver.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_network_contract_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_producer_and_reliability.cpp
         ${CMAKE_SOURCE_DIR}/tests/integration/test_network_sensor_to_mcp.cpp
@@ -579,10 +580,13 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/camera/MockCameraAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/V380CameraAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/V380Discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/CameraEndpointResolver.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/RegistryAuthorizer.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteConnector.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_boundary.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_v380_camera_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_endpoint_resolver.cpp
         ${CMAKE_SOURCE_DIR}/tests/camera/test_v380_protocol.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/SiteProfile.cpp
         ${CMAKE_SOURCE_DIR}/src/camera/ControlChannel.cpp
@@ -651,6 +655,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/net/DeviceProtocol.cpp
         ${CMAKE_SOURCE_DIR}/src/net/DeviceRegistry.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ObservationIngest.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/PanasonicNodeReceiver.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ReplayState.cpp
         ${CMAKE_SOURCE_DIR}/src/net/IngressConfigPolicy.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/PwAudioCaptureDevice.cpp
@@ -760,3 +765,17 @@ add_executable(hg_scenario_runner
 )
 target_include_directories(hg_scenario_runner PRIVATE src)
 target_link_libraries(hg_scenario_runner PRIVATE)
+
+# The bounded V380 handshake probe: one login, one stream login, NO media.
+add_executable(hg_v380_handshake
+    ${CMAKE_SOURCE_DIR}/tools/v380_handshake.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/Aes128Ecb.cpp)
+target_include_directories(hg_v380_handshake PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# The resolver probe: device id in, current address out. No media.
+add_executable(hg_v380_resolve
+    ${CMAKE_SOURCE_DIR}/tools/v380_resolve.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/V380Discovery.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/CameraEndpointResolver.cpp)
+target_include_directories(hg_v380_resolve PRIVATE ${CMAKE_SOURCE_DIR}/src)

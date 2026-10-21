@@ -132,7 +132,7 @@ struct Chain {
 
         V380SourceAdapter::Config scfg;
         scfg.enrolled_identity = device_id;
-        scfg.endpoint_host = "192.168.1.19";
+        scfg.endpoint_host = "10.20.30.19";
         scfg.consent_granted = true;
         scfg.synthetic_fixture = true;       // stated, not hidden: the frames are synthetic
         source = std::make_unique<V380SourceAdapter>(scfg);

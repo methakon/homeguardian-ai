@@ -103,8 +103,10 @@ TEST_CASE("v380 protocol: the password field refuses what it cannot represent", 
                                            kSyntheticRandomKey, &field, &why));
         REQUIRE(why.find("longer than") != std::string::npos);
     }
-    SECTION("an empty password") {
-        REQUIRE_FALSE(build_password_field("", kSyntheticStaticKey, kSyntheticRandomKey, &field, &why));
+    SECTION("an empty password is accepted, and really is an all-zero block") {
+        REQUIRE(build_password_field("", kSyntheticStaticKey, kSyntheticRandomKey, &field, &why));
+        REQUIRE(field.size() == kPasswordFieldBytes);
+        REQUIRE(decrypt_password_field(field, kSyntheticStaticKey).empty());
     }
     SECTION("a static key that is not 16 bytes") {
         REQUIRE_FALSE(build_password_field("pw", "short", kSyntheticRandomKey, &field, &why));
