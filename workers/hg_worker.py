@@ -464,25 +464,39 @@ def _kanban_show_status(task_id: str) -> str:
     return ""
 
 
-def release_stale_dispatches(state: dict, now=None, status_fn=None, window: int = DISPATCH_STALE_SECONDS) -> list:
-    """Return the list of missions released from a dispatch that never took effect."""
-    released = []
+def release_stale_dispatches(state: dict, now=None, status_fn=None, window: int = DISPATCH_STALE_SECONDS) -> tuple:
+    """Reconcile dispatches against the board. Returns (released, completed).
+
+    This is what CLOSES the loop: the work is done by whoever the dispatcher spawned, and nothing tells this
+    worker when that happens - so the board is the source of truth. `done` means the work finished and the
+    watcher must resume; a task the board never picked up is released LOUDLY to BLOCKED rather than quietly
+    holding the gate shut forever.
+    """
+    released, completed = [], []
     now = now or time.time()
-    for mission, task in state.get("tasks", {}).items():
+    for mission, task in sorted(state.get("tasks", {}).items()):
         dispatched = task.get("dispatched")
         if not dispatched or task.get("state") != "CLAIMED":
             continue
-        age = now - float(dispatched.get("at") or 0)
-        if age < window:
+        # Age unknown (a malformed record) is NOT treated as infinitely old: that would block a task that may
+        # well be running. This worker always writes `at`, so this is only about damaged state.
+        at = float(dispatched.get("at") or task.get("updated_at") or 0)
+        if at <= 0 or now - at < window:
             continue
         board = (status_fn or _kanban_show_status)(dispatched.get("kanban_task_id", ""))
-        if board in ("running", "done", "review"):
-            continue                              # the executor really does have it: leave it in flight
+        if board in ("running", "review"):
+            continue                                   # the executor really does have it: leave it in flight
+        if board == "done":
+            task["state"] = "COMPLETE"
+            task["completed_by"] = "board: the dispatched run finished"
+            task["updated_at"] = now
+            completed.append(mission)
+            continue
         task["state"] = "BLOCKED"
-        task["blocked_reason"] = (f"dispatched {int(age)}s ago but the board shows "
+        task["blocked_reason"] = (f"dispatched {int(now - at)}s ago but the board shows "
                                   f"'{board or 'absent'}' - the dispatch never took effect")
         released.append(mission)
-    return released
+    return released, completed
 
 
 def dispatch_argv(mode: str, mission: str, detail: str, branch: str, task_id: str = "") -> list:
@@ -516,7 +530,7 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
     Returns (status, detail) with status in {busy, idle, dispatched, failed}.
     """
     fetch = fetch or fetch_comments_gh
-    released = release_stale_dispatches(state, now=now)      # a stalled dispatch must never freeze the loop
+    released, completed = release_stale_dispatches(state, now=now)   # closes the loop and unsticks it
     inflight = inflight_tasks(state)
     if inflight:
         # Busy gate FIRST, before any network call: while work is running the watcher must not even look.
@@ -737,7 +751,7 @@ def selftest() -> int:
     check("watcher dispatches a new assignment", status == "dispatched", f"{status}: {detail}")
     check("dry-run dispatch does not touch kanban", "kanban" in detail and "create" in detail, detail)
     # after a real dispatch the task is in flight, so the watcher goes INACTIVE and must not even fetch
-    loop_state["tasks"]["LOOP-1"]["dispatched"] = {"mode": "kanban", "ok": True}
+    loop_state["tasks"]["LOOP-1"]["dispatched"] = {"mode": "kanban", "ok": True, "at": time.time()}
     calls = []
     status, detail = watch(loop_state, fetch=lambda: calls.append(1) or [], mode="dry-run")
     check("watcher is inactive while a task is in flight", status == "busy", f"{status}: {detail}")
@@ -765,7 +779,7 @@ def selftest() -> int:
     check("once the first completes, the held-back task starts (the loop resumes)",
           watch(st3, fetch=lambda: [], mode="dry-run")[0] == "dispatched", str(watch(st3, fetch=lambda: [], mode="dry-run")))
     # idempotent across a repeated tick: the same task is never dispatched twice
-    seen = {"tasks": {"LOOP-3": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "ok": True}}},
+    seen = {"tasks": {"LOOP-3": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "ok": True, "at": time.time()}}},
             "processed": {}, "rejected": []}
     calls = []
     watch(seen, fetch=lambda: [], runner=lambda a: (calls.append(a), (True, "ok"))[1], mode="kanban")
@@ -785,7 +799,7 @@ def selftest() -> int:
     # 17b. LIVENESS: a dispatch that never started must not freeze the watcher forever
     stale = {"tasks": {"S-1": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time() - 4000,
                                                                    "ok": True, "kanban_task_id": "t_dead"}}}}
-    rel = release_stale_dispatches(stale, status_fn=lambda t: "ready")
+    rel, done = release_stale_dispatches(stale, status_fn=lambda t: "ready")
     check("a dispatch the board never picked up is released", rel == ["S-1"], str(rel))
     check("it is released to BLOCKED with a reason, not retried blindly",
           stale["tasks"]["S-1"]["state"] == "BLOCKED" and "never took effect" in stale["tasks"]["S-1"]["blocked_reason"])
@@ -796,7 +810,16 @@ def selftest() -> int:
     check("a dispatch the board IS running is left in flight",
           release_stale_dispatches(live, status_fn=lambda t: "running") == [] and inflight_tasks(live) == ["S-2"])
     fresh = {"tasks": {"S-3": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time(), "ok": True}}}}
-    check("a fresh dispatch is not released", release_stale_dispatches(fresh, status_fn=lambda t: "ready") == [])
+    check("a fresh dispatch is not released", release_stale_dispatches(fresh, status_fn=lambda t: "ready") == ([], []))
+    # THE LOOP CLOSES: the dispatched run finished, and the board is what says so
+    fin = {"tasks": {"S-4": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time() - 4000,
+                                                                 "ok": True, "kanban_task_id": "t_fin"}}}}
+    rel, done = release_stale_dispatches(fin, status_fn=lambda t: "done")
+    check("a finished dispatched run closes the task", done == ["S-4"] and fin["tasks"]["S-4"]["state"] == "COMPLETE")
+    check("the watcher resumes once the executed work is finished", inflight_tasks(fin) == [])
+    damaged = {"tasks": {"S-5": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "ok": True, "kanban_task_id": "t_x"}}}}
+    check("a record with no timestamp is not presumed stalled",
+          release_stale_dispatches(damaged, status_fn=lambda t: "ready") == ([], []))
 
     # 17. KANBAN -> WORKER intake (the direction the dispatcher cannot serve: it logs skipped_nonspawnable)
     kb = {"tasks": {}, "processed": {}, "rejected": []}
