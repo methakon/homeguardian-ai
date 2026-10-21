@@ -324,3 +324,33 @@ TEST_CASE("v380 protocol: chunk assembler handles 8MiB frame reassembly safely w
     REQUIRE(asm_.frames_completed() == 1);
     REQUIRE(asm_.frame_bytes_held() == 0);
 }
+
+TEST_CASE("v380 protocol: chunk assembler enforces aggregate multi-session memory ceiling", "[v380proto][chunks][memory]") {
+    ChunkAssembler::Config cfg;
+    cfg.max_frame_bytes = 1000;
+    cfg.max_aggregate_bytes = 1200; // tight aggregate limit for testing
+
+    ChunkAssembler asm1(cfg);
+    ChunkAssembler asm2(cfg);
+    ChunkHeader hdr;
+
+    std::vector<uint8_t> body(500, 0xaa);
+    std::string body_str(reinterpret_cast<const char*>(body.data()), body.size());
+
+    // asm1 appends 500 bytes
+    std::vector<uint8_t> c1 = chunk(kChunkTypeIFrame, 2, 0, body_str);
+    REQUIRE(asm1.begin_chunk(c1.data(), c1.size(), &hdr) == ChunkOutcome::need_more);
+    REQUIRE(asm1.append_chunk(hdr, c1.data() + kChunkHeaderBytes, 500, nullptr));
+
+    // asm2 appends 500 bytes (total 1000 <= 1200)
+    std::vector<uint8_t> c2 = chunk(kChunkTypeIFrame, 2, 0, body_str);
+    REQUIRE(asm2.begin_chunk(c2.data(), c2.size(), &hdr) == ChunkOutcome::need_more);
+    REQUIRE(asm2.append_chunk(hdr, c2.data() + kChunkHeaderBytes, 500, nullptr));
+
+    // asm2 attempts to append another 500 bytes -> 1500 > 1200: must fail closed
+    write_u16(&c2, 5, 1);
+    REQUIRE(asm2.begin_chunk(c2.data(), c2.size(), &hdr) == ChunkOutcome::need_more);
+    std::string why;
+    REQUIRE_FALSE(asm2.append_chunk(hdr, c2.data() + kChunkHeaderBytes, 500, &why));
+    REQUIRE(why.find("aggregate") != std::string::npos);
+}

@@ -73,7 +73,7 @@ TEST_CASE("v380 camera adapter: inventory onboarding and device registry integra
     const auto* rec = inventory.find(reg_opts.id);
     REQUIRE(rec != nullptr);
     REQUIRE(rec->owner_identity_label == "ec39.01");
-    REQUIRE(rec->firmware_model == "V380 EC39");
+    REQUIRE(rec->firmware_model == "V380_EC39");
     REQUIRE(rec->media == MediaStatus::vendor_protocol_only);
 
     // Reject randomized MAC

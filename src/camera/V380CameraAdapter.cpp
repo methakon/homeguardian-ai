@@ -150,7 +150,7 @@ bool V380CameraAdapter::register_into_inventory(CameraInventory& inventory,
     }
     const auto* rec = inventory.find_by_fingerprint(fp);
     if (rec != nullptr) {
-        inventory.note_firmware(rec->id, "V380 EC39", true, nullptr);
+        inventory.note_firmware(rec->id, "V380_EC39", true, nullptr);
         inventory.set_media_status(rec->id, MediaStatus::vendor_protocol_only, nullptr);
     }
     return true;
@@ -165,7 +165,7 @@ bool V380CameraAdapter::register_into_device_registry(net::DeviceRegistry& regis
     if (!id.valid()) return false;
     net::DeviceRegistry::Device d;
     d.device_id = id.canonical();
-    d.display_name = "V380 EC39";
+    d.display_name = "V380_EC39";
     d.device_type = "camera";
     d.credential_id = credential_id;
     d.paired = true;

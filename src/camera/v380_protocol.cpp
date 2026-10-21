@@ -228,8 +228,64 @@ StreamResponse parse_stream_response(const uint8_t* data, size_t size) {
     return r;
 }
 
+namespace {
+std::atomic<size_t>& aggregate_bytes_held_counter() {
+    static std::atomic<size_t> counter{0};
+    return counter;
+}
+}  // namespace
+
 ChunkAssembler::ChunkAssembler() = default;
 ChunkAssembler::ChunkAssembler(Config config) : cfg_(config) {}
+
+ChunkAssembler::~ChunkAssembler() {
+    if (!buffer_.empty()) {
+        aggregate_bytes_held_counter().fetch_sub(buffer_.size(), std::memory_order_relaxed);
+    }
+}
+
+ChunkAssembler::ChunkAssembler(ChunkAssembler&& other) noexcept
+    : cfg_(other.cfg_),
+      expected_total_(other.expected_total_),
+      next_index_(other.next_index_),
+      chunks_in_frame_(other.chunks_in_frame_),
+      last_type_(other.last_type_),
+      frames_completed_(other.frames_completed_),
+      chunks_dropped_(other.chunks_dropped_),
+      keepalives_seen_(other.keepalives_seen_),
+      buffer_(std::move(other.buffer_)) {
+    other.expected_total_ = 0;
+    other.next_index_ = 0;
+    other.chunks_in_frame_ = 0;
+    other.last_type_ = 0;
+}
+
+ChunkAssembler& ChunkAssembler::operator=(ChunkAssembler&& other) noexcept {
+    if (this != &other) {
+        if (!buffer_.empty()) {
+            aggregate_bytes_held_counter().fetch_sub(buffer_.size(), std::memory_order_relaxed);
+        }
+        cfg_ = other.cfg_;
+        expected_total_ = other.expected_total_;
+        next_index_ = other.next_index_;
+        chunks_in_frame_ = other.chunks_in_frame_;
+        last_type_ = other.last_type_;
+        frames_completed_ = other.frames_completed_;
+        chunks_dropped_ = other.chunks_dropped_;
+        keepalives_seen_ = other.keepalives_seen_;
+        buffer_ = std::move(other.buffer_);
+
+        other.expected_total_ = 0;
+        other.next_index_ = 0;
+        other.chunks_in_frame_ = 0;
+        other.last_type_ = 0;
+    }
+    return *this;
+}
+
+size_t ChunkAssembler::aggregate_frame_bytes_held() {
+    return aggregate_bytes_held_counter().load(std::memory_order_relaxed);
+}
 
 ChunkOutcome ChunkAssembler::begin_chunk(const uint8_t* data, size_t size, ChunkHeader* header) {
     if (header == nullptr) return ChunkOutcome::dropped_protocol;
@@ -262,10 +318,22 @@ bool ChunkAssembler::append_chunk(const ChunkHeader& header, const uint8_t* body
     // returned false when the caller passed nullptr, which the protocol tests caught immediately.
     if (why != nullptr) why->clear();
     if (body == nullptr || body_size != header.length) {
-        *why = "chunk body length does not match the header";
+        if (why != nullptr) *why = "chunk body length does not match the header";
         ++chunks_dropped_;
         return false;
     }
+
+    auto discard_current_frame = [this]() {
+        if (!buffer_.empty()) {
+            aggregate_bytes_held_counter().fetch_sub(buffer_.size(), std::memory_order_relaxed);
+            buffer_.clear();
+        }
+        expected_total_ = 0;
+        last_type_ = 0;
+        next_index_ = 0;
+        chunks_in_frame_ = 0;
+    };
+
     if (buffer_.empty()) {
         expected_total_ = header.total_frame;
         next_index_ = 0;
@@ -273,37 +341,43 @@ bool ChunkAssembler::append_chunk(const ChunkHeader& header, const uint8_t* body
         last_type_ = header.type;
     } else if (header.type != last_type_) {
         // A frame whose chunks disagree about their own type is not a frame this codec can assemble.
-        *why = "chunk type changed mid-frame";
+        if (why != nullptr) *why = "chunk type changed mid-frame";
         ++chunks_dropped_;
-        buffer_.clear();
-        expected_total_ = 0;
-        last_type_ = 0;
+        discard_current_frame();
         return false;
     }
     if (header.cur_frame != next_index_) {
-        *why = "out-of-order chunk: expected index " + std::to_string(next_index_) + ", got " +
-               std::to_string(header.cur_frame);
+        if (why != nullptr) {
+            *why = "out-of-order chunk: expected index " + std::to_string(next_index_) + ", got " +
+                   std::to_string(header.cur_frame);
+        }
         ++chunks_dropped_;
-        buffer_.clear();
-        expected_total_ = 0;
+        discard_current_frame();
         return false;
     }
     if (buffer_.size() + body_size > cfg_.max_frame_bytes) {
-        *why = "frame exceeds the configured ceiling of " + std::to_string(cfg_.max_frame_bytes) + " bytes";
+        if (why != nullptr) {
+            *why = "frame exceeds the configured ceiling of " + std::to_string(cfg_.max_frame_bytes) + " bytes";
+        }
         ++chunks_dropped_;
-        buffer_.clear();
-        expected_total_ = 0;
+        discard_current_frame();
         return false;
     }
     if (chunks_in_frame_ + 1 > cfg_.max_chunks_per_frame) {
-        *why = "frame exceeds the configured chunk ceiling";
+        if (why != nullptr) *why = "frame exceeds the configured chunk ceiling";
         ++chunks_dropped_;
-        buffer_.clear();
-        expected_total_ = 0;
+        discard_current_frame();
+        return false;
+    }
+    if (aggregate_bytes_held_counter().load(std::memory_order_relaxed) + body_size > cfg_.max_aggregate_bytes) {
+        if (why != nullptr) *why = "aggregate V380 frame reassembly memory ceiling exceeded";
+        ++chunks_dropped_;
+        discard_current_frame();
         return false;
     }
 
     buffer_.insert(buffer_.end(), body, body + body_size);
+    aggregate_bytes_held_counter().fetch_add(body_size, std::memory_order_relaxed);
     ++chunks_in_frame_;
     ++next_index_;
     return true;
@@ -323,7 +397,10 @@ bool ChunkAssembler::take_frame(AssembledFrame* frame) {
                                 : 0;
     frame->payload_bytes = buffer_.size() - frame->payload_offset;
     ++frames_completed_;
-    buffer_.clear();
+    if (!buffer_.empty()) {
+        aggregate_bytes_held_counter().fetch_sub(buffer_.size(), std::memory_order_relaxed);
+        buffer_.clear();
+    }
     expected_total_ = 0;
     next_index_ = 0;
     chunks_in_frame_ = 0;

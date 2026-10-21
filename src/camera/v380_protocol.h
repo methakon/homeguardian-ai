@@ -174,10 +174,17 @@ public:
     struct Config {
         size_t max_frame_bytes = 8u * 1024u * 1024u;  // ceiling on one frame
         size_t max_chunks_per_frame = 65535;
+        size_t max_aggregate_bytes = 64u * 1024u * 1024u; // ceiling across concurrent sessions
     };
 
     ChunkAssembler();
     explicit ChunkAssembler(Config config);
+    ~ChunkAssembler();
+
+    ChunkAssembler(const ChunkAssembler&) = delete;
+    ChunkAssembler& operator=(const ChunkAssembler&) = delete;
+    ChunkAssembler(ChunkAssembler&& other) noexcept;
+    ChunkAssembler& operator=(ChunkAssembler&& other) noexcept;
 
     // Parse exactly one header from `data[0..size)`. Returns kNeedMore when fewer than 12 bytes are present.
     ChunkOutcome begin_chunk(const uint8_t* data, size_t size, ChunkHeader* header);
@@ -192,6 +199,7 @@ public:
     size_t chunks_dropped() const { return chunks_dropped_; }
     size_t keepalives_seen() const { return keepalives_seen_; }
     size_t frame_bytes_held() const { return buffer_.size(); }
+    static size_t aggregate_frame_bytes_held();
 
 private:
     Config cfg_;
