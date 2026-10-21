@@ -1,0 +1,155 @@
+{
+  "version": "1.0.0",
+  "coordinator": "hg-antigravity-integration",
+  "repository": "methakon/homeguardian-ai",
+  "integration_branch": "dev/production-integration",
+  "allowed_task_actions": [
+    "implement",
+    "test",
+    "review",
+    "report",
+    "investigate"
+  ],
+  "authorized_authors": [
+    "msekhardhar-cell",
+    "methakon"
+  ],
+  "workers": {
+    "hg-hermes-network": {
+      "worker_id": "hg-hermes-network",
+      "session_id": "local-39f07d6fc4fa643c8a4c0909876865f6507845f10fb9a97c9edf2b452dd7d621",
+      "role": "NETWORK_SECURITY",
+      "issue_number": 14,
+      "also_accepts_issues": [],
+      "owned_branch": "experiment/hg-lan-mtls-07",
+      "worktree_path": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-s1-lan-mtls-07",
+      "allowed_task_types": [
+        "mtls_contract",
+        "pki_revocation",
+        "exposure_gate",
+        "network_security",
+        "investigate",
+        "test",
+        "report"
+      ],
+      "status_source": {
+        "type": "file_lock_and_pid",
+        "lock_file": "/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg-worker-network/lock",
+        "state_file": "/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg-worker-network/ledger.json"
+      },
+      "dispatch_mechanism": {
+        "type": "hermes_resume",
+        "command_template": "hermes --resume local-39f07d6fc4fa643c8a4c0909876865f6507845f10fb9a97c9edf2b452dd7d621 -z \"{assignment_summary}\""
+      },
+      "last_completed_task": "8fc052b7338350e768d20bf2899f205c357481ff",
+      "recovery_policy": {
+        "stale_lock_timeout_seconds": 1800,
+        "max_retries": 3,
+        "retry_backoff_base_seconds": 30,
+        "on_crash": "check_pid_and_resume"
+      }
+    },
+    "hg-hermes-android": {
+      "worker_id": "hg-hermes-android",
+      "session_id": "20261009_174946_2dfba7",
+      "role": "ANDROID_EDGE_SERVICE",
+      "issue_number": 12,
+      "also_accepts_issues": [],
+      "owned_branch": "experiment/hg-panasonic-service-transport-06",
+      "worktree_path": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-s2-svc-transport06",
+      "allowed_task_types": [
+        "cctv_service",
+        "wake_lock",
+        "producer_schema",
+        "jni_guard",
+        "android_build",
+        "test",
+        "report"
+      ],
+      "status_source": {
+        "type": "file_lock_and_pid",
+        "lock_file": "/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg-worker-android/lock",
+        "state_file": "/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg-worker-android/ledger.json"
+      },
+      "dispatch_mechanism": {
+        "type": "hermes_resume",
+        "command_template": "hermes --resume 20261009_174946_2dfba7 -z \"{assignment_summary}\""
+      },
+      "last_completed_task": "c293658da6f3ace50d4bee0bfd289af0f8f8e95e",
+      "recovery_policy": {
+        "stale_lock_timeout_seconds": 1800,
+        "max_retries": 3,
+        "retry_backoff_base_seconds": 30,
+        "on_crash": "check_pid_and_resume"
+      }
+    },
+    "hg-hermes-cpp": {
+      "worker_id": "hg-hermes-cpp",
+      "session_id": "local-8d61817af2cd4c61d60b33c84230543d035305518e6e7a62a2f91c766de798c9",
+      "role": "CPP_ENGINE",
+      "issue_number": 19,
+      "also_accepts_issues": [16],
+      "owned_branch": "experiment/hg-panasonic-cpp-receiver-08",
+      "worktree_path": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-v380-09",
+      "allowed_task_types": [
+        "panasonic_receiver",
+        "observation_ingest",
+        "schema_drift_guard",
+        "ctest_reconciliation",
+        "v380_protocol",
+        "test",
+        "report"
+      ],
+      "status_source": {
+        "type": "file_lock_and_pid",
+        "lock_file": "/home/swarna-sekhar-dhar/.hermes/state/hg-hermes-cpp/lock",
+        "state_file": "/home/swarna-sekhar-dhar/.hermes/state/hg-hermes-cpp/state.json"
+      },
+      "dispatch_mechanism": {
+        "type": "hermes_resume",
+        "command_template": "hermes --resume local-8d61817af2cd4c61d60b33c84230543d035305518e6e7a62a2f91c766de798c9 -z \"{assignment_summary}\""
+      },
+      "last_completed_task": "da87b3b6c9a7018a02996806abf46f51caac2a6d",
+      "recovery_policy": {
+        "stale_lock_timeout_seconds": 1800,
+        "max_retries": 3,
+        "retry_backoff_base_seconds": 30,
+        "on_crash": "check_pid_and_resume"
+      }
+    },
+    "hg-antigravity-integration": {
+      "worker_id": "hg-antigravity-integration",
+      "session_id": "44d0b99c-0ce7-463f-ba3e-61c52579e936",
+      "role": "INTEGRATION_COORDINATOR",
+      "issue_number": 17,
+      "also_accepts_issues": [],
+      "owned_branch": "dev/production-integration",
+      "worktree_path": "/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/antigravity-prod-dev",
+      "allowed_task_types": [
+        "integration",
+        "reconciliation",
+        "sanitizer_verification",
+        "release_gate",
+        "main_merge",
+        "test",
+        "report"
+      ],
+      "status_source": {
+        "type": "file_lock_and_pid",
+        "lock_file": "/home/swarna-sekhar-dhar/.gemini/antigravity-cli/brain/44d0b99c-0ce7-463f-ba3e-61c52579e936/lock",
+        "state_file": "/home/swarna-sekhar-dhar/.gemini/antigravity-cli/brain/44d0b99c-0ce7-463f-ba3e-61c52579e936/state.json"
+      },
+      "dispatch_mechanism": {
+        "type": "assistant_orchestrator",
+        "command_template": "antigravity dispatch {task_id}"
+      },
+      "last_completed_task": "9e38e6253c0560cbd357684913b5b8e8b2ae5a29",
+      "recovery_policy": {
+        "stale_lock_timeout_seconds": 1800,
+        "max_retries": 3,
+        "retry_backoff_base_seconds": 30,
+        "on_crash": "notify_coordinator"
+      }
+    }
+  }
+}
