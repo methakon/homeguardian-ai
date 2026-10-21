@@ -984,9 +984,9 @@ def selftest() -> int:
     check("the dispatch brief forbids merging to main",
           "Never merge to main" in dispatch_argv("kanban", "M", "d", BRANCH)[-2])
     check("dispatch puts the worker in the real worktree, not a scratch dir",
-          "--workspace" in dispatch_argv("kanban", "M", "d", BRANCH)
-          and "worktree" in dispatch_argv("kanban", "M", "d", BRANCH)
-          and BRANCH in dispatch_argv("kanban", "M", "d", BRANCH))
+          any(a.startswith("worktree:") for a in dispatch_argv("kanban", "M", "d", BRANCH))
+          and BRANCH in dispatch_argv("kanban", "M", "d", BRANCH),
+          str(dispatch_argv("kanban", "M", "d", BRANCH)))
     check("unknown dispatch modes are refused", _try(lambda: dispatch_argv("whatever", "M", "d", BRANCH)) is False)
 
     # 17b. LIVENESS: a dispatch that never started must not freeze the watcher forever
