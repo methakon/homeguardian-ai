@@ -1,0 +1,12 @@
+# OPT-IN local override: publish the hub's dashboard on the host's LOOPBACK
+# interface only (127.0.0.1). This is for the machine you are sitting at; it is
+# still not reachable from the LAN, and it does NOT change the hub's own
+# listener (which remains 127.0.0.1). Do not replace the bind address with
+# 0.0.0.0 — a network-facing boundary is milestone D-03's job.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.loopback.yml up -d
+#   open http://127.0.0.1:8080/
+services:
+  hub:
+    ports:
+      - "127.0.0.1:8080:8080"

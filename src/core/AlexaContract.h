@@ -89,6 +89,7 @@ struct AlexaResponse {
 struct AlexaAuthContext {
     bool authenticated = false;
     std::string principal;      // opaque identifier of the caller
+    std::string credential_id;  // deterministic identifier / hash of the credential
     bool allow_status = false;
     bool allow_alert_summary = false;
 };

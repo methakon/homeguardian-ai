@@ -22,7 +22,10 @@ const os = require('node:os');
 const path = require('node:path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const BRIDGE = path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge');
+const BRIDGE = process.env.HG_BRIDGE_PATH ||
+  (fs.existsSync(path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge'))
+    ? path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge')
+    : path.join(REPO_ROOT, 'build', 'hg_alexa_bridge'));
 const ADAPTER = path.join(REPO_ROOT, 'src', 'bridge', 'hg_http_adapter.js');
 const CONFIG = path.join(REPO_ROOT, 'config', 'homeguardian.json');
 

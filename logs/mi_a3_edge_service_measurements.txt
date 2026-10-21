@@ -1,0 +1,25 @@
+==============================================================================
+Mi A3 edge service — resource measurement   window=90s
+==============================================================================
+
+-- before --
+  app pid 28148   RSS 95880 kB   PSS 96084 kB(peak)
+  device MemAvailable 2866 MB
+  battery level=96% health=2 temp=33.3C status=2
+  skin-therm 37.0C   hottest 54.6C
+  probe log: 8 ok / 0 fail so far
+
+-- over 95s --
+  MCP probes completed : 4  (ok 4, fail 0)
+  APP CPU              : 150 ms of CPU over 95s = 0.16% of one core
+  APP CPU per MCP probe: 37.50 ms
+  RSS samples (kB)     : min 95880 max 95880 last 95880  (growth +0 kB)
+  probe latency ms     : min 20 p50 30 max 40
+
+-- after --
+  battery temp 33.3C -> 33.3C   level 96% -> 96%
+  skin-therm 37.0C -> 36.7C   hottest 54.6C -> 45.3C
+  device MemAvailable 2866 MB -> 2777 MB
+  app RSS 95880 kB -> 95880 kB   peak VmHWM 96084 kB
+
+  -> /home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-service/logs/mi_a3_edge_service_measurements.json

@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include <unistd.h>   // getpid: process-unique fixture paths
 #include "core/IMediaDevice.h"
 #include "core/ConsentGate.h"
 #include "core/ConsentGuardedDevice.h"
@@ -85,7 +86,11 @@ private:
     int close_count_ = 0;
 };
 
-static const std::string GUARD_DB = "test_guard.db";
+// Unique per process: two suite instances running in the same working
+// directory must not delete each other's database (SQLite reports the
+// collision as a confusing 'disk I/O error' on the next WAL/DDL call).
+static const std::string GUARD_DB =
+    std::string("test_guard.db.") + std::to_string(::getpid());
 
 struct GuardFixture {
     std::shared_ptr<SQLiteDatabase> db;

@@ -264,9 +264,9 @@ prove real hardware enforcement.
   Available since **API level 26** (newer AAudio calls 28–32 are avoided).
 - Both are within the confirmed API 27 floor.
 
-### Confirmed device (live, via ADB)
+### Lab test device audit (historical, via ADB)
 
-A physical device is attached and verified. The model string is **not trusted**
+A test device was audited via ADB. The model string is **not trusted**
 and was **not** corroborated:
 
 - `ro.product.model=S25_Ultra` is cosmetic. Corroborating properties disagree:
@@ -479,9 +479,9 @@ surface; they operate on synthetic alerts and simulator state only:
 - Configuration remains fail-closed: capture disabled by default; invalid or
   contradictory config is rejected before components start and cannot enable
   capture or bypass consent.
-- The alert is a **synthetic presence notice**, never a real-world danger
-  detection. No raw audio/video/biometric data is persisted. No physical sensor
-  was activated.
+- The alert is a **synthetic, detection-driven activity notice** (raised only when
+  the fused detector evidence qualifies), never a real-world danger detection. No
+  raw audio/video/biometric data is persisted. No physical sensor was activated.
 
 ## Durable audit + observability — privacy notes (added 2026-10-11)
 
@@ -515,8 +515,8 @@ observability without any new capture or retention surface:
   and cannot grant consent or enable capture. Counters reset per process and are
   never mistaken for durable audit history.
 - **Logs/records cannot be mistaken for physical sensor activation:** all media
-  is synthetic; the alert is a synthetic presence notice, not a danger
-  detection. No physical sensor was activated.
+  is synthetic; the alert is a synthetic, detection-driven activity notice, not a
+  danger detection. No physical sensor was activated.
 
 ## Integration contract + consent verification (added 2026-10-11)
 
@@ -613,11 +613,11 @@ observability without any new capture or retention surface:
   pending — needs Amazon credentials); the adapter verifies local bearer tokens
   only.
 
-## Simulated Alexa+ web demo — privacy notes (added 2026-10-12)
+## Standalone simulated Alexa+ bridge demo (`demo.sh`) — privacy notes (added 2026-10-12)
 
-- **It is a simulation, clearly labelled.** The UI states in a banner and in the
-  footer that this is a project-built simulated Alexa+ experience, not a real
-  Alexa+ device integration, with no MCP server and no live Amazon identity.
+- **It is a simulation, clearly labelled.** The `demo.sh` UI states in a banner and in the
+  footer that this is a project-built simulated Alexa+ bridge experience (distinct from the native C++ MCP server `hg_mcp_server`), not a real
+  Alexa+ device integration, with no live Amazon identity.
 - **No physical sensor.** Every observation is synthetic and produced in-process
   by the deterministic sensor simulator. No camera, microphone, or speaker is
   ever opened.
@@ -746,3 +746,283 @@ enforcement verified") under strict privacy boundaries:
 - **No new data access.** The audit observes existing decisions at the consent
   boundary; it introduces no new sensing, no new persistence of personal data,
   and no covert identification or tracking.
+
+## v17 — scenario demo exposure and consent isolation (2026-10-13)
+
+**What the demo now exposes (loopback only).**
+- `/api/alerts` returns the most recent alert METADATA from the local audit
+  store: `alert_id`, `severity`, `rule`, `message`, `confidence`, `detected_at`,
+  `contributing_events`, and a derived explanation string. No media, no
+  transcripts, no embeddings, no personal identifiers. Alert messages in this
+  build are synthetic simulator strings.
+- `/api/scenarios` returns the scenario catalogue (static text).
+- `/api/run-scenario?scenario=<id>` accepts only tokens from a fixed allowlist;
+  it is loopback-bound and subject to the existing Host/Origin checks.
+
+**The Alexa-facing contract is unchanged and remains AGGREGATE-ONLY** (`state`,
+`capture_enabled`, `alert_count`, `highest_severity`, capped `alert_ids`). Per-alert
+detail is available only on the local demo surface, never through the contract.
+
+**Consent.** Each scenario run clears the synthetic in-memory consent repo first
+(`reset_consent_state()`), so a previous run's grants or withdrawals cannot
+influence a later run. The fail-closed gate behaviour is unchanged, and the
+privacy audit (`enforcement_ok`) is evaluated per run: in every scenario,
+acquisitions equal authorizations (no acquisition without consent). Denied
+acquisitions are counted and surfaced.
+
+**No change** to: `synchronous=FULL`, WAL, the bounded (256) audit ring, token
+access control, loopback binding, or the consent decision path.
+
+## L-11 — detection-driven alerts: what the alert metadata now carries (2026-10-13)
+
+The alert `details` JSON (and therefore the `/api/alerts` projection) now carries
+the evidence that caused the alert: `fusion_verdict`, `fusion_confidence`,
+`contributing` (count), `inconclusive` (count), `detector_ids` (bounded to 10),
+`provenance` ("synthetic") and the fusion `reason` string (a bounded, numeric
+explanation such as "detected by 5 input(s), agreement 1, confidence 1").
+
+None of this is derived from media: these are aggregate detector verdicts and
+counts. The bounded contributing-event id list is capped at 10. No raw audio,
+video, biometrics, transcripts or credentials are added, and the Alexa-facing
+contract remains AGGREGATE-ONLY.
+
+Consent semantics are unchanged and now also gate detection: detection runs only
+after an authorized acquisition, so a denied or withdrawn consumer can never
+cause a detection observation or a detection-driven alert.
+
+## L-12 — anomaly results: what is stored and exposed (2026-10-13)
+
+The anomaly stage adds only bounded numeric metadata to the scenario response and
+the local dashboard:
+
+| Field | Meaning | Sensitive? |
+|---|---|---|
+| baseline_ready / phase / samples / min_samples | is the learned baseline usable | no |
+| baseline_mean / baseline_stddev | rolling statistics of the bounded feature | no |
+| last_value / last_zscore | the evaluated sample and its z-score | no |
+| status (warm-up/normal/high/low/missing) / deviation / anomalies | the detector's verdict and count | no |
+| reason / missing_reason | the detector's own short explanation | no |
+| fused_into_alert / relationship | whether the result may influence the alert | no |
+
+- No raw audio, video, biometrics, identities or behavioural profiles are stored:
+  the detector's state is a bounded deque of numbers per key plus a running mean
+  and stddev (`max_window` 32, `max_keys` 256 in the library).
+- Anomaly Observations carry only bounded features + a note; they are treated
+  exactly like other detection Observations (validated, bounded history).
+- **Persisted alerts are unchanged**: anomaly internals are NOT written to SQLite;
+  only the delivered detection-driven alert metadata is, as before. The
+  `details` JSON never contains media keys.
+- The anomaly stage runs only for scenarios that enable it and only after an
+  AUTHORIZED acquisition, so consent/capture gating is preserved.
+
+
+## H-01s — what the synthetic impact stage stores and exposes (2026-10-13)
+
+The impact stage adds no new data class. It processes one bounded numeric
+synthetic feature (impact intensity in [0,1]) per AUTHORIZED acquisition and
+emits `Observation`s with `provenance = synthetic`, `source = sim_sensor` and
+bounded features (phase, value, transient/stillness values, sample distance,
+thresholds).
+
+- **No camera, microphone, pose, biometric or personal data.** A "confirmed
+  impact pattern" is a statement about synthetic numbers, never about a person.
+- The alert's `details` are non-sensitive metadata: pattern name, two bounded
+  intensities, a sample count, a supporting count, `provenance`, `simulated` and
+  `emergency_services_contacted: false`. No media, transcripts, credentials or
+  person identifiers.
+- Persisted alerts are unchanged in shape; the same non-sensitive `details` are
+  written to SQLite and no impact internals beyond them.
+- The stage runs only for a scenario that enables it and only after an AUTHORIZED
+  acquisition. Capture off, missing/withdrawn/expired/ambiguous consent => no
+  observation => no classifier result => no critical alert.
+- The privacy audit trail is unchanged and `enforcement_ok` stays true for every
+  scenario, including the critical one.
+- Every user-visible string about this feature says it is simulated and that no
+  emergency services are contacted.
+
+
+## v21 — no new data class; degraded state is reported honestly (2026-10-13)
+
+v21 added no data class, no sensor and no retention of new information. The three
+fixes are behavioural:
+
+- The HTTP status for an unsupported scenario id changed to `400`; the response
+  body still carries only the generic error and the echoed identifier — never a
+  path, token or internal detail.
+- Logging failure is no longer fatal; the logger falls back to console output and
+  never writes secrets (it never did).
+- The bridge's durable alert store honours `alert_retention_days`, so old alert
+  metadata is deleted on schedule instead of accumulating. Deleting audit records
+  is a privacy-positive change and matches the documented retention policy.
+
+When persistence is unavailable the deployment reports itself as degraded
+(`/api/status` -> `{"error":"unavailable","ok":false}`) and the scenario result
+omits persisted-alert counts rather than reporting fabricated ones. The privacy
+audit trail continues to run in every mode and `enforcement_ok` stayed true for
+all ten verified scenarios, in capture-on and capture-off configurations.
+
+
+## D-02 — what the Android node does and does not do (2026-10-13)
+
+The node exists to acquire frames and PCM samples from a phone the owner controls,
+under explicit consent, and to hand bounded, authorized, timestamped payloads to
+the pipeline. Privacy properties, by construction:
+
+- **Nothing starts by itself.** Capture requires three independent things: an
+  explicit operator tap, the Android runtime permission (granted through the
+  normal system flow, never `adb pm grant`), and a HomeGuardian consent record.
+- **No background capture.** There is no foreground service and no
+  `FOREGROUND_SERVICE` permission; leaving the activity stops and releases every
+  device. Screen-off operation is deliberately not implemented in D-02.
+- **A visible indicator while capturing**: an on-screen RECORDING banner plus live
+  frame/sample counters and the reason the last payload was refused.
+- **Withdrawal works immediately.** Consent withdrawal re-evaluates the gate and
+  forces capture down; permission revocation or a device disconnect does the same
+  through the audio path's stop request.
+- **No media retention.** Frames and PCM buffers are counted in memory for the
+  duration of the callback: no decode, no feature extraction, no file, no upload,
+  no transcription, and no face/speech/fall/emergency inference anywhere in the
+  node. (Feature extraction from real media is milestone D-05 and is bounded to
+  modest explainable signals such as motion energy and audio RMS.)
+- **Identity is not personal.** The node id is an opaque hash of the Android ID;
+  the display name, model, API level and ABI are sanitised and bounded. No
+  accounts, contacts, telephony identifiers, location or media content are read.
+- **Least media by default.** The camera preview is deliberately small
+  (320x240 preferred) and microphone capture is mono 16 kHz unless the operator
+  selects otherwise.
+
+
+## Precursor and sensor-observation layer — privacy properties (2026-10-14, D-02x)
+
+- **No person-directed inference of any kind.** No facial-emotion analysis, no voice
+  stress/deception analysis, no body-vibration or thermal "stress" profiling, no face
+  recognition or identity matching, no speaker identity. The `home-security-sensor-nodes`
+  skill's own exclusion list is adopted as a hard project boundary, and its reasoning is
+  recorded: those methods fail independent validation (~75-79% in controlled lab settings) and
+  are a consent problem regardless of accuracy.
+- **No species identification and no speech content.** Audio is reduced to scalars (RMS, peak,
+  zero-crossing rate) that are computed in place and discarded; nothing is transcribed,
+  retained, uploaded or classified. Image data is reduced to a per-pixel change statistic on
+  the luma plane. `possible_animal_activity` is an explicit hypothesis about a multi-sensor
+  activity pattern, and its own note says it is not a species identification.
+- **No raw media persistence.** The layer consumes bounded buffers and emits scalars and bounded
+  feature payloads. Enforced by construction: the extractors copy nothing.
+- **Environmental data requires authorization.** `EnvironmentalAdapter::validate()` refuses a
+  sample with no authorization context or one that does not record a grant; an unauthorized
+  measurement is not ingested at all.
+- **Every sensor observation carries its consent context**: subject, purpose and the
+  authorization decision at ingestion. An unauthorized report is stored with status
+  `unavailable` and claims no detection.
+- **Home Assistant tokens are treated as secrets**: read from a mounted file that is refused if
+  group/other-readable, held privately by the transport, never logged, never placed in an
+  observation or feature payload, never returned by `describe()`, and never baked into an image
+  layer. The integration is read-only and disabled until configured and explicitly authorized.
+- **No identity of household members is derived** from any observation, and no observation
+  scores a human being.
+
+
+## Dashboard disclosure (2026-10-14)
+
+The status panel discloses rather than implies. It shows which surfaces are live versus synthetic,
+labels the one faunal output as a hypothesis, states that an environmental association is a
+correlation rather than causation, and says plainly what the system does not do: no species
+identification, no person identification, no fall detection, no speech content, and no
+earthquake/flood/storm prediction from animal behaviour. The API payload behind it carries none of
+those claims, so they cannot be rendered as results even by mistake, and the verification script
+asserts that absence. Every empty surface is shown with its reason, because an unexplained zero
+would read as a working sensor reporting calm - the most misleading state a monitoring panel can
+display.
+
+
+## D-03 privacy additions (device transport)
+
+- **Compact observations only.** The protocol carries bounded numeric features and short strings. No
+  raw audio, no image, no frame, no transcript and no biometric template can be expressed in it, so
+  no such data can reach SQLite on this path. The Android sender (`ObservationTransport.java`) has
+  no code path that can serialize a buffer.
+- **Provenance is derived, never trusted.** A device claiming `real` acquisition is recorded as
+  **synthetic** unless the hub itself can substantiate it from the authenticated peer, the registry
+  consent record, the capture flag and a live acquisition mode. The unsubstantiated claim is flagged
+  and counted, so an operator can see it rather than silently believe it.
+- **Consent is per device and checked per message.** Withdrawing consent (or disabling capture)
+  stops processing on the next observation; the device is refused, not quietly downgraded. The
+  refusal reason is recorded (`consent_missing`, `consent_withdrawn`, `capture_disabled`).
+- **Revocation is immediate and total.** Revoking a device clears pairing, consent, capture and
+  liveness and is re-read on every connection: no restart, and no residual permission.
+- **No credential in any payload or log.** The certificate is presented to the socket; the
+  observation body has no key field. The ingress logs device ids and reason codes, never key
+  material, and the Android sender logs exception CLASSES for keystore operations so a failure
+  cannot print secret material.
+- **The device port is not a door to the data.** No dashboard, no alert listing, no commands and no
+  SQLite are served there, so an authorized device cannot read anything about the household beyond
+  its own acknowledgements.
+- **Certificates are operator-provisioned and read-only in the container** (mounted `:ro`), and
+  `deploy/docker/certs/`, `*.key` and `*.crt` are gitignored: key material never enters the
+  repository or an image layer.
+
+## D-03.1 privacy notes
+
+- The durable replay state contains device ids and counters only: no media, no feature
+  values, no credentials, no timestamps.
+- The welcome's `last_sequence` is the device's OWN watermark; it reveals nothing about
+  any other device and no authorization detail.
+- Authorization transition audit lines name a device id and which operator field moved
+  (revoked, consent, capture). They carry no observation content.
+- Consent withdrawal and capture disable now take effect on an established connection and
+  flush queued observations, so nothing collected after a withdrawal is transmitted.
+- Ingested observations remain non-authoritative for alarms unless the operator
+  explicitly allowlists their detector ids (`evidence_detector_ids`), unchanged from D-03.
+
+## D-03.2 privacy notes
+
+- The durable replay state stores device ids, sequence counters and the last completed
+  observation id. No payloads, no feature values, no media, no credentials, no timestamps.
+- The in-flight marker is in memory only and is never written anywhere.
+- `processing_failed` details are bounded and non-sensitive (they name the failing stage,
+  not the observation content).
+
+## H-01 privacy notes (audio activation)
+
+- The microphone is opened only by an explicit operator action, twice confirmed (`--start`
+  plus `--i-understand-this-opens-the-microphone`), and never by construction, discovery,
+  build or test. The whole `[audio]` suite runs silent and deaf.
+- No raw audio is written to disk anywhere in this path, and none is transmitted: the capture
+  adapter hands bounded windows to the session, which computes scalars and discards them.
+- No transcription, no keyword spotting, no speaker identity, no emotion inference, and no
+  cloud transmission. A test scans every sentence the component can emit for species, person
+  and disaster vocabulary and fails if one appears.
+- The finding states what is NOT known ("The source is not identified", "no species, speech,
+  person or event classification is performed or implied") rather than leaving the reader to
+  assume.
+- A stalled microphone is reported as an equipment fault, never as a quiet room, so a failure
+  is not mistaken for evidence about the household.
+- Audio hardware is reached only from the host process; no container gains device or
+  sound-server access, so the network-facing ingress cannot capture even if compromised.
+
+## H-02A - spoken feedback
+
+* The spoken sentences come from a CLOSED set compiled into the binary. No observation text,
+  feature value, device name or payload content is ever spoken, so speech cannot leak measured
+  data or a guessed source.
+* Operator test text is sanitized (bounded length, printable characters only, control characters
+  refused) before it can reach the output.
+* No raw audio is written, buffered to disk, or sent anywhere: the output path plays locally and
+  the input path discards samples after feature extraction, exactly as before.
+* No cloud speech service is involved, and none is configured. The local engine names itself
+  honestly; nothing is labelled Amazon Alexa.
+* The microphone's consent state and the speaker's enable/mute state are SEPARATE controls, so
+  an operator can keep listening while silencing output, or stop listening while leaving speech
+  enabled.
+* Speech delivery status is non-sensitive (a counter, the last sentence template, a failure
+  reason). No audio and no text derived from audio is stored.
+
+## H-03 - Android node
+
+The node transmits compact numeric scalars only: motion fraction, motion mean delta, RMS, peak,
+zero-crossing rate, counters, timestamps and provenance. No imagery and no audio leave the phone,
+nothing is persisted, and the Y plane of a frame is read once for a bounded descriptor and dropped
+without being copied back into Java. Device credentials live in app-private storage; the app checks
+only their EXISTENCE and never reads, displays or logs their contents. Consent gates every payload
+at the native layer, so a withdrawn consent stops measurement as well as delivery; permission and
+consent are separate operator actions. No cloud service is involved and none is configured. There
+is no TLS verification disable switch - a missing certificate means no connection.

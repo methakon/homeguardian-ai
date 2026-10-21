@@ -1,0 +1,7 @@
+#pragma once
+// GENERATED at configure time from src/web/index.html — do not edit by hand.
+// The dashboard is embedded so the native demo binary is a single self-contained
+// process with no runtime file dependency on a web server or Node.js.
+namespace homeguardian {
+inline constexpr const char* kDashboardHtml = R"HGWEB(@HG_DASHBOARD_HTML@)HGWEB";
+}  // namespace homeguardian

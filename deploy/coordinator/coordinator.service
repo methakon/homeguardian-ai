@@ -1,0 +1,45 @@
+[Unit]
+Description=HomeGuardian Remote MCP Coordinator Service
+Documentation=https://github.com/swarna-sekhar-dhar/homeguardian-ai
+After=network.target wg-quick@wg0.service
+Wants=wg-quick@wg0.service
+
+[Service]
+Type=simple
+User=homeguardian
+Group=homeguardian
+WorkingDirectory=/opt/homeguardian/coordinator
+
+# Environment file with production configurations
+EnvironmentFile=-/etc/homeguardian-coordinator/coordinator.env
+Environment=NODE_ENV=production
+
+# Resource Limits (Strictly enforced to protect co-hosted Postfix/Dovecot mail server on 1GB VPS)
+# Node.js heap limit capped at 64MB; systemd cgroup kills process if it exceeds 120MB
+ExecStart=/usr/bin/node --max-old-space-size=64 /opt/homeguardian/coordinator/service.js
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Process Sandboxing & Isolation
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Explicit Read/Write paths
+ReadOnlyPaths=/opt/homeguardian/coordinator
+ReadWritePaths=/etc/homeguardian-coordinator /var/log/homeguardian
+
+# Resource caps
+MemoryMax=120M
+MemoryHigh=100M
+CPUQuota=25%
+TasksMax=30
+
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

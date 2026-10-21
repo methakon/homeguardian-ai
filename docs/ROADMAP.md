@@ -5,7 +5,7 @@
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
 | A-01 | Initialize project and verify toolchain | — | C++20, CMake, spdlog, nlohmann/json, Catch2 all working | DONE |
-| A-02 | Initialize Git repository | A-01 | Repo exists at `/home/swarna-sekhar-dhar/projects/homeguardian-ai` on `main` branch | DONE |
+| A-02 | Initialize Git repository | A-01 | Repo exists at `homeguardian-ai` on `main` branch | DONE |
 | A-03 | Create initial documentation | A-02 | README, ARCHITECTURE, ROADMAP, DEVELOPMENT, TESTING, ORCHESTRATION, DECISIONS, STATUS all exist and are committed | DONE |
 | A-04 | Review and first commit | A-03 | All docs reviewed, `.gitignore` present, initial commit created | DONE |
 | A-05 | Create skill inventory | A-03 | `docs/SKILL_INVENTORY.md` created with all relevant skills documented | DONE |
@@ -175,17 +175,17 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| F-01 | HTTP server (Boost.Beast) | C-03 | REST API for dashboard and alerts | TODO |
-| F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | TODO |
-| F-03 | Alexa+ integration | F-02 | Alexa+ can invoke HomeGuardian tools | TODO |
+| F-01 | HTTP server | C-03 | REST API for dashboard and alerts | DONE (in scope) — implemented as the native C++ loopback transport `hg_alexa_bridge --http` (loopback read subset, no external dependency; state-changing endpoints require authenticated session & CSRF). Boost.Beast deliberately NOT adopted (dependency-avoidance). Broader/production REST (public TLS, OAuth provider) remains absent. |
+| F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | DONE (implemented and certified in PR #20) — Native C++ Model Context Protocol (spec 2025-11-25) server (`hg_mcp_server`) implemented with Streamable HTTP transport, 2 read-only tools, fail-closed auth, and full test suites. (Originally deferred during F22, fully implemented in PR #20). |
+| F-03 | Alexa+ integration | F-02 | Alexa+ can invoke HomeGuardian tools | DEFERRED — no live Alexa+ identity/device integration. The in-repo simulated Alexa+ web experience is NOT equivalent to production Alexa+ integration. |
 
 ## Phase G — Dashboard and Notifications
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| G-01 | Web dashboard | F-01 | HTML/CSS/JS dashboard shows events and status | TODO |
-| G-02 | Notification service | C-03 | Email/push/webhook alerts | TODO |
-| G-03 | Ring simulator | C-03 | Simulated Ring events for development | TODO |
+| G-01 | Web dashboard | F-01 | HTML/CSS/JS dashboard shows events and status | DONE — vanilla HTML/CSS/JS dashboard (`src/web/index.html`), embedded in the native binary, shows status/alerts/detection/privacy-audit and drives the real backend. Built on the native transport (F-01), not Boost.Beast. |
+| G-02 | Notification service | C-03 | Email/push/webhook alerts | DEFERRED — not implemented (out of v16 scope). |
+| G-03 | Ring simulator | C-03 | Simulated Ring events for development | DEFERRED — not implemented; no Ring integration is claimed. |
 
 ## Phase H — Safety and Hardening
 
@@ -194,7 +194,7 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 | H-01 | Fall detection pipeline | E-02, E-03 | Pose-based fall detection with configurable sensitivity | TODO |
 | H-02 | Emergency workflow | G-02 | Configurable escalation: notify → call → emergency services | TODO |
 | H-03 | Privacy audit | D-01 | All data access logged; consent enforcement verified | DONE |
-| H-04 | Security review | All | Input validation, injection prevention, access control | TODO |
+| H-04 | Security review | All | Input validation, injection prevention, access control | DONE (native HTTP transport reviewed + hardened; see docs/SECURITY_READINESS_V8.md) |
 
 ## Phase L — Observation and inference framework (added 2026-10-12)
 
@@ -243,3 +243,511 @@ consent-gated data-access decisions.
 demo/API. Durable database persistence of audit entries (via the existing SQLite
 layer) is a deliberate follow-up and is not required by the H-03 acceptance
 criteria; the structured logger already emits a durable record.
+
+## Phase N — Native HTTP demo transport (added 2026-10-13, v14)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| N-01 | Review the committed `NativeHttp.h` foundation | — | Compiles clean; framing/size/timeout/method/route review; defects corrected before use | DONE (4 defects fixed) |
+| N-02 | Native integration into the C++ bridge | N-01 | `hg_alexa_bridge --http` serves `/`, `/index.html`, `/api/health`, `/api/status`, `/api/run-scenario` using the real backend + SQLite; API contracts preserved | DONE |
+| N-03 | Embed the dashboard; drop the Node runtime dependency | N-02 | HTML embedded via CMake; `demo.sh` starts ONE native process; Node not invoked | DONE |
+| N-04 | Per-run semantics for a single long-lived process | N-02 | Repeated scenario runs each deliver a fresh alert and grow durable history (matches legacy per-process behavior) | DONE |
+| N-05 | H-04 security review + adversarial tests | N-02 | Input validation, Host/Origin enforcement, CSP, resource limits; 18 `[nativehttp]` cases incl. handler-not-reached-on-rejection | DONE |
+| N-06 | Footprint benchmark (native vs legacy Node) | N-03 | Measured RSS/CPU/startup/latency/process count/deps via `scripts/bench_demo.sh`; recorded (incl. the unflattering run-scenario latency) | DONE |
+| N-07 | Legacy Node adapter retained as reference | N-03 | `src/bridge/hg_demo_server.js` kept; `HG_DEMO_LEGACY_NODE=1` path; not required by default | DONE |
+
+## Phase O — Scenario latency investigation (added 2026-10-13, v15)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| O-01 | Reproduce the v14 scenario-latency gap | N-03 | 40-trial Release measurement with median/p95/variability | DONE (native 46.5 ms median / 437 ms p95) |
+| O-02 | Phase-profile the scenario path | O-01 | Steady-clock phases via default-off `HG_PROFILE=1`; no sensitive data | DONE (99 % in `persist`) |
+| O-03 | Isolate the cause | O-02 | Control + `strace` + isolated `sqlite3` measurement | DONE (SQLite `synchronous=FULL` fsync ≈ 93 ms/commit) |
+| O-04 | Safe optimization | O-03 | Improve latency **without** durability/security/footprint regressions | **CLOSED (v16)** — decision: KEEP `synchronous=FULL`; storage-related latency accepted. No safe lever exists; durability retained. See `docs/DECISIONS.md` (D-sqlite-synchronous-full-retained). |
+| O-05 | Keep instrumentation, default-off, reported | O-02 | `HG_PROFILE=1` inert when unset; no credential/media leakage | DONE |
+
+**Phase F / G review vs the implemented native transport** (requested):
+
+- **F-01 "HTTP server (Boost.Beast) — REST API for dashboard and alerts":**
+  **superseded / satisfied in scope.** A loopback REST-ish API for the dashboard
+  and alerts now exists as the **native `hg_alexa_bridge --http`** transport
+  (read subset with authenticated state mutations, no external dependency), rather than Boost.Beast. The
+  original dependency choice is deliberately NOT adopted (dependency-avoidance
+  goal). Not a production HTTP server: no TLS, no real auth, handwritten subset.
+- **G-01 "Web dashboard (HTML/CSS/JS) — shows events and status":**
+  **implemented**, but built on the native transport (F-01 above) rather than the
+  never-built Boost.Beast F-01. The dashboard is vanilla HTML/CSS/JS
+  (`src/web/index.html`), embedded into the binary, showing status, alerts, the
+  detection stage, and the privacy audit; it drives the real backend.
+- **F-03 (Alexa+ live integration), G-02 (notifications), G-03 (Ring
+  simulator), H-01 (fall detection):** **NOT implemented / deferred** — unchanged.
+  Live Alexa, physical sensing, or production HTTP deployment is not claimed.
+  *(Note: F-02 Native C++ MCP server was implemented and certified in PR #20; see docs/DEVPOST_DEMONSTRATION_GUIDE.md).*
+
+## Phase P — Licensing and release readiness (added 2026-10-13, v16)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| P-01 | Close the SQLite durability decision | O-03/O-04 | `synchronous=FULL` retained; verified in code (WAL) and at runtime (`synchronous=2`); no durability change | DONE |
+| P-02 | Apache-2.0 license (hackathon P0-2) | user approval | Root `LICENSE` = unmodified Apache-2.0 (sha256-verified vs apache.org); `NOTICE` with attribution; README updated | DONE |
+| P-03 | Third-party attribution review | P-02 | SQLite/Catch2/spdlog/nlohmann-json (and optional ask-sdk) licenses identified and preserved; no relicensing | DONE |
+| P-04 | Roadmap reconciliation (F-01/G-01/F-02/F-03) | — | Accurate status: local demo HTTP + dashboard DONE in scope; MCP/Alexa+/notifications/Ring DEFERRED; Boost.Beast not adopted | DONE |
+| P-05 | Release-readiness verification | — | Clean-clone Release build, C++/CTest/ASan, native adversarial suite, Node-free demo, loopback, persistence, capture-off, privacy, graceful shutdown, no artifacts committed | DONE |
+
+**Completed records preserved:** H-04 (security hardening for the documented
+local transport scope) is DONE; Phase N N-01..N-07 are DONE; Phase O established
+the v15 performance root cause and the durability decision is now resolved with
+**no code-level durability change**.
+
+## Phase Q — Multi-scenario demo with explainable alerts (added 2026-10-13, v17)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| Q-01 | Deterministic scenario catalogue (core) | L-09 | Data-only fixtures (no pre-baked outcomes); ids form an allowlist; default entry preserved | DONE |
+| Q-02 | Scenario runner through the REAL pipeline | Q-01 | Runs SimulatorRuntime -> event sink -> Pipeline -> correlation -> AlertPolicy; no second engine | DONE |
+| Q-03 | Scenario A normal | Q-02 | Activity detected, but no alert (below the >=2 correlation threshold) | DONE |
+| Q-04 | Scenario B unusual | Q-02 | Alert traceable to the rule/evidence; duplicates suppressed | DONE |
+| Q-05 | Scenario C inconclusive | Q-02 | Detector + fusion preserve inconclusive/unavailable; no alert, no fabricated confidence | DONE |
+| Q-06 | Scenario D consent denied | Q-02 | Denied acquisition blocked; no event from the denied consumer; enforcement_ok true | DONE |
+| Q-07 | Real alerts captured + persisted | Q-02 | The alert persisted is the pipeline output (the old hardcoded placeholder is removed) | DONE |
+| Q-08 | Scenario isolation in one process | Q-02 | Consent state reset per run; results independent of execution order | DONE |
+| Q-09 | Allowlisted scenario selection over HTTP | Q-02 | scenario= strictly validated; unknown rejected; Host/Origin/loopback preserved | DONE |
+| Q-10 | Dashboard: selector + backend-derived detail + safe DOM | Q-07 | Real alert severity/rule/message/explanation; textContent only; explains what/why/persisted/consent | DONE |
+| Q-11 | Honest simulated assistant | Q-10 | Answers grounded in real status + last scenario; explicitly not a language model | DONE |
+| Q-12 | Tests + docs + footprint | Q-03..Q-11 | Per-scenario tests, isolation, persistence, malformed ids, injection-safety; footprint documented | DONE |
+
+## Phase R — L-11 detection-driven, explainable alerts (added 2026-10-13, v18)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| L-11 | Detection-driven alert generation | L-01..L-05, L-09 | The alert exists only because the detection/fusion evidence qualified; the previous independent raw-observation rule is removed | DONE |
+| R-01 | DetectionFusionRule (core) | FusionEngine | Fuses reconstructed detection observations; alerts only on `detected` >= confidence floor with >= 2 usable votes; never on inconclusive/unavailable/not_detected/conflict | DONE |
+| R-02 | Observation::from_event round-trip | Observation | Rebuilds an Observation from the inference event carried by the pipeline; rejects non-inference/unknown-status events | DONE |
+| R-03 | Evidence-derived severity + metadata | R-01 | severity from fused confidence; `details` carry fusion_verdict/confidence/contributing/inconclusive/provenance/reason | DONE |
+| R-04 | Detection gated by authorized acquisition | R-01 | No acquisition (capture off / consent withdrawn / no authorized consumer) => no detection step => no detection-driven alert | DONE |
+| R-05 | Alert metadata surfaced (API + dashboard) | R-03 | Per-alert reason/severity/provenance from backend state; safe DOM only | DONE |
+| R-06 | Uncertainty + regression tests | R-01..R-05 | 9 `[l11]` cases prove the causal path and the negative cases; scenario suite updated to measured results | DONE |
+
+## Phase S — L-12 statistical anomaly detection in the live pipeline (2026-10-13)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| S-01 | AnomalyMonitor core component | AnomalyDetector | Feeds the bounded numeric feature of each AUTHORIZED acquisition; maps results to detection Observations; bounded, non-sensitive status | DONE |
+| S-02 | Detection Observations through the SAME pipeline | S-01, L-11 | Validation -> history -> detection rule -> alert policy; no second pipeline, no synthetic alert | DONE |
+| S-03 | Explicit evidence allowlist | L-11 | DetectionFusionRule accepts only allowlisted detector ids as votes; anomaly evidence advisory by default; influence explicit + causal + tested | DONE |
+| S-04 | Scenario catalogue: warm-up / normal / deviation / missing | S-01 | Deterministic baseline before deviations; deliberate gap probe; documented per-run baseline reset | DONE |
+| S-05 | API + dashboard exposure | S-01 | baseline ready, phase, status (warm-up/normal/high/low/missing), deviation, mean/sd, z-score, reason, gap reason, relationship to the alert | DONE |
+| S-06 | Tests + regression + stale-binary safeguard | S-01..S-05 | 17 `[l12]` cases incl. warm-up, normal, deviation, missing, uncertainty, consent/capture gating, repetition, L-11 preservation, persistence/privacy; every shipped target rebuilt before recording results | DONE |
+
+
+## Phase T — H-01s synthetic critical impact + severity prioritisation (added 2026-10-13)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| H-01s | SIMULATED critical impact scenario | S-01..S-06 | `synthetic-critical-impact`: normal activity, then a high-intensity transient, then a completing stillness sample. The critical alert exists only because the evidence qualified | DONE |
+| T-01 | `SyntheticImpactClassifier` (core) | Observation | Deterministic transient-then-stillness pattern with documented, tested thresholds (transient >= 0.80, stillness <= 0.25, window 4 samples). A lone transient is `inconclusive` — never a confirmation | DONE |
+| T-02 | `SyntheticImpactRule` (correlation) | T-01, AlertPolicy | Fires ONLY on a confirmed pattern with >= 2 supporting impact observations; maps a confirmed pattern to `Severity::critical`; message + `details` state that this is not fall detection and no emergency service is contacted | DONE |
+| T-03 | Severity prioritisation in `Pipeline` | T-02 | Every registered rule is evaluated and the HIGHEST severity is returned (info < warning < critical), so a critical impact alert is never lost behind an unrelated info/warning alert; single-rule behaviour is unchanged | DONE |
+| T-04 | Lossy round-trip fix (`Observation::from_event`) | R-02 | The reconstructed Observation carries the bounded feature payload. Previously only activity `energy`/`detect_threshold` survived, so a detector-specific feature (the impact `phase`) was invisible to every rule | DONE |
+| T-05 | Scenario + API + dashboard | T-01..T-04 | Id in the strict allowlist and the selector; the API returns the classifier's real result plus the alert's non-sensitive evidence; the dashboard labels it SIMULATED and never claims a real fall or an emergency response | DONE |
+| T-06 | Tests + regression + stale-binary safeguard | T-01..T-05 | 18 `[h01s]` cases: normal, lone signal, confirmed pattern, evidence derivation, prioritisation, duplicate suppression, rule independence, re-arm, capture-off, denied/expired/ambiguous consent, inconclusive, repetition, persistence + restart, allowlist, L-11/L-12 preservation, no sensing/emergency contact | DONE |
+
+### Boundary — kept explicit and unchanged
+
+| Item | Status |
+|------|--------|
+| **H-01s** synthetic impact-prioritisation demonstration | **IMPLEMENTED (simulation only)** |
+| **H-01** real pose-based fall detection | **NOT implemented** |
+| **H-02** emergency workflow / escalation | **NOT implemented** |
+| **G-02** external notifications | **NOT implemented** |
+
+
+## Phase U — v21 final integration and stability verification (added 2026-10-13)
+
+Release-candidate pass: verify the existing product end to end and correct
+verified defects only. No new features, no architectural change, no merge.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| U-01 | Fresh out-of-source Release build of every shipped target | — | `homeguardian`, `homeguardian_tests`, `hg_alexa_bridge` build clean (0 errors) from scratch, outside the source tree; every runtime figure taken from those binaries | DONE |
+| U-02 | Full scenario-catalogue verification | U-01 | All 10 registered scenarios exercised with asserted expectations (consent, capture, observations, events, detection, anomaly, fusion, alerts gen/delivered/suppressed, severity, persistence, audit) | DONE |
+| U-03 | HTTP contract: unsupported scenario is 400 | U-01 | Handler owns the business status; unknown scenario answers 400 with the existing generic JSON error body; transport validation unchanged; regression asserts status **and** body | DONE |
+| U-04 | Logger must never abort the process | U-01 | An unwritable working directory degrades to console-only logging instead of SIGABRT; regression test | DONE |
+| U-05 | Bounded retention for the bridge's alert store | U-01 | The configured `alert_retention_days` is applied to the bridge's own durable store (startup + bounded periodic, only on write); `scripts/verify_retention.sh` regression | DONE |
+| U-06 | End-to-end, privacy, persistence, lifecycle and stress verification | U-01..U-05 | Browser smoke test, adversarial matrix, alternating/repeated runs, corrupted-DB and read-only-dir handling, restart recovery, graceful SIGTERM, resource stability | DONE |
+| U-08 | Test fixtures safe under concurrent runs | U-01 | Eleven fixtures no longer use fixed CWD-relative database names; two suite instances in one working directory both pass with zero `disk I/O error` occurrences (`scripts/verify_suite_concurrency.sh`) | DONE |
+| U-07 | Release-candidate report | U-01..U-06 | `docs/RELEASE_CANDIDATE_V21.md` with tested functionality, limitations, reproduction commands and a GO/CONDITIONAL GO/NO-GO decision | DONE |
+
+
+## Phase D — Distributed architecture (owner-directed, added 2026-10-13)
+
+The project owner changed the target architecture: the simulator-only web demo is
+no longer the intended final product. The target is a central C++20 hub in Docker
+plus real old-Android-phone acquisition nodes, with genuine Alexa integration only
+if an officially supported runtime exists.
+
+**v21 remains the tested fallback for the hackathon.** These phases are additive:
+they reuse the consent gate, observation/event model, detection + fusion, alert
+policy, SQLite persistence and dashboard, and introduce **no second event engine**.
+Work happens on the dedicated branch `feature/distributed-homeguardian`.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| D-01 | Dockerize the existing C++ hub | v21 | Multi-stage build; no Node/Python in the image; non-root; no privileged container; no device passthrough; no published port (loopback-only server); health check; persistent SQLite volume; explicit config/secret mounts; clean SIGTERM; resource limits; documented restart behaviour; one container starts the real core, keeps state across container replacement, and passes the existing suite inside the container toolchain | DONE |
+| D-02 | Android acquisition node | D-01 | On a test phone: authorized real frames + PCM samples, correctly timestamped, bounded, accounted for; permission denial/withdrawal stops delivery; else BLOCKED and reported as such | **SOFTWARE DONE / PHYSICAL BLOCKED** |
+| D-03 | Secure device transport | D-02 | Registration/pairing, per-device identity + auth, encrypted LAN transport, per-device consent, versioning, sequence numbers/timestamps, heartbeat, bounded queues, backpressure/drop, replay + malformed protection, reconnect policy, no unauthorized forwarding | **DONE (end-to-end with a mock device; physical device BLOCKED)** |
+| D-04 | Multiple nodes | D-03 | Device registry, per-device media/consent, independent streams, device-scoped source ids, clock-skew handling, bounded buffering, reconnect isolation, revocation, multi-source correlation; losing one device does not affect another | TODO |
+| D-05 | Real media-derived observations | D-02, D-04 | Modest explainable features (frame-change/motion energy, audio RMS, availability, connect/disconnect, bounded sensors) computed from actually acquired data, flowing through the existing pipeline; capture-off/permission/consent/disconnect all fail closed | TODO |
+| D-06 | Genuine Alexa integration | D-01 (external gate) | Official runtime or official skill route, verified against primary Amazon sources. **Official Docker runtime: BLOCKED** (no official Alexa/Alexa+ container image; AVS tools withdrawn; AVS Device SDK archived 2024-01-16; Alexa+ partner-gated). Skill route requires owner approval | BLOCKED (external) |
+
+## Phase V — D-01 container verification tooling (2026-10-13)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| V-02 | `scripts/verify_android_node.sh` | D-02 | 18 host-side checks: native library builds for armeabi-v7a and exports all JNI entry points; APK builds/aligned/verifies; manifest declares exactly CAMERA + RECORD_AUDIO, both features optional, no FOREGROUND_SERVICE; dex has no invokedynamic (API 27 verifier); `[d02]` contracts and the full host suite pass; reports APK/library sizes and the attached-device count | DONE |
+| V-01 | `scripts/verify_docker_hub.sh` | D-01 | Starts the real container and asserts health, real-core responses, persisted alerts, survival across container replacement, clean SIGTERM exit, no published ports / non-root / caps dropped / no docker.sock / loopback-only listener, WAL header in the volume, and reports image size + RSS + CPU + threads | DONE |
+
+
+## Phase W — Skills validation and detection integration (added 2026-10-14, D-02x)
+
+Owner-directed: inspect three installed skills (`animal-calamity-precursor-detection`,
+`home-security-sensor-nodes`, and a requested `Home Assistant hub`), validate what they claim,
+and implement only the feasible, testable, honest parts.
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| W-01 | Skill discovery + compatibility matrix | - | Every skill located by exact path or reported missing with its exact identifier; matrix covers provenance, functions, detection methods, overlap, dependencies, privacy, reliability and an adopt/adapt/defer/reject decision | **DONE** (`docs/SKILLS_INTEGRATION_VALIDATION.md` §1-2; the third skill does not exist and is reported as such) |
+| W-02 | Bounded precursor detection layer | W-01 | Activity baseline, temporal deviation (REUSING the existing `AnomalyMonitor`), audio activity, motion change, multi-source correlation and an environmental correlation adapter - all pure C++20, bounded, deterministic, host-tested | **DONE** (`src/core/{BoundedFeatures,ActivityDetectors,DempsterShafer,PrecursorDetection,EnvironmentalCorrelation}.*`) |
+| W-03 | Evidence grading (A/B/C) and per-method records | W-01 | Every candidate method classified by evidence quality with hardware floor, window, confounders, FP risks, dataset availability, resource cost and privacy implications recorded; folklore kept as hypothesis only | **DONE** (`SKILLS_INTEGRATION_VALIDATION.md` §3) |
+| W-04 | Security sensor observation model + adapters | W-01 | Device id, source type, acquisition + ingestion timestamps, real/synthetic provenance, confidence/quality, consent/authorization context and a bounded validated payload for every observation; no fabricated telemetry | **DONE** (`src/core/SecurityObservation.*` incl. availability tracking and de-duplication) |
+| W-05 | Home Assistant integration adapter | W-01 | All ten required behaviours proven: address config, secure credential storage, entity discovery, explicit allowlist, authorized conversion to validated observations, liveness tracking, reconnect without fabricated events, duplicate suppression, provenance preservation, disabled by default | **DONE** (`src/core/HomeAssistantAdapter.*` + `src/core/HttpClient.*`; read-only, plaintext-gated, no actuation) |
+| W-06 | Pipeline integration without a second alert engine | W-04, W-05 | New observations convert to the standard `Event`, flow through the existing `Pipeline`/rules/`AlertPolicy`; new detector ids ADVISORY by default so historical scenarios are byte-identical; opt-in via the existing explicit allowlist | **DONE** (`tests/core/test_observation_integration.cpp`) |
+| W-07 | Conservative severity + uncertainty model | W-06 | info = verified event; warning = validated abnormality (tamper, loss of a sensor); **critical unreachable** from any new path; `synthetic-critical-impact` stays synthetic; no species/intruder/fall/calamity claim anywhere | **DONE** (`SecurityObservation::suggested_severity` matrix test + fusion mapping + `[integration][skills]`) |
+| W-08 | Verification | W-02..W-07 | New suites pass; full host suite passes; ctest 100%; fresh out-of-source Release builds all three targets; ASan/UBSan clean; existing scenario behaviour unchanged | **DONE** (413 cases / 3,984 assertions; see STATUS) |
+| W-09 | Deferred work recorded with unblock conditions | W-01 | YAMNet/embeddings, YOLO, optical flow, MediaPipe, Frigate, MQTT, WebSocket events and Alexa each recorded with the exact condition that would unblock them | **DONE** (`SKILL_VALIDATION_REPORT.md` section 11) |
+| W-10 | Per-skill documentation set | W-02..W-07 | One document per skill carrying adopted/adapted/rejected + why, implementation files, tests, measured performance, missing hardware and remaining validation requirements | **DONE** (`docs/SKILL_VALIDATION_REPORT.md`, `ANIMAL_ACTIVITY_DETECTION.md`, `HOME_SECURITY_SENSOR_INTEGRATION.md`, `HOME_ASSISTANT_INTEGRATION.md`) |
+| W-11 | Dashboard status surface | W-04, W-05 | Read-only `/api/integrations` route whose every value is derived from real state (adapter validation, real empty registry, closed label vocabulary), rendered with the three provenance labels and a per-label legend; empty surfaces state why they are empty; no calamity/identity claim in the payload | **DONE** (`src/bridge/NativeHttp.h`, `src/bridge/hg_alexa_bridge.cpp`, `src/web/index.html`, `scripts/verify_integration_dashboard.sh` 31+5 checks) |
+| W-12 | Section-J gap coverage | W-02..W-07 | Multi-device simultaneity, missing observation, unauthorized/withdrawn source, upstream authentication failure, resource bounds under sustained input | **DONE** (`tests/core/test_skill_gaps.cpp`, `[gaps]` 4 cases / 84 assertions) |
+| W-13 | Missing-observation guard | W-02 | A stale finding degrades to `insufficient_evidence` instead of being repeated as current | **DONE** (`PrecursorSuite::fusion(now)` with `stale_after`, default 300 s) |
+| W-14 | Fail-closed hardening found by W-11 | W-11 | A malformed credential table must refuse cleanly (non-zero exit, bounded message, no core dump, no serving) | **DONE** (bridge credential load guarded; adversarial case in `verify_integration_dashboard.sh`) |
+
+### Boundary — kept explicit
+
+No model weights were downloaded, no ML runtime was added, no species classifier exists, and no
+life-safety prediction is produced. Species, seismic, infrasound and ultrasonic channels are
+recorded as hardware- or data-blocked rather than approximated.
+
+
+## Phase X — D-03 secure device transport (added 2026-10-14, branch `feature/secure-device-transport`)
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| X-01 | Protocol + credential model | D-02 | Versioned framed compact-observation protocol; private CA with one certificate per device; identity derived from the certificate, never the payload; provenance derived from (authenticated peer) x (paired) x (consent) x (capture) x (live), with an unsubstantiated `real` claim recorded synthetic and flagged | **DONE** (`src/net/DeviceProtocol.*`, `tools/provision_ca.sh`) |
+| X-02 | Mutual TLS transport | X-01 | OpenSSL, TLS 1.2 minimum, client-certificate verification against the private CA, hard frame cap validated before allocation, socket timeouts, no custom cryptography, verification never disabled | **DONE** (`src/net/TlsTransport.*`) |
+| X-03 | Bounded device registry | X-01 | Per device: id, display name, paired, credential binding, revoked, type, capabilities, camera/mic, last heartbeat, last accepted sequence, last authorized observation timestamp, online state, per-device consent; bounded; strict persistence that never restores capture or liveness | **DONE** (`src/net/DeviceRegistry.*`) |
+| X-04 | Server-side accept path | X-03 | Authenticated before storage; unpaired/revoked/identity-mismatch/consent/capture/allowlist/timestamp/sequence/duplicate/queue refusals each with a stable reason; the sequence watermark commits only after every check passes | **DONE** (`src/net/ObservationIngest.*`) |
+| X-05 | Separate network-facing ingress | X-02, X-04 | One protocol only, no dashboard/commands/SQLite on the device port; bounded connection queue, worker pool and idle timeouts; clean SIGTERM; immediate revocation via a file re-read per connection | **DONE** (`src/net/DeviceIngressServer.*`, `src/main_ingress.cpp`) |
+| X-06 | D-02x detectors in the shipped hub runtime | X-05 | Per-device activity/anomaly/liveness detection fed from accepted observations, into the SAME pipeline; scalar-appropriate components only; advisory by default; no path to critical | **DONE** (`src/net/IngestDetectors.*`) - the D-02x linking limitation is closed |
+| X-07 | Docker deployment of the boundary | X-05 | Second service publishing exactly one port; hub dashboard stays unpublished; non-root, caps dropped, no-new-privileges, no docker.sock, read-only certificate mounts, own volume, resource ceilings | **DONE** (`deploy/docker/`) |
+| X-08 | Acceptance tooling | X-05 | Real-TLS end-to-end with a mock device client, including adversarial modes; runs inside the container where OpenSSL exists | **DONE** (`src/main_device_client.cpp`, `scripts/verify_device_transport.sh`, 21/21) |
+| X-10 | Footprint measurement | X-05 | Idle/peak RAM, CPU, threads, latency, throughput, queue bounds measured rather than estimated; hardware-dependent numbers explicitly not claimed | **DONE** (`scripts/measure_device_transport.sh`, results in `docs/DISTRIBUTED_DEPLOYMENT.md`) |
+| X-09 | Android transport | X-01 | Bounded queue + framed mutual TLS in the APK, compact observations only, no credential in a payload or log | **PARTIAL** - implemented and compile-verified; no phone attached, so physical delivery is BLOCKED |
+
+## Phase X — X-11 D-03.1 security and reliability hardening (complete)
+
+- X-11.1 Server identity verification (Android SAN + endpoint identification; OpenSSL
+  hostname/IP verification; SAN-aware provisioning). Done.
+- X-11.2 Credential isolation: offline CA tree, runtime tree, device-key tree. Done.
+- X-11.3 Delivery-time authorization refresh with fail-closed malformed state. Done.
+- X-11.4 Durable replay protection across restarts, plus the resume point that keeps a
+  legitimate application restart working. Done.
+- X-11.5 Android acknowledgment matching, refusal classification, queue flush and
+  lifecycle/generation handling. Done (compile-verified; device acceptance blocked).
+- X-11.6 Explicit `processing_failed` outcome and pre-delivery persistence ordering. Done.
+- X-11.7 Test hygiene found by the battery: per-process fixtures (concurrency), guarded
+  traps, container-model restart/revocation checks. Done.
+
+Next: X-12 (physical device acceptance, requires a connected phone and explicit operator
+permission). D-04 multi-phone expansion and ML remain out of scope until D-03.1 passes
+review.
+
+## Phase X — X-12 D-03.2 replay and processing consistency (complete)
+
+- X-12.1 Two-phase durable record (begin/complete/abandon) so the watermark cannot advance
+  ahead of the work. Done.
+- X-12.2 Idempotent answer for an unacknowledged repeat of the last completed observation.
+  Done.
+- X-12.3 Real fsync-before-rename plus directory fsync, with every failure reported and
+  in-memory rollback. Done.
+- X-12.4 Mandatory replay protection; loopback-only isolated-test opt-out; TLS-free policy
+  unit so the host suite tests it. Done.
+- X-12.5 Fault injection at every boundary (validation, begin, sink, complete, repeat,
+  concurrency, unwritable store, dead-process marker). Done.
+- X-12.6 Android: `duplicate_observation` reclassified as retryable, matching the hub's
+  in-flight-timeout semantics. Done (compile-verified).
+
+Next: X-13 (physical device acceptance, requires a connected phone and explicit operator
+permission). D-04 remains out of scope until D-03.2 passes review.
+
+## Phase H — H-01 real hardware activation
+
+- H-01a Hardware discovery and installation — **PARTIAL**: microphone and speaker discovered
+  and enumerated; the USB Android phone is not detected, so installation is blocked.
+- H-01b Real audio — **software complete**, awaiting the operator's explicit start action
+  (`hg_audio_bridge --start --i-understand-this-opens-the-microphone`); the generated-tone
+  output test is likewise the operator's to run.
+- H-01c Real Android camera — **BLOCKED** (no device visible to ADB).
+- H-01d Encrypted Wi-Fi ingestion — **BLOCKED** on H-01c.
+- H-01e Explainable feedback — **software complete**: the session emits the closed-vocabulary
+  sentence with provenance and uncertainty; spoken delivery is blocked by the missing voice
+  backend (only the generated tone plays).
+- H-01f Amazon integration feasibility — **BLOCKED** (no supported Amazon runtime).
+
+## H-02B - Speech completion, honest engine reporting, real synthesis
+
+Status: COMPLETE (branch `feature/h02a-local-voice-feedback` @ e9674ca).
+
+* `espeak-ng` 1.51 installed by the operator; the engine chain now selects it and REPORT it
+  correctly (`engine_name()` used to name the last-resort `spd-say` while espeak-ng spoke).
+* Speech completion is tracked deterministically (monotone per-job index + bounded wait) instead
+  of being guessed from `busy()`, which is false before the worker picks a job up - that defect
+  cancelled queued sentences before they played.
+* `playback jobs=0` can no longer be reported as success.
+* Real path verified through YO-457BT: 3.79 s per sentence, 7.5 MB peak RSS, 2% CPU; a real
+  authorized microphone session spoke "Unusual sound activity was detected. The source has not
+  been identified." from a genuine sustained_increase finding, with suppression windows and a
+  per-message cooldown doing their job (`spoken=1-2 suppressed=10-24 suppressed_input_windows=75-150`,
+  no false microphone-stall).
+* Measured limitation: 1.8-3.0% of frames dropped by the bounded ring during 48 kHz capture with
+  speech active (counted, not silent).
+* Audibility of HomeGuardian's own sentence stays OPERATOR-UNCONFIRMED until the owner reports
+  hearing it.
+
+## H-02A - Local voice feedback through the Bluetooth speaker
+
+Status: IMPLEMENTED, physical acceptance BLOCKED on one package install.
+
+* Closed spoken vocabulary (`VoicePhrasebook`) - 11 fixed sentences, no species/person/disaster
+  claim reachable, camera statements require an authenticated device.
+* One output subsystem reused (`LocalSpeaker`), extended with engine selection
+  (`espeak-ng` -> `espeak` -> `spd-say`), mute, status and a no-shell probe path.
+* Delivery policy: confidence gate, minimum interval, per-message cooldown, bounded utterance,
+  bounded queue, and a decision that is NOT committed until the sentence is really handed over.
+* Feedback suppression (bounded window) with monitoring resuming automatically; suppression is
+  reported separately from a stalled microphone.
+* Independent controls: microphone consent, spoken-feedback enable, output mute.
+* Operator action required: `sudo apt-get install -y espeak-ng`.
+
+## H-03 - Android Wi-Fi camera and audio sensor
+
+Status: source + build complete; hardware acceptance BLOCKED on a USB-attached, ADB-authorized phone.
+
+* Audited the real APK and found the D-03 transport was DEAD CODE: nothing built an observation,
+  so nothing was ever sent. The transport, the Camera1 preview callback, the AAudio data callback
+  and a new bounded drain are now joined into one application (features computed only from
+  AUTHORIZED payloads; compact numeric scalars only; bounded queue with counted drops;
+  interval-sampled emission).
+* APK 882,617 B, signed, with the wiring verified inside classes.dex and libhg_harness.so.
+* Operator-facing hub link + status panel (connection state, Wi-Fi, permissions, transport
+  counters, measured FPS, battery, thermal).
+* Hardware items (identification, install, permissions, provisioning, Wi-Fi delivery, USB-unplug
+  acceptance) stay BLOCKED until a device enumerates; the exact operator steps are in
+  docs/ANDROID_WIFI_HARDWARE_ACCEPTANCE_H03.md.
+* Known gaps: no acknowledgment counter, no preview SurfaceView, no foreground service, no
+  camera/audio availability observations, live remote CCTV NOT implemented.
+
+### H-03 progress: physical device
+
+The device is a **MediaTek MT6580 clone reporting a spoofed 'S25 Ultra'** (verified by USB vendor
+id `0e8d`, `ro.product.manufacturer=alps`, `ro.board.platform=mt6580`, kernel RAM ~962 MB, and
+faker properties including `persist.sys.fakeandroidversion=15.0`) - so API 27 + armeabi-v7a on a
+~1 GB device is the real target and must be the only basis for capability claims.
+
+Verified on hardware: APK installs and launches cleanly, the native node reports its identity, the
+ingress runs least-privilege and ACCEPTS this device's certificate over mutual TLS (`accepted=3`,
+spoofed id refused as `identity_mismatch`, durable watermark advanced). Remaining: the on-device
+Import/Connect/consent/Start taps (phone is locked; owner-only), then camera/mic counters, then
+Wi-Fi delivery, and only then the physical USB unplug.
+
+## HG-MCP-01 - MCP over Streamable HTTP (implemented)
+
+Delivered on `feature/mcp-streamable-http` (worktree `~/worktrees/hg-mcp`), branched from the
+H-03 tip. An MCP server implementing the 2025-11-25 specification over Streamable HTTP, built
+on the existing read-only `AlexaContract` so authorization stays in one place. Two tools:
+`get_homeguardian_status`, `get_alert_summary`. Full protocol surface (initialize + version
+negotiation, notifications/initialized, ping, tools/list, tools/call, batching), session
+management, Origin validation, bearer-auth boundary, request-size/timeout/concurrency bounds
+and clean shutdown. `scripts/verify_mcp.sh` drives the real binary and passes 43/43; the `[mcp]`
+tag adds 19 cases / 89 assertions.
+
+Deliberately NOT claimed: this is not an Alexa+ runtime and not an Amazon integration - no
+account linking, no live Amazon identity, no AWS resource. Observations behind the tools remain
+synthetic. Not deployed, and `main` is untouched.
+
+Next (unimplemented): OAuth 2.1-style authorization for MCP clients, TLS termination (or the
+existing D-03 mutual-TLS ingress) for anything beyond loopback, a server-initiated SSE stream if
+a client needs one, `resources/*` and `prompts/*` capabilities, per-token quotas, and session
+resumability.
+
+## HG-EDGE-01 / HG-EDGE-02 / HG-EDGE-03 / HG-EDGE-04 / HG-EDGE-05 — Mi A3 edge device (EXPERIMENTAL, unmerged)
+
+**Status:** experimental work on `experiment/mi-a3-edge` (HG-EDGE-01),
+`experiment/mi-a3-edge-sec02` (the same work re-validated on the corrected SHA) and
+`experiment/mi-a3-edge-service` (HG-EDGE-02). **None of these is merged into `main`,
+and nothing here is security-certified.** Added on operator instruction; the
+documentation owner should decide whether this becomes a numbered phase.
+
+These branches are the first record of, and the first working deployment on, the
+real **arm64** edge device — the Mi A3 (`laurel_sprout`, `trinket`/SM6125, Android 11
+/ API 30, `arm64-v8a`, 5.47 GiB RAM). Until now the only Android device in the
+documentation was the spoofed MT6580 `S25_Ultra` clone (API 27, `armeabi-v7a`,
+~962 MB), and the two are physically interchangeable on the same USB port, so every
+capability claim must name which device it was measured on.
+
+**HG-EDGE-01 (done, on-device evidence):** the genuine `hg_mcp_server` and the
+genuine engine cross-compile for `arm64-v8a` with the NDK and run under Bionic with
+no Termux and no PRoot. 18/18 MCP functional checks, real SQLite WAL persistence, a
+real `critical` alert from `synthetic-critical-impact` read back through the MCP
+tool, 5.4 MB RSS, 1.55 ms server CPU per tool call, cold start 275–287 ms.
+Validated identically on `01a4d3b` and on the HG-SEC-02 corrected candidate
+`187727a`. Report: `docs/EDGE_DEVICE_MI_A3.md`.
+
+**HG-EDGE-02 (in progress):** the same engine and MCP server packaged as a managed
+Android app (`org.homeguardian.edgeservice`, `apk_service/`) — a foreground service
+with a visible notification, a `BOOT_COMPLETED` receiver, Start/Stop/Restart, a
+bounded crash-recovery budget and a real MCP `initialize` health probe, all bound to
+loopback. It requests only INTERNET, FOREGROUND_SERVICE and RECEIVE_BOOT_COMPLETED —
+no camera and no microphone, because it captures nothing.
+
+**Deliberately NOT claimed:** no LAN or public exposure, no camera/mic ingestion, no
+root, no bootloader unlock, no ROM change, no 24/7 readiness. Continuous unattended
+charging is **not approved**. The mTLS D-03 ingestion boundary is unavailable on
+Android until OpenSSL is cross-compiled (NDK r26d ships none).
+
+**Open items:** the six HG-SEC-02 blockers need independent clearance on the exact
+corrected SHA by the security-audit workstream; the supervised 48–72 h soak is not
+started and will not be proposed until charging safety, service restart and crash
+recovery are demonstrated.
+
+**HG-EDGE-03 (discovery done, specification proposed):** the phone evaluated as an
+environmental-context and sensor-fusion hub. Report:
+`docs/EDGE_DEVICE_SENSORS_MI_A3.md`. The device reports 28 hardware/HAL-backed
+sensors, but of the four environmental metrics the engine already allowlists
+(`temperature | humidity | pressure | illuminance`) it can supply **one** —
+`illuminance`, from the `stk_stk3x3x` ambient-light sensor, which is permission-free
+and on-change. **Ambient temperature, barometric pressure and humidity are absent
+hardware** (0 hits for those types across the full 439-line `dumpsys sensorservice`
+dump), so the edge node is not and cannot be a local weather station. The 60+ thermal
+zones — including `battery` and `bms` — are explicitly recorded as **not**
+atmospheric readings and are never substituted for one. Motion, presence and
+orientation sensing is plentiful and mostly permission-free and belongs to the
+existing `SecurityObservation` path; GNSS is enabled device-wide (not by this work,
+and nothing is collected) and BLE external sensors are the only route to the missing
+metrics but require `ACCESS_FINE_LOCATION` on API 30, because `BLUETOOTH_SCAN` does
+not exist before API 31. No sensor was activated, no permission requested, no
+coordinate printed, no hardware purchased. Thresholds and allowlists unchanged; the
+proposed interface additions are additive (accuracy, confidence, and a staleness
+bound) and **not implemented** — the measurement step in section 9.3 is the
+prerequisite.
+
+**HG-EDGE-04 (toolkit done and proven over USB; wireless pairing PENDING):** removing
+the permanently-attached USB cable via Android 11's native TLS Wireless Debugging. New
+manual `docs/EDGE_WIRELESS_DEVELOPMENT_MI_A3.md` and an isolated `scripts/edge_dev/`
+toolkit (connect, pair, deploy, status, test, logs, disconnect). Every script verifies
+the target against **multiple** identifiers and has no "use the only attached device"
+fallback — necessary because this phone's USB descriptor reports itself as a *Redmi Note
+3*, and a spoofing MT6580 clone shares the same port. 12/12 MCP checks pass over an
+`adb forward` on loopback, with the server's loopback-only binding asserted by the
+absence of an all-interfaces listener; sanitized log collection yields 0 redaction
+leaks. A correction was produced: the handling order in `McpHttpServer.cpp` is size
+(413) → encoding (501) → malformed (400) → **auth (401)** → method (405) / session
+(400), so an unauthenticated request can only ever return 401 for GET/DELETE — the
+`GET → 405` recorded for the earlier SHA does not hold for this one. Two honest limits:
+Wireless Debugging cannot be enabled or disabled from adb (the framework resets the
+global setting), so it needs one phone-screen action; and the production build's bearer
+token is unreadable without root by design, so full host-side authenticated MCP testing
+requires the debuggable test build the brief asks for. Bluetooth was assessed and
+rejected as a substitute (adbd has no Bluetooth transport; PAN is ~30–60× slower and
+would still need the forbidden `adb tcpip`). No root, ROM change, port forwarding,
+tunnelling or LAN exposure; MCP stays loopback-only; no sensitive permission requested.
+
+**HG-EDGE-05 (implemented, tested, not yet wired into the app):** the environmental
+context engine — the Android-to-C++ sensor interface. New
+`src/core/EnvironmentalContext.{h,cpp}`, `tests/core/test_environmental_context.cpp`
+(12 cases / 162 assertions, tag `[envcontext]`) and `tools/envcontext_bench.cpp`; design
+and handoff in `docs/EDGE_ENVIRONMENTAL_CONTEXT.md`. The module encodes the HG-EDGE-03
+inventory finding as structure rather than convention: atmospheric and device-thermal
+are disjoint channel namespaces, so `atmospheric_temperature()` can never return a
+battery reading, and a test proves that a plausible 46.9 °C SoC value still fails to
+satisfy an atmospheric request. Readings carry dual timestamps, the existing
+`Provenance` split, computed freshness against per-channel max ages, quality, and an
+explicit uncertainty that fusion actually propagates (inverse-variance weighted). No
+threshold is invented: daylight and thermal-health banding are injected with a
+`*_source` string naming their provenance, and both return nullopt/unknown otherwise.
+Positional channels are double-gated and off by default, and coarsened to ~1 km on
+ingest so no precise coordinate is retained. Correlation output vocabulary is exactly
+`environmental_correlation` / `insufficient_evidence`, with a test asserting no
+predictive term (forecast, earthquake, seismic, disaster, flood, species, animal) can
+appear — the same unrepresentability discipline DempsterShafer uses for
+`SeismicPrecursor`. Verified: full suite green at 39,088 assertions / 538 cases (exit 0,
+no regressions); 200k ingests at 0.79–0.89 µs/reading and 20k snapshots at 2.6–2.7 µs on
+the host, bounded at 160 retained readings / +100 kB RSS. ARM64 cost is NOT measured
+on-device and is not claimed. No app integration, no JNI, no permission requested, no
+GNSS enabled, MCP still loopback-only.
+
+
+## Phase CAM — Panasonic ELUGA I7 CCTV node (added 2026-10-17, branch `experiment/hg-cam-eluga-cctv`)
+
+A second, deliberately independent hardware workstream. Kept separate from H-03: that workstream
+is the C++ MCP hub on the Mi A3 / MT6580 clone, this one is a candidate CCTV camera node.
+
+Target: Panasonic `ELUGA_I7_EE`, serial `LRW86SC6RO8TZ99H`, board `k39tv1_64_a27`, MT6739,
+arm64-v8a, Android 9 / API 28, A-only, Treble-enabled (vndk 28).
+
+| ID | Task | Dependencies | Acceptance Criteria | Status |
+|----|------|-------------|---------------------|--------|
+| CAM-01 | Device and capability assessment (Path A) | — | Camera2 support, hardware H.264 encoder, audio in/out, AEC and Wi-Fi inventoried on the real device; Android 9 background-restriction path identified | DONE |
+| CAM-02 | Alternative-OS feasibility (Path B) | CAM-01 | Model-specific ROM availability settled by API-level search, not page scraping; kernel source, bootloader unlock, GSI and recovery options documented with sources | DONE |
+| CAM-03 | Recoverable backup before any destructive step | CAM-01 | Shared storage captured, checksummed, encrypted outside the repo, and proven restorable by decrypting the archive and verifying the extracted tree | DONE |
+| CAM-04 | Reset decision brief including FRP | CAM-03 | FRP requirements, unrecoverable data, recovery procedure and a reset-vs-keep comparison reported to the owner | DONE (owner confirmation pending) |
+| CAM-05 | Second encrypted copy on physically separate storage | CAM-04 | Archive and key on storage that survives loss of this workstation, key held separately from the archive | BLOCKED (owner action — key and archive currently share one disk) |
+| CAM-06 | CCTV APK: foreground service + arm64/API-28 build | CAM-02 | Foreground service declared and running; APK builds for arm64-v8a and installs on API 28 | DONE — installed on the Panasonic; service verified `isForeground=true` with its notification; `singleTop` fix required (see CAM-15) |
+| CAM-07 | CCTV APK: screen-off survival acceptance | CAM-06 | Capture continues with the screen off for >= 30 minutes with counters advancing | **DONE (duration + continuity MET)** — 30-minute battery-powered screen-off window (off USB, `mWakefulness=Asleep`): video 1,018 -> 54,857 encoded buffers, mic 1,006,080 -> 88,312,320 samples, 29/29 sampled intervals continuous (fps min 29.2 / max 32.1), `camera_reopens=1 disarms=0`, 0 errors. Remaining caveat unchanged: the SoC does NOT suspend while capturing, so suspend survival is untested — explicitly not the acceptance condition |
+| CAM-08 | CCTV APK: hub delivery proven from the real device | CAM-06 | A real Panasonic delivers observations to the hub over the existing mutual-TLS transport, with a reproducible evidence artifact | PROPOSED |
+| CAM-09 | CCTV APK: speaker talkback with AEC | CAM-06 | Two-way audio with the AOSP acoustic echo canceller active and no audible echo | PROPOSED |
+| CAM-10 | CCTV APK: visible capture indicator | CAM-06 | Operator-visible indication whenever capture is live | PROPOSED |
+| CAM-11 | Factory reset and dedicated-node provisioning | CAM-12, CAM-05 | FRP disarmed by owner account removal; device provisioned as a dedicated node | BLOCKED (explicit owner authorization required) |
+| CAM-12 | Remove the unwanted Google account (disarms FRP) | CAM-04 | Google account absent from `dumpsys account`; Facebook/Messenger/WhatsApp accounts intact | DONE — Google **verified absent**; but all three non-Google accounts also gone (discrepancy documented in `docs/HG_CAM_06_CLEANUP_RESULT.md`) |
+| CAM-13 | Power-failure resilience for install/test operations | CAM-04 | Install/test steps idempotent and state re-read before acting; no long maintenance; no unnecessary reboots | DONE (design recorded in `docs/HG_CAM_04_POWER_RESILIENCE.md`) |
+| CAM-14 | Remove unnecessary user-installed apps | CAM-12 | Each removal individually approved and verified; system/camera/audio/media/Wi-Fi/ADB/security/installer preserved; WhatsApp/Facebook/Messenger separately confirmed | DONE — 6/6 removed individually, 1,198,908 KB freed, essential services PASS, shared storage intact |
+| CAM-15 | Panasonic APK installation and foreground-service acceptance | CAM-06 | APK installs on the device; foreground service runs with its required notification; start/stop/restart/cleanup all verified | DONE — see `docs/HG_CAM_07_MEDIA_ACCEPTANCE.md` |
+| CAM-16 | Wire camera + microphone capture into the foreground service | CAM-15 | Real frame arrival and sample delivery measured under the consent architecture; encoder initialized and validated | **IN PROGRESS** — MEASURED: service-owned concurrent video+audio (screen-off 30 min, 53,839 buffers / 87.3M samples, 29/29 intervals continuous, 0 restarts); H.264 encoder->decoder round-trip 285 buffers -> 283 decoded frames (SPS/PPS present); audio encoder path real (710,400 PCM -> 694 AAC-LC frames). CAM-07's 30-minute screen-off gate is now MET. **Remaining blockers to closure: no media-path/hub delivery (loopback-only interface, no TLS/hub), no Opus encoder on this device (AAC-LC only), no A/V muxing or sync, no talkback (CAM-09)** — see `docs/HG_CAM_08D_SUSTAINED_ACCEPTANCE.md` |
+| CAM-17 | Real camera-frame delivery on the MT6739 vendor stack | CAM-16 | Measured encoded-frame delivery from at least one camera, with clean resource release | **DONE** — measured encoded-frame delivery on the real device: 350/344/345/344 encoded H.264 buffers @ 29.69 fps, `video/avc 640x480`, 0 FATAL, clean open/close per run. **Re-scoped by operator decision; the historical Camera1 failure is retained here:** the original implementation's undrained `SurfaceTexture` design produced 0 frames (`HW_TEXTURE ... released w/o using`, `mNonReleasedNum==0`) and was SUPERSEDED by the working Camera2 + MediaCodec implementation. **Technical accuracy note: this does NOT show Camera1 is universally incapable of frames — Android supports preview callbacks and Camera1 can deliver them. The documented failure belongs to that particular undrained-texture implementation. What IS structural is that Camera1's `setPreviewTexture` accepts only a `SurfaceTexture`, so Camera1 cannot target an encoder sink.** |
+| CAM-18 | USB-free Wi-Fi ADB development access | CAM-15 | Wi-Fi ADB usable with USB physically removed; stable endpoint; shutdown procedure documented | DONE — USB-free acceptance PASSED with USB physically absent (shell, logcat, deploy, launch/restart, 10/10 reconnects); does NOT survive reboot (re-arm `tcpip 5555`); DHCP reservation still outstanding |
+
+### CAM progress: device findings and constraints
+
+* **Path B is closed as a dead end, on evidence rather than opinion.** No device-specific ROM exists
+  for this model (`gh search repos lineage_device_panasonic` returns no results at all); the only
+  artifact for the exact model is auto-generated `twrpdtgen` output that is scaffolding, not a ROM,
+  and the kernel source it expects (`kernel/panasonic/ELUGA_I7_EE`) was never published. The
+  bootloader reports `flash.locked=1` with `sys.oem_unlock_allowed=0`, so a fastboot unlock is not
+  available as shipped. A GSI is architecturally possible (Treble, vndk 28) but unverified here and
+  would most likely cost the camera — the feature the device exists for.
+* **Stock Android 9 stays the preferred OS.** Path A needs no destructive step.
+* **Hardware is sufficient and measured**: `OMX.MTK.VIDEO.ENCODER.AVC` H.264 to 1920x1080
+  (70-155 fps measured at 720p), PCM-16 audio to 48 kHz, AOSP acoustic echo canceller present,
+  2.4 GHz Wi-Fi at 65 Mbps. Real constraints: 975 MB free on `/data` (so stream, never store),
+  ~464 MB swap in use, `LIMITED` camera HAL, root-only thermal telemetry, 2.4 GHz only.
+* **FRP is armed and verified as such**, not merely assumed: a Google account is signed in *and*
+  both Google MDM device-admin receivers are active, which means Find My Device is enabled. A reset
+  would require a previously-added Google credential to complete setup.
+* **Backup scale was larger than the device reported.** The device's own `du` is unreliable over
+  FUSE (it reported 0 for `/sdcard` and 106 MB for a directory holding 2.83 GB). Trusted figures are
+  measured workstation-side after transfer: 3,839 files, 4,288,477,523 bytes.
+* **The APK to extend already exists.** `apk/` (consent gating, per-payload accounting, bounded
+  queues, Camera1, AAudio capture, framed mutual TLS) builds cleanly on this host with 22/22 JNI
+  exports. Its manifest explicitly declares no foreground service, which is precisely the gap a
+  screen-off CCTV node must close. Plan in `docs/HG_CAM_04_CCTV_APK_SPEC.md`.
+* **Do not conflate the two phones.** The Mi A3 is the MCP hub; the ELUGA is the camera. The
+  MT6580 clone is a third, unrelated device.

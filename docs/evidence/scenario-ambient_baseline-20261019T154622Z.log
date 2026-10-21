@@ -1,0 +1,188 @@
+=====================================================================
+ REAL camera capture -> bounded scalars -> one finding per frame
+ device=/dev/video0  requested=640x480  frames=600
+ Nothing is written, streamed or transmitted. No image leaves this process.
+=====================================================================
+
+negotiated: driver=uvcvideo card=W100: W100 bus=usb-0000:00:14.0-9 640x480 YUYV stride=1280
+  [  0] seq=1      motion=0.0000 mean_delta=0.0000 baseline=0.0000 ratio=1.00  n/a                warming_up
+  [  5] seq=6      motion=0.1132 mean_delta=0.0368 baseline=0.1132 ratio=1.00  localized_motion   warming_up
+  [ 10] seq=11     motion=0.1263 mean_delta=0.0354 baseline=0.1139 ratio=1.05  localized_motion   warming_up
+  [ 25] seq=26     motion=0.0316 mean_delta=0.0111 baseline=0.1063 ratio=0.73  diffuse_motion     quiet_baseline
+  [ 30] seq=31     motion=0.0352 mean_delta=0.0123 baseline=0.1027 ratio=0.54  diffuse_motion     quiet_baseline
+  [ 35] seq=36     motion=0.0467 mean_delta=0.0155 baseline=0.0999 ratio=0.39  diffuse_motion     quiet_baseline
+  [ 40] seq=41     motion=0.0249 mean_delta=0.0099 baseline=0.0962 ratio=0.36  quiet              sustained_decrease
+  [ 45] seq=46     motion=0.0143 mean_delta=0.0083 baseline=0.0921 ratio=0.33  quiet              sustained_decrease
+  [ 50] seq=51     motion=0.0207 mean_delta=0.0097 baseline=0.0885 ratio=0.30  quiet              sustained_decrease
+  [ 55] seq=56     motion=0.0198 mean_delta=0.0087 baseline=0.0851 ratio=0.23  quiet              sustained_decrease
+  [ 60] seq=61     motion=0.0114 mean_delta=0.0086 baseline=0.0814 ratio=0.20  quiet              sustained_decrease
+  [ 65] seq=66     motion=0.0246 mean_delta=0.0109 baseline=0.0786 ratio=0.24  quiet              sustained_decrease
+  [ 70] seq=71     motion=0.0130 mean_delta=0.0075 baseline=0.0753 ratio=0.23  quiet              sustained_decrease
+  [ 75] seq=76     motion=0.0221 mean_delta=0.0092 baseline=0.0726 ratio=0.24  quiet              sustained_decrease
+  [ 80] seq=81     motion=0.0098 mean_delta=0.0067 baseline=0.0695 ratio=0.25  quiet              sustained_decrease
+  [ 85] seq=86     motion=0.0089 mean_delta=0.0067 baseline=0.0664 ratio=0.20  quiet              sustained_decrease
+  [ 90] seq=91     motion=0.0176 mean_delta=0.0083 baseline=0.0640 ratio=0.23  quiet              sustained_decrease
+  [ 95] seq=96     motion=0.0173 mean_delta=0.0080 baseline=0.0617 ratio=0.22  quiet              sustained_decrease
+  [100] seq=101    motion=0.0198 mean_delta=0.0087 baseline=0.0596 ratio=0.27  quiet              sustained_decrease
+  [105] seq=106    motion=0.0130 mean_delta=0.0072 baseline=0.0572 ratio=0.30  quiet              sustained_decrease
+  [110] seq=111    motion=0.0142 mean_delta=0.0075 baseline=0.0551 ratio=0.29  quiet              sustained_decrease
+  [115] seq=116    motion=0.0096 mean_delta=0.0067 baseline=0.0528 ratio=0.27  quiet              sustained_decrease
+  [120] seq=121    motion=0.0145 mean_delta=0.0079 baseline=0.0509 ratio=0.25  quiet              sustained_decrease
+  [125] seq=126    motion=0.0098 mean_delta=0.0067 baseline=0.0488 ratio=0.25  quiet              sustained_decrease
+  [130] seq=131    motion=0.0223 mean_delta=0.0093 baseline=0.0475 ratio=0.30  quiet              sustained_decrease
+  [135] seq=136    motion=0.0136 mean_delta=0.0074 baseline=0.0458 ratio=0.33  quiet              sustained_decrease
+  [140] seq=141    motion=0.0188 mean_delta=0.0084 baseline=0.0445 ratio=0.36  quiet              sustained_decrease
+  [145] seq=146    motion=0.0089 mean_delta=0.0066 baseline=0.0427 ratio=0.37  quiet              sustained_decrease
+  [150] seq=151    motion=0.0114 mean_delta=0.0071 baseline=0.0411 ratio=0.32  quiet              sustained_decrease
+  [155] seq=156    motion=0.0110 mean_delta=0.0070 baseline=0.0396 ratio=0.32  quiet              sustained_decrease
+  [160] seq=161    motion=0.0138 mean_delta=0.0075 baseline=0.0383 ratio=0.29  quiet              sustained_decrease
+  [165] seq=166    motion=0.0120 mean_delta=0.0071 baseline=0.0370 ratio=0.33  quiet              sustained_decrease
+  [170] seq=171    motion=0.0150 mean_delta=0.0078 baseline=0.0359 ratio=0.36  quiet              sustained_decrease
+  [175] seq=176    motion=0.0118 mean_delta=0.0071 baseline=0.0347 ratio=0.38  quiet              sustained_decrease
+  [180] seq=181    motion=0.0102 mean_delta=0.0067 baseline=0.0335 ratio=0.37  quiet              sustained_decrease
+  [185] seq=186    motion=0.0165 mean_delta=0.0080 baseline=0.0326 ratio=0.41  quiet              sustained_decrease
+  [190] seq=191    motion=0.0154 mean_delta=0.0077 baseline=0.0318 ratio=0.42  quiet              sustained_decrease
+  [195] seq=196    motion=0.0140 mean_delta=0.0075 baseline=0.0309 ratio=0.45  quiet              sustained_decrease
+  [200] seq=201    motion=0.0089 mean_delta=0.0065 baseline=0.0298 ratio=0.46  quiet              sustained_decrease
+  [205] seq=206    motion=0.0131 mean_delta=0.0072 baseline=0.0289 ratio=0.44  quiet              sustained_decrease
+  [210] seq=211    motion=0.0124 mean_delta=0.0073 baseline=0.0281 ratio=0.43  quiet              sustained_decrease
+  [215] seq=216    motion=0.0179 mean_delta=0.0085 baseline=0.0276 ratio=0.47  quiet              sustained_decrease
+  [220] seq=221    motion=0.0088 mean_delta=0.0067 baseline=0.0267 ratio=0.49  quiet              sustained_decrease
+  [225] seq=226    motion=0.0102 mean_delta=0.0069 baseline=0.0258 ratio=0.48  quiet              sustained_decrease
+  [230] seq=231    motion=0.0104 mean_delta=0.0069 baseline=0.0251 ratio=0.47  quiet              sustained_decrease
+  [235] seq=236    motion=0.0159 mean_delta=0.0078 baseline=0.0246 ratio=0.46  quiet              sustained_decrease
+  [240] seq=241    motion=0.0117 mean_delta=0.0070 baseline=0.0240 ratio=0.50  quiet              sustained_decrease
+  [245] seq=246    motion=0.0156 mean_delta=0.0078 baseline=0.0235 ratio=0.57  quiet              sustained_decrease
+  [250] seq=251    motion=0.0164 mean_delta=0.0079 baseline=0.0232 ratio=0.64  quiet              quiet_baseline
+  [255] seq=256    motion=0.0105 mean_delta=0.0069 baseline=0.0226 ratio=0.60  quiet              quiet_baseline
+  [260] seq=261    motion=0.0091 mean_delta=0.0066 baseline=0.0219 ratio=0.59  quiet              quiet_baseline
+  [265] seq=266    motion=0.0117 mean_delta=0.0071 baseline=0.0214 ratio=0.56  quiet              quiet_baseline
+  [270] seq=271    motion=0.0151 mean_delta=0.0077 baseline=0.0211 ratio=0.55  quiet              sustained_decrease
+  [275] seq=276    motion=0.0134 mean_delta=0.0073 baseline=0.0207 ratio=0.60  quiet              sustained_decrease
+  [280] seq=281    motion=0.0125 mean_delta=0.0071 baseline=0.0203 ratio=0.65  quiet              quiet_baseline
+  [285] seq=286    motion=0.0159 mean_delta=0.0079 baseline=0.0201 ratio=0.71  quiet              quiet_baseline
+  [290] seq=291    motion=0.0134 mean_delta=0.0073 baseline=0.0197 ratio=0.70  quiet              quiet_baseline
+  [295] seq=296    motion=0.0125 mean_delta=0.0073 baseline=0.0194 ratio=0.70  quiet              quiet_baseline
+  [300] seq=301    motion=0.0119 mean_delta=0.0073 baseline=0.0190 ratio=0.71  quiet              quiet_baseline
+  [305] seq=306    motion=0.0145 mean_delta=0.0077 baseline=0.0188 ratio=0.70  quiet              quiet_baseline
+  [310] seq=311    motion=0.0191 mean_delta=0.0087 baseline=0.0188 ratio=0.77  quiet              quiet_baseline
+  [315] seq=316    motion=0.0166 mean_delta=0.0080 baseline=0.0187 ratio=0.83  quiet              quiet_baseline
+  [320] seq=321    motion=0.0117 mean_delta=0.0071 baseline=0.0183 ratio=0.85  quiet              quiet_baseline
+  [325] seq=326    motion=0.0166 mean_delta=0.0079 baseline=0.0182 ratio=0.88  quiet              quiet_baseline
+  [330] seq=331    motion=0.0084 mean_delta=0.0065 baseline=0.0177 ratio=0.75  quiet              quiet_baseline
+  [335] seq=336    motion=0.0119 mean_delta=0.0070 baseline=0.0175 ratio=0.70  quiet              quiet_baseline
+  [340] seq=341    motion=0.0329 mean_delta=0.0123 baseline=0.0182 ratio=0.96  quiet              quiet_baseline
+  [345] seq=346    motion=0.0460 mean_delta=0.0159 baseline=0.0196 ratio=1.26  quiet              quiet_baseline
+  [350] seq=351    motion=0.0985 mean_delta=0.0298 baseline=0.0236 ratio=2.01  localized_motion   quiet_baseline
+  [355] seq=356    motion=0.1514 mean_delta=0.0486 baseline=0.0300 ratio=2.74  localized_motion   quiet_baseline
+  [360] seq=361    motion=0.1629 mean_delta=0.0506 baseline=0.0366 ratio=3.13  localized_motion   sustained_increase
+  [365] seq=366    motion=0.0926 mean_delta=0.0257 baseline=0.0394 ratio=3.21  localized_motion   sustained_increase
+  [370] seq=371    motion=0.1272 mean_delta=0.0349 baseline=0.0438 ratio=3.05  localized_motion   sustained_increase
+  [375] seq=376    motion=0.0876 mean_delta=0.0252 baseline=0.0460 ratio=2.56  quiet              sustained_increase
+  [380] seq=381    motion=0.0181 mean_delta=0.0087 baseline=0.0446 ratio=1.83  quiet              sustained_increase
+  [385] seq=386    motion=0.0543 mean_delta=0.0159 baseline=0.0451 ratio=1.59  quiet              quiet_baseline
+  [390] seq=391    motion=0.0619 mean_delta=0.0165 baseline=0.0459 ratio=1.21  quiet              quiet_baseline
+  [395] seq=396    motion=0.0889 mean_delta=0.0222 baseline=0.0481 ratio=1.16  localized_motion   quiet_baseline
+  [400] seq=401    motion=0.0183 mean_delta=0.0085 baseline=0.0466 ratio=1.20  quiet              quiet_baseline
+  [405] seq=406    motion=0.0526 mean_delta=0.0147 baseline=0.0469 ratio=1.18  quiet              quiet_baseline
+  [410] seq=411    motion=0.1013 mean_delta=0.0256 baseline=0.0496 ratio=1.32  diffuse_motion     quiet_baseline
+  [415] seq=416    motion=0.0180 mean_delta=0.0082 baseline=0.0480 ratio=0.99  quiet              quiet_baseline
+  [420] seq=421    motion=0.0462 mean_delta=0.0145 baseline=0.0479 ratio=1.14  quiet              quiet_baseline
+  [425] seq=426    motion=0.0294 mean_delta=0.0103 baseline=0.0470 ratio=1.04  quiet              quiet_baseline
+  [430] seq=431    motion=0.0257 mean_delta=0.0097 baseline=0.0459 ratio=0.65  quiet              quiet_baseline
+  [435] seq=436    motion=0.0236 mean_delta=0.0094 baseline=0.0448 ratio=0.70  quiet              quiet_baseline
+  [440] seq=441    motion=0.0113 mean_delta=0.0072 baseline=0.0432 ratio=0.52  quiet              quiet_baseline
+  [445] seq=446    motion=0.0167 mean_delta=0.0083 baseline=0.0418 ratio=0.46  quiet              quiet_baseline
+  [450] seq=451    motion=0.0131 mean_delta=0.0077 baseline=0.0404 ratio=0.40  quiet              sustained_decrease
+  [455] seq=456    motion=0.0103 mean_delta=0.0070 baseline=0.0389 ratio=0.33  quiet              sustained_decrease
+  [460] seq=461    motion=0.0144 mean_delta=0.0079 baseline=0.0377 ratio=0.36  quiet              sustained_decrease
+  [465] seq=466    motion=0.0223 mean_delta=0.0091 baseline=0.0369 ratio=0.41  quiet              sustained_decrease
+  [470] seq=471    motion=0.0179 mean_delta=0.0083 baseline=0.0359 ratio=0.45  quiet              sustained_decrease
+  [475] seq=476    motion=0.0103 mean_delta=0.0070 baseline=0.0347 ratio=0.47  quiet              sustained_decrease
+  [480] seq=481    motion=0.0116 mean_delta=0.0073 baseline=0.0335 ratio=0.46  quiet              sustained_decrease
+  [485] seq=486    motion=0.0154 mean_delta=0.0079 baseline=0.0326 ratio=0.42  quiet              sustained_decrease
+  [490] seq=491    motion=0.0132 mean_delta=0.0075 baseline=0.0316 ratio=0.40  quiet              sustained_decrease
+  [495] seq=496    motion=0.0117 mean_delta=0.0074 baseline=0.0306 ratio=0.42  quiet              sustained_decrease
+  [500] seq=501    motion=0.0206 mean_delta=0.0088 baseline=0.0301 ratio=0.51  quiet              sustained_decrease
+  [505] seq=506    motion=0.0197 mean_delta=0.0086 baseline=0.0296 ratio=0.55  quiet              sustained_decrease
+  [510] seq=511    motion=0.0145 mean_delta=0.0076 baseline=0.0289 ratio=0.58  quiet              sustained_decrease
+  [515] seq=516    motion=0.0115 mean_delta=0.0071 baseline=0.0280 ratio=0.59  quiet              sustained_decrease
+  [520] seq=521    motion=0.0173 mean_delta=0.0083 baseline=0.0275 ratio=0.57  quiet              sustained_decrease
+  [525] seq=526    motion=0.0572 mean_delta=0.0153 baseline=0.0289 ratio=0.87  quiet              quiet_baseline
+  [530] seq=531    motion=0.0251 mean_delta=0.0097 baseline=0.0288 ratio=0.97  quiet              quiet_baseline
+  [535] seq=536    motion=0.0289 mean_delta=0.0104 baseline=0.0288 ratio=1.12  quiet              quiet_baseline
+  [540] seq=541    motion=0.0227 mean_delta=0.0091 baseline=0.0285 ratio=1.18  quiet              quiet_baseline
+  [545] seq=546    motion=0.0302 mean_delta=0.0106 baseline=0.0285 ratio=0.94  quiet              quiet_baseline
+  [550] seq=551    motion=0.0438 mean_delta=0.0126 baseline=0.0293 ratio=1.07  quiet              quiet_baseline
+  [555] seq=556    motion=0.0292 mean_delta=0.0105 baseline=0.0293 ratio=1.07  quiet              quiet_baseline
+  [560] seq=561    motion=0.0106 mean_delta=0.0072 baseline=0.0284 ratio=1.00  quiet              quiet_baseline
+  [565] seq=566    motion=0.0240 mean_delta=0.0095 baseline=0.0282 ratio=0.96  quiet              quiet_baseline
+  [570] seq=571    motion=0.0305 mean_delta=0.0109 baseline=0.0283 ratio=0.83  quiet              quiet_baseline
+  [575] seq=576    motion=0.0247 mean_delta=0.0097 baseline=0.0281 ratio=0.80  quiet              quiet_baseline
+  [580] seq=581    motion=0.0149 mean_delta=0.0080 baseline=0.0274 ratio=0.86  quiet              quiet_baseline
+  [585] seq=586    motion=0.0109 mean_delta=0.0072 baseline=0.0266 ratio=0.76  quiet              quiet_baseline
+  [590] seq=591    motion=0.0143 mean_delta=0.0078 baseline=0.0260 ratio=0.62  quiet              quiet_baseline
+  [595] seq=596    motion=0.0138 mean_delta=0.0076 baseline=0.0254 ratio=0.53  quiet              quiet_baseline
+
+== RESULTS ==
+  frames captured      : 600 of 600 requested
+  observations built   : 120 (cadence 5 frame(s) per observation)
+  capture stalls       : 0
+  driver-dropped frames: 0
+  elapsed              : 36646 ms
+  pixels per frame     : 640x480 (luma plane reduced in place)
+  peak motion / ratio  : 0.1629 / 3.21
+  peak confidence      : 1.000 (the rule's current gate is 0.5)
+  windows by kind      : sustained_increase=5 sustained_decrease=59 quiet=51
+  MOTION-VERDICT       : a sustained increase WAS observed
+  final finding        : quiet_baseline
+    sentence           : motion within the established baseline
+    motion_level       : 0.0138   mean_delta 0.0076   baseline 0.0254
+    provenance         : real (a physical device frame)
+    NOT claimed        : motion energy is a bounded scalar: it is not a person, an animal, a species, a face, a gesture, a fall or an emergency, and nothing in this build can infer one from it
+
+== RULE EVALUATION over this capture's own observations ==
+  observations in the window : 120
+  fusion verdict             : inconclusive (confidence 0.104, 115 contributing)
+  detection-fusion rule      : no alert
+  NOTE: this is the existing rule and the existing engine, fed the observations
+        this capture produced. No threshold was changed and no detector was added.
+
+  observation (through the existing event model):
+{
+  "confidence": 0.0,
+  "event_id": "cam-activity-36646",
+  "ingestion_timestamp": 1792424818990,
+  "observation_timestamp": 1792424818990,
+  "payload": {
+    "baseline_level": 0.025387732013594323,
+    "baseline_ready": true,
+    "bipolar_balance": 1.0,
+    "change_character": "quiet",
+    "consecutive": 1,
+    "detector_id": "camera-motion-activity",
+    "direction": "falling",
+    "idle_band": 0.09333333333333334,
+    "model_id": "ema-baseline-v1",
+    "motion-changed-fraction": 0.013500162760416665,
+    "note": "sustained falling activity not yet confirmed (1 of 3)",
+    "provenance": "real",
+    "ratio": 0.5317593061557353,
+    "region_travel": 0.0,
+    "samples": 119,
+    "spread_radius": 0.2736668644418348,
+    "status": "not_detected",
+    "travel_consistent": 0
+  },
+  "processing_metadata": {
+    "detector_id": "camera-motion-activity",
+    "model_id": "ema-baseline-v1",
+    "provenance": "real",
+    "status": "not_detected"
+  },
+  "schema_version": 1,
+  "source": "/dev/video0",
+  "type": "inference"
+}
+
+RESULT: 600 real frame(s) reduced to scalars; nothing retained.

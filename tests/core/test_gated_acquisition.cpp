@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include <unistd.h>   // getpid: process-unique fixture paths
 #include "core/ConsentGate.h"
 #include "core/SimulatedSensorSource.h"
 #include "core/ConsentGatedAcquisition.h"
@@ -12,7 +13,11 @@
 
 using namespace homeguardian;
 
-static const std::string ACQ_DB = "test_gated_acq.db";
+// Unique per process: two suite instances running in the same working
+// directory must not delete each other's database (SQLite reports the
+// collision as a confusing 'disk I/O error' on the next WAL/DDL call).
+static const std::string ACQ_DB =
+    std::string("test_gated_acq.db.") + std::to_string(::getpid());
 
 struct GatedAcqFixture {
     GatedAcqFixture() {

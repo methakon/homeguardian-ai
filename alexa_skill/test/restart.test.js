@@ -27,10 +27,15 @@ const os = require('node:os');
 const path = require('node:path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const BRIDGE = path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge');
+const BRIDGE = process.env.HG_BRIDGE_PATH ||
+  (fs.existsSync(path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge'))
+    ? path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge')
+    : path.join(REPO_ROOT, 'build', 'hg_alexa_bridge'));
 const CONFIG = path.join(REPO_ROOT, 'config', 'homeguardian.json');
-// The main app binary, used to produce a REAL synthetic alert into a temp DB.
-const APP = path.join(REPO_ROOT, 'hg_build', 'homeguardian');
+const APP = process.env.HG_APP_PATH ||
+  (fs.existsSync(path.join(REPO_ROOT, 'hg_build', 'homeguardian'))
+    ? path.join(REPO_ROOT, 'hg_build', 'homeguardian')
+    : path.join(REPO_ROOT, 'build', 'homeguardian'));
 
 const NOW = Date.now();
 const CREDS = {
@@ -91,7 +96,7 @@ test('restart: a prior alert is visible to a fresh bridge process', async () => 
     // signaled); SIGTERM after a moment for a clean shutdown.
     await new Promise((resolve, reject) => {
       const app = spawn(APP, [onConfig], { cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] });
-      const t = setTimeout(() => app.kill('SIGTERM'), 2500);
+      const t = setTimeout(() => app.kill('SIGTERM'), 3500);
       app.on('close', (code) => { clearTimeout(t); resolve(code); });
       app.on('error', reject);
     });

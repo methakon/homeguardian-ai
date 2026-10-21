@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include <unistd.h>   // getpid: process-unique fixture paths
 #include "core/PersistenceAudit.h"
 #include "core/RuntimeStatus.h"
 #include "core/Alert.h"
@@ -20,7 +21,9 @@ using namespace homeguardian;
 namespace {
 
 std::string temp_db(const std::string& tag) {
-    std::string p = "test_audit_" + tag + ".db";
+    // Unique per process: two suite instances in the same working directory must
+    // not delete each other's database (SQLite reports that as "disk I/O error").
+    std::string p = "test_audit_" + tag + "_" + std::to_string(::getpid()) + ".db";
     std::filesystem::remove(p);
     std::filesystem::remove(p + "-wal");
     std::filesystem::remove(p + "-shm");
@@ -144,7 +147,10 @@ TEST_CASE("Audit: write failure degrades status, does not throw or corrupt",
 TEST_CASE("Audit: corrupt/unsupported DB file is handled without silent success",
           "[audit][corrupt]") {
     Logger::initialize("error");
-    std::string db = "test_audit_corrupt.db";
+    // Unique per process so a concurrent suite instance in the same working
+    // directory cannot delete this file underneath us (SQLite then reports
+    // "disk I/O error" instead of the real assertion).
+    std::string db = std::string("test_audit_corrupt.db.") + std::to_string(::getpid());
     cleanup_db(db);
     // Write a file that is NOT a valid SQLite database.
     {

@@ -10,19 +10,19 @@ and it never claims real-time sensor analysis.
 
 ## What this answers up front
 
-**Q: Can the Alexa Developer Console Simulator test this without deploying a
+**Q: Can the Alexa Developer Console Simulator test this prior to deploying a
 backend?**
 
-**No.** Amazon's simulator requires a configured endpoint and deployed skill
+Amazon's simulator requires a configured endpoint and deployed skill
 code. The lowest-cost supported path is an **Alexa-hosted skill**, which
-auto-provisions an AWS Lambda function **without you creating an AWS account or
-paying anything** (Lambda's free tier covers the tiny request volume of testing;
-see Cost below). This repository's handler is written for exactly that path
+auto-provisions an AWS Lambda function with zero cloud cost
+(Lambda's free tier covers testing volume; see Cost below).
+This repository's handler is written for exactly that path
 (`index.js` exports `exports.handler`, the standard Lambda entry point).
 
-The unit tests in `test/handler.test.js` run **without any deployment** — they
-invoke the handlers directly — so the skill logic is fully verified locally
-before you ever touch the console.
+The unit tests in `test/handler.test.js` run directly in Node.js — they
+invoke the handlers in-process — so the skill logic is fully verified locally
+before configuring the console.
 
 ## Architecture
 
@@ -148,15 +148,15 @@ method are required for an Alexa-hosted skill.
 
 - **Amazon Developer account:** free, required. No credit card needed to create
   skills or use Alexa-hosted skills.
-- **Alexa-hosted skills:** Amazon auto-provisions the AWS Lambda (and other AWS
+- **Alexa-hosted skills (simulated prototype):** Amazon auto-provisions the AWS Lambda (and other AWS
   resources) for you. You do **not** create an AWS account or enter AWS
   credentials. Testing volume is far within AWS Lambda's free tier (1M requests
   / 400,000 GB-seconds per month), so **expected charge: $0** for this
-  simulator-first prototype. (AWS pricing is subject to change; no paid tier is
-  enabled by this project.)
+  simulation prototype. (AWS pricing is subject to change; this prototype
+  operates strictly under free-tier allowances with zero paid tiers.)
 - **Node.js runtime:** Lambda's Node.js 16 is **deprecated**; Alexa-hosted
   skills default to a current Node.js runtime (18/20/22) or Python. The
-  `ask-sdk-core` v2 SDK is compatible. (Verified against current AWS Lambda
+  `ask-sdk-core` v2 SDK is compatible. (Checked against current AWS Lambda
   runtime and ASK SDK deprecation docs.)
 - **No Echo device, no microphone, no camera** are needed. Text-based testing
   only. Do not enable voice/mic in the simulator.

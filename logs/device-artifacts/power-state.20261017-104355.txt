@@ -1,0 +1,5 @@
+  mWakefulness=Dozing
+  mWakefulnessChanging=false
+  mIsPowered=true
+  mHoldingDisplaySuspendBlocker=false
+  mIsPowered=true

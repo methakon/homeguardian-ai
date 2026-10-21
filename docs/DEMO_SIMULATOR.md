@@ -53,26 +53,31 @@ rm -f /tmp/hg_on.json
 Expected output pattern:
 ```
 [info]  Simulator mode: capture_enabled=true consumers=2 state=Starting
-[info]  Simulator cycle 0: delivered=2 blocked=0 speaker_played=2 pipeline_history=2 alerts_delivered=1 alerts_suppressed=0
+[info]  Simulator cycle 0: delivered=2 blocked=0 speaker_played=2 pipeline_history=3 alerts_delivered=0 alerts_suppressed=0
+[warn]  Alert generated: synthetic activity detected: fusion confidence 0.92 from 2 contributing detector observation(s)
+[info]  Simulator cycle 1: delivered=2 blocked=0 speaker_played=4 pipeline_history=6 alerts_delivered=1 alerts_suppressed=0
+[info]  Alert suppressed (dedup/cooldown): synthetic activity detected: fusion confidence 0.92 from 2 contributing detector observation(s)
+[warn]  Alert generated: synthetic activity detected: fusion confidence 0.61 from 2 contributing detector observation(s)
 ...
-[warn] Alert generated: synthetic simulator presence notice
-[info] Alert suppressed (dedup/cooldown): synthetic simulator presence notice
-...
-[info] Simulator cycles complete. speaker_played=10 queue=0 pipeline_history=10 alerts_delivered=1 alerts_suppressed=8
+[info] Simulator cycles complete. speaker_played=10 queue=0 pipeline_history=15 alerts_delivered=2 alerts_suppressed=8
 [info] Main loop exited cleanly. final_state=Stopped
 ```
 
 Observe:
 - **Authorized observations enter the pipeline** (`pipeline_history` grows
-  2 → 10 across 5 cycles).
-- **A controlled correlation scenario generates the expected synthetic alert**
-  (`Alert generated: synthetic simulator presence notice`) once ≥2 observations
-  are in the 60s window.
-- **Repeated matching observations follow the dedup/cooldown policy**: the
-  first firing is delivered; subsequent firings of the same active condition
-  within the 60s cooldown are suppressed (`alerts_delivered=1`,
-  `alerts_suppressed=8` over 10 observations). Unrelated alerts (different
-  rule/severity) would be delivered independently — see `AlertPolicy`.
+  3 → 15 across 5 cycles: 2 synthetic observations per tick, plus the single
+  detection observation produced from that authorized acquisition).
+- **The alert is DETECTION-DRIVEN (L-11).** The detector runs once per authorized
+  acquisition; its Observations are fused by `FusionEngine`; the detection rule
+  raises an alert only when the fused verdict is `detected` above the confidence
+  floor. The message names the evidence
+  (`Alert generated: synthetic activity detected: fusion confidence 0.92 …`).
+  Raw observations alone never raise an alert — they are the detector's input.
+- **Repeated firings follow the dedup/cooldown policy**, keyed on rule+severity
+  (measured: `alerts_delivered=2`, `alerts_suppressed=8` over 15 processed
+  events). The two deliveries are the `warning` and `info` severities of the same
+  rule — different severities are independent conditions and are never suppressed
+  against each other. See `AlertPolicy`.
 
 ## 5. Revoking consent blocks subsequent observations
 
@@ -175,7 +180,8 @@ condition:
 - **Clock**: injectable; a backward-moving clock cannot extend a cooldown.
 
 This is a **notification** policy, not a safety detector. A suppressed duplicate
-is still an active condition. The alert is a **synthetic presence notice**, never
+is still an active condition. The alert is a **synthetic, detection-driven
+activity notice** (raised only when the fused detector evidence qualifies), never
 a real-world danger detection.
 
 ## Limitations

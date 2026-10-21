@@ -70,4 +70,56 @@ Event Observation::to_event() const {
     );
 }
 
+std::optional<Observation> Observation::from_event(const Event& event) {
+    // Only inference events produced by to_event() are detection observations.
+    if (event.get_type() != EventType::inference) return std::nullopt;
+    const nlohmann::json& p = event.get_payload();
+    if (!p.is_object()) return std::nullopt;
+    if (!p.contains("detector_id") || !p.contains("status")) return std::nullopt;
+    if (!p["detector_id"].is_string() || !p["status"].is_string())
+        return std::nullopt;
+
+    Observation o;
+    o.observation_id = event.get_event_id();
+    o.source = event.get_source();
+    o.provenance = (p.value("provenance", std::string("synthetic")) == "real")
+                       ? Provenance::real
+                       : Provenance::synthetic;
+    o.detector_id = p["detector_id"].get<std::string>();
+    o.model_id = p.value("model_id", std::string());
+    o.schema_version = event.get_schema_version();
+    o.observation_timestamp = event.get_observation_timestamp();
+
+    const std::string status = p["status"].get<std::string>();
+    if (status == "detected") o.status = DetectorStatus::detected;
+    else if (status == "not_detected") o.status = DetectorStatus::not_detected;
+    else if (status == "unavailable") o.status = DetectorStatus::unavailable;
+    else if (status == "inconclusive") o.status = DetectorStatus::inconclusive;
+    else return std::nullopt;  // unknown status is not a usable detection
+
+    o.confidence = event.get_confidence();
+    if (p.contains("quality") && p["quality"].is_number())
+        o.quality = p["quality"].get<double>();
+    if (p.contains("note") && p["note"].is_string())
+        o.note = p["note"].get<std::string>();
+
+    // Carry the bounded, non-sensitive feature payload. The keys that map onto
+    // dedicated Observation fields are excluded; everything else is preserved so
+    // a detector-specific feature (e.g. the impact classifier's "phase") survives
+    // the round trip. The payload is already bounded by validate().
+    nlohmann::json features = nlohmann::json::object();
+    static const char* kMetaKeys[] = {"provenance", "detector_id", "model_id",
+                                      "status", "quality", "note"};
+    for (auto it = p.begin(); it != p.end(); ++it) {
+        bool is_meta = false;
+        for (const char* k : kMetaKeys) {
+            if (it.key() == k) { is_meta = true; break; }
+        }
+        if (!is_meta) features[it.key()] = it.value();
+    }
+    o.features = std::move(features);
+
+    return o;
+}
+
 }  // namespace homeguardian
