@@ -40,14 +40,18 @@ echo "    stubs: $(find "$OUT/stubs" -name '*.class' | wc -l)"
 
 echo "==> 3/4 compile the isolated tests"
 javac --release 8 -Xlint:-options -classpath "$OUT/prod:$AJ" -d "$OUT/test" \
-    "$APK_DIR/tests/NodeTransportHostTest.java"
+    "$APK_DIR/tests/NodeTransportHostTest.java" \
+    "$APK_DIR/tests/ProducerSchemaConformanceTest.java"
 echo "    test classes: $(find "$OUT/test" -name '*.class' | wc -l)"
 
 echo "==> 4/4 run (stubs first on the classpath)"
 echo
 # The stubs MUST come first: that is what shadows android.jar's throwing stubs off-device.
-java -classpath "$OUT/stubs:$OUT/prod:$OUT/test" org.homeguardian.harness.NodeTransportHostTest
-rc=$?
+CP="$OUT/stubs:$OUT/prod:$OUT/test"
+rc=0
+java -classpath "$CP" org.homeguardian.harness.NodeTransportHostTest || rc=1
+echo
+java -classpath "$CP" org.homeguardian.harness.ProducerSchemaConformanceTest || rc=1
 echo
 echo "==> exit code: $rc"
 exit $rc

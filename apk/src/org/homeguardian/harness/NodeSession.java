@@ -84,7 +84,9 @@ public final class NodeSession {
             final double value = numberField(line, "value");
             final double confidence = numberField(line, "confidence");
             final long acquiredAtMs = (long) numberField(line, "acquired_at_ms");
-            if (sourceType == null || observationType == null || Double.isNaN(value)) {
+            if (!ObservationWire.hasRequiredFields(line)) {
+                // Schema v1: source_type, observation_type and a finite value are required.
+                // Anything else is dropped and counted, never forwarded and never zero-filled.
                 parseFailures++;
                 continue;
             }
@@ -106,40 +108,20 @@ public final class NodeSession {
         return queued;
     }
 
-    /** Extract `"key":"value"` without a JSON dependency (the shape is produced by our own JNI). */
+    /**
+     * Delegates to ObservationWire, which owns the wire contract's parsing rules and is unit-tested
+     * off-device. Kept as a thin alias so existing call sites are unchanged; there is exactly one
+     * implementation. See docs/SCHEMA_PRODUCER_V1.md.
+     */
     static String stringField(String line, String key) {
-        final String needle = "\"" + key + "\":\"";
-        final int at = line.indexOf(needle);
-        if (at < 0) {
-            return null;
-        }
-        final int from = at + needle.length();
-        final int to = line.indexOf('"', from);
-        return to < 0 ? null : line.substring(from, to);
+        return ObservationWire.stringField(line, key);
     }
 
-    /** Extract `"key":number`. Returns NaN when absent or unparseable (never a silent zero). */
+    /**
+     * Delegates to ObservationWire - see stringField above. Absence is NaN, never a silent zero.
+     */
     static double numberField(String line, String key) {
-        final String needle = "\"" + key + "\":";
-        final int at = line.indexOf(needle);
-        if (at < 0) {
-            return Double.NaN;
-        }
-        int from = at + needle.length();
-        int to = from;
-        while (to < line.length()) {
-            final char c = line.charAt(to);
-            if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E') {
-                to++;
-            } else {
-                break;
-            }
-        }
-        try {
-            return Double.parseDouble(line.substring(from, to));
-        } catch (RuntimeException e) {
-            return Double.NaN;
-        }
+        return ObservationWire.numberField(line, key);
     }
 
     /**
