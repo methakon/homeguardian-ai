@@ -143,7 +143,15 @@ PanasonicNodeReceiver::Result PanasonicNodeReceiver::accept_line(const PeerConte
     // Schema handling. The current producer sends NO version field, so that case is counted and accepted as
     // the documented shape; any version this receiver does not implement is refused rather than guessed at.
     if (parsed.schema_version == kSchemaVersionAbsent) {
+        // Counted, never ASSUMED: an absent version is not silently read as the version this receiver
+        // implements. Under strict mode it is refused outright.
         ++schema_absent_;
+        if (cfg_.require_schema_version) {
+            out.reason = "missing_schema_version";
+            out.detail = "strict mode: the producer must send schema_version on every line";
+            ++refused_;
+            return out;
+        }
     } else if (parsed.schema_version != kNodeSchemaVersion) {
         out.reason = "unsupported_schema_version";
         out.detail = "this receiver implements schema version " + std::to_string(kNodeSchemaVersion);

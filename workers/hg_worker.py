@@ -568,6 +568,9 @@ def _kanban_run_failure(task_id: str) -> str:
     if not ok:
         return ""
     for line in out.splitlines():
+        if "spawn_failed" in line or "gave_up" in line:
+            short = re.search(r"error['\"]?:\s*['\"]?(.{0,120})", line)
+            return f"spawn failed - {short.group(1)}" if short else "spawn failed"
         if "worker_result" in line and "'exit_code'" in line:
             match = re.search(r"'exit_code':\s*(-?\d+)", line)
             if match and int(match.group(1)) != 0:
@@ -594,9 +597,15 @@ def release_stale_dispatches(state: dict, now=None, status_fn=None, failure_fn=N
         # Age unknown (a malformed record) is NOT treated as infinitely old: that would block a task that may
         # well be running. This worker always writes `at`, so this is only about damaged state.
         at = float(dispatched.get("at") or task.get("updated_at") or 0)
-        if at <= 0 or now - at < window:
+        board_now = (status_fn or _kanban_show_status)(dispatched.get("kanban_task_id", ""))
+        failure_now = (failure_fn or _kanban_run_failure)(dispatched.get("kanban_task_id", ""))
+        # A board VERDICT is immediate, whatever the clock says. Waiting the full window for a spawn failure or
+        # a blocked task is exactly how this worker sat idle while two queued tasks were stuck: the state said
+        # "in flight" (observed: spawn_failed x2 -> gave_up -> blocked) and the watcher stayed inactive.
+        verdict = bool(failure_now) or board_now in ("blocked", "failed", "archived")
+        if not verdict and (at <= 0 or now - at < window):
             continue
-        failure = (failure_fn or _kanban_run_failure)(dispatched.get("kanban_task_id", ""))
+        failure = failure_now
         if failure:
             # A run that died is not "in flight", whatever the board's status still says.
             task["state"] = "BLOCKED"
@@ -604,7 +613,13 @@ def release_stale_dispatches(state: dict, now=None, status_fn=None, failure_fn=N
             task["updated_at"] = now
             released.append(mission)
             continue
-        board = (status_fn or _kanban_show_status)(dispatched.get("kanban_task_id", ""))
+        board = board_now
+        if board in ("blocked", "failed", "archived"):
+            task["state"] = "BLOCKED"
+            task["blocked_reason"] = f"the board marked this {board}: the dispatch did not run"
+            task["updated_at"] = now
+            released.append(mission)
+            continue
         if board in ("running", "review"):
             continue                                   # the executor really does have it: leave it in flight
         release_heavy_slot(mission)
@@ -634,8 +649,12 @@ def dispatch_argv(mode: str, mission: str, detail: str, branch: str, task_id: st
              f"Run the focused suites, record the exact SHA, and report to issue #{ISSUE} with the "
              f"WORKER/TASK/SHA/TESTS format. Commit and push to the assigned branch. Never merge to main.")
     if mode == "kanban":
+        # `--workspace worktree --branch` is what puts the spawned worker in the REAL project worktree. Without
+        # it the run happens in a scratch dir and cannot commit to the assigned branch - which is how the flag
+        # error ("--branch is only valid with --workspace worktree") turned out to be a design hint, not noise.
         return kanban_argv("create", "--json", "--idempotency-key", f"{WORKER_ID}:{mission}",
                            "--assignee", "default", "--created-by", WORKER_ID,
+                           "--workspace", f"worktree:{WORKTREE}", "--branch", branch,
                            "--model", DISPATCH_MODEL, "--provider", DISPATCH_PROVIDER, "--body", brief,
                            f"[{WORKER_ID}] {mission}")
     if mode == "resume":
@@ -742,9 +761,10 @@ def _try(fn):
 
 def selftest() -> int:
     """Offline validation matrix. No network, no gh, no git mutation."""
-    global STATE_DIR
-    old = STATE_DIR
+    global STATE_DIR, HEAVY_SLOT
+    old, old_slot = STATE_DIR, HEAVY_SLOT
     STATE_DIR = tempfile.mkdtemp(prefix="hg-worker-selftest-")
+    HEAVY_SLOT = os.path.join(STATE_DIR, "heavy.lock")   # isolate the GLOBAL slot too, or the test reads live state
     failures = []
 
     def check(name, condition, detail=""):
@@ -963,6 +983,10 @@ def selftest() -> int:
           dispatch_argv("resume", "M", "d", BRANCH)[1:4] == ["--resume", SESSION_ID, "-z"])
     check("the dispatch brief forbids merging to main",
           "Never merge to main" in dispatch_argv("kanban", "M", "d", BRANCH)[-2])
+    check("dispatch puts the worker in the real worktree, not a scratch dir",
+          "--workspace" in dispatch_argv("kanban", "M", "d", BRANCH)
+          and "worktree" in dispatch_argv("kanban", "M", "d", BRANCH)
+          and BRANCH in dispatch_argv("kanban", "M", "d", BRANCH))
     check("unknown dispatch modes are refused", _try(lambda: dispatch_argv("whatever", "M", "d", BRANCH)) is False)
 
     # 17b. LIVENESS: a dispatch that never started must not freeze the watcher forever
@@ -1003,6 +1027,23 @@ def selftest() -> int:
     check("a record with no timestamp is not presumed stalled",
           release_stale_dispatches(damaged, status_fn=lambda t: "ready") == ([], []))
 
+    # 17a. THE STALL THE OWNER SPOTTED: a board verdict must release at once, not after the window
+    stuck = {"tasks": {"S-B": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time(),
+                                                                   "ok": True, "kanban_task_id": "t_blk"}}}}
+    rel, _ = release_stale_dispatches(stuck, status_fn=lambda t: "blocked", failure_fn=lambda t: "")
+    check("a board-blocked task releases immediately, not after the stale window", rel == ["S-B"], str(rel))
+    check("and it no longer holds the watcher inactive", inflight_tasks(stuck) == [])
+    spawn = {"tasks": {"S-S": {"state": "CLAIMED", "dispatched": {"mode": "kanban", "at": time.time(),
+                                                                  "ok": True, "kanban_task_id": "t_sp"}}}}
+    rel, _ = release_stale_dispatches(spawn, status_fn=lambda t: "ready",
+                                      failure_fn=lambda t: "spawn failed - no workspace_path")
+    check("a spawn failure releases immediately", rel == ["S-S"], str(rel))
+    check("the spawn failure reason is recorded",
+          "spawn failed" in spawn["tasks"]["S-S"]["blocked_reason"], spawn["tasks"]["S-S"]["blocked_reason"])
+    check("dispatch names an ABSOLUTE worktree path, as the dispatcher requires",
+          f"worktree:{WORKTREE}" in dispatch_argv("kanban", "M", "d", BRANCH)
+          and os.path.isabs(WORKTREE), str([a for a in dispatch_argv("kanban", "M", "d", BRANCH) if "worktree" in a]))
+
     # 17. KANBAN -> WORKER intake (the direction the dispatcher cannot serve: it logs skipped_nonspawnable)
     kb = {"tasks": {}, "processed": {}, "rejected": []}
     contracted = [{"id": "t_abc123", "title": "real work", "body": block(
@@ -1030,8 +1071,6 @@ def selftest() -> int:
           queue_unchanged({"issue_head": {"comments": 34, "updated_at": "t"}},
                           {"comments": 35, "updated_at": "t"}) is False)
     check("a fresh state is never 'unchanged'", queue_unchanged({}, {"comments": 1, "updated_at": "t"}) is False)
-    os.environ.setdefault("HG_RESOURCE_DIR", STATE_DIR)
-    globals()["HEAVY_SLOT"] = os.path.join(STATE_DIR, "heavy.lock")
     check("the heavy slot starts free", heavy_slot_holder() == "")
     ok1, _ = acquire_heavy_slot("MINE-1")
     check("the heavy slot can be taken", ok1)
@@ -1047,7 +1086,7 @@ def selftest() -> int:
     check("dispatch pins a provider that can actually sustain a session",
           DISPATCH_PROVIDER and DISPATCH_MODEL, f"{DISPATCH_PROVIDER}/{DISPATCH_MODEL}")
 
-    STATE_DIR = old
+    STATE_DIR, HEAVY_SLOT = old, old_slot
     print(f"\nselftest: {len(failures)} failure(s)")
     return 1 if failures else 0
 

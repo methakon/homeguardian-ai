@@ -83,6 +83,11 @@ public:
         uint16_t protocol_version_minor = kProtocolVersionMinor;
         // Supplied by the caller so a test can drive time; defaults to the system clock in the constructor.
         std::function<int64_t()> clock;
+        // Strict mode: refuse a line with NO schema_version instead of counting it as the documented legacy
+        // shape. Default false so the running producer (which sends no version) keeps working; it is flipped
+        // only when the producer actually sends the field on every line. See contract section 6.3.
+        // Declared LAST on purpose: this struct is aggregate-initialized positionally elsewhere in the tree.
+        bool require_schema_version = false;
     };
 
     struct Result {

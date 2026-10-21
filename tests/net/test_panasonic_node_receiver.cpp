@@ -201,7 +201,7 @@ TEST_CASE("panasonic receiver: malformed, oversized and mis-versioned lines are 
         REQUIRE(r.reason == "unknown_source_type");
     }
     SECTION("oversized line") {
-        PanasonicNodeReceiver small(*h.ingest, PanasonicNodeReceiver::Config{true, 64, 1, 0, nullptr});
+        PanasonicNodeReceiver small(*h.ingest, PanasonicNodeReceiver::Config{.session_is_synthetic = true, .max_line_bytes = 64, .protocol_version_major = 1, .protocol_version_minor = 0});
         REQUIRE_FALSE(small.accept_line(h.peer(), node_line(), h.sink).accepted);
     }
     SECTION("schema version absent is accepted AND counted (the producer sends none today)") {
@@ -527,5 +527,102 @@ TEST_CASE("producer/receiver compatibility: the producer's real line shape", "[p
         // The rest of the producer's shape is unaffected by the provenance field: no version, no state.
         REQUIRE(receiver.schema_version_absent() == 1);
         REQUIRE(receiver.state_unmapped() == 0);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// HG-SCHEMA-EDGE-2 / HG-SCHEMA-EDGE-3: an absent schema_version is COUNTED, never assumed, and strict mode
+// refuses it. Non-strict keeps the current producer working; the flag flips only when the producer sends the
+// field on every line (contract section 6.3).
+// ---------------------------------------------------------------------------------------------------------
+namespace {
+
+std::string schema_line(bool has_version, int version, int64_t acquired_ms = 0) {
+    json j;
+    j["source_type"] = "motion";
+    j["observation_type"] = "motion-changed-fraction";
+    j["value"] = 0.42;
+    j["unit"] = "";
+    j["state"] = "";
+    j["confidence"] = 0.9;
+    j["acquired_at_ms"] = acquired_ms > 0 ? acquired_ms : clock_ms();
+    j["provenance"] = "real_device";
+    if (has_version) {
+        j["schema_version"] = version;
+    }
+    return j.dump();
+}
+
+PanasonicNodeReceiver::Config real_session() {
+    PanasonicNodeReceiver::Config cfg;
+    cfg.session_is_synthetic = false;
+    return cfg;
+}
+
+}  // namespace
+
+TEST_CASE("schema version: absent is counted, never assumed", "[panasonic][schema]") {
+    SECTION("non-strict: an absent version is accepted AND counted, not read as the implemented version") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        const auto r = receiver.accept_line(h.peer(), schema_line(false, 0), h.sink);
+        INFO(r.reason << " / " << r.detail);
+        REQUIRE(r.accepted);
+        REQUIRE(receiver.schema_version_absent() == 1);
+        REQUIRE(h.delivered.size() == 1);
+    }
+    SECTION("the absent counter counts ONLY absent lines") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(false, 0), h.sink).accepted);
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(true, kNodeSchemaVersion), h.sink).accepted);
+        REQUIRE(receiver.accept_line(h.peer(), schema_line(false, 0), h.sink).accepted);
+        REQUIRE(receiver.schema_version_absent() == 2);
+        REQUIRE(receiver.lines_accepted() == 3);
+    }
+    SECTION("strict mode: an absent version is refused as missing_schema_version") {
+        Harness h;
+        auto cfg = real_session();
+        cfg.require_schema_version = true;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        const auto r = receiver.accept_line(h.peer(), schema_line(false, 0), h.sink);
+        REQUIRE_FALSE(r.accepted);
+        REQUIRE(r.reason == "missing_schema_version");
+        REQUIRE(h.delivered.empty());           // nothing reached the ingest
+        REQUIRE(receiver.schema_version_absent() == 1);   // still counted: the gap is measured, not hidden
+    }
+    SECTION("strict mode: a producer that sends the implemented version is accepted") {
+        Harness h;
+        auto cfg = real_session();
+        cfg.require_schema_version = true;
+        PanasonicNodeReceiver receiver(*h.ingest, cfg);
+        const auto r = receiver.accept_line(h.peer(), schema_line(true, kNodeSchemaVersion), h.sink);
+        INFO(r.reason);
+        REQUIRE(r.accepted);
+        REQUIRE(receiver.schema_version_absent() == 0);
+    }
+    SECTION("an unsupported version is refused in BOTH modes, and no version is guessed") {
+        Harness h;
+        PanasonicNodeReceiver lenient(*h.ingest, real_session());
+        const auto a = lenient.accept_line(h.peer(), schema_line(true, kNodeSchemaVersion + 1), h.sink);
+        REQUIRE_FALSE(a.accepted);
+        REQUIRE(a.reason == "unsupported_schema_version");
+
+        Harness h2;
+        auto cfg = real_session();
+        cfg.require_schema_version = true;
+        PanasonicNodeReceiver strict(*h2.ingest, cfg);
+        const auto b = strict.accept_line(h2.peer(), schema_line(true, kNodeSchemaVersion + 1), h2.sink);
+        REQUIRE_FALSE(b.accepted);
+        REQUIRE(b.reason == "unsupported_schema_version");
+    }
+    SECTION("a non-integer version is refused rather than coerced") {
+        Harness h;
+        PanasonicNodeReceiver receiver(*h.ingest, real_session());
+        json j = json::parse(schema_line(true, kNodeSchemaVersion));
+        j["schema_version"] = "1";
+        const auto r = receiver.accept_line(h.peer(), j.dump(), h.sink);
+        REQUIRE_FALSE(r.accepted);
+        REQUIRE_FALSE(r.reason.empty());
     }
 }
