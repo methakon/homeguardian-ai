@@ -43,7 +43,8 @@ javac --release 8 -Xlint:-options -classpath "$OUT/prod:$AJ" -d "$OUT/test" \
     "$APK_DIR/tests/NodeTransportHostTest.java" \
     "$APK_DIR/tests/ProducerSchemaConformanceTest.java" \
     "$APK_DIR/tests/ObservationTransportPolicyTest.java" \
-    "$APK_DIR/tests/CrossReceiverContractTest.java"
+    "$APK_DIR/tests/CrossReceiverContractTest.java" \
+    "$APK_DIR/tests/TlsHandshakeE2ETest.java"
 echo "    test classes: $(find "$OUT/test" -name '*.class' | wc -l)"
 
 echo "==> 3b/4 generate the cross-receiver fixture from the C++ receiver source"
@@ -81,6 +82,18 @@ if [ -s "$OUT/media-claims.txt" ]; then
 fi
 echo "    OK: no ASSERTION claims physical media (a disclaimer comment is correctly ignored)"
 
+echo "==> 3d/4 generate TEST-ONLY TLS material for the real-socket handshake test"
+# The TLS test needs a CA, a server cert with an IP SAN and a client cert. Generated per run under a
+# temp dir; never committed, never a production credential. If generation fails the TLS test would
+# SKIP, and a skipped check must not read as a cleaner result than the check itself - so this is a
+# hard failure.
+if ! HG_TLS_DIR="$(bash "$ROOT/scripts/gen_test_tls_material.sh" 2>"$OUT/tls-gen.log")"; then
+    echo "    TLS MATERIAL GENERATION FAILED - refusing to run with a silently-skipping TLS test"
+    sed 's/^/      /' "$OUT/tls-gen.log"
+    exit 1
+fi
+echo "    material: $HG_TLS_DIR"
+
 echo "==> 4/4 run (stubs first on the classpath)"
 echo
 # The stubs MUST come first: that is what shadows android.jar's throwing stubs off-device.
@@ -93,6 +106,7 @@ echo
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ProducerSchemaConformanceTest || rc=1
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ObservationTransportPolicyTest || rc=1
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.CrossReceiverContractTest || rc=1
+java -Dhg.root="$ROOT" -Dhg.tls.dir="$HG_TLS_DIR" -classpath "$CP" org.homeguardian.harness.TlsHandshakeE2ETest || rc=1
 echo
 echo "==> exit code: $rc"
 exit $rc
