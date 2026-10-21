@@ -87,6 +87,66 @@ public final class NodeTransportHostTest {
         @Override public long releaseCount() { return releases; }
     }
 
+    /**
+     * A holder that models the platform's TIMED AUTO-RELEASE.
+     *
+     * This exists because {@link FakeWakeLock} can never expire, which is precisely why no test could
+     * see the lapse bug: `held` was a flag the host set and nothing ever cleared it, so the fake
+     * agreed with the host's belief no matter how wrong it was. A fake that cannot disagree with the
+     * code under test cannot test it.
+     *
+     * The platform side is modelled separately from the host's belief:
+     *   platformHeld - what the system actually holds; drops itself when the timeout elapses
+     *   held         - what this holder believes
+     * They are compared explicitly so "the host kept the lock alive" is a measurement.
+     */
+    static final class ExpiringWakeLock implements WakeLockHolder {
+        long now = 0L;                  // virtual clock, advanced only by the test
+        final long timeoutMs;
+        boolean held = false;           // what we believe
+        boolean platformHeld = false;   // what the platform actually holds
+        long acquiredAt = 0L;
+        long acquires = 0L;
+        long releases = 0L;
+
+        ExpiringWakeLock(long timeoutMs) { this.timeoutMs = timeoutMs; }
+
+        /** Advance the virtual clock. The platform silently drops its lock once the timeout passes. */
+        void advance(long ms) {
+            now += ms;
+            if (platformHeld && acquiredAt + timeoutMs <= now) {
+                platformHeld = false;   // released BY THE PLATFORM, with no callback to us
+            }
+        }
+
+        /** Did the platform drop a lock we still believe we hold? That is the failure being tested. */
+        boolean lapsed() { return held && !platformHeld; }
+
+        @Override public void acquire() {
+            if (held && platformHeld) {
+                return;   // genuinely still ours
+            }
+            held = true;
+            platformHeld = true;
+            acquiredAt = now;
+            acquires++;
+        }
+        @Override public void release() { if (held) { held = false; platformHeld = false; releases++; } }
+        @Override public boolean isHeld() { return held && platformHeld; }
+        @Override public long acquireCount() { return acquires; }
+        @Override public long releaseCount() { return releases; }
+    }
+
+    /** A holder whose acquire() throws, to prove a renewal failure cannot fail the pump. */
+    static final class ThrowingWakeLock implements WakeLockHolder {
+        long acquires = 0L;
+        @Override public void acquire() { acquires++; throw new IllegalStateException("no lock"); }
+        @Override public void release() { }
+        @Override public boolean isHeld() { return false; }
+        @Override public long acquireCount() { return acquires; }
+        @Override public long releaseCount() { return 0L; }
+    }
+
     // ------------------------------------------------------------------ harness
 
     private static void check(String name, boolean ok) {
@@ -104,7 +164,7 @@ public final class NodeTransportHostTest {
         }
     }
 
-    private static NodeTransportHost newHost(FakeLink link, FakeWakeLock wl) {
+    private static NodeTransportHost newHost(FakeLink link, WakeLockHolder wl) {
         // Clear any consent block left by an earlier test. It is an INSTANCE method because it
         // also resumes the link, so it is called on a throwaway instance first.
         try {
@@ -130,6 +190,7 @@ public final class NodeTransportHostTest {
         t8_queueCountersAndBackoffSurface();
         t9_wakeLockOnEveryExitPath();
         t10_noInterferenceWithMiA3Mcp();
+        t11_wakeLockSurvivesTheSession();
 
         System.out.println();
         System.out.println("=== " + passed + " passed, " + failed + " failed ===");
@@ -353,6 +414,89 @@ public final class NodeTransportHostTest {
         hf.start(); hf.pump("p\n"); hf.clearConsentBlock(); hf.stop("final");
         check("9f lock not held after a full start/pump/stop cycle", !wf.isHeld(),
                 "held=" + wf.isHeld());
+    }
+
+    /**
+     * 11. THE LOCK MUST SURVIVE THE SESSION, not just the start call.
+     *
+     * The defect this pins: the lock is taken once in start() with a 30-minute timeout, and Android
+     * releases a timed lock on its own without telling anyone. Nothing re-armed it, so half an hour
+     * into an unattended run the node believed it held a lock the platform had already dropped, and
+     * every later acquire() was a silent no-op. That is the same silent-death shape as the original
+     * screen-off defect, at a longer horizon.
+     *
+     * FakeWakeLock could never expire, so no existing assertion could see it. ExpiringWakeLock models
+     * the platform side separately from the host's belief, which is what makes the lapse measurable.
+     */
+    private static void t11_wakeLockSurvivesTheSession() {
+        final long timeout = 1000L;
+
+        // (a) WITHOUT renewal the lock lapses - this is the bug, demonstrated rather than described.
+        FakeLink a = new FakeLink(); ExpiringWakeLock wa = new ExpiringWakeLock(timeout);
+        NodeTransportHost ha = newHost(a, wa);
+        ha.start();
+        check("11a lock held at start", wa.isHeld(), "held=" + wa.isHeld());
+        wa.advance(timeout + 1);   // the platform silently drops it
+        check("11a the platform drops a timed lock with no callback (bug precondition)",
+                wa.lapsed(), "held=" + wa.held + " platformHeld=" + wa.platformHeld);
+        check("11a a lapsed lock is reported as NOT held, not as held",
+                !wa.isHeld(), "a stale held flag must not report as held");
+
+        // (b) the pump tick keeps it alive across the same horizon
+        FakeLink b = new FakeLink(); ExpiringWakeLock wb = new ExpiringWakeLock(timeout);
+        NodeTransportHost hb = newHost(b, wb);
+        hb.start();
+        for (int i = 0; i < 5; i++) {
+            wb.advance(timeout / 2 + 1);   // crosses the renewal point each time
+            hb.pump("p\n");
+        }
+        check("11b the pump re-arms the lock across repeated timeouts: still held",
+                wb.isHeld(), "held=" + wb.isHeld() + " lapsed=" + wb.lapsed());
+        check("11b it was re-armed more than once (not a single lucky take)",
+                wb.acquireCount() > 1, "acquires=" + wb.acquireCount());
+        check("11b it never lapsed at a checkpoint", !wb.lapsed(),
+                "held=" + wb.held + " platformHeld=" + wb.platformHeld);
+
+        // (c) no renewal churn while the link is stopped
+        final long afterStop = wb.acquireCount();
+        hb.stop("test over");
+        wb.advance(timeout + 1);
+        hb.pump("p\n");   // must be a no-op: the link is not running
+        check("11c a stopped host does not re-acquire the lock on a stray pump",
+                wb.acquireCount() == afterStop,
+                "acquires went " + afterStop + " -> " + wb.acquireCount());
+        check("11c lock released at stop and not silently retaken",
+                !wb.isHeld() && wb.releaseCount() == 1,
+                "held=" + wb.isHeld() + " releases=" + wb.releaseCount());
+
+        // (d) a wake-lock failure must not cost us the LINK - at start or on a renewal.
+        //
+        // This found a real gap rather than confirming one. start() called the lock unguarded, so a
+        // throwing holder propagated out of start() and failed the whole link, while the class
+        // comment claimed "a failed acquire is reported, never fatal". The interface said acquire()
+        // must not throw, and AndroidWakeLock honoured that by catching internally - which made the
+        // guarantee a property of one implementation, not of the host. Both call sites are now
+        // tolerant, and both are asserted here.
+        FakeLink d = new FakeLink(); ThrowingWakeLock wd = new ThrowingWakeLock();
+        NodeTransportHost hd = newHost(d, wd);
+        String startResult = null;
+        try {
+            startResult = hd.start();
+        } catch (RuntimeException e) {
+            startResult = "THREW " + e;
+        }
+        check("11d a throwing wake lock does NOT fail start()",
+                hd.isRunning() && d.startCalls == 1 && !startResult.startsWith("THREW"),
+                "start returned: " + startResult);
+        final long pumpedBefore = d.pumpCalls;
+        hd.pump("p\n");
+        check("11d a throwing wake-lock renew does NOT stop the pump",
+                d.pumpCalls > pumpedBefore && hd.isRunning(),
+                "pumpCalls " + pumpedBefore + " -> " + d.pumpCalls + " running=" + hd.isRunning());
+        check("11d the lock was attempted at BOTH start and the tick", wd.acquires >= 2,
+                "acquires=" + wd.acquires + " (expected >= 2: start + one pump)");
+        hd.stop("cleanup");
+        check("11d released and not running after stop", !hd.isRunning(), "running=" + hd.isRunning());
     }
 
     /** 10. Nothing here may touch the Mi A3's native MCP server, which runs in another process. */

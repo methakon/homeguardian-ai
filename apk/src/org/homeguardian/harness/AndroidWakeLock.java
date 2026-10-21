@@ -27,9 +27,19 @@ public final class AndroidWakeLock implements WakeLockHolder {
     /** See the class comment: bounds the damage of a missed release. */
     private static final long TIMEOUT_MS = 30L * 60L * 1000L;
 
+    /**
+     * Re-arm at half the timeout, not at the timeout.
+     *
+     * A timed wake lock is released BY THE PLATFORM when the timeout elapses, and nothing tells us.
+     * Re-arming exactly at the boundary would race that; re-arming at half leaves a full half-window
+     * of slack, so a missed or delayed tick cannot let the lock lapse.
+     */
+    private static final long RENEW_AFTER_MS = TIMEOUT_MS / 2L;
+
     private final Context ctx;
     private PowerManager.WakeLock lock;
     private volatile boolean held = false;
+    private volatile long acquiredAtMs = 0L;
     private volatile long acquires = 0L;
     private volatile long releases = 0L;
 
@@ -37,10 +47,38 @@ public final class AndroidWakeLock implements WakeLockHolder {
         this.ctx = ctx == null ? null : ctx.getApplicationContext();
     }
 
+    /**
+     * Take the lock, or RE-ARM it if the platform has let it lapse.
+     *
+     * THE BUG THIS FIXES: the previous version did `if (held) return;`. Because Android releases a
+     * timed lock on its own at the timeout, `held` stayed true after the platform had already let go,
+     * so every later call was a silent no-op and the lock was gone for the rest of the session while
+     * {@link #isHeld()} still reported it. On an unattended node that is the same silent-death shape
+     * as the original screen-off defect, just at a 30-minute horizon - and no test could see it,
+     * because a fake holder never expires.
+     *
+     * So a held lock is no longer assumed to be a live lock. Past {@link #RENEW_AFTER_MS} the stale
+     * handle is dropped and a fresh lock taken, which is safe to call on every scheduler tick.
+     */
     @Override
     public synchronized void acquire() {
+        final long now = System.currentTimeMillis();
         if (held) {
-            return;
+            if (now - acquiredAtMs < RENEW_AFTER_MS) {
+                return;   // comfortably inside the window; nothing to do
+            }
+            // Past the re-arm point. Do NOT trust `held`: release whatever the platform still has us
+            // holding, then take a fresh lock below.
+            try {
+                if (lock != null && lock.isHeld()) {
+                    lock.release();
+                }
+            } catch (RuntimeException e) {
+                Log.w(TAG, "wake lock re-arm: releasing the stale handle threw: " + e);
+            }
+            lock = null;
+            held = false;
+            Log.i(TAG, "re-arming the partial wake lock before its timeout lapses");
         }
         if (ctx == null) {
             Log.w(TAG, "no context; continuing WITHOUT a wake lock");
@@ -56,6 +94,7 @@ public final class AndroidWakeLock implements WakeLockHolder {
             lock.setReferenceCounted(false);
             lock.acquire(TIMEOUT_MS);
             held = true;
+            acquiredAtMs = now;
             acquires++;
             Log.i(TAG, "partial wake lock acquired (timeout " + (TIMEOUT_MS / 60000L) + "m)");
         } catch (RuntimeException e) {
@@ -85,9 +124,27 @@ public final class AndroidWakeLock implements WakeLockHolder {
         }
     }
 
+    /**
+     * Whether the lock is held RIGHT NOW, asked of the platform rather than of our own flag.
+     *
+     * The flag alone is not trustworthy: a timed lock is released by the system, and reporting `true`
+     * for a lock the platform has already let go is the exact lie that hid the lapse. When there is
+     * no handle we fall back to the flag, which is the no-context "continuing without a lock" case.
+     */
     @Override
     public boolean isHeld() {
-        return held;
+        final PowerManager.WakeLock l = lock;
+        if (!held) {
+            return false;
+        }
+        if (l == null) {
+            return false;
+        }
+        try {
+            return l.isHeld();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     @Override
