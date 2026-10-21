@@ -27,7 +27,7 @@ import subprocess
 import sys
 import threading
 
-FX = sys.argv[1] if len(sys.argv) > 1 else "/tmp/hg-mtls-07-fixtures"
+FX = os.environ.get("HG_MTLS_FIXTURES", os.path.expanduser("~/.hermes/cache/scratch/hg-mtls-07-fixtures"))
 CA, R, D = f"{FX}/dev-ca", f"{FX}/runtime", f"{FX}/devices"
 
 
@@ -108,9 +108,9 @@ def bound(reg_path, device_id, cert_path):
     """Credential binding: the presented cert's fingerprint must equal the registry entry."""
     dev = registry(reg_path).get(device_id)
     if not dev or dev.get("revoked"):
-        return False, "device_revoked_or_absent"
+        return False, "device_unknown"   # canonical (was a local token)
     if dev["credential_id"] != fp(cert_path):
-        return False, "credential_id_mismatch"
+        return False, "identity_mismatch"  # canonical (was a local token)
     return True, "bound"
 
 

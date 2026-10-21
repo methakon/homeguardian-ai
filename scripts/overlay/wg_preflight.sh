@@ -47,6 +47,7 @@ say()  { printf '  %s\n' "$*"; }
 pass() { printf '  [PASS] %s\n' "$*"; }
 fail() { printf '  [FAIL] %s\n' "$*"; }
 blk()  { printf '  [BLOCKED] %s\n' "$*"; }
+warn() { printf '  [WARN] %s\n' "$*"; }
 need_execute() {
   [ "$EXECUTE" = 1 ] || { echo "refusing to change network state without --execute ($MODE)" >&2; exit 3; }
 }
@@ -91,9 +92,11 @@ preflight() {
   local blocked=0
   echo "== preflight: prerequisites =="
   command -v wg >/dev/null && pass "wg present ($(command -v wg))" || { blk "wg MISSING - install wireguard-tools"; blocked=1; }
-  command -v wg-quick >/dev/null && pass "wg-quick present" || blk "wg-quick MISSING (audit only; this runbook uses wg+ip and does not need it)"
-  if [ -d /sys/module/wireguard ] || modinfo wireguard >/dev/null 2>&1 || \
-     grep -qE '(^| )wireguard( |$)' /proc/modules 2>/dev/null; then
+  command -v wg-quick >/dev/null && pass "wg-quick present" || warn "wg-quick absent (advisory: this runbook uses wg+ip and does not need it)"
+  # PATH-independent: modinfo lives in /usr/sbin and may be absent from a restricted PATH (the same
+  # class of failure that hid /snap/bin/gh). Check the kernel's own interfaces first.
+  if [ -d /sys/module/wireguard ] || grep -qw wireguard /proc/modules 2>/dev/null || \
+     { command -v modinfo >/dev/null 2>&1 && modinfo wireguard >/dev/null 2>&1; }; then
     pass "kernel WireGuard support present"
   else
     blk "kernel WireGuard support NOT detected (module absent and not built in)"; blocked=1
@@ -103,18 +106,20 @@ preflight() {
   else blk "no passwordless sudo - bringing the interface up needs privilege"; blocked=1; fi
   if [ -f "$CONF" ]; then pass "peer config present ($CONF, mode $(stat -c %a "$CONF"))"
   else blk "no peer config at $CONF - the workstation key must be supplied (never committed)"; blocked=1; fi
-  [ "$(stat -c %a "$CONF" 2>/dev/null)" = 600 ] || blk "peer config permissions are not 0600"
+  [ "$(stat -c %a "$CONF" 2>/dev/null)" = 600 ] || { blk "peer config permissions are not 0600 (a readable private key is a security failure)"; blocked=1; }
   if ip -br link show dev "$IFACE" >/dev/null 2>&1; then
     blk "$IFACE already exists - tear it down before a fresh test"
   else pass "no pre-existing $IFACE (clean slate)"; fi
+  # DEFECT FOUND BY THE MOCKED SUITE: this reported [BLOCKED] but never set the flag, so 'up'
+  # proceeded and created the interface on an unverifiable baseline. A label must match its effect.
   ip -4 route show default | grep -q . && pass "default route present: $(ip -4 route show default | head -1)" \
-    || blk "no default route"
+    || { blk "no default route - the baseline cannot prove the default route is unchanged"; blocked=1; }
   echo "== preflight: endpoint =="
   local host=${ENDPOINT%:*}; local port=${ENDPOINT##*:}
   if command -v nc >/dev/null && nc -zuv -w3 "$host" "$port" >/dev/null 2>&1; then
     pass "udp $host:$port reachable (probe is advisory: wireshark-free UDP sends are unreliable)"
   else
-    blk "udp $host:$port not confirmed - expected while the NSG pins the source, and note a phone on another network is dropped upstream"
+    warn "udp $host:$port not confirmed (advisory: the NSG pins the source, and a phone on another network is dropped upstream)"
   fi
   snapshot pre
   say "snapshot written to $STATE/net.pre (routes, interfaces, nat, ip_forward, resolv.conf)"
