@@ -17,7 +17,14 @@ from vocabulary import CANONICAL, REQUIRED_FOR_LAN_PATH, PROVENANCE, base   # no
 
 EMITTERS = ["test_mtls_validation.py", "test_revocation_and_identity.py",
             "test_failure_recovery_real.py", "verify_lan_exposure.py"]
-TOKENISH = re.compile(r'"([a-z][a-z0-9_]{3,40}(?::[^"]{0,40})?)"')
+# Judge only DECISION strings - the values returned or recorded as an outcome. Matching any quoted
+# `credential*` string also caught dict FIELD NAMES ("credential_id"), which is not a refusal token
+# at all: a scanner that cannot tell a reason from a key reports failures that do not exist.
+TOKENISH = re.compile(
+    r'(?:return\s+(?:False|True),\s*|return\s+|outcome\.append\(\s*|append\(\s*|\()'
+    r'f?["\']([a-z][a-z0-9_]{3,60}(?::[^"\']{0,40})?)["\']')
+# explicit safety valve for anything that is structurally a token but semantically a field name
+IGNORE = {"credential_id", "device_id", "identity_id"}
 
 
 def main():
@@ -33,6 +40,8 @@ def main():
         for m in TOKENISH.findall(txt):
             t = base(m)
             # only judge strings that look like this harness's own vocabulary
+            if t in IGNORE:
+                continue
             if t in CANONICAL:
                 emitted.add(t)
             elif re.search(r'^(credential|device|identity|consent)_', t):
