@@ -178,6 +178,12 @@ public class CctvService extends Service {
             // uptime-based timer is the only way to see counters advance while screen-off.
             Log.i(TAG, "tick #" + ticks + " " + captureSummary);
             Log.i(TAG, "tick #" + ticks + " " + micSummary);
+            // Service-side link counters, logged from the SERVICE's timer. This is the only way to
+            // show the transport kept draining while the screen was off: the Activity's heartbeat
+            // stops at onPause, so a UI-side counter would go quiet exactly when it matters.
+            if (linkHost != null) {
+                Log.i(TAG, "tick #" + ticks + " " + linkHost.counters());
+            }
             if (decodeCheck != null) {
                 decodeSummary = decodeCheck.result().summary();
                 decodeRunning = decodeCheck.result().started
@@ -498,9 +504,26 @@ public class CctvService extends Service {
             media = "standing by - media not armed";
         }
 
+        // Link state, shown ON THE DEVICE. The operator must be able to see whether the node is
+        // reporting without attaching adb - otherwise "it was running" is only ever knowable from a
+        // log pulled afterwards, which is exactly the gap that hid the original defect.
+        String link;
+        if (linkHost == null) {
+            link = "link off";
+        } else {
+            link = "link " + NodeTransportHost.state()
+                    + " sent=" + NodeTransportHost.sentCountStatic()
+                    + " queued=" + NodeTransportHost.queuedCountStatic()
+                    + " dropped=" + NodeTransportHost.droppedCountStatic();
+            if (NodeTransportHost.consentBlocked()) {
+                link = link + " BLOCKED(consent)";
+            }
+        }
+
         String text = media + " | " + (micArmed && mic != null
                     ? (mic.result().totalSamples + " samples" + (mic.result().silent ? " SILENT" : ""))
                     : "mic off")
+                + " | " + link
                 + " | up " + uptimeS + "s"
                 + (sleptS > 5 ? " | suspended " + sleptS + "s" : "");
 
