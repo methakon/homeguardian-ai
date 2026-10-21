@@ -47,7 +47,8 @@ ALLOWED_ACTIONS = {"implement", "test", "review", "report", "investigate"}
 STATES = ["QUEUED", "CLAIMED", "RUNNING", "TESTING", "COMMITTED", "REPORTED", "COMPLETE", "BLOCKED", "FAILED"]
 MARKER = "hg-task"
 # SPOOFING: the payload being well-formed is NOT authorization. Only these GitHub accounts may issue tasks.
-AUTHORIZED_ISSUERS = {u.strip() for u in (os.environ.get("HG_WORKER_ISSUERS") or "methakon").split(",") if u.strip()}
+AUTHORIZED_ISSUERS = {u.strip() for u in (os.environ.get("HG_WORKER_ISSUERS")
+                                          or "methakon,msekhardhar-cell").split(",") if u.strip()}
 # The native Hermes Kanban board this worker mirrors its lifecycle onto (a board is rows in the existing
 # kanban.db - not a second database, and not a second scheduler).
 KANBAN_BOARD = os.environ.get("HG_WORKER_KANBAN_BOARD") or "hg-orchestration"
@@ -71,9 +72,44 @@ DISPATCH_PROVIDER = os.environ.get("HG_WORKER_DISPATCH_PROVIDER") or "commandcod
 # Memory pressure: a heavy C++ build is deferred rather than started when the host is already loaded.
 PRESSURE_MIN_AVAILABLE_MB = 2048
 PRESSURE_MAX_LOAD_FRACTION = 0.8
+# ONE heavy local job across ALL workers. Deliberately NOT per-worker state: the point of a global limit is
+# that two workers cannot each decide they are the only one running.
+HEAVY_SLOT = os.path.join(os.environ.get("HG_RESOURCE_DIR") or os.path.expanduser("~/.hermes/state/hg-resources"),
+                          "heavy.lock")
+HEAVY_SLOT_MAX_HOLD_S = 3600
 
 
 # ----------------------------------------------------------------------------- state (one JSON file, atomic)
+
+def _which(name: str) -> str:
+    """Resolve a binary WITHOUT depending on PATH.
+
+    FOUND BY THE SCHEDULER, not by me: run from an interactive shell the watcher had `gh` on PATH, but the
+    gateway spawns cron jobs with a minimal environment and every tick died with
+    `No such file or directory: 'gh'`. A watcher that only works when a human is logged in is not a watcher.
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+    for folder in ("~/.local/bin", "~/.hermes/bin", "~/.nvm/versions/node", "/usr/local/bin",
+                   "/usr/bin", "/bin", "/snap/bin"):
+        candidate = os.path.join(os.path.expanduser(folder), name)
+        if os.path.exists(candidate):
+            return candidate
+        if folder.startswith("~/.nvm"):            # nvm keeps bins one glob deep
+            base = os.path.expanduser(folder)
+            if os.path.isdir(base):
+                for version in sorted(os.listdir(base), reverse=True):
+                    deeper = os.path.join(base, version, "bin", name)
+                    if os.path.exists(deeper):
+                        return deeper
+    return name                                    # unresolved: fail loudly at the call site, not silently
+
+
+GH = _which("gh")
+HERMES_BIN = _which("hermes")
+KAGGLE_BIN = _which("kaggle")
+
 
 def _paths():
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -322,7 +358,7 @@ def defer_if_pressured(state: dict, mission: str, reader=None) -> bool:
 
 def kanban_argv(action: str, *args) -> list:
     """The exact command shape this worker shells out to. Pure, so it is asserted offline."""
-    base = ["hermes", "kanban", "--board", KANBAN_BOARD]
+    base = [HERMES_BIN, "kanban", "--board", KANBAN_BOARD]
     return base + [action] + [str(a) for a in args]
 
 
@@ -374,7 +410,7 @@ def kaggle_verify(ref: str, status_provider=None, success_token: str = "complete
     that is somehow still queued is not 'released', and this refuses to call that a success."""
     if status_provider is None:
         def status_provider(r):
-            out = subprocess.run(["kaggle", "kernels", "status", r], capture_output=True, text=True, timeout=90)
+            out = subprocess.run([KAGGLE_BIN, "kernels", "status", r], capture_output=True, text=True, timeout=90)
             return (out.stdout or "") + (out.stderr or "")
     try:
         text = (status_provider(ref) or "").lower()
@@ -388,6 +424,57 @@ def kaggle_verify(ref: str, status_provider=None, success_token: str = "complete
         if busy in text and busy != success_token:
             return False, f"still {busy} after completion: resources not released"
     return True, f"complete and released: {text.strip()[:120]}"
+
+
+# --------------------------------------------------- the global heavy-job slot (cross-worker resource limit)
+
+def _slot_info() -> dict:
+    try:
+        with open(HEAVY_SLOT, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def heavy_slot_holder(now=None) -> str:
+    """"" when the slot is free, else a description of the holder. A slot whose holder is gone, or whose hold
+    has expired, is not a holder - a crashed worker must never wedge the whole fleet."""
+    info = _slot_info()
+    if not info:
+        return ""
+    now = now or time.time()
+    held_for = now - float(info.get("at") or 0)
+    if held_for > HEAVY_SLOT_MAX_HOLD_S:
+        return ""
+    pid = int(info.get("pid") or 0)
+    if pid and not _pid_alive(pid):
+        # A finished dispatch leaves no live pid; the slot is released by mission instead (see release below).
+        return f"{info.get('worker','?')}:{info.get('mission','?')} (holder pid {pid} has exited)"
+    return f"{info.get('worker','?')}:{info.get('mission','?')}"
+
+
+def acquire_heavy_slot(mission: str, now=None) -> tuple:
+    os.makedirs(os.path.dirname(HEAVY_SLOT), exist_ok=True)
+    holder = heavy_slot_holder(now)
+    if holder:
+        return False, holder
+    tmp = HEAVY_SLOT + f".{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"worker": WORKER_ID, "mission": mission, "pid": os.getpid(),
+                   "at": now or time.time()}, fh)
+    os.replace(tmp, HEAVY_SLOT)                      # atomic: two workers cannot both think they won
+    return True, "acquired"
+
+
+def release_heavy_slot(mission: str) -> bool:
+    info = _slot_info()
+    if info.get("mission") == mission and info.get("worker") == WORKER_ID:
+        try:
+            os.unlink(HEAVY_SLOT)
+        except OSError:
+            return False
+        return True
+    return False
 
 
 # --------------------------------------------- the other direction: tasks the board assigns TO this worker
@@ -520,6 +607,7 @@ def release_stale_dispatches(state: dict, now=None, status_fn=None, failure_fn=N
         board = (status_fn or _kanban_show_status)(dispatched.get("kanban_task_id", ""))
         if board in ("running", "review"):
             continue                                   # the executor really does have it: leave it in flight
+        release_heavy_slot(mission)
         if board == "done":
             task["state"] = "COMPLETE"
             task["completed_by"] = "board: the dispatched run finished"
@@ -551,7 +639,7 @@ def dispatch_argv(mode: str, mission: str, detail: str, branch: str, task_id: st
                            "--model", DISPATCH_MODEL, "--provider", DISPATCH_PROVIDER, "--body", brief,
                            f"[{WORKER_ID}] {mission}")
     if mode == "resume":
-        return ["hermes", "--resume", SESSION_ID, "-z", brief]
+        return [HERMES_BIN, "--resume", SESSION_ID, "-z", brief]
     raise ValueError(f"unknown dispatch mode: {mode}")
 
 
@@ -571,12 +659,27 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
         # Busy gate FIRST, before any network call: while work is running the watcher must not even look.
         return "busy", f"in flight: {', '.join(inflight)} — inactive until it completes"
 
-    try:
-        comments = fetch()
-    except Exception as exc:                                     # noqa: BLE001 - reported, never swallowed
-        return "failed", f"could not read the queue: {exc}"
+    head = issue_head() if fetch is fetch_comments_gh else {}
+    if head and queue_unchanged(state, head):
+        # nothing has changed on the issue: skip the full paginated read entirely (light idle polling)
+        try:
+            intake_started, intake_detail = kanban_intake(state, lister)
+        except Exception:                                        # noqa: BLE001
+            intake_started, intake_detail = 0, "board not readable"
+        pending_queued = [m for m in sorted(state["tasks"])
+                          if state["tasks"][m].get("state") == "CLAIMED" and not state["tasks"][m].get("dispatched")]
+        if not pending_queued:
+            return "idle", f"queue unchanged (#{head.get('comments')} comments) — no full fetch"
+        comments = []
+        head = {}
+    else:
+        try:
+            comments = fetch()
+        except Exception as exc:                                 # noqa: BLE001 - reported, never swallowed
+            return "failed", f"could not read the queue: {exc}"
 
     poll(comments, state, issue=ISSUE)
+    state["issue_head"] = head
     intake_started, _intake_detail = kanban_intake(state, lister)
     pending = [m for m in sorted(state["tasks"])
                if state["tasks"][m].get("state") == "CLAIMED" and not state["tasks"][m].get("dispatched")]
@@ -587,11 +690,32 @@ def watch(state: dict, fetch=None, runner=None, mode: str = "dry-run", now=None,
         state["deferred_missions"] = pending[1:]
     mission = pending[0]
     task = state["tasks"][mission]
+    # GLOBAL limit: one heavy local job across the workers. A task needing the slot waits QUEUED, not dropped.
+    holder = heavy_slot_holder(now)
+    if holder and holder.split(":")[-1] not in ("", mission):
+        task["queued_reason"] = f"heavy slot held by {holder}"
+        return "idle", f"{mission} waits: heavy slot held by {holder}"
     if mode == "dry-run":
         return "dispatched", "dry-run: " + " ".join(dispatch_argv("kanban", mission, task.get("notes", ""), BRANCH))
+    if not acquire_heavy_slot(mission, now)[0]:
+        task["queued_reason"] = "heavy slot taken between check and acquire"
+        return "idle", f"{mission} queued: heavy slot unavailable"
     argv = dispatch_argv(mode, mission, task.get("notes", ""), BRANCH)
     runner = runner or _kanban_run
     ok, out = runner(argv)
+    if mode == "kanban" and ok:
+        # FOUND ON LIVE DATA: when the idempotency key matches an existing task, `create` returns that task
+        # WITHOUT applying --model/--provider, so a retry silently inherits the provider that just failed.
+        # `set-model` is the documented verb for pinning an existing task's worker.
+        try:
+            blob = (out or "").strip()
+            existing = json.loads(blob[blob.index("{"):]).get("id")
+        except (ValueError, IndexError):
+            existing = None
+        if existing:
+            fixed, _note = _kanban_run(kanban_argv("set-model", existing, DISPATCH_MODEL,
+                                                   "--provider", DISPATCH_PROVIDER))
+            task["model_pinned"] = bool(fixed)
     kid = ""
     try:
         blob = (out or "").strip()
@@ -751,10 +875,19 @@ def selftest() -> int:
     # 13. KANBAN MIRROR: the native queue, addressed as the CLI actually documents it
     argv = kanban_argv("create", "--json", "--idempotency-key", f"{WORKER_ID}:M1", "title")
     check("kanban command shape is the documented one",
-          argv[:3] == ["hermes", "kanban", "--board"] and argv[3] == KANBAN_BOARD and argv[4] == "create", str(argv))
+          argv[0].endswith("hermes") and argv[1:3] == ["kanban", "--board"]
+          and argv[3] == KANBAN_BOARD and argv[4] == "create", str(argv))
+    # THE SCHEDULER BUG: binaries must resolve without PATH, because the gateway spawns jobs with a minimal env
+    check("gh is resolved to an ABSOLUTE path (the scheduler has no PATH)",
+          os.path.isabs(GH), GH)
+    check("hermes is resolved to an ABSOLUTE path", os.path.isabs(HERMES_BIN), HERMES_BIN)
+    check("the fetch uses the resolved gh, never the bare name",
+          comments_argv()[0] == GH and "/" in comments_argv()[0], comments_argv()[0])
+    check("the head call uses the resolved gh too", issue_head_argv()[0] == GH, issue_head_argv()[0])
     check("the mirror carries a native idempotency key", f"{WORKER_ID}:M1" in argv)
     check("lifecycle verbs are the documented ones",
-          kanban_argv("claim", "t1")[:4] == ["hermes", "kanban", "--board", KANBAN_BOARD]
+          kanban_argv("claim", "t1")[0].endswith("hermes")
+          and kanban_argv("claim", "t1")[1:4] == ["kanban", "--board", KANBAN_BOARD]
           and kanban_argv("claim", "t1")[4] == "claim")
     check("block carries a reason", kanban_argv("block", "t1", "tests failed")[4:] == ["block", "t1", "tests failed"])
 
@@ -824,9 +957,10 @@ def selftest() -> int:
           watch(empty, fetch=lambda: [], mode="dry-run")[0] == "idle")
     # the two dispatch modes are the documented command shapes and nothing else
     check("kanban dispatch uses the native dispatcher",
-          dispatch_argv("kanban", "M", "d", BRANCH)[:5] == ["hermes", "kanban", "--board", KANBAN_BOARD, "create"])
+          dispatch_argv("kanban", "M", "d", BRANCH)[0].endswith("hermes")
+          and dispatch_argv("kanban", "M", "d", BRANCH)[1:5] == ["kanban", "--board", KANBAN_BOARD, "create"])
     check("resume dispatch wakes an explicit session id, never 'latest'",
-          dispatch_argv("resume", "M", "d", BRANCH)[:4] == ["hermes", "--resume", SESSION_ID, "-z"])
+          dispatch_argv("resume", "M", "d", BRANCH)[1:4] == ["--resume", SESSION_ID, "-z"])
     check("the dispatch brief forbids merging to main",
           "Never merge to main" in dispatch_argv("kanban", "M", "d", BRANCH)[-2])
     check("unknown dispatch modes are refused", _try(lambda: dispatch_argv("whatever", "M", "d", BRANCH)) is False)
@@ -885,12 +1019,63 @@ def selftest() -> int:
     status, _ = watch(kb3, fetch=lambda: [], lister=lambda: contracted, mode="dry-run")
     check("the watcher starts a board-assigned task too", status == "dispatched", status)
 
+    # 18. the mission's added requirements
+    check("the coordinator account is authorized", "msekhardhar-cell" in AUTHORIZED_ISSUERS, str(AUTHORIZED_ISSUERS))
+    check("the owner account is authorized", "methakon" in AUTHORIZED_ISSUERS)
+    check("idle polling asks for ONE small head call, not the whole issue",
+          "--paginate" not in issue_head_argv() and "comments" in issue_head_argv()[-1])
+    check("an unchanged queue is detected", queue_unchanged({"issue_head": {"comments": 34, "updated_at": "t"}},
+                                                            {"comments": 34, "updated_at": "t"}) is True)
+    check("a changed queue is not mistaken for unchanged",
+          queue_unchanged({"issue_head": {"comments": 34, "updated_at": "t"}},
+                          {"comments": 35, "updated_at": "t"}) is False)
+    check("a fresh state is never 'unchanged'", queue_unchanged({}, {"comments": 1, "updated_at": "t"}) is False)
+    os.environ.setdefault("HG_RESOURCE_DIR", STATE_DIR)
+    globals()["HEAVY_SLOT"] = os.path.join(STATE_DIR, "heavy.lock")
+    check("the heavy slot starts free", heavy_slot_holder() == "")
+    ok1, _ = acquire_heavy_slot("MINE-1")
+    check("the heavy slot can be taken", ok1)
+    ok2, holder = acquire_heavy_slot("OTHER-2")
+    check("a second worker CANNOT take the heavy slot", ok2 is False and "MINE-1" in holder, holder)
+    check("the slot is attributed to the holder", WORKER_ID in heavy_slot_holder())
+    check("releasing someone else's slot is refused", release_heavy_slot("NOT-MINE") is False)
+    check("releasing your own slot works", release_heavy_slot("MINE-1") is True)
+    check("the slot is free again", heavy_slot_holder() == "")
+    check("set-model is used so an EXISTING task still gets the pinned provider",
+          kanban_argv("set-model", "t_x", DISPATCH_MODEL)[4] == "set-model"
+          and "--provider" in kanban_argv("set-model", "t_x", DISPATCH_MODEL, "--provider", DISPATCH_PROVIDER))
+    check("dispatch pins a provider that can actually sustain a session",
+          DISPATCH_PROVIDER and DISPATCH_MODEL, f"{DISPATCH_PROVIDER}/{DISPATCH_MODEL}")
+
     STATE_DIR = old
     print(f"\nselftest: {len(failures)} failure(s)")
     return 1 if failures else 0
 
 
 # ---------------------------------------------------------------------------------------------------- CLI
+
+def issue_head_argv() -> list:
+    """ONE small call to decide whether the expensive paginated fetch is needed at all. The mission requires
+    idle polling to stay lightweight, and re-reading 34 comments every minute to learn nothing has changed is
+    not lightweight."""
+    return [GH, "api", f"repos/methakon/homeguardian-ai/issues/{ISSUE}",
+            "--jq", "{comments: .comments, updated_at: .updated_at}"]
+
+
+def issue_head(head_fn=None) -> dict:
+    head_fn = head_fn or (lambda: json.loads(subprocess.run(issue_head_argv(), capture_output=True,
+                                                           text=True, check=True).stdout))
+    try:
+        return head_fn()
+    except Exception:                                # noqa: BLE001 - an unreadable head means "fetch properly"
+        return {}
+
+
+def queue_unchanged(state: dict, head: dict) -> bool:
+    previous = state.get("issue_head") or {}
+    return bool(head) and previous.get("comments") == head.get("comments") \
+        and previous.get("updated_at") == head.get("updated_at")
+
 
 def comments_argv() -> list:
     """The fetch shape, kept pure so the self-test can assert `--paginate` never quietly disappears.
@@ -899,7 +1084,7 @@ def comments_argv() -> list:
     oldest-first. The unpaginated call therefore returned only the OLDEST 30 and the newest assignments -
     including the very task being demonstrated - were never fetched at all. A worker that silently cannot see
     new work is worse than one that fails loudly, so pagination is asserted below."""
-    return ["gh", "api", "--paginate", f"repos/methakon/homeguardian-ai/issues/{ISSUE}/comments",
+    return [GH, "api", "--paginate", f"repos/methakon/homeguardian-ai/issues/{ISSUE}/comments",
             "--jq", ".[] | {id: .id, body: .body, user: .user.login}"]
 
 
