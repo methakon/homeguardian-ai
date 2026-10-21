@@ -74,6 +74,12 @@ INC=( -I"$ROOT/src" -I"$ROOT/src/core" -I"$ROOT/src/backend/android"
 # already-populated tree, and it defaults to the historical location so existing checkouts are
 # unaffected. Both headers are checked, so a wrong path fails here with a clear message instead of
 # failing later inside the compiler.
+#
+# CAVEAT - symlinked CHILDREN do not work. The lookups below use `find`, which does not descend a
+# symlink. A symlinked HG_DEPS_DIR root IS followed (find starts there), but a directory whose
+# children are symlinks - e.g. `_deps/nlohmann_json-src -> /elsewhere/...` - yields ZERO matches and
+# this reports "not found" even though the headers are reachable. Materialise real directories, or
+# point at a tree that already has them. Cost an hour to diagnose once; written down so it is once.
 DEPS_DIR="${HG_DEPS_DIR:-$ROOT/hg_build/_deps}"
 JSON_DIR="$(find "$DEPS_DIR" -type d -path '*nlohmann_json*/include' 2>/dev/null | head -1 || true)"
 SPDLOG_INC_DIR="$(find "$DEPS_DIR" -type d -path '*spdlog*/include' 2>/dev/null | head -1 || true)"
