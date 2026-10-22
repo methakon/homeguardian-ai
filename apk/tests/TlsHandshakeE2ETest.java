@@ -126,7 +126,11 @@ public final class TlsHandshakeE2ETest {
                             result.frames.add(obs);
                         }
                         if (ackFor != null && obs != null) {
-                            writeFrame(out, ackFor);
+                            // Echo the observation_id and sequence from the frame actually received.
+                            // The transport checks correlation BEFORE classifying the refusal, so an
+                            // ack without them is a mismatch and is never classified - which is
+                            // correct, and was why an earlier version of these cases saw no suspend.
+                            writeFrame(out, correlate(ackFor, obs));
                         }
                         Thread.sleep(120);
                         s.close();
@@ -237,6 +241,37 @@ public final class TlsHandshakeE2ETest {
         @Override public void close() {
             try { serverSocket.close(); } catch (Exception ignored) { }
         }
+    }
+
+    /**
+     * Make an ack frame correlate with the observation that was actually received.
+     *
+     * The transport rejects an ack whose observation_id or sequence does not match what it sent,
+     * BEFORE it looks at the refusal reason. A scripted ack therefore has to echo the real values, or
+     * it is discarded as uncorrelated and the reason is never classified.
+     */
+    static String correlate(String ackTemplate, String observationFrame) {
+        final String oid = between(observationFrame, "\"observation_id\":\"", "\"");
+        final String seq = between(observationFrame, "\"sequence\":", ",");
+        String ack = ackTemplate;
+        if (!ack.contains("observation_id")) {
+            ack = ack.replaceFirst("\\{", "{\"observation_id\":\"" + oid + "\",");
+        } else {
+            ack = ack.replace(between(ack, "\"observation_id\":\"", "\""), oid);
+        }
+        if (!ack.contains("\"sequence\"")) {
+            ack = ack.replaceFirst("\\{", "{\"sequence\":" + seq + ",");
+        }
+        return ack;
+    }
+
+    static String between(String s, String open, String close) {
+        final int a = s.indexOf(open);
+        if (a < 0) {
+            return "";
+        }
+        final int b = s.indexOf(close, a + open.length());
+        return b < 0 ? "" : s.substring(a + open.length(), b);
     }
 
     static String readFrame(DataInputStream in) {
@@ -584,6 +619,84 @@ public final class TlsHandshakeE2ETest {
                             + "refused remotely instead");
             check("T10b a valid identity does connect, so T10a is not a no-op",
                     true, "covered by T1/T2 which connect with a normal identity");
+        }
+
+        // ---- T11: a hub refusal delivered over a REAL socket must drive the disposition ----------
+        // The classification is unit-tested; this proves the socket path actually FEEDS it. A hub that
+        // answers the observation with a refusal reason must produce the right disposition, because
+        // "stop and wait for the operator" and "drop this one and keep pushing" are very different
+        // behaviours and only this path shows which one happens.
+        {
+            // consent withdrawn -> the transport must SUSPEND
+            Peer peer = new Peer(dir,
+                    "{\"kind\":\"welcome\",\"protocol_version_major\":1,\"last_sequence\":0}",
+                    "{\"protocol_version_major\":1,\"kind\":\"ack\",\"accepted\":false,"
+                            + "\"reason\":\"consent_withdrawn\"}");
+            peer.start();
+            ObservationTransport t = new ObservationTransport(config(dir, peer.port()));
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            Thread.sleep(1200);
+            boolean suspended = t.isSuspended();
+            String reason = t.suspensionReason();
+            t.stop();
+            peer.await(2000);
+            peer.close();
+            check("T11a an 'consent_withdrawn' refusal over a real socket SUSPENDS the transport",
+                    suspended, "isSuspended=" + suspended);
+            check("T11b the suspension reason is the hub's own reason, passed through verbatim",
+                    "consent_withdrawn".equals(reason), "reason=" + reason);
+        }
+
+        {
+            // a replay refusal -> PERMANENT: retrying the same sequence cannot fix it
+            Peer peer = new Peer(dir,
+                    "{\"kind\":\"welcome\",\"protocol_version_major\":1,\"last_sequence\":0}",
+                    "{\"protocol_version_major\":1,\"kind\":\"ack\",\"accepted\":false,"
+                            + "\"reason\":\"replayed_sequence\"}");
+            peer.start();
+            ObservationTransport t = new ObservationTransport(config(dir, peer.port()));
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            Thread.sleep(1200);
+            long permanent = t.permanentRejectionCount();
+            long sentCount = t.sentCount();
+            boolean suspended = t.isSuspended();
+            t.stop();
+            peer.await(2000);
+            peer.close();
+            check("T11c a 'replayed_sequence' refusal is PERMANENT: counted, not retried",
+                    permanent >= 1, "permanentRejections=" + permanent);
+            // The discriminating assertion. transmit() returns true for a permanent refusal too, so
+            // an earlier version of the worker counted a REFUSED observation as delivered and
+            // permanentRejections stayed at zero. A node reporting a clean `sent` count while the hub
+            // is discarding its data is the failure this catches.
+            check("T11c2 a permanently refused observation is NOT counted as sent",
+                    sentCount == 0, "sent=" + sentCount
+                            + " - a refused observation must never inflate the delivery count");
+            check("T11d and it does NOT suspend the transport (a replay is not an authorization loss)",
+                    !suspended, "isSuspended=" + suspended);
+        }
+
+        {
+            // a retryable refusal -> RETRY: the hub was busy, not wrong
+            Peer peer = new Peer(dir,
+                    "{\"kind\":\"welcome\",\"protocol_version_major\":1,\"last_sequence\":0}",
+                    "{\"protocol_version_major\":1,\"kind\":\"ack\",\"accepted\":false,"
+                            + "\"reason\":\"queue_full\"}");
+            peer.start();
+            ObservationTransport t = new ObservationTransport(config(dir, peer.port()));
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            Thread.sleep(1200);
+            long permanent = t.permanentRejectionCount();
+            boolean suspended = t.isSuspended();
+            t.stop();
+            peer.await(2000);
+            peer.close();
+            check("T11e a 'queue_full' refusal is RETRYABLE: not counted as permanent, not suspended",
+                    permanent == 0 && !suspended,
+                    "permanent=" + permanent + " suspended=" + suspended);
         }
 
         System.out.println();

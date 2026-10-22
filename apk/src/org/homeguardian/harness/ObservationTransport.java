@@ -553,19 +553,38 @@ public class ObservationTransport {
                 sleepQuietly(1000);
                 continue;
             }
-            if (transmit(next)) {
-                synchronized (lock) {
-                    queue.pollFirst();
-                }
-                sent++;
-            } else if (terminalFailure) {
-                // The hub refused this observation for a reason that will never change
-                // (bad frame, duplicate, revoked): sending it again is pointless.
+            // ORDER MATTERS HERE, and it was wrong.
+            //
+            // transmit() returns TRUE for three different outcomes: the hub accepted it, the hub
+            // refused it permanently, and the hub's refusal SUSPENDED the transport. Testing the
+            // boolean first therefore caught all three in the "delivered" branch, so `sent++` counted
+            // a PERMANENTLY REFUSED observation as delivered, and the `terminalFailure` branch below
+            // was unreachable - permanentRejections was dead code that never incremented.
+            //
+            // That made the operator-facing counters lie in the direction that matters least visibly:
+            // "sent=N" would include observations the hub had thrown away, so a node could report a
+            // clean delivery count while losing data.
+            //
+            // terminalFailure is checked FIRST, and `sent` is only incremented when the hub actually
+            // accepted the observation.
+            final boolean outcome = transmit(next);
+            if (terminalFailure) {
+                // Refused for a reason that will never change (bad frame, replay, revoked):
+                // dropping it is correct, and it is NOT a delivery.
                 terminalFailure = false;
                 synchronized (lock) {
                     queue.pollFirst();
                 }
                 permanentRejections++;
+            } else if (outcome) {
+                synchronized (lock) {
+                    queue.pollFirst();
+                }
+                // A suspension resolves the message (it was decided, not lost) but it is still not a
+                // delivery, so it must not inflate `sent`.
+                if (!suspended) {
+                    sent++;
+                }
             } else {
                 online = false;
                 // Bounded backoff: a phone that cannot reach the hub retries slowly

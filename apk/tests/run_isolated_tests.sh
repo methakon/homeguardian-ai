@@ -44,7 +44,8 @@ javac --release 8 -Xlint:-options -classpath "$OUT/prod:$AJ" -d "$OUT/test" \
     "$APK_DIR/tests/ProducerSchemaConformanceTest.java" \
     "$APK_DIR/tests/ObservationTransportPolicyTest.java" \
     "$APK_DIR/tests/CrossReceiverContractTest.java" \
-    "$APK_DIR/tests/TlsHandshakeE2ETest.java"
+    "$APK_DIR/tests/TlsHandshakeE2ETest.java" \
+    "$APK_DIR/tests/SyntheticVectorEmitTest.java"
 echo "    test classes: $(find "$OUT/test" -name '*.class' | wc -l)"
 
 echo "==> 3b/4 generate the cross-receiver fixture from the C++ receiver source"
@@ -107,6 +108,7 @@ java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ProducerSchemaC
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.ObservationTransportPolicyTest || rc=1
 java -Dhg.root="$ROOT" -classpath "$CP" org.homeguardian.harness.CrossReceiverContractTest || rc=1
 java -Dhg.root="$ROOT" -Dhg.tls.dir="$HG_TLS_DIR" -classpath "$CP" org.homeguardian.harness.TlsHandshakeE2ETest || rc=1
+java -Dhg.root="$ROOT" -Dhg.vector.out="$ROOT/hg_verify/synthetic_vector" -classpath "$CP" org.homeguardian.harness.SyntheticVectorEmitTest || rc=1
 echo
 echo "==> exit code: $rc"
 exit $rc
