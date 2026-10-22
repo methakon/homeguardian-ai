@@ -169,6 +169,9 @@ openssl pkcs12 -export -in "$D/client.pem" -inkey "$D/client.key" -certfile "$D/
   -out "$E2E_DIR/device.p12" -passout pass:testonly -name hgtest >/dev/null 2>&1 \
   || die "device.p12 failed"
 printf 'testonly' > "$E2E_DIR/device.p12.pass"
+# Remove first: keytool refuses to overwrite an existing alias, and in FRESH mode the old keystore is
+# still on disk holding the old CA under the same alias.
+rm -f "$E2E_DIR/ca.p12"
 "$JAVA_HOME/bin/keytool" -importcert -noprompt -alias hgtestca -file "$D/ca.pem" \
   -keystore "$E2E_DIR/ca.p12" -storetype PKCS12 -storepass testonly >/dev/null 2>&1 \
   || die "ca.p12 failed"
@@ -180,9 +183,22 @@ fi  # end FRESH generation
 # 5. Start the REAL ingress.
 # ---------------------------------------------------------------------------------------------
 say "==> 5/6 start the real D-03 ingress on 127.0.0.1:$PORT"
-# REUSE a healthy container rather than recreating it. This container is shared with Hermes 3, and
-# removing it would drop whatever watermark and audit state they are relying on. Only start a new one
-# when none is running, and say which path was taken so the choice is visible in the output.
+# REUSE a healthy container rather than recreating it. The container is shared with another lane, and
+# removing it would drop whatever watermark and audit state they rely on.
+#
+# BUT a FRESH generation and an existing container are INCOMPATIBLE: the running ingress loaded its CA
+# and registry at startup, so newly generated material cannot be verified by it. So when FRESH=1 this
+# script recreates ITS OWN container - and never the shared one, whatever FRESH is set to. Getting this
+# wrong is not a loud failure: the container stays up and every connection is refused, which reads as a
+# trust problem rather than a stale-process one.
+SHARED_CONTAINER="hg_e2e_ingress"
+if [ "$FRESH" = "1" ] && [ "$CONTAINER" != "$SHARED_CONTAINER" ]; then
+  say "FRESH=1: recreating $CONTAINER so it loads the newly generated material"
+  docker rm -f "$CONTAINER" >/dev/null 2>&1
+elif [ "$FRESH" = "1" ]; then
+  die "FRESH=1 with CONTAINER=$SHARED_CONTAINER: refusing to recreate a container this lane does not own"
+fi
+
 if docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null | grep -q running; then
   say "reusing the running container $CONTAINER (not removed: it is shared)"
   docker logs "$CONTAINER" 2>&1 | grep 'ready' | tail -1 | sed 's/^/    /' || true
@@ -216,13 +232,58 @@ mkdir -p "$OUT/prod" "$OUT/stubs" "$OUT/test"
   "$REPO"/apk/src/org/homeguardian/harness/*.java >/dev/null 2>&1 || die "prod compile failed"
 "$JAVA_HOME/bin/javac" --release 8 -Xlint:-options -classpath "$OUT/prod:$AJ" -d "$OUT/test" \
   "$REPO"/apk/tests/RealIngressE2ETest.java >/dev/null 2>&1 || die "test compile failed"
+"$JAVA_HOME/bin/javac" --release 8 -Xlint:-options -classpath "$OUT/prod:$AJ" -d "$OUT/test" \
+  "$REPO"/apk/tests/SyntheticVectorEmitTest.java >/dev/null 2>&1 || die "vector compile failed"
 
 CP="$OUT/stubs:$OUT/prod:$OUT/test:$AJ"
 "$JAVA_HOME/bin/java" -Dhg.e2e.dir="$E2E_DIR" -Dhg.e2e.host=127.0.0.1 -Dhg.e2e.port="$PORT" \
   -classpath "$CP" org.homeguardian.harness.RealIngressE2ETest
 RC=$?
 
+# ---------------------------------------------------------------------------------------------
+# 7. BOTH VECTOR MODES.
+#    pinned = byte-reproducible offline golden, NOT live-valid (its timestamp ages out of the 24h
+#             window and the hub refuses it - that refusal is asserted as E1 above).
+#    live   = fresh timestamp inside the window, same shape, same synthetic provenance.
+#    The digests differ between modes BY DESIGN; within a mode the pinned one must not.
+# ---------------------------------------------------------------------------------------------
 say ""
-say "the container is LEFT RUNNING for inspection. Stop it with:"
+say "==> 7/7 emit both vector modes"
+"$JAVA_HOME/bin/java" -Dhg.vector.out="$E2E_DIR/vector-pinned" -classpath "$CP" \
+  org.homeguardian.harness.SyntheticVectorEmitTest | sed 's/^/    /' || RC=1
+"$JAVA_HOME/bin/java" -Dhg.vector.out="$E2E_DIR/vector-live" -Dhg.vector.mode=live -classpath "$CP" \
+  org.homeguardian.harness.SyntheticVectorEmitTest | sed 's/^/    /' || RC=1
+
+say ""
+say "pinned observation.frame sha256: $(sha256sum "$E2E_DIR/vector-pinned/observation.frame" 2>/dev/null | cut -c1-32)..."
+say "live   observation.frame sha256: $(sha256sum "$E2E_DIR/vector-live/observation.frame" 2>/dev/null | cut -c1-32)..."
+say "both manifests record mode, live_valid and the ingress timestamp windows."
+
+say ""
+say "this run used $CONTAINER on 127.0.0.1:$PORT. It is left RUNNING for inspection:"
 say "  docker rm -f $CONTAINER"
+
+# ---------------------------------------------------------------------------------------------
+# LIFECYCLE NOTE — read before restarting anything.
+#
+# A container must not be restarted in isolation from the tree it mounts. `rm -rf` on a bind-mounted
+# directory leaves the running container attached to the UNLINKED inode: its /state then reads as
+# empty and every connection fails `certificate verify failed`, which looks like a trust problem and
+# is actually a filesystem one. Restarting it is not enough either - the ingress loads its CA at
+# startup, so it must be restarted together with the material it was started from.
+#
+# So the CLEAN START for a container that reports that symptom is a fresh generation plus a fresh
+# container, in that order:
+#
+#   HG_E2E_FRESH=1 bash scripts/run_real_ingress_e2e.sh
+#
+# That regenerates the TEST-ONLY material and starts a new container bound to it. The shipped
+# hg_e2e_ingress (a shared container) is deliberately NOT touched by this script: it is out of this
+# lane's scope, and a lifecycle change to it is an owner decision. If it is in the broken state above,
+# the owner's remedy is the same recipe with HG_E2E_CONTAINER=hg_e2e_ingress after stopping it.
+# ---------------------------------------------------------------------------------------------
+say ""
+say "clean start after a stale-inode break (see the lifecycle note in this script):"
+say "  HG_E2E_FRESH=1 bash scripts/run_real_ingress_e2e.sh"
+
 exit $RC

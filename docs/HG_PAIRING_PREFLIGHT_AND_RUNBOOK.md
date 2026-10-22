@@ -122,14 +122,90 @@ takes observations as data:
 - **Revocation.** Revoking the device in the registry makes the next exchange return `device_revoked`,
   which suspends the transport. It does **not** silently drop one observation and continue.
 
-## 7. What remains owner-gated
+## 8. Two vector modes, because one timestamp cannot serve both purposes
+
+A pinned timestamp makes bytes reproducible; the ingress **bounds** the timestamp. `kMaxObservationAgeMs`
+is 86400000 (24 h), so a fixed instant expires the day after it is chosen. The original pinned value
+`1761100000000` = **2025-10-22T02:26:40Z** was exactly a year stale and the live ingress refuses it
+`malformed_timestamp / "acquisition timestamp is too old"`. **Deterministic bytes cannot be used
+unchanged in a live test**, and pretending otherwise yields either a test that fails forever or one that
+gets quietly skipped.
+
+```
+pinned   byte-reproducible offline golden. NOT live-valid. sha256 736c4b88... (stable across runs)
+live     fresh acquired_at_ms inside the window. sha256 0a1781fa... (differs every run)
+         BOTH: acquisition_mode=synthetic, provenance_claim=synthetic, same framing, same vocabulary
+```
+
+The manifest records `mode`, `live_valid`, `acquired_at_utc` and the exact `ingress_timestamp_windows`,
+so a consumer can tell which artefact it holds without inferring it.
+
+```
+-Dhg.vector.mode=pinned   (default)   -Dhg.vector.mode=live
+```
+
+`V10` asserts the pinned golden **is** outside the window — so a later change that quietly refreshed it
+would break the build rather than silently stop being reproducible.
+
+### The three time rejections, and their two different tokens
+
+```
+acquired_at_ms > now + 120s              -> malformed_timestamp  "in the future"
+now - acquired_at_ms > 24h               -> malformed_timestamp  "too old"
+acquired_at_ms < last_observation - 60s  -> stale_timestamp      "behind the device watermark"
+```
+
+The third is a distinct token and is about **ordering within a device**, not age. E1–E4 assert all of
+these against the live ingress, including `E1`: the hub refuses the pinned golden's own timestamp.
+
+## 9. Allowlisted vocabulary is NOT detector capability — the distinction that matters
+
+`camera_availability` / `availability` are **wire-valid**: the ingress accepts, records and audits them.
+That is all they are. From `main_ingress.cpp`:
+
+> ingested sensor observations are recorded and audited but **cast NO vote** — so they can never raise an
+> alert on their own. Listing the ingested ids (e.g. `sensor.motion`) is an explicit operator decision to
+> let that evidence participate in fusion.
+
+So:
+
+- **allowlisted source_type** → the frame is accepted. Nothing more is implied.
+- **detector-capable** → the id must also appear in `evidence_detector_ids` in the ingress config.
+
+**This vector is wire-valid and detector-INERT by default.** It proves the transport contract; it does
+**not** prove that an ingested observation raises an alert. Claiming otherwise would be the same class of
+error as presenting synthetic evidence as physical. Producing rule-compliant detector evidence is a
+separate artefact and requires the operator listing the id — an operator decision, not a code change.
+
+## 10. Test-container lifecycle
+
+`hg_e2e_ingress_s2` (this lane) on `127.0.0.1:18444` with its own state dir. The shared `hg_e2e_ingress`
+is **not touched**.
+
+**Never `rm -rf` a bind-mounted tree, and never restart a container independently of the material it was
+started from.** A bind mount holds the **inode**: deleting the host directory leaves the running
+container attached to the *unlinked* one, so `/state` reads empty and every connection fails
+`certificate verify failed` — which presents as a trust problem and is a filesystem one. The ingress also
+loads its CA at startup, so a regenerated CA cannot be verified by a running process.
+
+**Clean start** (the remedy for that symptom):
+
+```
+HG_E2E_FRESH=1 bash scripts/run_real_ingress_e2e.sh
+```
+
+`FRESH=1` regenerates the material **and recreates this lane's container**; the script refuses
+`FRESH=1` against the shared container name rather than recreating a container it does not own.
+
+## 11. What remains owner-gated
 
 1. **Credential issuance** for the designated device, and the registry entry.
-2. **Publishing the ingress on a LAN interface** — a network-boundary change, #23's decision. Today
-   `docker port` is empty and `127.0.0.1:8443` is refused, so there is no reachable endpoint.
-3. **`apk_install`** if the Mi A3 is the subject; `sensor_activation` for any capture.
+2. **Publishing the ingress on a LAN interface** — #23's decision. Today `docker port` is empty and there
+   is no address Android can reach.
+3. **`apk_install`** if the Mi A3 is the subject; **`sensor_activation`** for any capture.
 4. **The #26 trusted approval gate**, which is unresolved.
+5. **A detector-capable evidence fixture**, if fusion evidence is wanted (§9).
 
-Until 1–4 are satisfied, the honest statement is: **the wire contract is verified against the real
-receiver by inspection and against a real TLS peer by execution, and no physical device has yet
+Until then: **the wire contract is verified against the real receiver, and no physical device has
 exchanged a frame with the C++ hub.**
+

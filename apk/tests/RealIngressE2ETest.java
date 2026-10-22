@@ -231,6 +231,40 @@ public final class RealIngressE2ETest {
         check("D4 adoption is monotonic: the result is never below either input",
                 ObservationTransport.adoptedSequence(5L, 5L) >= 5L);
 
+
+        // ---- E: the hub's TIME bounds, against the REAL ingress ---------------------------------
+        // The pinned golden's timestamp (1761100000000 = 2025-10-22T02:26:40Z) is exactly a year old
+        // and the ingress allows 24 hours, so the golden is NOT live-valid and never can be. That is
+        // asserted here rather than discovered later: a deterministic vector cannot double as a live
+        // one, and a test that reuses it live would either fail forever or get quietly skipped.
+        //
+        // Each probe completes a full authenticated exchange first (TLS, client cert, hello, welcome)
+        // and uses a FRESH sequence, so the only thing under test is the timestamp.
+        final long now = System.currentTimeMillis();
+        final String pinnedAck = rawAuthenticatedExchange(dir, host, port, cfg.deviceId, 0L,
+                1761100000000L);
+        check("E1 the LIVE hub refuses the pinned golden's timestamp as malformed_timestamp "
+                        + "(confirmed: the golden is an offline artefact, not a live vector)",
+                pinnedAck != null && pinnedAck.contains("malformed_timestamp"),
+                "ack=" + pinnedAck);
+
+        final String futureAck = rawAuthenticatedExchange(dir, host, port, cfg.deviceId, 0L,
+                now + 300000L);
+        check("E2 a timestamp 5 minutes in the FUTURE is refused (clock skew, max 120s)",
+                futureAck != null && futureAck.contains("malformed_timestamp"),
+                "ack=" + futureAck);
+
+        final String expiredAck = rawAuthenticatedExchange(dir, host, port, cfg.deviceId, 0L,
+                now - 172800000L);
+        check("E3 a timestamp 48 hours OLD is refused (max age 24h)",
+                expiredAck != null && expiredAck.contains("malformed_timestamp"),
+                "ack=" + expiredAck);
+
+        final String freshAck = rawAuthenticatedExchange(dir, host, port, cfg.deviceId, 0L, 0L);
+        check("E4 but a FRESH synthetic timestamp IS accepted, so the live mode is genuinely live-valid",
+                freshAck != null && freshAck.contains("\"accepted\":true"),
+                "ack=" + freshAck);
+
         System.out.println();
         if (skipped > 0) {
             System.out.println("  SKIPPED: " + skipped);
@@ -314,6 +348,17 @@ public final class RealIngressE2ETest {
      */
     static String rawAuthenticatedExchange(String dir, String host, int port, String deviceId,
                                            long sequenceOverride) throws Exception {
+        return rawAuthenticatedExchange(dir, host, port, deviceId, sequenceOverride, 0L);
+    }
+
+    /**
+     * As above, but with an explicit acquisition timestamp so the hub's TIME bounds can be probed.
+     *
+     * @param acquiredAtOverride millisecond instant to send; 0 means "now".
+     */
+    static String rawAuthenticatedExchange(String dir, String host, int port, String deviceId,
+                                           long sequenceOverride, long acquiredAtOverride)
+            throws Exception {
         SSLSocket socket = openAuthenticated(dir, host, port);
         try {
             socket.setSoTimeout(6000);
@@ -329,14 +374,20 @@ public final class RealIngressE2ETest {
                 return "no-welcome: " + welcome;
             }
             final long watermark = longField(welcome, "\"last_sequence\":");
-            final long sequence = sequenceOverride >= 0L ? sequenceOverride : watermark;
+            // -1 asks for a DELIBERATE replay (the watermark itself); 0 asks for a FRESH sequence
+            // just above it, so a time probe cannot be refused for replay before its timestamp is
+            // even looked at; >0 is explicit.
+            final long sequence = sequenceOverride == -1L ? watermark
+                    : sequenceOverride > 0L ? sequenceOverride
+                    : watermark + 1L;
 
             writeFrame(out, "{\"protocol_version_major\":1,\"protocol_version_minor\":0,"
                     + "\"kind\":\"observation\",\"observation_id\":\"raw-replay-probe-" + RUN + "\","
                     + "\"device_id\":\"" + deviceId + "\","
                     + "\"source_type\":\"camera_availability\",\"observation_type\":\"availability\","
                     + "\"acquisition_mode\":\"synthetic\","
-                    + "\"acquired_at_ms\":" + System.currentTimeMillis() + ","
+                    + "\"acquired_at_ms\":" + (acquiredAtOverride > 0L
+                            ? acquiredAtOverride : System.currentTimeMillis()) + ","
                     + "\"sequence\":" + sequence + ","
                     + "\"features\":{\"availability\":1.0,\"state\":\"present\"},"
                     + "\"unit\":\"fraction\",\"confidence\":0.9,"

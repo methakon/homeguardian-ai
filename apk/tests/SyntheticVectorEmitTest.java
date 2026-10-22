@@ -69,6 +69,15 @@ public final class SyntheticVectorEmitTest {
         return buffer.toByteArray();
     }
 
+    /** ISO-8601 UTC for a millisecond instant, so the manifest's timestamp is human-checkable. */
+    static String utcIso(long millis) {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.ROOT) {
+            {
+                setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            }
+        }.format(new java.util.Date(millis));
+    }
+
     static String sha256(byte[] data) throws Exception {
         final MessageDigest md = MessageDigest.getInstance("SHA-256");
         final byte[] digest = md.digest(data);
@@ -90,7 +99,24 @@ public final class SyntheticVectorEmitTest {
 
         final String DEVICE_ID = "hg-android-synthetic-01";
         final long SEQ = 1L;
-        final long NOW = 1761100000000L;          // pinned so the vector is byte-reproducible
+
+        // ---- TWO MODES, because one timestamp cannot serve both purposes --------------------------
+        //
+        // A pinned timestamp makes the bytes reproducible, which is what an offline golden vector is
+        // for. But the ingress BOUNDS the timestamp: kMaxObservationAgeMs is 24 hours, so a fixed
+        // instant stops being valid the day after it is chosen. The original pinned value
+        // (1761100000000 = 2025-10-22T02:26:40Z) was exactly a year stale, and the live ingress
+        // refuses it `malformed_timestamp / "acquisition timestamp is too old"`. Deterministic bytes
+        // therefore CANNOT be used unchanged in a live test, and pretending otherwise would mean
+        // either a silently-skipped live test or a golden that only ever passed on the day it was cut.
+        //
+        //   pinned  byte-reproducible offline golden. NOT live-valid; the manifest says so, and the
+        //           live run refuses it on purpose as a negative case.
+        //   live    fresh acquired_at_ms inside the hub's window. Provenance is still "synthetic", and
+        //           the digest + ACK correlation are recorded exactly as in pinned mode.
+        final String mode = System.getProperty("hg.vector.mode", "pinned");
+        final boolean live = "live".equals(mode);
+        final long NOW = live ? System.currentTimeMillis() : 1761100000000L;
         final String OBS_ID = "synthetic-obs-0001";
         final String SOURCE_TYPE = "camera_availability";  // NOT "camera": the ingress allowlists source types
         final String OBS_TYPE = "availability";  // NOT "motion": that is not an allowlisted observation type
@@ -182,6 +208,26 @@ public final class SyntheticVectorEmitTest {
         check("V8e a stale sequence in the receipt is a mismatch, not a delivery",
                 !staleAck.contains("\"sequence\":" + SEQ));
 
+        // ---- V9-V11: the two modes differ ONLY in the timestamp ------------------------------------
+        // If the live mode silently changed the shape, provenance, or framing, it would stop being the
+        // same vector and the digests would be comparing different things.
+        check("V9a live mode carries a timestamp inside the ingress window (<=24h old)",
+                !live || (System.currentTimeMillis() - NOW) < 86400000L,
+                "age=" + (System.currentTimeMillis() - NOW) + " ms");
+        check("V9b live mode carries a timestamp that is not in the future",
+                !live || NOW <= System.currentTimeMillis() + 120000L);
+        // The pinned golden is STALE BY DESIGN, and that is asserted rather than left to drift: if a
+        // later change quietly refreshed it, the "pinned" mode would stop being reproducible and
+        // nothing would notice.
+        check("V10 the pinned golden is intentionally outside the ingress window (it is an offline "
+                        + "artefact and would be refused live as malformed_timestamp/too old)",
+                live || (System.currentTimeMillis() - NOW) > 86400000L,
+                "age=" + (System.currentTimeMillis() - NOW) + " ms");
+        check("V11 provenance is 'synthetic' in BOTH modes (a fresh clock is not a claim of real "
+                        + "capture)", "synthetic".equals(o.provenanceClaim));
+        check("V11b the source/observation vocabulary is unchanged in BOTH modes",
+                "camera_availability".equals(o.sourceType) && "availability".equals(o.observationType));
+
         // ---- write the vector ---------------------------------------------------------------------
         write(outDir, "hello.frame", helloFrame);
         write(outDir, "observation.frame", obsFrame);
@@ -192,6 +238,8 @@ public final class SyntheticVectorEmitTest {
         final String manifest =
                 "{\n"
                         + "  \"contract_version\": 1,\n"
+                        + "  \"mode\": \"" + mode + "\",\n"
+                        + "  \"live_valid\": " + (live ? "true" : "false") + ",\n"
                         + "  \"purpose\": \"bounded synthetic Android->C++ observation test vector\",\n"
                         + "  \"real\": [\"framing\", \"field names\", \"json shape\", \"length prefixes\"],\n"
                         + "  \"synthetic\": true,\n"
@@ -200,6 +248,16 @@ public final class SyntheticVectorEmitTest {
                         + "  \"observation_id\": \"" + OBS_ID + "\",\n"
                         + "  \"sequence\": " + SEQ + ",\n"
                         + "  \"acquired_at_ms\": " + NOW + ",\n"
+                        + "  \"acquired_at_utc\": \"" + utcIso(NOW) + "\",\n"
+                        + "  \"ingress_timestamp_windows\": {\n"
+                        + "    \"max_future_skew_ms\": 120000,\n"
+                        + "    \"max_age_ms\": 86400000,\n"
+                        + "    \"max_out_of_order_ms\": 60000,\n"
+                        + "    \"note\": \"outside these the ingress rejects malformed_timestamp (future "
+                        + "or too old) or stale_timestamp (behind the device watermark)\"\n"
+                        + "  },\n"
+                        + "  \"mode_meaning\": \"pinned = byte-reproducible offline golden, NOT live-valid; "
+                        + "live = fresh timestamp inside the window, same shape and provenance\",\n"
                         + "  \"acquisition_mode\": \"synthetic\",\n"
                         + "  \"provenance_claim\": \"synthetic\",\n"
                         + "  \"hello_sha256\": \"" + sha256(helloFrame) + "\",\n"
