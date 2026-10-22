@@ -99,11 +99,21 @@ printf 'extendedKeyUsage=clientAuth\n' > "$D/client.ext"
 openssl x509 -req -in "$D/client.csr" -CA "$D/ca.pem" -CAkey "$D/ca.key" -CAcreateserial \
   -out "$D/client.pem" -days 2 -extfile "$D/client.ext" >/dev/null 2>&1 || die "client cert failed"
 
+# A SECOND client identity. device_id is derived from the certificate CN, and the detector fixture needs
+# two distinct source types on two distinct registered devices - a single identity could not legally
+# present both without the hub seeing one device make contradictory claims.
+openssl req -newkey rsa:2048 -nodes -keyout "$D/client2.key" -out "$D/client2.csr" \
+  -subj "/CN=hg-android-presence-01" >/dev/null 2>&1 || die "client2 csr failed"
+openssl x509 -req -in "$D/client2.csr" -CA "$D/ca.pem" -CAkey "$D/ca.key" -CAcreateserial \
+  -out "$D/client2.pem" -days 2 -extfile "$D/client.ext" >/dev/null 2>&1 || die "client2 cert failed"
+
 # The registry binds a device to the certificate FINGERPRINT, and the format matters:
 # TlsTransport.cpp builds it as lowercase hex with NO colons. A colons-separated fingerprint
 # authenticates as a different device and is refused.
 FP=$(openssl x509 -in "$D/client.pem" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-Z' 'a-z')
-say "client fingerprint: ${FP:0:24}..."
+FP2=$(openssl x509 -in "$D/client2.pem" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr 'A-Z' 'a-z')
+say "client  fingerprint: ${FP:0:24}..."
+say "client2 fingerprint: ${FP2:0:24}..."
 
 # ---------------------------------------------------------------------------------------------
 # 2. Test registry. Field names and bounds come from DeviceRegistry.cpp:
@@ -128,6 +138,21 @@ cat > "$E2E_DIR/registry.json" <<JSON
       "consent_purpose": "loopback protocol verification",
       "capture_enabled": true,
       "capabilities": ["camera", "microphone"]
+    },
+    {
+      "device_id": "hg-android-presence-01",
+      "display_name": "HG TEST-ONLY presence node",
+      "device_type": "android",
+      "credential_id": "$FP2",
+      "paired": true,
+      "revoked": false,
+      "has_camera": false,
+      "has_microphone": false,
+      "consent_granted": true,
+      "consent_subject": "test-harness",
+      "consent_purpose": "loopback protocol verification",
+      "capture_enabled": true,
+      "capabilities": ["presence"]
     }
   ]
 }
@@ -155,6 +180,7 @@ cat > "$E2E_DIR/ingress.json" <<JSON
   "audit_db_path": "/state/audit.db",
   "max_connections": 4,
   "max_workers": 2,
+  "evidence_detector_ids": ${HG_E2E_EVIDENCE:-["sensor.motion", "sensor.presence"]},
   "verbose": true
 }
 JSON
@@ -169,6 +195,10 @@ openssl pkcs12 -export -in "$D/client.pem" -inkey "$D/client.key" -certfile "$D/
   -out "$E2E_DIR/device.p12" -passout pass:testonly -name hgtest >/dev/null 2>&1 \
   || die "device.p12 failed"
 printf 'testonly' > "$E2E_DIR/device.p12.pass"
+openssl pkcs12 -export -in "$D/client2.pem" -inkey "$D/client2.key" -certfile "$D/ca.pem" \
+  -out "$E2E_DIR/device2.p12" -passout pass:testonly -name hgtest2 >/dev/null 2>&1 \
+  || die "device2.p12 failed"
+printf 'testonly' > "$E2E_DIR/device2.p12.pass"
 # Remove first: keytool refuses to overwrite an existing alias, and in FRESH mode the old keystore is
 # still on disk holding the old CA under the same alias.
 rm -f "$E2E_DIR/ca.p12"
@@ -258,6 +288,20 @@ say ""
 say "pinned observation.frame sha256: $(sha256sum "$E2E_DIR/vector-pinned/observation.frame" 2>/dev/null | cut -c1-32)..."
 say "live   observation.frame sha256: $(sha256sum "$E2E_DIR/vector-live/observation.frame" 2>/dev/null | cut -c1-32)..."
 say "both manifests record mode, live_valid and the ingress timestamp windows."
+
+# ---------------------------------------------------------------------------------------------
+# 8. DETECTOR-CAPABLE FIXTURE.
+#    The pinned/live vectors above carry camera_availability, which is wire-valid but casts no vote.
+#    These two streams carry the types and states the C++ actually maps to `detected`, on two distinct
+#    registered identities, driven by the same production serializer.
+# ---------------------------------------------------------------------------------------------
+say ""
+say "==> 8/8 detector-capable fixture (motion + presence)"
+"$JAVA_HOME/bin/javac" --release 8 -Xlint:-options -classpath "$OUT/prod:$AJ" -d "$OUT/test" \
+  "$REPO"/apk/tests/DetectorProducerFixtureTest.java >/dev/null 2>&1 || die "detector fixture compile failed"
+"$JAVA_HOME/bin/java" -Dhg.e2e.dir="$E2E_DIR" -Dhg.e2e.host=127.0.0.1 -Dhg.e2e.port="$PORT" \
+  -Dhg.detector.out="$E2E_DIR/detector-fixture" -classpath "$CP" \
+  org.homeguardian.harness.DetectorProducerFixtureTest | sed 's/^/    /' || RC=1
 
 say ""
 say "this run used $CONTAINER on 127.0.0.1:$PORT. It is left RUNNING for inspection:"

@@ -637,7 +637,9 @@ public class ObservationTransport {
             // watermark has just become known, and only for this message.
             rebaseAboveWatermark(observation);
 
-            if (!writeFrame(socket, observationToJson(observation).toString())) {
+            final String payload = observationToJson(observation).toString();
+            lastSentFrame = payload;
+            if (!writeFrame(socket, payload)) {
                 return false;
             }
             final String ack = readFrame(socket);
@@ -910,6 +912,20 @@ public class ObservationTransport {
      * fixed, so the rebase below compares against this value directly.
      */
     private volatile long lastAdoptedWatermark = 0L;
+
+    /**
+     * The exact observation frame the serializer produced for the most recent send, or null.
+     *
+     * Exposed so a test can assert on what the SERIALIZER emitted rather than re-deriving the JSON
+     * alongside it. A test that rebuilt the payload itself would be checking its own construction, not
+     * the production path - which is the mistake the offline suite already made once with a stub that
+     * mis-serialized.
+     */
+    private volatile String lastSentFrame = null;
+
+    public String lastSentFrame() {
+        return lastSentFrame;
+    }
 
     /**
      * Rebase an observation's sequence above the hub's watermark, once, at the transmission boundary.
