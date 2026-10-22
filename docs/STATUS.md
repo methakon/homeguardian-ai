@@ -2,6 +2,22 @@
 
 **Last updated:** 2026-10-23
 
+## On-phone analyzer candidate — not yet deployed
+
+The approved in-place update is being prepared on the isolated Android branch.
+The current host analyzer suite passes **34 checks, 0 failures**, including a
+synthetic alert persisted to SQLite and the exact id recovered after analyzer
+recreation. Bridge regression suites also pass: **4 Python tests**, a nested Java
+UI harness with **8 scenarios**, and **50 route-policy checks**. Initial alert
+fixture failures were traced to a test/phone configuration mismatch; classic
+fusion remains the default and its confidence gate is unchanged.
+
+A fresh ARM64 APK build is in progress; no installation or phone acceptance is
+claimed. The latest ADB inventory is empty, blocking handset deployment and
+readback. Existing phone/VPN/MCP evidence below is historical, not a fresh health
+check. Physical sensor acceptance remains open. See the
+[candidate verification checkpoint](ANDROID_EDGE_ANALYZER_UPDATE.md).
+
 ## Private remote MCP readiness — 2026-10-23
 
 **04:02 IST — REMOTE MCP VERIFIED OVER THE PRIVATE VPN.** All four reported
