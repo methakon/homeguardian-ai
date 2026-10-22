@@ -1,0 +1,55 @@
+--- a/docs/SUBMISSION_PACKAGE.md
++++ b/docs/SUBMISSION_PACKAGE.md
+@@ -231,6 +231,6 @@
+ | Final Devpost submission + verify the rendered page | ⬜ **USER** — submit and confirm it renders | user |
+ 
+ **Not claimed:** AWS Builder mini-challenge, Open Source mini-challenge, live
+-Alexa+ integration, MCP server, Ring integration, physical sensor capture, and
++Alexa+ integration, Ring integration, physical sensor capture, and
+ real-world detection accuracy. The simulated Alexa+ experience is **not**
+ equivalent to production Alexa+ integration.
+--- a/docs/DEVPOST_DEMONSTRATION_GUIDE.md
++++ b/docs/DEVPOST_DEMONSTRATION_GUIDE.md
+@@ -58,9 +58,9 @@
+ 
+ ### Judge Failure Guidance & Troubleshooting
+ If `scripts/verify_judge_release.sh` reports a failure:
+-1. **Missing Prerequisites:** Ensure `curl`, `jq`, `cmake` (>= 3.20), `make`, `g++` (or `clang++` with C++20), and `node` (>= 18) are installed on the host. The script will explicitly identify any missing tool.
+-2. **Missing Node Modules:** If npm packages are absent, run `npm install` once from repository root (installs `ws` and `werift` without cloud access).
+-3. **Stale Background Listeners:** If test ports are blocked by an existing daemon, run `pkill -f hg_mcp_server || true` and retry. All ports are selected dynamically from unprivileged ranges (`18800-19900`).
++1. **Missing Prerequisites:** Ensure `curl`, `jq`, `cmake` (>= 3.28.3), `make`, `g++` (or `clang++` with C++20), and `node` (>= 18) are installed on the host. The script will explicitly identify any missing tool.
++2. **Missing Node Modules:** If npm packages are absent, run `npm ci` once from repository root (downloads locked `ws` and `werift` dependencies; package-registry access is required on first installation).
++3. **Stale Background Listeners:** If test ports are blocked by an existing daemon, stop only the server process you started, then retry. All ports are selected dynamically from unprivileged ranges (`18800-19900`).
+ 4. **Credential Permissions (0600):** The native C++ MCP server strictly enforces POSIX `0600` or `0400` permissions on secret files and refuses execution if world-readable. The script automatically sets `chmod 600` on generated test credentials.
+ 5. **No Cloud or Network Required:** All checks execute strictly over `127.0.0.1` loopback; no internet access or VPN connection is needed during verification.
+ 
+@@ -99,7 +99,8 @@
+ Launches a single native C++ binary (`hg_alexa_bridge`) running an embedded HTTP server to demonstrate the simulated Alexa+ event bridge without Node.js dependencies:
+ 
+ ```bash
+-bash demo.sh
++# Supply an owner-only operator-secret file to enable scenario execution.
++HG_SECRET_FILE=/absolute/path/to/operator.secret bash demo.sh
+ ```
+ *(Prints a dynamic loopback URL such as `http://127.0.0.1:<port>` for minimal single-page event simulation).*
+ 
+--- a/docs/DEVPOST_SUBMISSION.md
++++ b/docs/DEVPOST_SUBMISSION.md
+@@ -30,7 +30,7 @@
+ 2. **Explainable Anomaly Detection & Fusion:** Sensor observations are evaluated on-device against learned statistical baselines (mean, standard deviation, warm-up intervals). Bounded numerical features from multiple sensor modalities are fused into actionable insights. Raw observations alone never trigger alarms; an alert is generated only when fused, multi-sensor mathematical evidence qualifies.
+ 3. **Native Model Context Protocol (MCP) Server:** Fully implements the official Model Context Protocol (spec 2025-11-25) in native C++ over Streamable HTTP. Autonomous AI agents can query home status and alert histories through strictly read-only tools (`get_homeguardian_status`, `get_alert_summary`). Sessions are secured by OS-backed CSPRNG 256-bit tokens with strict credential binding.
+ 4. **Peripheral Device Registry & WebRTC Viewer:** An authoritative C++ device registry manages paired peripherals. A built-in WebRTC streaming engine enables real-time, low-latency browser monitoring. In accordance with safe testing principles, physical cameras default to an unverified state (refusing viewing requests), while synthetic test streams allow comprehensive verification without privacy risk.
+-5. **Alexa-Style Conversational Assistant (Simulated Client):** Using a hardened, read-only simulation contract, the dashboard provides a voice- and text-driven demonstration client for Alexa-style interactions. Operators can query household status (*"Is everything okay?"*, *"Are there any alerts?"*) and inspect live consent states.
++5. **Alexa-Style Conversational Assistant (Simulated Client):** Using a hardened, read-only simulation contract, the dashboard provides a text-driven demonstration client for Alexa-style interactions. Operators can query household status (*"Is everything okay?"*, *"Are there any alerts?"*) and inspect live consent states.
+ 6. **Local Persistence & Retention:** All alert metadata (timestamps, rule IDs, mathematical evidence) is stored in a local SQLite database with automated age-based retention and schema migration. Raw sensor media is never persisted.
+ 
+ ---
+@@ -56,7 +56,7 @@
+ 
+ ### Accomplishments We're Proud Of
+ - **Zero Cloud Exfiltration:** Achieved complete home monitoring and anomaly detection without sending a single byte of telemetry or media to external cloud infrastructure.
+-- **Extensive Test Coverage & Rigor:** The system is validated by **527 native C++ test cases with 38,929 assertions**, 161 WebRTC and dashboard tests, 26 MCP client tests, 73 native MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, and 44 Android route security tests — 100% passing with zero failures.
++- **Extensive Test Coverage & Rigor:** The system is validated by **776 native C++ test cases with 76,054 assertions (independently rerun on main at 79e21c2)**, 161 WebRTC and dashboard tests, 26 MCP client tests, 73 native MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, and 44 Android route security tests in historical release verification. See the current audit report for checks independently rerun against this commit.
+ - **Clean Memory Footprint:** The combined idle footprint of the C++ core and MCP server is under 15 MB RSS, making it fully deployable on edge devices, low-power Raspberry Pis, and low-spec cloud instances.
+ - **Open Standards Alignment:** Built against open, royalty-free standards: Apache-2.0 licensing, Model Context Protocol 2025-11-25, WebRTC, and SQLite.
+ 
