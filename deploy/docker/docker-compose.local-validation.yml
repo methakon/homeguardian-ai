@@ -1,0 +1,15 @@
+# LOCAL VALIDATION override — for a developer's own machine, never for a deployment.
+#
+# WHY: validating the receiver end to end needs a device identity, and the provisioned DEVICE KEY lives outside
+# the runtime directory the deployment mounts. This adds it read-only, so the repo's own hg_device_client can run
+# as that identity against the local receiver. It creates no credential and changes no boundary.
+#
+# It also documents the exposure decision: the ingress port is parameterised in the base file
+# ("${HG_INGRESS_BIND:-0.0.0.0}:${HG_INGRESS_PORT:-8443}:8443/tcp"). Publishing it on 0.0.0.0 is the DEPLOYMENT's
+# design for a device-facing boundary; an isolated local stack must set HG_INGRESS_BIND=127.0.0.1, which is the
+# supported way to bind loopback. Do NOT "fix" exposure by overriding the ports list instead: a ports override
+# merged against the base produced a container with no published port and no usable network at all.
+services:
+  ingress:
+    volumes:
+      - ${HG_DEVICE_KEYS_DIR:-$HOME/hg_h03/device-keys}:/etc/homeguardian/device-keys:ro

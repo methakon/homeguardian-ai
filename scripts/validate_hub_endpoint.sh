@@ -137,14 +137,21 @@ if [ "$REACHABLE" = "1" ]; then
     else
       bad "application ACK" "client exit=${ack_rc:-none} · $(printf '%s' "$ack_raw" | tr '\n' ' ' | tail -c 130)"
     fi
-    rep_cmd="${ack_cmd/--mode normal/--mode replay --expect-reject}"
+    # THE REAL REPLAY TEST. `--mode replay` alone does NOT create a replay: the client resumes at the hub's
+    # watermark and sends a FRESH sequence, so it reports "EXPECTED the hub to reject replayed sequences"
+    # (exit 7) having proved nothing. A genuine replay needs the sequence PINNED behind the watermark, which
+    # --sequence-start does. Verified live: "seq=1 accepted=0 reason=replayed_sequence, rejected=1, RC=0".
+    # Both signals are required - the refusal reason AND the exit status - so a probe that never ran cannot pass.
+    rep_cmd="${ack_cmd/--count 1 --mode normal/--count 1 --sequence-start 1 --expect-reject}"
     rep_raw=$(timeout "$TIMEOUT" docker run --rm --entrypoint sh --user "$(id -u):$(id -g)" --network host \
               -v "${CERTS}:/certs:ro" -v "${DEVKEYS}:/keys:ro" "$IMG" -lc "$rep_cmd" 2>&1 || true)
     rep_rc=$(printf '%s' "$rep_raw" | grep -oE 'RC=[0-9]+' | tail -1 | cut -d= -f2)
-    if [ "$rep_rc" = "0" ]; then
-      ok "replay control: a replayed frame was refused (client exit 0 with --expect-reject)"
+    if [ "$rep_rc" = "0" ] && printf '%s' "$rep_raw" | grep -q 'replayed_sequence'; then
+      ok "replay rejection: a pinned stale sequence was REFUSED (reason=replayed_sequence, exit 0)"
+    elif [ "$rep_rc" = "0" ]; then
+      bad "replay rejection" "exit 0 but the refusal reason was not 'replayed_sequence' (probe did not exercise a replay)"
     else
-      no "replay control" "client exit=${rep_rc:-none} · $(printf '%s' "$rep_raw" | tr '\n' ' ' | tail -c 110)"
+      bad "replay rejection" "client exit=${rep_rc:-none} · $(printf '%s' "$rep_raw" | tr '\n' ' ' | tail -c 120)"
     fi
   else
     no "application ACK" "no ingress container with hg_device_client on PATH"
