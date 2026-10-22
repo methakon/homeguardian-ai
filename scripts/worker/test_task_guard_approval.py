@@ -5,7 +5,7 @@ import json, os, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from task_guard import Ledger, Refused, validate  # noqa: E402
+from task_guard import ApprovalStore, Ledger, Refused, validate  # noqa: E402
 
 CFG = json.load(open(os.path.join(HERE, "identity.json")))
 
@@ -21,7 +21,7 @@ def base_task(**over):
         "prohibited_actions": ["oracle_change", "handset_change"],
         "requires_approval": [],
         "approvals": {},
-        "author": "owner",
+        "author": "methakon",
     }
     t.update(over)
     return t
@@ -29,11 +29,15 @@ def base_task(**over):
 def fresh_ledger():
     return Ledger(os.path.join(tempfile.mkdtemp(prefix="hg-lease-"), "ledger.json"))
 
+def fresh_store():
+    td = tempfile.mkdtemp(prefix="hg-appr-store-")
+    return ApprovalStore(os.path.join(td, "approvals.db"))
+
 # 1: prohibited action without approval should be rejected
 def test_prohibited_without_approval():
     task = base_task(prohibited_actions=["oracle_change"], approvals={})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "PROHIBITED_ACTION", exc.code
@@ -42,7 +46,7 @@ def test_prohibited_without_approval():
 def test_prohibited_with_approval():
     task = base_task(prohibited_actions=["oracle_change"], approvals={"oracle_change": "owner:approval-1"})
     try:
-        res = validate(task, CFG, fresh_ledger())
+        res = validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return res["decision"] == "ADMIT", "ADMIT"
     except Refused as exc:
         return False, exc.code
@@ -51,7 +55,7 @@ def test_prohibited_with_approval():
 def test_missing_author():
     task = base_task(author=None)
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "MISSING_AUTHOR", exc.code
@@ -60,7 +64,7 @@ def test_missing_author():
 def test_unauthorized_author():
     task = base_task(author="random_user")
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "UNAUTHORIZED_AUTHOR", exc.code
@@ -69,16 +73,16 @@ def test_unauthorized_author():
 def test_unauthorized_approver():
     task = base_task(approvals={"oracle_change": "badguy:approval-1"})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "UNAUTHORIZED_APPROVER", exc.code
 
 
 def test_self_approval():
-    task = base_task(approvals={"oracle_change": "owner:approval-1"})
+    task = base_task(author="owner", approvals={"oracle_change": "owner:approval-1"})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "SELF_APPROVAL", exc.code

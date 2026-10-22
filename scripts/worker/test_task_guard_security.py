@@ -7,7 +7,7 @@ import json, os, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from task_guard import Ledger, Refused, validate  # noqa: E402
+from task_guard import ApprovalStore, Ledger, Refused, validate  # noqa: E402
 
 CFG = json.load(open(os.path.join(HERE, "identity.json")))
 
@@ -23,7 +23,7 @@ def base_task(**over):
         "prohibited_actions": ["oracle_change"],
         "requires_approval": [],
         "approvals": {},
-        "author": "owner",
+        "author": "methakon",
     }
     t.update(over)
     return t
@@ -31,11 +31,15 @@ def base_task(**over):
 def fresh_ledger():
     return Ledger(os.path.join(tempfile.mkdtemp(prefix="hg-lease-"), "ledger.json"))
 
+def fresh_store():
+    td = tempfile.mkdtemp(prefix="hg-sec-store-")
+    return ApprovalStore(os.path.join(td, "approvals.db"))
+
 # 1: approval record not present in store → APPROVAL_NOT_VERIFIED
 def test_approval_not_verified():
     task = base_task(approvals={"oracle_change": "owner:oracle_change:missing"})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "APPROVAL_NOT_VERIFIED", exc.code
@@ -44,7 +48,7 @@ def test_approval_not_verified():
 def test_approval_expired():
     task = base_task(approvals={"oracle_change": "owner:oracle_change:expired-1"})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "APPROVAL_EXPIRED", exc.code
@@ -53,7 +57,7 @@ def test_approval_expired():
 def test_approval_replayed():
     task = base_task(approvals={"oracle_change": "owner:handset_change:used-1"})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "APPROVAL_REPLAYED", exc.code
@@ -62,16 +66,16 @@ def test_approval_replayed():
 def test_unauthorized_approver():
     task = base_task(approvals={"oracle_change": "badguy:oracle_change:approval-1"})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "UNAUTHORIZED_APPROVER", exc.code
 
 # 5: self‑approval (already covered elsewhere but repeat)
 def test_self_approval():
-    task = base_task(approvals={"oracle_change": "owner:oracle_change:approval-1"})
+    task = base_task(author="owner", approvals={"oracle_change": "owner:oracle_change:approval-1"})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "SELF_APPROVAL", exc.code
@@ -80,7 +84,7 @@ def test_self_approval():
 def test_prohibited_without_approval():
     task = base_task(prohibited_actions=["oracle_change"], approvals={})
     try:
-        validate(task, CFG, fresh_ledger())
+        validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return False, "ADMIT"
     except Refused as exc:
         return exc.code == "PROHIBITED_ACTION", exc.code
@@ -89,7 +93,7 @@ def test_prohibited_without_approval():
 def test_prohibited_with_approval():
     task = base_task(prohibited_actions=["oracle_change"], approvals={"oracle_change": "owner:oracle_change:approval-1"})
     try:
-        res = validate(task, CFG, fresh_ledger())
+        res = validate(task, CFG, fresh_ledger(), approvals_store=fresh_store())
         return res["decision"] == "ADMIT", "ADMIT"
     except Refused as exc:
         return False, exc.code

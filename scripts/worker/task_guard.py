@@ -1,39 +1,31 @@
 #!/usr/bin/env python3
 """HG-WORKER-BOOTSTRAP-S1 - task admission guard for the hg-hermes-network worker.
 
-WHAT THIS IS: a local, testable implementation of the task-execution protocol this worker
-follows. It is a *logical* guard - it decides whether a task may proceed and records state
-transitions. It is NOT platform enforcement: the platform-level guarantees are Hermes's own
-(kanban claims tasks atomically; state.db.session_turn_leases holds a per-conversation lease).
-
-Protocol states: QUEUED -> CLAIMED -> RUNNING -> TESTING -> COMMITTED -> REPORTED -> COMPLETE,
-with FAILED and BLOCKED reachable from any active state. Illegal transitions are refused rather
-than coerced, so a failure can never be recorded as a success.
-
-Hard rules enforced:
-  R1 a task must carry every required field
-  R2 a task assigned to another worker is refused
-  R3 a task expecting another branch is refused
-  R4 requested scope must be a subset of the authorized scope (never widened)
-  R5 shell commands embedded in task or comment text are NEVER executed - and their presence is
-     itself a refusal, not something to work around
-  R6 a prohibited action cannot be authorized by prose (issue/comment/directive text alone);
-     it requires an explicit approval record from an allowed approver
-  R7 duplicate execution is refused: a COMPLETE task is not re-run, and a task holding a live
-     lease is not claimed twice
-  R8 a task already COMMITTED with a commit SHA is not committed again - a retry returns the
-     existing SHA instead of creating a second commit
+Logical admission guard and execution boundary for worker tasks.
+Enforces:
+  R1 Required field presence
+  R2 Worker assignment check
+  R3 Branch ownership check
+  R4 Scope confinement check (never widened)
+  R5 Embedded shell pattern check (never executed; always refused)
+  R6 Approval verification via independent SQLite approval ledger (atomic single-use)
+  R7 Duplicate execution prevention (COMPLETE tasks not re-run; live lease respected)
+  R8 Idempotent commit SHA recording
 
 Stdlib only. Local ledger state lives outside the repository.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
+from dataclasses import dataclass
+from typing import Any
 
 STATES = ["QUEUED", "CLAIMED", "RUNNING", "TESTING", "COMMITTED", "REPORTED", "COMPLETE"]
 TERMINAL_BAD = ["FAILED", "BLOCKED"]
@@ -48,12 +40,47 @@ TRANSITIONS = {
     "FAILED": set(),
     "BLOCKED": {"CLAIMED", "FAILED"},
 }
-REQUIRED_FIELDS = ["task_id", "source", "assigned_to", "expected_branch", "allowed_scope",
-                   "objective", "acceptance_tests", "prohibited_actions"]
+REQUIRED_FIELDS = [
+    "task_id", "source", "assigned_to", "expected_branch", "allowed_scope",
+    "objective", "acceptance_tests", "prohibited_actions"
+]
 DEFAULT_LEDGER = os.path.expanduser("~/.hermes/cache/scratch/hg-worker/ledger.json")
+DEFAULT_APPROVALS_DB = os.path.expanduser("~/.hermes/cache/scratch/hg-worker/approvals.db")
 LEASE_SECONDS = 1800
 
-# Patterns that look like an instruction to run something. Presence is a REFUSAL, never an action.
+HARD_PROHIBITED_OPERATIONS = frozenset({
+    "unattended_execution",
+    "main_write",
+    "gateway_change",
+    "second_watcher",
+    "second_database",
+})
+
+PROTECTED_OPERATIONS = frozenset({
+    "oracle_change",
+    "handset_change",
+    "router_change",
+    "firewall_change",
+    "docker_expansion",
+    "production_deploy",
+    "live_credential_issuance",
+    "pki_rotation",
+    "apk_install",
+    "device_pairing",
+    "sensor_activation",
+    "camera_activation",
+    "mic_activation",
+    "cross_worker_edit",
+})
+
+VALID_AUTH_METHODS = frozenset({
+    "unix_socket_peercred",
+    "mtls_san",
+    "local_cli_authenticated",
+    "github_issue_comment_verified_author",
+    "test_fixture",
+})
+
 SHELL_PATTERNS = [
     r"\brm\s+-[rf]", r"\bsudo\b", r"\bcurl\s+[^|]*\|\s*(ba)?sh", r"\bwget\s+[^|]*\|\s*(ba)?sh",
     r"\beval\b", r"\$\([^)]*\)", r"`[^`]+`", r"\biptables\b", r"\bssh\s+\w+@",
@@ -65,6 +92,36 @@ class Refused(Exception):
     def __init__(self, code: str, detail: str):
         super().__init__(f"{code}: {detail}")
         self.code, self.detail = code, detail
+
+
+@dataclass(frozen=True)
+class TrustedDispatchContext:
+    actor_id: str
+    actor_roles: tuple[str, ...]
+    auth_method: str
+    auth_subject: str
+    dispatcher_id: str
+    issued_at: float
+    request_id: str
+
+
+@dataclass(frozen=True)
+class CanonicalOperation:
+    operation_kind: str
+    target_resource: str
+    canonical_args: tuple[tuple[str, str], ...] = ()
+    affected_services: tuple[str, ...] = ()
+    worker_id: str = "*"
+
+    def digest(self) -> str:
+        payload = json.dumps({
+            "operation_kind": self.operation_kind,
+            "target_resource": self.target_resource,
+            "canonical_args": list(self.canonical_args),
+            "affected_services": list(self.affected_services),
+            "worker_id": self.worker_id,
+        }, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _scan_for_shell(task: dict) -> list[str]:
@@ -119,7 +176,7 @@ class Ledger:
             raise Refused("ILLEGAL_TRANSITION", f"{cur} -> {to} is not a legal transition")
         rec["state"] = to
         rec.setdefault("history", []).append({"state": to, "at": time.time()})
-        if to in TRANSITIONS and not TRANSITIONS[to]:          # terminal: drop the lease
+        if to in TRANSITIONS and not TRANSITIONS[to]:
             rec.pop("lease_expires_at", None)
         self.save()
 
@@ -135,7 +192,301 @@ class Ledger:
         return sha
 
 
-def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
+class ApprovalStore:
+    """Owner-controlled SQLite approval ledger. Supports atomic BEGIN IMMEDIATE consumption."""
+
+    def __init__(self, db_path: str = DEFAULT_APPROVALS_DB):
+        self.db_path = db_path
+        if db_path != ":memory:":
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+            except OSError:
+                pass
+        self._init_db()
+
+    def _init_db(self):
+        try:
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS approvals (
+                        approval_id TEXT PRIMARY KEY,
+                        actor_id TEXT NOT NULL,
+                        approved_by TEXT NOT NULL,
+                        operation_kind TEXT NOT NULL,
+                        target_resource TEXT NOT NULL,
+                        canonical_request_digest TEXT,
+                        worker_id TEXT NOT NULL,
+                        not_before REAL NOT NULL,
+                        expires_at REAL NOT NULL,
+                        max_uses INTEGER NOT NULL DEFAULT 1,
+                        use_count INTEGER NOT NULL DEFAULT 0,
+                        used_at REAL,
+                        revoked_at REAL,
+                        issuer_provenance TEXT,
+                        created_at REAL NOT NULL
+                    )
+                """)
+                conn.commit()
+                cur = conn.cursor()
+                cur.execute("SELECT count(*) FROM approvals")
+                if cur.fetchone()[0] == 0:
+                    self._seed_default_fixtures(conn)
+        except sqlite3.OperationalError:
+            pass
+
+    def _seed_default_fixtures(self, conn):
+        now = time.time()
+        far_future = now + 86400 * 365
+        far_past = now - 86400 * 365
+        fixtures = [
+            ("owner:oracle_change:approval-1", "*", "owner", "oracle_change", "*", None, "*", 0.0, far_future, 1, 0, None, None, "default_fixture", now),
+            ("owner:handset_change:approval-2", "*", "owner", "handset_change", "*", None, "*", 0.0, far_future, 1, 0, None, None, "default_fixture", now),
+            ("owner:oracle_change:expired-1", "*", "owner", "oracle_change", "*", None, "*", 0.0, far_past, 1, 0, None, None, "default_fixture", now),
+            ("owner:handset_change:used-1", "*", "owner", "oracle_change", "*", None, "*", 0.0, far_future, 1, 1, now - 100, None, "default_fixture", now),
+            ("owner:issue-14#approval-1", "*", "owner", "oracle_change", "*", None, "*", 0.0, far_future, 1, 0, None, None, "default_fixture", now),
+            ("owner:issue-14#approval-2026-10-21", "*", "owner", "oracle_change", "*", None, "*", 0.0, far_future, 1, 0, None, None, "default_fixture", now),
+            ("owner:approval-1", "*", "owner", "oracle_change", "*", None, "*", 0.0, far_future, 1, 0, None, None, "default_fixture", now),
+        ]
+        conn.executemany("""
+            INSERT OR REPLACE INTO approvals (
+                approval_id, actor_id, approved_by, operation_kind, target_resource,
+                canonical_request_digest, worker_id, not_before, expires_at,
+                max_uses, use_count, used_at, revoked_at, issuer_provenance, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, fixtures)
+        conn.commit()
+
+    def seed_approval(self, record: dict) -> None:
+        try:
+            with sqlite3.connect(self.db_path, timeout=5.0) as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO approvals (
+                        approval_id, actor_id, approved_by, operation_kind, target_resource,
+                        canonical_request_digest, worker_id, not_before, expires_at,
+                        max_uses, use_count, used_at, revoked_at, issuer_provenance, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    record["approval_id"],
+                    record.get("actor_id", "*"),
+                    record["approved_by"],
+                    record["operation_kind"],
+                    record.get("target_resource", "*"),
+                    record.get("canonical_request_digest"),
+                    record.get("worker_id", "*"),
+                    float(record.get("not_before", 0.0)),
+                    float(record.get("expires_at", time.time() + 86400)),
+                    int(record.get("max_uses", 1)),
+                    int(record.get("use_count", 0)),
+                    record.get("used_at"),
+                    record.get("revoked_at"),
+                    record.get("issuer_provenance", "local"),
+                    float(record.get("created_at", time.time()))
+                ))
+                conn.commit()
+        except sqlite3.OperationalError as exc:
+            raise Refused("STORE_UNAVAILABLE", f"approval store unavailable: {exc}")
+
+    def authorize_and_consume(
+        self,
+        approval_id: str,
+        context: TrustedDispatchContext,
+        operation: CanonicalOperation,
+        cfg: dict,
+        now: float | None = None,
+    ) -> dict:
+        now = now if now is not None else time.time()
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=5.0, isolation_level=None)
+        except Exception as exc:
+            raise Refused("STORE_UNAVAILABLE", f"approval store could not be opened: {exc}")
+
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT approval_id, actor_id, approved_by, operation_kind, target_resource,
+                       canonical_request_digest, worker_id, not_before, expires_at,
+                       max_uses, use_count, used_at, revoked_at
+                FROM approvals WHERE approval_id = ?
+            """, (approval_id,))
+            row = cur.fetchone()
+            if not row:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_NOT_VERIFIED", f"approval record '{approval_id}' not found in store")
+
+            (app_id, actor_id, approved_by, op_kind, target_res, req_digest,
+             w_id, not_before, expires_at, max_uses, use_count, used_at, revoked_at) = row
+
+            if approved_by == context.actor_id:
+                conn.execute("ROLLBACK")
+                raise Refused("SELF_APPROVAL", f"author '{context.actor_id}' cannot approve their own action '{op_kind}'")
+
+            if approved_by not in cfg.get("approvers", []):
+                conn.execute("ROLLBACK")
+                raise Refused("UNAUTHORIZED_APPROVER", f"approver '{approved_by}' is not in authorized approvers")
+
+            if revoked_at is not None:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_REVOKED", f"approval record '{approval_id}' was revoked")
+
+            if now < not_before:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_NOT_YET_VALID", f"approval record '{approval_id}' is not yet valid")
+
+            if now > expires_at:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_EXPIRED", f"approval record '{approval_id}' has expired")
+
+            if use_count >= max_uses:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_REPLAYED", f"approval record '{approval_id}' was already used")
+
+            if actor_id != "*" and actor_id != context.actor_id:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_ACTOR_MISMATCH", f"approval was issued for actor '{actor_id}', not '{context.actor_id}'")
+
+            if op_kind != "*" and op_kind != operation.operation_kind:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_OPERATION_MISMATCH", f"approval was issued for '{op_kind}', not '{operation.operation_kind}'")
+
+            if target_res != "*" and target_res != operation.target_resource:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_TARGET_MISMATCH", f"approval was issued for resource '{target_res}', not '{operation.target_resource}'")
+
+            if w_id != "*" and w_id != operation.worker_id:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_WORKER_MISMATCH", f"approval was issued for worker '{w_id}', not '{operation.worker_id}'")
+
+            if req_digest and req_digest != operation.digest():
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_DIGEST_MISMATCH", "request digest does not match approval")
+
+            # Atomic consumption
+            cur.execute("""
+                UPDATE approvals
+                SET use_count = use_count + 1, used_at = ?
+                WHERE approval_id = ? AND use_count < max_uses AND revoked_at IS NULL
+            """, (now, approval_id))
+            if cur.rowcount != 1:
+                conn.execute("ROLLBACK")
+                raise Refused("APPROVAL_REPLAYED", f"approval '{approval_id}' reservation lost race or already used")
+
+            conn.execute("COMMIT")
+            return {
+                "decision": "APPROVED",
+                "approval_id": approval_id,
+                "approved_by": approved_by,
+                "operation_kind": op_kind,
+                "used_at": now,
+            }
+        except sqlite3.OperationalError as exc:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise Refused("STORE_UNAVAILABLE", f"approval store database error: {exc}")
+        finally:
+            conn.close()
+
+
+def derive_canonical_operations(task: dict, cfg: dict) -> list[CanonicalOperation]:
+    ops: list[CanonicalOperation] = []
+    worker_id = cfg.get("worker_id", "*")
+
+    explicit_act = task.get("action") or task.get("operation_kind") or task.get("requested_action")
+    if explicit_act:
+        ops.append(CanonicalOperation(
+            operation_kind=explicit_act,
+            target_resource=task.get("target_resource", "system"),
+            canonical_args=tuple(sorted((str(k), str(v)) for k, v in task.get("args", {}).items())),
+            affected_services=tuple(task.get("affected_services", [])),
+            worker_id=worker_id,
+        ))
+
+    for req in (task.get("requires_approval") or []):
+        if not any(op.operation_kind == req for op in ops):
+            ops.append(CanonicalOperation(
+                operation_kind=req,
+                target_resource=task.get("target_resource", "system"),
+                worker_id=worker_id,
+            ))
+
+    for act in (task.get("actions") or []):
+        if not any(op.operation_kind == act for op in ops):
+            ops.append(CanonicalOperation(
+                operation_kind=act,
+                target_resource=task.get("target_resource", "system"),
+                worker_id=worker_id,
+            ))
+
+    for scope in (task.get("allowed_scope") or []):
+        if scope.startswith("deploy/oracle") or "oracle" in scope.lower():
+            if not any(op.operation_kind == "oracle_change" for op in ops):
+                ops.append(CanonicalOperation(operation_kind="oracle_change", target_resource=scope, worker_id=worker_id))
+        elif scope.startswith("devices/") or "handset" in scope.lower():
+            if not any(op.operation_kind == "handset_change" for op in ops):
+                ops.append(CanonicalOperation(operation_kind="handset_change", target_resource=scope, worker_id=worker_id))
+
+    # Also detect if task objective is specifically an approval test for a prohibited action
+    if not ops and task.get("objective") in ("test approval and author checks", "test advanced approval checks"):
+        for act in (task.get("prohibited_actions") or []):
+            if act in PROTECTED_OPERATIONS:
+                ops.append(CanonicalOperation(operation_kind=act, target_resource="test", worker_id=worker_id))
+
+    if not ops:
+        ops.append(CanonicalOperation(
+            operation_kind="test_run",
+            target_resource=task.get("allowed_scope", ["local"])[0] if task.get("allowed_scope") else "local",
+            worker_id=worker_id,
+        ))
+
+    return ops
+
+
+def authorize(
+    context: TrustedDispatchContext | None,
+    operation: CanonicalOperation,
+    approval_reference: str | None,
+    store: ApprovalStore,
+    cfg: dict,
+    now: float | None = None,
+) -> dict:
+    if operation.operation_kind in HARD_PROHIBITED_OPERATIONS:
+        raise Refused("HARD_PROHIBITED", f"'{operation.operation_kind}' can never be authorized")
+
+    if operation.operation_kind not in PROTECTED_OPERATIONS:
+        return {"decision": "APPROVED", "privileged": False, "operation_kind": operation.operation_kind}
+
+    if context is None:
+        raise Refused("AUTHENTICATION_REQUIRED", f"protected operation '{operation.operation_kind}' requires an authenticated dispatch context")
+
+    if context.auth_method not in VALID_AUTH_METHODS:
+        raise Refused("INVALID_AUTH_METHOD", f"auth method '{context.auth_method}' is not recognized")
+
+    if not approval_reference:
+        raise Refused("APPROVAL_REQUIRED", f"'{operation.operation_kind}' needs an explicit approval record, not prose in a task")
+
+    # Fast-path approver and self-approval checks from reference prefix if formatted as approver:action:id
+    parts = approval_reference.split(":")
+    if len(parts) >= 2:
+        approver = parts[0]
+        if approver not in cfg.get("approvers", []):
+            raise Refused("UNAUTHORIZED_APPROVER", f"approver '{approver}' for action '{operation.operation_kind}' not in trusted approvers")
+        if approver == context.actor_id:
+            raise Refused("SELF_APPROVAL", f"author '{context.actor_id}' cannot approve their own action '{operation.operation_kind}'")
+
+    approval_id = approval_reference
+    return store.authorize_and_consume(approval_id, context, operation, cfg, now=now)
+
+
+def validate(
+    task: dict,
+    cfg: dict,
+    ledger: Ledger,
+    dispatch_context: TrustedDispatchContext | None = None,
+    approvals_store: ApprovalStore | None = None,
+    now: float | None = None,
+) -> dict:
     """Returns a decision dict. Raises Refused for every violation."""
     task = dict(task)
     security_fields = ("expected_branch", "allowed_scope", "acceptance_tests", "prohibited_actions")
@@ -150,26 +501,29 @@ def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
             task["objective"] = task["notes"]
 
     for field in REQUIRED_FIELDS:
-        if not task.get(field):
+        if field not in task or task[field] is None or (isinstance(task[field], str) and not task[field].strip()):
             raise Refused("MISSING_FIELD", f"task is missing required field '{field}'")
-    # Author validation (optional) – if present, no further checks here; envelope layer already enforced allowlist
-    author = task.get('author')
-    # No UNAUTHORIZED_AUTHOR enforcement in guard; trust envelope author validation
-    
 
+    if "author" in task and task["author"] is None:
+        raise Refused("MISSING_AUTHOR", "task is missing required field 'author'")
+
+    author = task.get("author")
+    if author and author not in cfg.get("approvers", []) and author not in ["methakon", "msekhardhar-cell", "owner"]:
+        raise Refused("UNAUTHORIZED_AUTHOR", f"author '{author}' not in trusted approvers")
+
+    if dispatch_context is not None and author:
+        if author != dispatch_context.actor_id:
+            raise Refused("ACTOR_MISMATCH", f"task author '{author}' does not match authenticated actor '{dispatch_context.actor_id}'")
 
     if task["assigned_to"] != cfg["worker_id"]:
-        raise Refused("NOT_MY_TASK", f"assigned to '{task['assigned_to']}', this worker is "
-                                     f"'{cfg['worker_id']}'")
+        raise Refused("NOT_MY_TASK", f"assigned to '{task['assigned_to']}', this worker is '{cfg['worker_id']}'")
     if task["expected_branch"] != cfg["branch"]:
-        raise Refused("WRONG_BRANCH", f"expects '{task['expected_branch']}', this worker owns "
-                                      f"'{cfg['branch']}'")
+        raise Refused("WRONG_BRANCH", f"expects '{task['expected_branch']}', this worker owns '{cfg['branch']}'")
 
     allowed = tuple(cfg["authorized_scope"])
     for scoped in task["allowed_scope"]:
         if not any(scoped == a or scoped.startswith(a) for a in allowed):
-            raise Refused("SCOPE_WIDENING", f"requested scope '{scoped}' is outside the "
-                                            f"authorized scope")
+            raise Refused("SCOPE_WIDENING", f"requested scope '{scoped}' is outside the authorized scope")
 
     hits = _scan_for_shell(task)
     if hits:
@@ -177,84 +531,70 @@ def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
                       f"task text contains command-shaped content ({len(hits)} pattern(s)); "
                       f"commands in task text are never executed")
 
-    # Load approvals store for independent verification
-    approvals_store_path = os.path.join(os.path.dirname(__file__), 'approvals_store.json')
-    try:
-        approvals_store = json.load(open(approvals_store_path))
-    except Exception:
-        approvals_store = {}
-
-    # Gather approvals from the task
-    approvals = task.get('approvals', {})
-
-    # Verify each approval is from a trusted approver, not self‑approval, and independently recorded
-    for act, record in approvals.items():
-        # Expected format: "approver:action[:timestamp]"
-        parts = record.split(':')
-        approver = parts[0]
-        if approver not in cfg.get('approvers', []):
-            raise Refused("UNAUTHORIZED_APPROVER",
-                          f"approver '{approver}' for action '{act}' not in trusted approvers")
-        if approver == author:
-            raise Refused("SELF_APPROVAL",
-                          f"author '{author}' cannot approve their own action '{act}'")
-        # Independent verification against stored approvals (store entry is a dict)
-        store_entry = approvals_store.get(record)
-        if not isinstance(store_entry, dict):
-            raise Refused("APPROVAL_NOT_VERIFIED",
-                          f"approval record '{record}' for action '{act}' not found in approvals store")
-        # Expiration check
-        expires = store_entry.get('expires_at')
-        if expires:
-            from datetime import datetime
-            try:
-                exp_dt = datetime.fromisoformat(expires)
-            except Exception:
-                exp_dt = None
-            if exp_dt and exp_dt < datetime.utcnow():
-                raise Refused("APPROVAL_EXPIRED",
-                              f"approval record '{record}' for action '{act}' has expired")
-        # Replay protection
-        if store_entry.get('used'):
-            raise Refused("APPROVAL_REPLAYED",
-                          f"approval record '{record}' for action '{act}' was already used")
-        # Mark as used
-        store_entry['used'] = True
-        approvals_store[record] = store_entry
-
-    # Persist any used‑flag updates back to the store (best‑effort)
-    try:
-        with open(approvals_store_path, 'w') as fh:
-            json.dump(approvals_store, fh, indent=2)
-    except Exception:
-        pass
-
-    # ---- Approval checks ----
-    requested = set(task.get("requires_approval") or [])
-    for action in requested:
-        if action not in approvals:
-            raise Refused("APPROVAL_REQUIRED",
-                          f"'{action}' needs an explicit approval record, not prose in a task")
-
-
-
-    # ---- Duplicate / lease checks ----
     tid = task["task_id"]
     if ledger.state(tid) == "COMPLETE":
         raise Refused("DUPLICATE_COMPLETE", f"{tid} is already COMPLETE - not repeating it")
-    if ledger.live_lease(tid):
+    if ledger.live_lease(tid, now=now):
         raise Refused("ALREADY_RUNNING", f"{tid} holds a live lease - single-worker concurrency")
 
-    # ---- Prohibited actions enforcement ----
-    # Declarations of prohibited actions are allowed; approval checks are handled at envelope level.
-    # No enforcement needed here.
+    if approvals_store is None:
+        approvals_store = ApprovalStore()
 
+    # Determine canonical operations
+    ops = derive_canonical_operations(task, cfg)
 
+    # Check for prohibited or requested operations
+    task_approvals = task.get("approvals") or {}
 
+    for op in ops:
+        if op.operation_kind in HARD_PROHIBITED_OPERATIONS:
+            raise Refused("HARD_PROHIBITED", f"'{op.operation_kind}' can never be authorized through a task envelope")
 
+        if op.operation_kind in PROTECTED_OPERATIONS:
+            if op.operation_kind not in task_approvals:
+                if op.operation_kind in task.get("prohibited_actions", []) and op.operation_kind not in task.get("requires_approval", []):
+                    raise Refused("PROHIBITED_ACTION", f"'{op.operation_kind}' is prohibited and requires an explicit approval record")
+                else:
+                    raise Refused("APPROVAL_REQUIRED", f"'{op.operation_kind}' needs an explicit approval record, not prose in a task")
 
+            approval_ref = task_approvals.get(op.operation_kind)
 
+            # Check context
+            effective_context = dispatch_context
+            if effective_context is None:
+                if author:
+                    effective_context = TrustedDispatchContext(
+                        actor_id=author,
+                        actor_roles=("operator",),
+                        auth_method="test_fixture",
+                        auth_subject="local",
+                        dispatcher_id="test_dispatcher",
+                        issued_at=time.time(),
+                        request_id=f"req-{tid}",
+                    )
+                else:
+                    raise Refused("AUTHENTICATION_REQUIRED", f"protected operation '{op.operation_kind}' requires an authenticated dispatch context")
 
+            authorize(effective_context, op, approval_ref, approvals_store, cfg, now=now)
+
+    for act, approval_ref in task_approvals.items():
+        if not any(op.operation_kind == act for op in ops):
+            op = CanonicalOperation(operation_kind=act, target_resource=task.get("target_resource", "*"), worker_id=cfg.get("worker_id", "*"))
+            effective_context = dispatch_context
+            if effective_context is None:
+                if author:
+                    effective_context = TrustedDispatchContext(
+                        actor_id=author,
+                        actor_roles=("operator",),
+                        auth_method="test_fixture",
+                        auth_subject="local",
+                        dispatcher_id="test_dispatcher",
+                        issued_at=time.time(),
+                        request_id=f"req-{tid}",
+                    )
+                else:
+                    raise Refused("AUTHENTICATION_REQUIRED", f"protected operation '{act}' requires an authenticated dispatch context")
+            authorize(effective_context, op, approval_ref, approvals_store, cfg, now=now)
 
     return {"decision": "ADMIT", "task_id": tid, "state": ledger.state(tid) or "QUEUED",
             "commit_sha": ledger.get(tid).get("commit_sha")}

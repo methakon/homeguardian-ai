@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from task_envelope import EnvelopeRefused, admit, extract_envelope   # noqa: E402
-from task_guard import Ledger, Refused                               # noqa: E402
+from task_guard import ApprovalStore, Ledger, Refused                # noqa: E402
 
 POLICY = json.load(open(os.path.join(HERE, "watcher-policy.json")))
 IDENTITY = json.load(open(os.path.join(HERE, "identity.json")))
@@ -53,6 +53,11 @@ def env_block(task, tag="hg-task"):
 
 def fresh_ledger():
     return Ledger(os.path.join(tempfile.mkdtemp(prefix="hg-env-"), "ledger.json"))
+
+
+def fresh_store():
+    td = tempfile.mkdtemp(prefix="hg-env-store-")
+    return ApprovalStore(os.path.join(td, "approvals.db"))
 
 
 def check(name, expect, fn):
@@ -101,7 +106,7 @@ check("privileged action without an approval record", "APPROVAL_REQUIRED",
 ok_oracle = dict(oracle_task, task_id="T-oracle-ok",
                  approvals={"oracle_change": "owner:issue-14#approval-1"})
 check("privileged action WITH an explicit approval record", "ADMIT",
-      lambda: admit(comment(env_block(ok_oracle)), POLICY, IDENTITY, fresh_ledger()))
+      lambda: admit(comment(env_block(ok_oracle)), POLICY, IDENTITY, fresh_ledger(), approvals_store=fresh_store()))
 
 # --- duplicate / ownership / shape ------------------------------------------------------------
 def dup():
