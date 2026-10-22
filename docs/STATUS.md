@@ -4,6 +4,18 @@
 
 ## Private remote MCP readiness — 2026-10-23
 
+**03:25 IST update — VPN WORKING, COORDINATOR DEPLOYED, PHONE BRIDGE PENDING:**
+phone enrollment, saved profile configuration and current-source cloud UDP ingress
+are applied. A fresh authenticated handshake, assigned phone tunnel address and
+two successful post-handshake pings were verified. The private coordinator is active
+and boot-enabled with VPN-only bindings, exact ingress restrictions and retained
+application authentication. Public MCP ports remain unreachable and mail service
+processes were unchanged. The installed phone APK lacks bridge code; its approved
+in-place update and an actual remote MCP readback remain pending. See the
+[execution checkpoint](PRIVATE_VPN_REMOTE_MCP_READINESS.md).
+
+Earlier read-only baseline, superseded for resolved items:
+
 **BLOCKED:** the existing VPS WireGuard server is up and boot-enabled, but the
 phone's supplied public key is not enrolled and its matching local profile has
 no address or peer configured. There is no current phone handshake. Cloud UDP

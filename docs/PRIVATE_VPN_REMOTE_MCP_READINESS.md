@@ -1,5 +1,58 @@
 # Private VPN and remote MCP readiness
 
+## Execution update — 2026-10-23, 03:25 IST
+
+The owner approved applying the prepared setup. The earlier read-only baseline
+below is retained as history, not the current state of the first three blockers.
+
+- **Phone enrolled and connected:** the supplied public key now has a dedicated
+  /32 assignment, persisted on the VPS while preserving both existing peers.
+  The phone profile was configured through WireGuard's UI without exporting or
+  replacing its private key. A fresh server-side authenticated handshake, a live
+  phone tunnel address and increasing transfer counters were observed.
+- **Connectivity verified after handshake:** the phone sent two pings to the VPS
+  tunnel address and received both replies, with zero packet loss.
+- **Cloud ingress corrected narrowly:** one UDP 51820 rule was added for the current
+  verified public /32 in the target's dedicated NSG; existing rules were preserved.
+  The observed phone handshake endpoint confirmed this source also covers the
+  phone's present egress. This is not a roaming-source or source-any allowance.
+- **Coordinator deployed as a service:** a checksum-verified isolated Node.js
+  v24.22.1 runtime and integrity-verified `ws` 8.22.0 were deployed without system
+  package upgrades. `homeguardian-coordinator.service` is active and enabled,
+  requires WireGuard, binds only the VPS tunnel address and has resource limits.
+  At the checkpoint it had zero restarts and approximately 28 MB cgroup memory.
+- **Application authentication remains enforced:** missing and incorrect client
+  tokens returned HTTP 401. A legitimate deployment-readiness request returned
+  HTTP 503 `EDGE_OFFLINE`, not a fabricated successful phone response. Eleven
+  focused coordinator readiness checks passed; the broader native integration
+  harness did not initialize its reused host C++ test artifact and is not reported
+  as passing.
+- **Exact private ingress restrictions installed:** a dedicated INPUT chain allows
+  the phone /32 only into edge port 18994 and the separately reserved worker /32
+  only into client port 18995, dropping other VPN sources to those ports. The worker
+  address is not yet enrolled or activated. A validated firewall snapshot was copied
+  off-host before changes; a timed rollback was armed, then cancelled only after
+  verification. The resulting rules were persisted and read back.
+- **Public and retained-service controls:** external TCP probes to 8790, 18994 and
+  18995 did not connect. The existing public SMTP banner remained reachable, both
+  retained mail daemons stayed active with unchanged process ids, and the original
+  WireGuard peers were preserved. No DNS or camera/media changes were made.
+
+**Remaining physical MCP bridge gate:** inspection of the installed phone APK
+confirmed that it contains neither the outbound bridge class nor its start action.
+The owner explicitly approved a same-signature in-place release update preserving
+app data and MCP credentials. That update is being prepared in an isolated source
+worktree; it has not yet been installed or connected at this checkpoint. Phone MCP
+continues serving authenticated read-only requests locally. Remote phone MCP is
+therefore **NOT YET VERIFIED**, despite the now-working VPN and deployed coordinator.
+
+The phone's existing native libraries will be preserved byte-for-byte rather than
+rebuilt during severe workstation disk pressure. Bridge enrollment credentials must
+remain separate from the existing native MCP bearer; the latter must not be exported.
+Real reboot/VPN restore and roaming-source recovery have not been tested.
+
+## Earlier read-only baseline
+
 Checkpoint: 2026-10-23, approximately 02:51–02:54 IST.
 
 Verdict: **EXISTING VPN SERVER VERIFIED; PHONE TUNNEL AND REMOTE MCP BLOCKED**.
