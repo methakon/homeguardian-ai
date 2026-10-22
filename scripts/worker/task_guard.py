@@ -481,41 +481,37 @@ def authorize(
 
 
 # --- FIX (item 3): canonical scope confinement -----------------------------------------------
-# The previous test was a raw str.startswith on un-normalized strings, so
-# "scripts/worker/../../etc/shadow", an encoded "..%2f" variant and a symlink leaving the
-# authorized root all satisfied it. Resolve, then require containment under the resolved root.
+# The previous test was a raw str.startswith on un-normalized strings, so traversal satisfied it.
+# FIRST ATTEMPT WAS WRONG and the adversarial suite caught it: it collapsed ".." before anchoring the
+# result under the root, which re-anchors an escaped path back INSIDE the root and admits it. The
+# correct shape is to join BOTH the candidate and the authorized root onto the same base, resolve, and
+# then require containment - never to resolve first and re-anchor.
 import os as _os
-import posixpath as _pp
 
 
-def _canonical_under_root(candidate: str, root: str) -> bool:
-    """True only if `candidate`, after resolution, stays INSIDE `root`."""
+def _canonical_under_root(candidate: str, root: str, base: str | None = None) -> bool:
+    """True only if `candidate`, resolved from `base`, stays inside the resolved `root`."""
     if not candidate or not root:
         return False
     if candidate.startswith("/") or "\\" in candidate:
-        return False                                  # absolute or windows-style escape
-    probe = candidate
-    for _ in range(6):                                # resolve iteratively: realpath if it exists,
-        nxt = _pp.normpath(probe)                     # else normpath alone still collapses ".."
-        if nxt == probe:
-            break
-        probe = nxt
-    if probe == ".." or probe.startswith("../"):
-        return False
-    if "..%2f" in candidate.lower() or "%2e%2e" in candidate.lower():
-        return False                                  # encoded traversal is never canonical
-    root_real = _os.path.realpath(root)
-    cand_real = _os.path.realpath(_os.path.join(root_real, probe))
+        return False                                   # absolute or windows-style escape
+    low = candidate.lower()
+    for bad in ("%2f", "..%2f", "%2e%2e", "\x00"):
+        if bad in low:
+            return False                               # encoded traversal / encoded separator
+    base = base or _os.getcwd()
+    root_real = _os.path.realpath(_os.path.join(base, root))
+    cand_real = _os.path.realpath(_os.path.join(base, candidate))
     try:
         return _os.path.commonpath([root_real, cand_real]) == root_real
     except ValueError:
         return False
 
 
-def _within_authorized_root(scoped: str, allowed) -> bool:
-    for a in allowed:
-        root = a.rstrip("/") or a
-        if _canonical_under_root(scoped, root):
+def _within_authorized_root(scoped: str, allowed, base: str | None = None) -> bool:
+    """True if `scoped` canonically falls INSIDE any authorized root. Never a raw prefix test."""
+    for a in allowed or ():
+        if _canonical_under_root(scoped, a.rstrip("/") or a, base):
             return True
     return False
 
