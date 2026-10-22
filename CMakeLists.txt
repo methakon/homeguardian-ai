@@ -283,4 +283,12 @@ if(HOMEGUARDIAN_BUILD_TESTS)
     # Also expose the source dir so tests that read repo-relative files work
     # when the binary is run directly from an out-of-source build directory.
     set_tests_properties(homeguardian_tests PROPERTIES ENVIRONMENT "HG_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+    # The offline feature replay has no third-party Python dependencies.
+    find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME animal_feature_replay
+            COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+                -s "${CMAKE_SOURCE_DIR}/tests" -p test_animal_feature_replay.py)
+        set_tests_properties(animal_feature_replay PROPERTIES TIMEOUT 30)
+    endif()
 endif()
