@@ -10,8 +10,8 @@ unavailable — the config is the way in.
 | container | same binary? | bind source | declared bind | host listener | verdict |
 |---|---|---|---|---|---|
 | `hg_e2e_ingress` | `hg_device_ingress --config /state/ingress.json` | `~/.hermes/cache/scratch/hg_e2e/ingress.json` | **`bind_address = 127.0.0.1`**, port 18443 | none on 18443 | **NOT EXPOSED** — declares loopback; no non-loopback listener |
-| `hg_e2e_ingress_s2` | `hg_device_ingress --config /state/ingress.json` | `~/.hermes/cache/scratch/hg_e2e_s2/ingress.json` | **`bind_address = 127.0.0.1`**, port 18445 | none on 18445 | **NOT EXPOSED** |
-| `hgvec27` | `hg_device_ingress --config /tmp/hg_vec27/ingress.json` | `/tmp/hg_vec27/ingress.json` | **`bind_address = 127.0.0.1`**, port 18445-vectored | none | **NOT EXPOSED** |
+| `hg_e2e_ingress_s2` | `hg_device_ingress --config /state/ingress.json` | `~/.hermes/cache/scratch/hg_e2e_s2/ingress.json` | **`bind_address = 127.0.0.1`**, port 18444 | none on 18444 | **NOT EXPOSED** |
+| `hgvec27` | `hg_device_ingress --config /tmp/hg_vec27/ingress.json` | `/tmp/hg_vec27/ingress.json` | **`bind_address = 127.0.0.1`**, port 18445 | none | **NOT EXPOSED** |
 
 All three are the **same image and binary** (`homeguardian-ai:d032test`,
 `/src/build/hg_device_ingress`), each pointed at a config whose `bind_address` is `127.0.0.1`. No
