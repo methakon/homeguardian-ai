@@ -41,10 +41,23 @@ except Exception:  # unit tests inject a stub module; the handlers below are unc
 
 
 SKILL_NAME = "HomeGuardian"
+
+
+def unavailable_speech(exc) -> str:
+    """Distinguish "it refused" from "it isn't there". Both mean no data; they are not the same statement."""
+    reason = getattr(exc, "reason", "unreachable")
+    if reason == "refused":
+        return ("The HomeGuardian service is running, but it refused that request, so I can't tell you. "
+                "Nothing has been changed, and I won't guess.")
+    if reason in ("unparseable", "unexpected_shape"):
+        return ("The HomeGuardian service answered with something I could not read, so I can't tell you. "
+                "I won't guess.")
+    return UNAVAILABLE_SPEECH
 UNAVAILABLE_SPEECH = ("I can't reach the HomeGuardian service right now. Nothing has been changed, "
                       "and I won't guess at the state of your home.")
-HELP_SPEECH = ("HomeGuardian is ready. You can ask about home status, alerts, camera availability, "
-               "detected activity, household routines, or the emergency advisory summary.")
+HELP_BODY = ("You can ask about home status, alerts, camera availability, detected activity, household "
+             "routines, or the emergency advisory summary.")
+HELP_SPEECH = f"{SKILL_NAME} is ready. {HELP_BODY}"
 
 
 class _Response:
@@ -94,8 +107,8 @@ def home_status_speech() -> str:
             parts.append(f"There is 1 recorded alert, highest severity {highest}.")
         else:
             parts.append(f"There are {alerts} recorded alerts, highest severity {highest}.")
-    except backend.BackendUnavailable:
-        parts.append("I could not read the alert record from the service.")
+    except backend.BackendUnavailable as exc:
+        parts.append(unavailable_speech(exc))
     try:
         capture = backend.capture_enabled()
     except backend.BackendUnavailable:
@@ -112,8 +125,8 @@ def home_status_speech() -> str:
 def alert_summary_speech() -> str:
     try:
         alerts, highest, ids = backend.describe_alerts()
-    except backend.BackendUnavailable:
-        return UNAVAILABLE_SPEECH
+    except backend.BackendUnavailable as exc:
+        return unavailable_speech(exc)
     if alerts == 0:
         return "There are no recorded alerts from the HomeGuardian service."
     plural = "alert" if alerts == 1 else "alerts"
@@ -126,8 +139,8 @@ def camera_speech() -> str:
     """Availability and health only. No stream, no image, no camera credential is requested."""
     try:
         status = backend.get_status()
-    except backend.BackendUnavailable:
-        return UNAVAILABLE_SPEECH
+    except backend.BackendUnavailable as exc:
+        return unavailable_speech(exc)
     camera = status.get("camera") if isinstance(status.get("camera"), dict) else None
     if camera is None:
         return ("HomeGuardian's service does not report camera availability over this interface, so I "
@@ -140,8 +153,8 @@ def animal_activity_speech() -> str:
     """A count of authorized observations, nothing more. No interpretation, no prediction."""
     try:
         status = backend.get_status()
-    except backend.BackendUnavailable:
-        return UNAVAILABLE_SPEECH
+    except backend.BackendUnavailable as exc:
+        return unavailable_speech(exc)
     observations = status.get("observations")
     count = observations.get("recent") if isinstance(observations, dict) else None
     if not isinstance(count, int):
@@ -158,8 +171,8 @@ def animal_activity_speech() -> str:
 def routine_speech() -> str:
     try:
         status = backend.get_status()
-    except backend.BackendUnavailable:
-        return UNAVAILABLE_SPEECH
+    except backend.BackendUnavailable as exc:
+        return unavailable_speech(exc)
     routines = status.get("routines")
     if not isinstance(routines, list):
         return ("The service isn't reporting household routine status over this interface, so I can't "
@@ -174,8 +187,8 @@ def emergency_advisory_speech() -> str:
     """Reports what the service has, and explicitly refuses to predict."""
     try:
         alerts, highest, _ids = backend.describe_alerts()
-    except backend.BackendUnavailable:
-        return UNAVAILABLE_SPEECH
+    except backend.BackendUnavailable as exc:
+        return unavailable_speech(exc)
     head = ("HomeGuardian has no recorded alerts to advise on." if alerts == 0 else
             f"HomeGuardian has {alerts} recorded {'alert' if alerts == 1 else 'alerts'}, highest "
             f"severity {highest}.")
@@ -197,8 +210,10 @@ class LaunchHandler(AbstractRequestHandler):
         if ready:
             return _speak(f"{SKILL_NAME} is ready. You can ask about home status, alerts, or detected "
                           "activity.", SKILL_NAME, "Ready")
+        # Not "is ready": the service is unreachable, and saying otherwise two sentences apart would be
+        # the same kind of contradiction this skill refuses elsewhere.
         return _speak(f"{SKILL_NAME} is running, but its home service is unreachable, so I can only help "
-                      f"with this skill itself. {HELP_SPEECH}", SKILL_NAME, "Service unreachable")
+                      f"with this skill itself. {HELP_BODY}", SKILL_NAME, "Service unreachable")
 
 
 class HelpHandler(AbstractRequestHandler):

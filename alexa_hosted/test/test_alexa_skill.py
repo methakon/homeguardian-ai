@@ -252,6 +252,24 @@ class TestAgainstRealGateway(unittest.TestCase):
         for read_path in ("/api/health", "/api/status", "/api/alerts"):
             self.assertIn(read_path, src)
 
+    def test_a_refusal_is_never_reported_as_unreachable(self):
+        """The gateway is up and answered; it REFUSED. Saying "I can't reach the service" would be untrue."""
+        self.assertIn("unauthorized", self.gw.get("/api/status")[1])
+        with self.assertRaises(backend.BackendUnavailable) as ctx:
+            backend.get_status()
+        self.assertEqual(ctx.exception.reason, "refused")
+        spoken = skill.camera_speech()
+        self.assertIn("refused", spoken)
+        self.assertNotIn("can't reach", spoken)
+        # a genuinely dead port is a different statement
+        os.environ["HG_GATEWAY_URL"] = f"http://127.0.0.1:{free_port()}"
+        try:
+            with self.assertRaises(backend.BackendUnavailable) as ctx2:
+                backend.get_status()
+            self.assertEqual(ctx2.exception.reason, "unreachable")
+        finally:
+            os.environ["HG_GATEWAY_URL"] = f"http://127.0.0.1:{self.gw.port}"
+
     def test_no_media_or_camera_stream_is_requested(self):
         src = (LAMBDA / "backend.py").read_text().lower()
         for forbidden in ("stream", "webrtc", "video", "getusermedia", "snapshot", ".mp4"):

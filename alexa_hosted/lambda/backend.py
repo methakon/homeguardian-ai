@@ -29,7 +29,16 @@ MAX_BODY_BYTES = 64 * 1024
 
 
 class BackendUnavailable(Exception):
-    """The gateway could not be reached, or did not answer with usable JSON."""
+    """A read did not produce usable data.
+
+    `reason` is one of: unreachable | refused | unparseable | unexpected_shape. The distinction is carried
+    rather than flattened because saying "I can't reach the service" when the service answered and refused
+    would itself be an untrue statement -- and this skill exists to avoid exactly that.
+    """
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def gateway_base_url() -> str:
@@ -47,25 +56,25 @@ def _get(path: str) -> dict:
             raw = resp.read(MAX_BODY_BYTES)
             status = getattr(resp, "status", 200)
             if status != 200:
-                raise BackendUnavailable(f"gateway_status_{status}")
+                raise BackendUnavailable("refused")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
         # Deliberately terse: no URL, query, header value or payload reaches the caller or a log.
-        raise BackendUnavailable(type(exc).__name__) from None
+        raise BackendUnavailable("unreachable") from None
     try:
         data = json.loads(raw.decode("utf-8", "replace"))
     except Exception:
-        raise BackendUnavailable("unparseable_response") from None
+        raise BackendUnavailable("unparseable") from None
     if not isinstance(data, dict):
         raise BackendUnavailable("unexpected_shape")
     # An error is NOT data. The gateway can answer HTTP 200 with an error object alongside an EMPTY
     # collection, and reading that empty list as "zero alerts" would be a false all-clear -- the one
     # failure mode a security skill must never have. Every error shape seen in practice is refused here.
     if data.get("ok") is False or data.get("error"):
-        raise BackendUnavailable("gateway_refused")
+        raise BackendUnavailable("refused")
     for section_name in ("status", "summary"):
         section = data.get(section_name)
         if isinstance(section, dict) and (section.get("error") or section.get("ok") is False):
-            raise BackendUnavailable("gateway_refused")
+            raise BackendUnavailable("refused")
     return data
 
 
