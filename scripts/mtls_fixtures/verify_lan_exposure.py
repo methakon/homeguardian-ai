@@ -122,9 +122,20 @@ def run_checks(host: str, obs_port: int, mcp_port: int, ca: str,
                      PASS if auth_ok else FAIL, True, auth_detail))
 
     mcp_open = tcp_reachable(host, mcp_port)
-    rows.append(("4 MCP port NOT reachable on the LAN address",
-                 FAIL if mcp_open else PASS, True,
-                 "REACHABLE - loopback-only violated" if mcp_open else "closed on the LAN address"))
+    mcp_local = tcp_reachable("127.0.0.1", mcp_port)
+    if mcp_open:
+        rows.append(("4 MCP port NOT reachable on the LAN address", FAIL, True,
+                     "REACHABLE - loopback-only violated"))
+    elif not mcp_local:
+        # A port that is closed EVERYWHERE is not isolated, it is absent. Certifying that as PASS
+        # would report isolation from a state in which there is nothing to isolate - the same class
+        # of vacuous result this lane keeps finding. Not a pass, and not a failure either.
+        rows.append(("4 MCP port NOT reachable on the LAN address", SKIP, False,
+                     "nothing is listening on loopback either - ABSENCE, not isolation "
+                     "(not counted as passing)"))
+    else:
+        rows.append(("4 MCP port NOT reachable on the LAN address", PASS, True,
+                     "closed on the LAN address while listening on loopback"))
 
     rows.append(("5 ICMP (informational only)", PASS, False,
                  f"link probe: {icmp} - never a proof of authentication"))
