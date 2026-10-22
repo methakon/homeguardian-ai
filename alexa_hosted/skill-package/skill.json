@@ -1,0 +1,40 @@
+{
+  "manifest": {
+    "manifestVersion": "1.0",
+    "publishingInformation": {
+      "isAvailableWorldwide": false,
+      "category": "SMART_HOME",
+      "distributionCountries": [],
+      "testingInstructions": "Read-only skill. It asks the owner's HomeGuardian gateway for status and alerts; without that gateway it says the service is unreachable and asserts nothing. It cannot change settings, start capture, or show camera media.",
+      "locales": {
+        "en-US": {
+          "name": "HomeGuardian AI(dhar)",
+          "summary": "Read-only voice status for a HomeGuardian installation.",
+          "description": "Asks the existing HomeGuardian service for home status, alerts, camera availability, detected activity, routines and an emergency advisory summary. Read-only: it cannot change settings or start capture.",
+          "examplePhrases": [
+            "Alexa, open Home Guardian",
+            "Alexa, ask Home Guardian for the home status",
+            "Alexa, ask Home Guardian for the alert summary"
+          ],
+          "keywords": [
+            "home",
+            "security",
+            "alerts",
+            "activity"
+          ]
+        }
+      }
+    },
+    "apis": {
+      "custom": {}
+    },
+    "privacyAndCompliance": {
+      "allowsPurchases": false,
+      "usesPersonalInfo": false,
+      "isChildDirected": false,
+      "isExportCompliant": true,
+      "containsAds": false
+    },
+    "events": {}
+  }
+}

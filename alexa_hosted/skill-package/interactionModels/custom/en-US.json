@@ -1,0 +1,120 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "home guardian",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": [
+            "cancel",
+            "never mind"
+          ]
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": [
+            "help",
+            "what can you do"
+          ]
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": [
+            "stop",
+            "goodbye"
+          ]
+        },
+        {
+          "name": "HomeStatusIntent",
+          "samples": [
+            "what is the home status",
+            "is the house secure",
+            "home security status"
+          ]
+        },
+        {
+          "name": "GetAlertSummaryIntent",
+          "samples": [
+            "are there any alerts",
+            "alert summary",
+            "any active alerts"
+          ]
+        },
+        {
+          "name": "GetRoutineStatusIntent",
+          "samples": [
+            "household routine status",
+            "what routines are set",
+            "routine status"
+          ]
+        },
+        {
+          "name": "CameraAvailabilityIntent",
+          "samples": [
+            "are the cameras available",
+            "camera health",
+            "are the cameras online"
+          ]
+        },
+        {
+          "name": "AnimalActivityIntent",
+          "samples": [
+            "are there any unusual animal activities",
+            "any animal activity",
+            "recent detected activity"
+          ]
+        },
+        {
+          "name": "EmergencyAdvisoryIntent",
+          "samples": [
+            "emergency advisory",
+            "is there any emergency",
+            "any emergency advisory summary"
+          ]
+        }
+      ],
+      "types": []
+    },
+    "dialog": {
+      "intents": [
+        {
+          "name": "HomeStatusIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        },
+        {
+          "name": "GetAlertSummaryIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        },
+        {
+          "name": "GetRoutineStatusIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        },
+        {
+          "name": "CameraAvailabilityIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        },
+        {
+          "name": "AnimalActivityIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        },
+        {
+          "name": "EmergencyAdvisoryIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        }
+      ]
+    },
+    "prompts": []
+  }
+}
