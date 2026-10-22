@@ -3,9 +3,10 @@
 
 namespace homeguardian {
 
-AlertRepository::AlertRepository(std::shared_ptr<SQLiteDatabase> db) : db_(std::move(db)) {
+AlertRepository::AlertRepository(std::shared_ptr<SQLiteDatabase> db, bool ensure_schema)
+    : db_(std::move(db)) {
     if (!db_) throw std::invalid_argument("AlertRepository: db is null");
-    ensure_table();
+    if (ensure_schema) ensure_table();
 }
 
 void AlertRepository::ensure_table() {

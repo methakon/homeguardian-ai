@@ -615,6 +615,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
+        ${CMAKE_SOURCE_DIR}/tests/persistence/test_alerts_read_only.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Config.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Application.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Logger.cpp

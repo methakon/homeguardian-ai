@@ -5,8 +5,30 @@
 namespace homeguardian {
 
 PersistenceAudit::PersistenceAudit(const std::string& path)
-    : process_start_(std::chrono::system_clock::now()) {
+    : PersistenceAudit(path, Access::read_write) {}
+
+PersistenceAudit::PersistenceAudit(const std::string& path, Access access)
+    : process_start_(std::chrono::system_clock::now()), read_only_(access == Access::read_only) {
     db_ = std::make_shared<SQLiteDatabase>();
+
+    if (read_only_) {
+        // A reader opens an existing store and proves it is one. open_read_only throws when the file is
+        // missing or unusable, and never creates it; the schema is NOT initialized, and the repository is
+        // built without ensure_table so no CREATE can run. count() is then the proof that the alerts table
+        // is really there - if it throws, this is not a HomeGuardian alert store and the caller must report
+        // the store unavailable rather than an empty result.
+        db_->open_read_only(path);
+        opened_with_readonly_flag_ = db_->opened_with_readonly_flag();
+        alert_repo_ = std::make_unique<AlertRepository>(db_, /*ensure_schema=*/false);
+        try {
+            historical_count_ = alert_repo_->count();
+        } catch (const std::exception& e) {
+            throw std::runtime_error(
+                std::string("read-only store is not a HomeGuardian alerts database: ") + e.what());
+        }
+        return;
+    }
+
     db_->open(path);  // throws on failure -> caller runs degraded
 
     schema_ = std::make_unique<SchemaManager>(db_);

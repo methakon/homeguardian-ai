@@ -7,6 +7,7 @@
 #include "core/Event.h"
 #include "core/Alert.h"
 #include "core/Logger.h"
+#include "core/PersistenceAudit.h"
 #include <chrono>
 #include <filesystem>
 #include <fstream>

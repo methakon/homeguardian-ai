@@ -16,6 +16,17 @@ public:
     SQLiteDatabase& operator=(const SQLiteDatabase&) = delete;
 
     void open(const std::string& path) override;
+    // Read-only view of an EXISTING database. It never creates the file or its parent directory, and the
+    // connection cannot write: a missing or unusable store THROWS, so a reader fails closed instead of
+    // opening an empty database and reporting "no data" for "no storage". That distinction is the whole
+    // point - a reader that creates what it reads can silently mask a missing store as an empty one.
+    void open_read_only(const std::string& path);
+    // True when this connection is guaranteed unable to write (open_read_only was used).
+    bool read_only_connection() const { return read_only_connection_; }
+    // True when SQLITE_OPEN_READONLY alone was sufficient. False means the connection had to be opened
+    // read-write for a WAL/-shm reason and then pinned with PRAGMA query_only, which is recorded rather
+    // than hidden, because "verified WAL behaviour" should be an observation, not an assumption.
+    bool opened_with_readonly_flag() const { return opened_with_readonly_flag_; }
     void close() override;
     bool is_open() const override;
 
@@ -37,6 +48,8 @@ private:
 
     sqlite3* db_;
     bool in_transaction_;
+    bool read_only_connection_ = false;
+    bool opened_with_readonly_flag_ = false;
     mutable std::mutex mutex_;
 };
 

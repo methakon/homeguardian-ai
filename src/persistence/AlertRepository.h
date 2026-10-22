@@ -9,7 +9,11 @@ namespace homeguardian {
 
 class AlertRepository : public IAlertRepository {
 public:
-    explicit AlertRepository(std::shared_ptr<SQLiteDatabase> db);
+    // `ensure_schema` exists for READ-ONLY use. A reader must not run CREATE TABLE IF NOT EXISTS: the
+    // connection cannot write, and creating an empty alerts table inside a missing store is precisely the
+    // "no alerts" masking a reader must never perform. Read-only callers pass false and validate the schema
+    // themselves (a count() that throws means "not this kind of store").
+    explicit AlertRepository(std::shared_ptr<SQLiteDatabase> db, bool ensure_schema = true);
     ~AlertRepository() override = default;
 
     void save(const Alert& alert) override;

@@ -32,6 +32,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <set>
 #include <chrono>
 #include <memory>
@@ -721,63 +722,59 @@ TEST_CASE("e2e corroboration: two distinct detector classes vote in the same win
     REQUIRE(text.find(a.alert_id) != std::string::npos);
 }
 
-TEST_CASE("e2e: an MCP session writes to no alert store, and the application's store stays its own",
-          "[e2e][ownership][store]") {
-    // OWNERSHIP, MEASURED. The proposed design says the MCP server keeps "its own separate audit DB for
-    // request audit only". Both halves are checkable and the code contradicts one of them:
-    //   * PersistenceAudit is an ALERT store - "durable, privacy-safe audit of DELIVERED alerts ... the alerts
-    //     table via AlertRepository" (src/core/PersistenceAudit.h:3-11). It has no request concept at all.
-    //   * record_alert is called ONLY by the ingress (src/main_ingress.cpp:276,284) and src/mcp/* never
-    //     references PersistenceAudit - so an MCP-side "audit DB" written by the MCP path would be a SECOND
-    //     writer of alert records, the hazard the ownership decision forbids.
-    // Measured here: a real MCP session against application state adds no row to any store, a delivered alert
-    // belongs to the store it was written to and to no other, and the two survive a restart independently.
-    // The absence of request auditing is asserted rather than described.
-    const std::string app_db = "/tmp/hg_app_alerts_" + std::to_string(::getpid()) + ".db";
-    const std::string mcp_db = "/tmp/hg_mcp_audit_" + std::to_string(::getpid()) + ".db";
-    std::remove(app_db.c_str());
-    std::remove(mcp_db.c_str());
-
-    SensorHub hub;
-    {
-        PersistenceAudit app_store(app_db);
-        PersistenceAudit mcp_side(mcp_db);
-        REQUIRE(app_store.record_alert(Alert::create("app-alert-1", Severity::warning,
-                                                     "synthetic application alert", {}, 0.9, "fusion",
-                                                     json::object())));
-        REQUIRE(app_store.total_alert_count() == 1);
-        REQUIRE(mcp_side.total_alert_count() == 0);
-
-        // A genuinely served MCP session against the application's own state.
-        SensorVerifier verifier;
-        EngineStatusProvider provider(hub.app, hub.delivered, true);
-        ToolRegistry tools = make_homeguardian_tools(verifier, provider);
-        SessionState session;
-        Dispatcher dispatcher(tools);
-        REQUIRE(dispatcher.handle(kInitialize, session, "sensor-hub-token").has_body);
-        const auto summary =
-            mcp_call(tools, session, "tools/call", R"({"name":"get_alert_summary","arguments":{}})");
-        const std::string text = tool_text(summary);
-        std::printf("ownership: app-store alerts=%zu mcp-side alerts=%zu mcp answer=%s\n",
-                    app_store.total_alert_count(), mcp_side.total_alert_count(), text.c_str());
-
-        // SEPARATION: a served request changed NEITHER store.
-        REQUIRE(mcp_side.total_alert_count() == 0);
-        REQUIRE(mcp_side.alerts_written() == 0);
-        REQUIRE(app_store.total_alert_count() == 1);
+TEST_CASE("e2e: the MCP view is a READ-ONLY view of the SAME store the application writes",
+          "[e2e][ownership][readonly]") {
+    // Option A (docs/HG_OBSERVATION_TO_MCP_SEAM_24.md), after HG-CPP-MCP-READONLY-25. The seam decision is
+    // one writer and one reader of ONE store, so the claims that make it safe are asserted rather than
+    // described:
+    //   * the reader sees what the writer committed;
+    //   * the reader CANNOT write - the connection is pinned read-only - so it is not a second writer;
+    //   * a store the reader cannot open is reported as UNAVAILABLE, never as "no alerts". Those are
+    //     different statements about the state of the home, and a reader that can create what it reads will
+    //     eventually answer the second with the first. That is exactly what this process used to do: open
+    //     PersistenceAudit read-write, CREATE an empty database, and report alert_count 0 for a store that
+    //     did not exist.
+    const std::string store = "/tmp/hg_shared_alerts_" + std::to_string(::getpid()) + ".db";
+    const std::string absent = "/tmp/hg_absent_alerts_" + std::to_string(::getpid()) + ".db";
+    for (const std::string& p : {store, absent}) {
+        for (const char* s : {"", "-wal", "-shm"}) std::remove((p + s).c_str());
     }
 
-    // Independence across a restart: reopening the application's store returns its alert and counts it as
-    // historical (written by a previous process), while the MCP-side store still holds nothing.
     {
-        PersistenceAudit reopened(app_db);
-        REQUIRE(reopened.total_alert_count() == 1);
-        REQUIRE(reopened.historical_alert_count() == 1);
+        // The single writer: creates, migrates, commits an alert, closes.
+        PersistenceAudit writer(store);
+        REQUIRE(writer.record_alert(Alert::create("shared-alert-1", Severity::warning,
+                                                  "synthetic application alert", {}, 0.9, "fusion",
+                                                  json::object())));
+        REQUIRE(writer.total_alert_count() == 1);
     }
-    {
-        PersistenceAudit still_empty(mcp_db);
-        REQUIRE(still_empty.total_alert_count() == 0);
+
+    // The reader: same store, read-only, and it sees what the writer committed.
+    PersistenceAudit reader(store, PersistenceAudit::Access::read_only);
+    REQUIRE(reader.read_only());
+    REQUIRE(reader.total_alert_count() == 1);
+    REQUIRE(reader.alerts().find_recent(4).size() == 1);
+    REQUIRE(reader.alerts().find_recent(4).front().alert_id == "shared-alert-1");
+    std::printf("ownership: shared store alerts=%zu (read_only=%d, readonly-flag=%d)\n",
+                reader.total_alert_count(), reader.read_only() ? 1 : 0,
+                reader.opened_with_readonly_flag() ? 1 : 0);
+
+    // A reader that tries to write must fail, and the store must not change.
+    REQUIRE_FALSE(reader.record_alert(Alert::create("shared-alert-2", Severity::info, "synthetic", {}, 0.5,
+                                                    "fusion", json::object())));
+    REQUIRE(reader.total_alert_count() == 1);
+
+    // And a store that is not there at all is an UNAVAILABLE store, not an empty one.
+    bool threw = false;
+    try {
+        PersistenceAudit missing(absent, PersistenceAudit::Access::read_only);
+    } catch (const std::exception&) {
+        threw = true;
     }
-    std::remove(app_db.c_str());
-    std::remove(mcp_db.c_str());
+    REQUIRE(threw);
+    REQUIRE_FALSE(std::filesystem::exists(absent));  // a reader must not create what it reads
+
+    for (const std::string& p : {store, absent}) {
+        for (const char* s : {"", "-wal", "-shm"}) std::remove((p + s).c_str());
+    }
 }

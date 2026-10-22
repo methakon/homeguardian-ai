@@ -75,8 +75,30 @@ rc=$?
 set -e
 check "refuses non-loopback bind when HG_MCP_ALLOW_REMOTE=0" "4" "$rc"
 
-echo "== 4. start the server on 127.0.0.1:$PORT"
-HG_MCP_PORT="$PORT" HG_MCP_AUDIT_DB="$TMP/audit.db" \
+echo "== 4. prepare the application's alert store with a WRITER, then read it read-only"
+# The MCP process is a READER of the store the application writes (Option A of
+# docs/HG_OBSERVATION_TO_MCP_SEAM_24.md). It no longer creates one: a missing store has to be reported as
+# UNAVAILABLE, never as "no alerts" - those are different statements about the state of the home. So the
+# store is created here by a real writer, hg_alexa_bridge, which builds the same Application and
+# PersistenceAudit the shipped hub does.
+BRIDGE="${HG_BRIDGE_BIN:-$ROOT/hg_build/hg_alexa_bridge}"
+STORE=""
+if [ -x "$BRIDGE" ]; then
+  ( cd "$TMP" && printf '' | timeout 5 "$BRIDGE" "$CONFIG" "$TMP/creds.json" >/dev/null 2>&1 || true )
+  STORE="$(ls -t "$TMP"/*.db 2>/dev/null | head -1)"
+fi
+if [ -n "$STORE" ] && [ -f "$STORE" ]; then
+  printf '  PASS  %-58s %s\n' "application store prepared by a writer" "$(basename "$STORE")"
+  PASS=$((PASS+1))
+else
+  # Without a store the tools must answer "unavailable", so everything below would be measuring that
+  # instead of the transport. This is a harness failure, stated as one.
+  printf '  FAIL  %-58s %s\n' "no application store could be prepared" "(need $BRIDGE)"
+  FAIL=$((FAIL+1))
+fi
+
+echo "== 4b. start the server on 127.0.0.1:$PORT, reading that store READ-ONLY"
+HG_MCP_PORT="$PORT" HG_MCP_ALERTS_DB="$STORE" \
   "$BIN" "$CONFIG" "$TMP/creds.json" >"$TMP/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 50); do

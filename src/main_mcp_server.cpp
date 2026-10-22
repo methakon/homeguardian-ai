@@ -6,6 +6,13 @@
 // exposes them through two read-only MCP tools. Authorization is the contract's, not a
 // second opinion.
 //
+// THE STORE IT READS (Option A, docs/HG_OBSERVATION_TO_MCP_SEAM_24.md): the application's
+// alert store is owned and written by exactly one process - the D-03 ingress, which runs
+// the real Observation -> Event -> Pipeline -> AlertPolicy path. This process opens that
+// SAME store READ-ONLY and must never be a second writer. A store it cannot open is
+// reported as unavailable; it is never reported as "no alerts", because those are
+// different statements about the state of the home.
+//
 // Security posture, stated so it can be checked rather than assumed:
 //   * authentication is REQUIRED and the credential store must load securely (owner-only
 //     0600 file, owned by the effective uid). A load failure exits non-zero: there is no
@@ -160,14 +167,38 @@ int main(int argc, char* argv[]) {
     homeguardian::Application app;
     app.get_status().capture_enabled.store(capture_enabled);
 
+    // ---- the application's alert store, opened READ-ONLY ---------------------------
+    //
+    // Option A of docs/HG_OBSERVATION_TO_MCP_SEAM_24.md. The D-03 ingress is the SINGLE WRITER of this
+    // store: it runs the real Observation -> Event -> Pipeline -> AlertPolicy path and calls record_alert.
+    // This process is a reader of the SAME store and writes nothing - the connection is pinned read-only
+    // (SQLITE_OPEN_READONLY, plus PRAGMA query_only), and the repository is built with ensure_schema=false
+    // so no CREATE can run.
+    //
+    // HG_MCP_AUDIT_DB is accepted as a DEPRECATED alias because it never meant "request audit":
+    // PersistenceAudit is an alert store (src/core/PersistenceAudit.h:3-11), so the old name described
+    // something the code has never done.
+    //
+    // FAIL CLOSED, and never as zeroes: a missing, unreadable or foreign store leaves the provider
+    // unavailable, and the contract turns that into an error. Reporting alert_count=0 for a store that could
+    // not be opened would be a false statement about the state of the home.
+    const std::string alerts_db =
+        env_or("HG_MCP_ALERTS_DB", env_or("HG_MCP_AUDIT_DB", "homeguardian_ingest_audit.db"));
+
     homeguardian::PersistenceAudit* audit = nullptr;
     std::unique_ptr<homeguardian::PersistenceAudit> audit_owner;
     try {
         audit_owner = std::make_unique<homeguardian::PersistenceAudit>(
-            env_or("HG_MCP_AUDIT_DB", "homeguardian_mcp_audit.db"));
+            alerts_db, homeguardian::PersistenceAudit::Access::read_only);
         audit = audit_owner.get();
-    } catch (const std::exception&) {
-        audit = nullptr;  // degraded => the status tool reports the app unavailable
+        spdlog::info("mcp: alert store '{}' opened READ-ONLY (readonly-flag={}, read_only={}, historical={})",
+                     alerts_db, audit->opened_with_readonly_flag() ? 1 : 0, audit->read_only() ? 1 : 0,
+                     audit->historical_alert_count());
+    } catch (const std::exception& e) {
+        // No create, no fallback, no zeroes. The tools answer "unavailable" until the store exists.
+        audit = nullptr;
+        spdlog::warn("mcp: alert store '{}' UNAVAILABLE ({}): tools will report unavailable, not zero",
+                     alerts_db, e.what());
     }
 
     // ---- credentials: secure store only, fail closed -------------------------------

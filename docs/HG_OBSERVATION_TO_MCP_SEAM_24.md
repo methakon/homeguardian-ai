@@ -137,3 +137,24 @@ Already proven, on the real engine and the real MCP handlers:
   it the request-audit schema it claims.
 - Every observation in these tests is synthetic and labelled so. No camera, microphone or device produced
   anything here.
+
+---
+
+## 7. IMPLEMENTED: HG-CPP-MCP-READONLY-25 (Option A chosen)
+
+Option A is now in the code, not a plan.
+
+| change | file | why |
+|---|---|---|
+| read-only connection: `SQLITE_OPEN_READONLY` + `PRAGMA query_only` + busy timeout; never creates the file or its parent directory; records whether the READONLY flag sufficed for a WAL store or the connection had to be opened read-write and pinned | `src/persistence/SQLiteDatabase.{h,cpp}` | the guarantee that there is no second writer is SQLite's, not a convention |
+| `AlertRepository(db, ensure_schema=false)` | `src/persistence/AlertRepository.{h,cpp}` | a reader must not run `CREATE TABLE IF NOT EXISTS`: creating an empty `alerts` table inside a missing store IS the "no alerts" masking |
+| `PersistenceAudit(path, Access::read_only)`: opens an existing store, proves it is a HomeGuardian alert store (`count()` must succeed), skips schema creation and migration, throws otherwise | `src/core/PersistenceAudit.{h,cpp}` | a reader that cannot fail closed will report "no alerts" for "no storage" |
+| the MCP server reads `HG_MCP_ALERTS_DB` read-only; `HG_MCP_AUDIT_DB` kept as a **deprecated alias** (it never meant "request audit"); an unopenable store leaves the provider unavailable, which the contract turns into a refusal | `src/main_mcp_server.cpp` | observed, not asserted: the shipped ingress config states the same design ("The SAME file the hub serves … one writer at a time is serialized and readers see a consistent snapshot") |
+
+Verified fail-closed behaviour: a **missing** store answers `isError: true`
+("the request could not be authorized") - never `alert_count: 0` - and the reader does not create the file.
+A valid **empty** store answers `alert_count: 0` with success. Those are the two different statements.
+
+Evidence: `scripts/verify_observation_to_mcp_path.sh` (14 checks, three processes) and
+`tests/persistence/test_alerts_read_only.cpp` (4 cases) with the ownership case in
+`tests/integration/test_network_sensor_to_mcp.cpp`.

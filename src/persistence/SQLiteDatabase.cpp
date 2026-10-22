@@ -45,6 +45,48 @@ void SQLiteDatabase::close() {
         db_ = nullptr;
     }
     in_transaction_ = false;
+    read_only_connection_ = false;
+    opened_with_readonly_flag_ = false;
+}
+
+void SQLiteDatabase::open_read_only(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_) {
+        throw DatabaseException("Database already open");
+    }
+
+    // No create_directories() and no sqlite3_open() here, deliberately: both would CREATE what a reader
+    // must only read. A missing store has to be an error the caller can report, not an empty database that
+    // looks like "no alerts".
+    int rc = sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr);
+    if (rc == SQLITE_OK) {
+        opened_with_readonly_flag_ = true;
+    } else {
+        // A WAL database needs its -shm/-wal side files, which a read-only connection cannot always use.
+        // Falling back to a read-write open is NOT a licence to write: PRAGMA query_only below makes SQLite
+        // itself refuse every write on this connection, so a second writer cannot appear even by accident.
+        if (db_) {
+            sqlite3_close(db_);
+            db_ = nullptr;
+        }
+        rc = sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READWRITE, nullptr);
+        if (rc != SQLITE_OK) {
+            const std::string err = db_ ? sqlite3_errmsg(db_) : "unknown error";
+            if (db_) {
+                sqlite3_close(db_);
+                db_ = nullptr;
+            }
+            throw DatabaseException("Cannot open database read-only: " + err);
+        }
+        opened_with_readonly_flag_ = false;
+    }
+
+    // In BOTH cases this connection must not write, and the guarantee is SQLite's, not a convention.
+    execute_locked("PRAGMA query_only = ON;");
+    sqlite3_busy_timeout(db_, 5000);
+    // Extended result codes so an attempt to write reports SQLITE_READONLY rather than a generic error.
+    sqlite3_extended_result_codes(db_, 1);
+    read_only_connection_ = true;
 }
 
 bool SQLiteDatabase::is_open() const {

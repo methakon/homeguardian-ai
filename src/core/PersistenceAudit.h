@@ -57,6 +57,23 @@ public:
     // std::runtime_error if the database cannot be opened/initialized, so the
     // caller can decide to run degraded.
     explicit PersistenceAudit(const std::string& path);
+
+    // Which side of the seam this process is on.
+    //
+    // read_only NEVER creates or migrates anything. It opens an EXISTING store (no file creation, no
+    // directories, no schema), proves it really is a HomeGuardian alerts database, and throws otherwise -
+    // so a caller reports the store as unavailable rather than reporting an empty alert list. A reader that
+    // can create what it reads will eventually report "no alerts" for "no storage", which is a security
+    // statement as much as a correctness one.
+    //
+    // There is exactly ONE writer: the process that owns the application (the D-03 ingress, which runs the
+    // Observation -> Event -> Pipeline -> AlertPolicy path and calls record_alert). The read-only
+    // connection is additionally pinned with PRAGMA query_only, so a second writer cannot appear by
+    // accident even when a WAL store forces the connection open read-write.
+    enum class Access { read_write, read_only };
+    PersistenceAudit(const std::string& path, Access access);
+    bool read_only() const { return read_only_; }
+    bool opened_with_readonly_flag() const { return opened_with_readonly_flag_; }
     ~PersistenceAudit();
 
     PersistenceAudit(const PersistenceAudit&) = delete;
@@ -112,6 +129,8 @@ private:
 
     std::chrono::system_clock::time_point process_start_;
     size_t historical_count_ = 0;
+    bool read_only_ = false;
+    bool opened_with_readonly_flag_ = false;
 
     // Timestamp of the last retention prune (bounded periodic scheduling).
     std::optional<std::chrono::system_clock::time_point> last_retention_prune_;
