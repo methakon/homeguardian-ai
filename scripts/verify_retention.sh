@@ -86,8 +86,8 @@ stop_bridge
 # seed one alert far outside the 30-day window and one just inside it
 OLD_MS=$(( ($(date +%s) - 40*86400) * 1000 ))
 RECENT_MS=$(( ($(date +%s) - 2*86400) * 1000 ))
-"$SQ" "$DB" "INSERT INTO alerts VALUES('seed-old','info','seeded old','[]',$OLD_MS,0.5,'seeded','{}');"
-"$SQ" "$DB" "INSERT INTO alerts VALUES('seed-recent','info','seeded recent','[]',$RECENT_MS,0.5,'seeded','{}');"
+"$SQ" "$DB" "INSERT INTO home_alerts VALUES('seed-old','info','seeded old','[]',$OLD_MS,0.5,'seeded','{}');"
+"$SQ" "$DB" "INSERT INTO home_alerts VALUES('seed-recent','info','seeded recent','[]',$RECENT_MS,0.5,'seeded','{}');"
 [[ "$(count)" == "4" ]] && ok "seeded 2 rows (4 total before restart)" \
                         || bad "expected 4 rows before restart, got $(count)"
 
@@ -95,9 +95,9 @@ start_bridge                      # startup retention runs here
 grep -q "retention: pruned 1 alert(s) older than 30 day(s)" "$WORK/err.log" \
   && ok "startup retention reported pruning 1 out-of-window alert" \
   || bad "startup retention did not report a prune: $(grep -c retention "$WORK/err.log")"
-[[ "$("$SQ" "$DB" "SELECT count(*) FROM alerts WHERE alert_id='seed-old';")" == "0" ]] \
+[[ "$("$SQ" "$DB" "SELECT count(*) FROM home_alerts WHERE alert_id='seed-old';")" == "0" ]] \
   && ok "out-of-window alert pruned" || bad "out-of-window alert still present"
-[[ "$("$SQ" "$DB" "SELECT count(*) FROM alerts WHERE alert_id='seed-recent';")" == "1" ]] \
+[[ "$("$SQ" "$DB" "SELECT count(*) FROM home_alerts WHERE alert_id='seed-recent';")" == "1" ]] \
   && ok "in-window alert survived the restart" || bad "in-window alert was pruned"
 [[ "$(count)" == "3" ]] && ok "3 rows remain after retention" \
                         || bad "expected 3 rows after retention, got $(count)"
