@@ -60,6 +60,11 @@ struct IngressConfig {
     size_t max_workers = 2;
     bool verbose = false;
     std::vector<std::string> extra_source_types;
+    // The same extension point for the OBSERVATION allowlist. A producer's vocabulary is its own: the Android
+    // harness speaks observation_type "motion" over source_type "camera", and an operator must be able to admit
+    // those names BY CONFIGURATION rather than by editing the built-in default. Additive only - the defaults
+    // stay exactly as they are, so this cannot loosen what no operator asked to accept.
+    std::vector<std::string> extra_observation_types;
     // OPT-IN fusion evidence allowlist for observations that arrive over the device
     // boundary. Empty means "keep the built-in conservative default"
     // ({"activity-energy"}), under which ingested sensor observations are recorded
@@ -142,6 +147,19 @@ bool load_config(const std::string& path, IngressConfig* config, std::string* er
                 return fail("evidence_detector_ids entries must be 1..64 characters");
             }
             config->evidence_detector_ids.push_back(id);
+        }
+    }
+    if (parsed.contains("extra_observation_types")) {
+        if (!parsed["extra_observation_types"].is_array()) {
+            return fail("extra_observation_types must be an array");
+        }
+        for (const auto& entry : parsed["extra_observation_types"]) {
+            if (!entry.is_string()) return fail("extra_observation_types entries must be strings");
+            const std::string name = entry.get<std::string>();
+            if (name.empty() || name.size() > 64) {
+                return fail("extra_observation_types entries must be 1..64 characters");
+            }
+            config->extra_observation_types.push_back(name);
         }
     }
     if (parsed.contains("extra_source_types")) {
@@ -261,6 +279,9 @@ int main(int argc, char** argv) {
     ingest_config.max_pending = config.max_pending;
     for (const std::string& extra : config.extra_source_types) {
         ingest_config.allowed_source_types.push_back(extra);
+    }
+    for (const std::string& extra : config.extra_observation_types) {
+        ingest_config.allowed_observation_types.push_back(extra);
     }
     ObservationIngest ingest(registry, ingest_config);
     IngestDetectors detectors(IngestDetectors::defaults());

@@ -188,7 +188,18 @@ ObservationIngest::Result ObservationIngest::accept(const PeerContext& peer,
     observation.device_id = peer.authenticated_device_id;  // authenticated, not claimed
     observation.source = "node";
     const auto source_type = security_source_type_from_string(message.source_type);
-    observation.source_type = source_type.value();
+    if (!source_type.has_value()) {
+        // An allowlisted string with no SecuritySourceType representation is NOT admissible evidence.
+        // Refuse it, for two reasons that both matter:
+        //   * `.value()` on the optional throws std::bad_optional_access - an exception raised by a value a
+        //     PEER put on the wire, reachable as soon as an operator extends the allowlist with a name the
+        //     record type cannot represent (HG-CPP-ANDROID-VECTOR-CONSUMER-27: the Android producer sends
+        //     source_type "camera", which is exactly this case).
+        //   * defaulting it instead would silently relabel what a device reported, which is worse than a
+        //     refusal: the vocabulary is the receiver's, and an unknown name must not become "motion".
+        return reject(RejectReason::unknown_source_type, "source_type has no known representation");
+    }
+    observation.source_type = *source_type;
     observation.acquired_at = from_ms(message.acquired_at_ms);
     observation.ingested_at = from_ms(now_ms);
     observation.provenance = provenance.real ? Provenance::real : Provenance::synthetic;
