@@ -255,6 +255,45 @@ inline std::string json_error(unsigned status, std::string_view error) {
         "{\"ok\":false,\"error\":\"" + std::string(error) + "\"}");
 }
 
+/// The body length a well-formed request has DECLARED, or kNoDeclaredBody when the framing must be left
+/// to dispatch(). Deliberately conservative: a caller may use the result only to decide to READ MORE, never
+/// to accept anything. Anything ambiguous -- Transfer-Encoding, a duplicate Content-Length, a non-numeric or
+/// negative-looking value, a value our own cap would reject anyway -- returns kNoDeclaredBody, so every
+/// existing rejection stays exactly where it was, in dispatch().
+inline constexpr std::size_t kNoDeclaredBody = static_cast<std::size_t>(-1);
+
+/// ASCII-lowercased copy, because header names are case-insensitive: the fragmentation reproducer sends
+/// "Content-Length" while a naive lowercase search would silently miss it -- i.e. the fix would not fix it.
+inline std::string ascii_lower(std::string_view s) {
+    std::string out(s);
+    for (char& c : out) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return out;
+}
+
+inline std::size_t declared_body_length(std::string_view head) {
+    const std::string lower = ascii_lower(head);
+    if (lower.find("transfer-encoding:") != std::string::npos)
+        return kNoDeclaredBody;
+    std::size_t found = kNoDeclaredBody;
+    for (std::size_t pos = lower.find("content-length:"); pos != std::string::npos;
+         pos = lower.find("content-length:", pos + 1)) {
+        if (found != kNoDeclaredBody) return kNoDeclaredBody;  // duplicate -> dispatch decides
+        std::size_t i = pos + 15;
+        while (i < lower.size() && (lower[i] == ' ' || lower[i] == '\t')) ++i;
+        std::size_t digits = 0;
+        std::size_t value = 0;
+        for (; i < lower.size() && lower[i] >= '0' && lower[i] <= '9'; ++i) {
+            value = value * 10 + static_cast<std::size_t>(lower[i] - '0');
+            if (++digits > 6) return kNoDeclaredBody;
+        }
+        if (digits == 0 || value > kMaxBodyBytes) return kNoDeclaredBody;
+        found = value;
+    }
+    return found;
+}
+
 inline std::string dispatch(std::string_view request, std::string_view html,
                             const Handler& handler, SessionStore& sessions,
                             int64_t now_ms, uint16_t server_port) {
@@ -573,10 +612,22 @@ inline int serve(uint16_t port, std::string_view html, const Handler& handler,
         std::string input;
         char buffer[kRecvChunk];
         bool too_large = false;
-        while (input.find("\r\n\r\n") == std::string::npos) {
+        // Incompleteness is not malformation. Read until the header block is complete AND, when a well-formed
+        // Content-Length has declared a body, that body has arrived as well -- otherwise a request whose body
+        // arrives in a later segment (or a later packet) is answered 400 before the client has even sent it.
+        // The decision to read more comes only from declared_body_length(), which returns kNoDeclaredBody for
+        // every ambiguous framing (TE, duplicate CL, non-numeric, over-cap); all acceptance and rejection
+        // remains in dispatch(), so no existing refusal is weakened.
+        for (;;) {
+            const auto header_end = input.find("\r\n\r\n");
+            if (header_end != std::string::npos) {
+                const auto declared = declared_body_length(std::string_view(input).substr(0, header_end));
+                if (declared == kNoDeclaredBody) break;
+                if (input.size() >= header_end + 4 + declared) break;
+            }
             const ssize_t n = ::recv(client, buffer, sizeof(buffer), 0);
             if (n <= 0) break;
-            if (input.size() + static_cast<size_t>(n) > kMaxHeaderBytes) {
+            if (input.size() + static_cast<size_t>(n) > kMaxHeaderBytes + kMaxBodyBytes) {
                 too_large = true;
                 break;
             }

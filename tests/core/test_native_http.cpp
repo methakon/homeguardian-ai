@@ -215,6 +215,41 @@ TEST_CASE("NativeHttp: a request body is rejected (no body framing)", "[nativeht
     REQUIRE(h.calls == 0);
 }
 
+// ---------------------------------------------------------------------------
+// HG-RECOVERY-CPP-HTTP-45: a body that arrives in a LATER segment must not be answered before it arrives.
+// The read loop used to stop the moment the header terminator appeared, so a well-formed Content-Length was
+// compared against a body the client had not sent yet -> 400 before the client had written anything. These
+// pin the decision that lets the loop wait, in BOTH directions.
+// ---------------------------------------------------------------------------
+TEST_CASE("NativeHttp: only a well-formed Content-Length can make the reader wait", "[nativehttp][h45]") {
+    using hg_native_http::declared_body_length;
+    using hg_native_http::kNoDeclaredBody;
+    // The reproducer's own spelling is capitalised; a lowercase-only search would miss it and the fix would
+    // not fix anything.
+    REQUIRE(declared_body_length("POST /api/session HTTP/1.1\r\nContent-Length: 2\r\n") == 2);
+    REQUIRE(declared_body_length("POST /x HTTP/1.1\r\ncontent-length: 0\r\n") == 0);
+    REQUIRE(declared_body_length("POST /x HTTP/1.1\r\nCoNtEnT-LeNgTh: 17\r\n") == 17);
+    // Ambiguous framing is dispatch()'s to reject: never wait on it, never accept it here.
+    REQUIRE(declared_body_length("POST /x HTTP/1.1\r\n") == kNoDeclaredBody);
+    REQUIRE(declared_body_length("POST /x HTTP/1.1\r\nTransfer-Encoding: chunked\r\n") == kNoDeclaredBody);
+    REQUIRE(declared_body_length("POST /x HTTP/1.1\r\nContent-Length: 2\r\nContent-Length: 2\r\n") ==
+            kNoDeclaredBody);
+    REQUIRE(declared_body_length("POST /x HTTP/1.1\r\nContent-Length: abc\r\n") == kNoDeclaredBody);
+    REQUIRE(declared_body_length("POST /x HTTP/1.1\r\nContent-Length: -2\r\n") == kNoDeclaredBody);
+    REQUIRE(declared_body_length("POST /x HTTP/1.1\r\nContent-Length: 9999999\r\n") == kNoDeclaredBody);
+}
+
+TEST_CASE("NativeHttp: a complete body is accepted and an incomplete one is still refused",
+          "[nativehttp][h45]") {
+    Rec h; auto handler = recording_handler(h);
+    const std::string head =
+        "POST /api/state HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 2\r\n\r\n";
+    // Both declared bytes present: the request is complete, so it is NOT a framing failure.
+    REQUIRE_FALSE(starts_with(dispatch(head + "{}", "<html>", handler), "HTTP/1.1 400"));
+    // Declared 2, delivered 1: dispatch still refuses it. The fix adds WAITING, not leniency.
+    REQUIRE(starts_with(dispatch(head + "{", "<html>", handler), "HTTP/1.1 400"));
+}
+
 TEST_CASE("NativeHttp: malformed request lines are rejected", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
     REQUIRE(starts_with(dispatch("GET\r\nHost: 127.0.0.1\r\n\r\n", "<html>", handler), "HTTP/1.1 400"));
