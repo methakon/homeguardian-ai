@@ -94,7 +94,66 @@ and runs loopback-only. **The judge release needs no Android.** Therefore:
 5. **Docs (#6)** — cheap, and they are the honest record of what was and was not proven.
 6. Everything else: **do not recover.** Revisit only if a physical-hardware lane is ever re-authorised.
 
-## 6. Bounded-audit statement
+## 7. Verification of DEFER #1 (added after the audit — the gap I flagged)
+
+My first version of §2 claimed main "has the file but not the fixes" on the strength of **file presence
+and diff size**, which is not verification. Reading main's copy confirms the claim — and sharpens it:
+**these are not "missing improvements", two of them are live defects in main.**
+
+```
+fix / marker                present in main @ 79e21c2?
+rebaseAboveWatermark        ABSENT          <- restart fix missing
+lastAdoptedWatermark        ABSENT
+lastSentFrame               ABSENT
+identityRejection           ABSENT          <- ingress bounds not mirrored
+observationRejection        ABSENT
+MAX_DEVICE_ID_CHARS         ABSENT
+sequence field              `public final long sequence` (final -> the rebase is impossible there)
+```
+
+**Defect 1 — a permanently refused observation is counted as delivered (LIVE IN MAIN).**
+Main's `transmit()` returns `true` on `SUSPENDING_REASONS`, on `PERMANENT_REASONS`, and on an unknown
+reason. The worker tests that boolean **first**:
+
+```java
+// main @ 79e21c2 line 360
+if (transmit(next)) { ... queue.pollFirst(); sent++; }
+else if (terminalFailure) { ... permanentRejections++; }   // UNREACHABLE
+```
+
+So a refusal the hub will never accept is counted as a delivery, and `permanentRejections` is dead code.
+The counter an operator reads to answer "is this node working" over-reports.
+
+**Defect 2 — a restarted node loses its first observation (LIVE IN MAIN).**
+Main adopts the watermark (`sequenceCounter = watermark`) but has **0 rebase sites**, and the queued
+observation's sequence was fixed at enqueue time, before the handshake. It is sent below the watermark,
+refused `replayed_sequence`, and — being PERMANENT — dropped and never retried.
+
+### A third defect I nearly reported, and did not
+
+I was about to claim main could **rewind** its counter (assigning a lower watermark over a higher
+current value). Reading the code instead of the diff:
+
+```java
+if (watermark > 0L) {
+    synchronized (lock) {
+        if (watermark > sequenceCounter) { sequenceCounter = watermark; }   // the guard IS there
+    }
+}
+```
+
+Main is **monotonic and correct** here. It writes the guard inline instead of via a named
+`adoptedSequence()` helper, which is a readability difference, not a defect. The claim would have been
+false, and it looked plausible from the diff — which is exactly why "the file differs" is not evidence
+of a bug.
+
+**Conclusion:** DEFER #1 stands, and is the highest-value item in this audit. Recipe unchanged —
+`git checkout -p bf776d0 -- apk/src/org/homeguardian/harness/ObservationTransport.java` — but it should be
+**taken with its regression tests** (`TlsHandshakeE2ETest` T11c/T11c2 for defect 1, T13–T15 for defect 2),
+because without them the fix is unverifiable.
+
+## 8. Bounded-audit statement
 
 Read-only throughout. No branch was modified, no cherry-pick was performed, nothing was pushed to
 `main`, no device or credential was touched. Only this document was added, in this lane.
+
