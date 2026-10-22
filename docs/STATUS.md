@@ -4,6 +4,28 @@
 
 ## Private remote MCP readiness — 2026-10-23
 
+**04:02 IST — REMOTE MCP VERIFIED OVER THE PRIVATE VPN.** All four reported
+blockers are resolved: the phone key is enrolled with its own /32, its profile is
+configured without exporting its private key, cloud UDP ingress admits the current
+verified source, and the private coordinator runs as an active boot-enabled service
+on the tunnel address. Through that coordinator the real handset answered
+initialize, listed exactly the two native read-only tools, passed both
+authentication stages on each tool call, rejected missing/incorrect client bearers
+with 401 and a mutating tool with 400, and still answered while the screen dozed.
+Public MCP ports remain unreachable and mail was untouched.
+
+Deployment also exposed and fixed a real route-policy defect: refusing any
+destination covered by a non-VPN route made the bridge undialable on any real
+Wi-Fi plus WireGuard handset, because Wi-Fi always advertises a default route. The
+policy now follows kernel longest-prefix priority; the unsafe overlap is still
+refused. Off-device policy checks went 44 → 50 and failed before the fix. Phone
+update kept the existing signer and both native libraries byte-identical.
+
+Still open: a separately reserved worker peer is not enrolled (needs local root),
+so remote MCP is proven from the VPS client listener; restart/reboot recovery and a
+changed public address are untested. Details:
+[verified connection and remaining blockers](PRIVATE_VPN_REMOTE_MCP_READINESS.md).
+
 **03:25 IST update — VPN WORKING, COORDINATOR DEPLOYED, PHONE BRIDGE PENDING:**
 phone enrollment, saved profile configuration and current-source cloud UDP ingress
 are applied. A fresh authenticated handshake, assigned phone tunnel address and

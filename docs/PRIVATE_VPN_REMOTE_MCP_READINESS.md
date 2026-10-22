@@ -1,5 +1,55 @@
 # Private VPN and remote MCP readiness
 
+## Final checkpoint — 2026-10-23, 04:02 IST: REMOTE MCP VERIFIED
+
+Four blockers were reported and all four are now resolved and measured. Remote
+read-only MCP from the private VPN works end to end against the real handset.
+
+| Blocker | Resolution | Evidence |
+|---|---|---|
+| Phone key not enrolled on the VPS | Dedicated /32 peer added and persisted; both pre-existing peers untouched | server peer list read back; fresh authenticated handshake |
+| Phone profile had no address or peer | Profile configured through the app's own UI; its private key never exported or replaced | live tunnel address and interface present on the device |
+| Cloud admitted WireGuard from one old source only | One additional UDP source rule for the current verified public address on the target's dedicated NSG | rule read back; NSG membership proven to be this instance only |
+| Private MCP coordinator not deployed | Active, boot-enabled service on the VPS tunnel address with resource limits | zero restarts; endpoint restrictions read back |
+
+**The remote call path, measured through the coordinator from the VPS itself:**
+
+- initialize → 200, tools/list → exactly the two native read-only tools
+- both tool contracts passed (two authentication stages each, not just HTTP)
+- missing and incorrect client bearer → 401
+- a mutating tool → 400 (rejected fail-closed)
+- phone status → `Running`, `read_only=true`, `capture_enabled=false`
+- alert summary → `alert_count=0`, `read_only=true`
+
+**Screen-off acceptance:** the phone was left to doze with its network awake
+handling normal. The bridge stayed authenticated and remote MCP calls continued to
+succeed, so the bridge inherits the foreground-service lifetime rather than the
+activity's. The test screen-on setting was reverted afterwards.
+
+**A real defect found by this deployment, fixed and covered by tests.** The Android
+route policy refused any destination that *some* non-VPN route covered. Every
+attached Wi-Fi network advertises a default route, so on a real Wi-Fi plus WireGuard
+handset the policy refused *every* endpoint and the bridge could never dial — while
+its synthetic suite passed, because those Wi-Fi states carried no default route.
+Route priority is now decided by prefix length, matching the kernel: a strictly more
+specific VPN route wins, and an overlap where the non-VPN prefix is at least as
+specific is still refused, so the unprotected case remains closed. The off-device
+policy suite grew from 44 to 50 checks with that device shape asserted in both
+directions, and it failed before the fix.
+
+Phone update applied in place with the existing signing identity: same signer
+fingerprint as the installed package, both native libraries carried over
+byte-identically (no C++ rebuild), no debugging enabled, permissions unchanged.
+Enrolment of the bridge used a separate credential displayed only in an explicit
+30-second dialog and transferred straight into the coordinator's registry; the
+phone's local MCP bearer was never read, displayed or exported.
+
+**Still open, and not claimed:** the separately reserved worker peer is unenrolled,
+so remote MCP has been proven from the VPS client listener rather than from a
+workstation peer (enrolling it needs local root). Coordinator and phone-service
+restart recovery, and a real reboot with a changed public address, have not been
+tested. No camera media traverses the coordinator, and no public MCP port exists.
+
 ## Execution update — 2026-10-23, 03:25 IST
 
 The owner approved applying the prepared setup. The earlier read-only baseline
