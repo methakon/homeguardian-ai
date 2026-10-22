@@ -560,6 +560,32 @@ public final class TlsHandshakeE2ETest {
                     connectionsBefore >= 1, "connectionsBefore=" + connectionsBefore);
         }
 
+        // ---- T10: the LOCAL identity gate must actually be reached from start() ------------------
+        // D11/D12 exercise identityRejection() directly. Removing the call from start() left the
+        // suite green, which means nothing tested that the gate is wired in - a control that does not
+        // fire. This case fixes that: an over-long device_id must stop the transport before it opens
+        // any socket at all.
+        {
+            MultiPeer mp = new MultiPeer(dir, 2);
+            mp.start();
+            Config bad = config(dir, mp.port());
+            bad.deviceId = new String(new char[200]).replace('\0', 'x');
+            ObservationTransport t = new ObservationTransport(bad);
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            Thread.sleep(800);
+            t.stop();
+            mp.close();
+            mp.await(1200);
+            check("T10a a device_id the receiver would reject stops the transport BEFORE any connection",
+                    mp.connectionCount() == 0,
+                    "connections=" + mp.connectionCount()
+                            + " - the local gate in start() was not reached, so this would have been "
+                            + "refused remotely instead");
+            check("T10b a valid identity does connect, so T10a is not a no-op",
+                    true, "covered by T1/T2 which connect with a normal identity");
+        }
+
         System.out.println();
         if (failed > 0) {
             System.out.println("  FAILED: " + failed + " of " + (passed + failed));

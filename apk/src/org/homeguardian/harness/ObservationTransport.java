@@ -193,6 +193,81 @@ public class ObservationTransport {
         return PROTOCOL_VERSION_MAJOR;
     }
 
+    // ---- ingress bounds, mirrored from the receiver so failures are LOCAL -----------------------
+    // The D-03 receiver enforces these on ingress (src/net/DeviceProtocol.h):
+    //     kMaxFrameBytes           4096
+    //     kMaxFeatureKeys            24      >= the 2 this producer emits
+    //     kMaxFeatureStringChars     64
+    //     kMaxSequence       (1ULL << 60)
+    //     bounded_string(device_id,   96)
+    //     bounded_string(display_name, 64)
+    //     capabilities: array <= 16, each entry <= 32 chars
+    //     kMaxFutureSkewMs       120000      acquired_at_ms must not be >2 min ahead
+    //     kMaxObservationAgeMs 86400000      ... nor >24 h old
+    //
+    // Emitting a value outside these bounds does not fail here: it fails at the hub, as a remote
+    // `bad_json` with no indication which field was wrong. Checking locally turns a confusing remote
+    // refusal into an immediate, nameable one.
+    static final int MAX_DEVICE_ID_CHARS = 96;
+    static final int MAX_DISPLAY_NAME_CHARS = 64;
+    static final int MAX_CAPABILITY_CHARS = 32;
+    static final int MAX_CAPABILITIES = 16;
+    static final int MAX_FEATURE_STRING_CHARS = 64;
+    static final int MAX_FEATURE_KEYS = 24;
+    static final long MAX_SEQUENCE = 1L << 60;
+    static final long MAX_FUTURE_SKEW_MS = 120000L;
+    static final long MAX_OBSERVATION_AGE_MS = 86400000L;
+
+    /**
+     * Why the configured identity would be refused by the receiver, or null when it is acceptable.
+     * Deliberately returns the reason rather than a boolean, so a caller can say which field is wrong.
+     */
+    static String identityRejection(Config config) {
+        if (config.deviceId == null || config.deviceId.length() == 0) {
+            return "device_id is empty";
+        }
+        if (config.deviceId.length() > MAX_DEVICE_ID_CHARS) {
+            return "device_id is " + config.deviceId.length() + " chars, receiver allows "
+                    + MAX_DEVICE_ID_CHARS;
+        }
+        if (config.displayName != null && config.displayName.length() > MAX_DISPLAY_NAME_CHARS) {
+            return "display_name is " + config.displayName.length() + " chars, receiver allows "
+                    + MAX_DISPLAY_NAME_CHARS;
+        }
+        return null;
+    }
+
+    /**
+     * Why this observation would be refused on its own fields, or null when acceptable.
+     *
+     * The timestamp window is the one that bites in the field: a phone whose clock drifts more than
+     * two minutes ahead of the hub has every observation refused as `malformed_timestamp`, which
+     * looks like a transport fault rather than a clock fault.
+     */
+    static String observationRejection(PendingObservation o, long nowMs) {
+        if (o == null) {
+            return "no observation";
+        }
+        if (o.sequence <= 0L || o.sequence > MAX_SEQUENCE) {
+            return "sequence " + o.sequence + " is out of range";
+        }
+        if (o.observationId.length() > 64) {
+            return "observation_id is " + o.observationId.length() + " chars";
+        }
+        if (o.acquiredAtMs > nowMs + MAX_FUTURE_SKEW_MS) {
+            return "acquired_at_ms is more than " + MAX_FUTURE_SKEW_MS
+                    + " ms ahead of the sender clock (clock skew)";
+        }
+        if (o.acquiredAtMs < nowMs - MAX_OBSERVATION_AGE_MS) {
+            return "acquired_at_ms is older than " + MAX_OBSERVATION_AGE_MS + " ms";
+        }
+        if (o.state != null && o.state.length() > MAX_FEATURE_STRING_CHARS) {
+            return "feature string state is " + o.state.length() + " chars, receiver allows "
+                    + MAX_FEATURE_STRING_CHARS;
+        }
+        return null;
+    }
+
     /**
      * Decide a welcome frame without a socket, so the handshake is testable.
      *
@@ -353,6 +428,14 @@ public class ObservationTransport {
 
     public void start() {
         if (running) {
+            return;
+        }
+        // Refuse a configuration the receiver would reject, HERE rather than at the hub. A device_id
+        // one character over the bound fails remotely as `bad_json` with no field named; failing
+        // locally names it and leaves the transport stopped instead of retrying a doomed handshake.
+        final String identityProblem = identityRejection(config);
+        if (identityProblem != null) {
+            Log.w(TAG, "refusing to start: " + identityProblem);
             return;
         }
         running = true;

@@ -282,6 +282,77 @@ public final class CrossReceiverContractTest {
         check("X9 negative control: an invented receiver token is detected as unknown",
                 detected, "if this is false, X1a proves nothing");
 
+        // ---- D: D-03 RECEIVER INGRESS BOUNDS ------------------------------------------------------
+        // Read from the real receiver (src/net/DeviceProtocol.h/.cpp @ 02ab07c), not from a scripted
+        // peer. Emitting outside these does not fail locally - it fails at the hub as a remote
+        // `bad_json` that names no field. These cases assert the producer is inside the bounds, and
+        // that a bad identity is refused LOCALLY.
+        check("D1 device_id bound matches the receiver (96)",
+                ObservationTransport.MAX_DEVICE_ID_CHARS == 96);
+        check("D2 display_name bound matches the receiver (64)",
+                ObservationTransport.MAX_DISPLAY_NAME_CHARS == 64);
+        check("D3 capability entry bound matches the receiver (32)",
+                ObservationTransport.MAX_CAPABILITY_CHARS == 32);
+        check("D4 capabilities count bound matches the receiver (16), and 2 are emitted",
+                ObservationTransport.MAX_CAPABILITIES == 16);
+        check("D5 feature string bound matches the receiver (64)",
+                ObservationTransport.MAX_FEATURE_STRING_CHARS == 64);
+        check("D6 feature key bound matches the receiver (24), and 2 keys are emitted",
+                ObservationTransport.MAX_FEATURE_KEYS == 24);
+        check("D7 sequence ceiling matches the receiver (1<<60)",
+                ObservationTransport.MAX_SEQUENCE == (1L << 60));
+        check("D8 future-skew window matches the receiver (120000 ms)",
+                ObservationTransport.MAX_FUTURE_SKEW_MS == 120000L);
+        check("D9 observation age window matches the receiver (86400000 ms)",
+                ObservationTransport.MAX_OBSERVATION_AGE_MS == 86400000L);
+
+        // The identity the producer actually emits must be acceptable.
+        ObservationTransport.Config goodCfg = new ObservationTransport.Config();
+        goodCfg.deviceId = "hg-android-test-device";
+        goodCfg.displayName = "test node";
+        check("D10 a normal identity is accepted locally",
+                ObservationTransport.identityRejection(goodCfg) == null,
+                "got " + ObservationTransport.identityRejection(goodCfg));
+
+        ObservationTransport.Config longId = new ObservationTransport.Config();
+        longId.deviceId = new String(new char[97]).replace('\0', 'x');
+        check("D11 a device_id one char over the bound is refused LOCALLY, not at the hub",
+                ObservationTransport.identityRejection(longId) != null,
+                "an over-long id must fail here where it can be named");
+
+        ObservationTransport.Config emptyId = new ObservationTransport.Config();
+        emptyId.deviceId = "";
+        check("D12 an empty device_id is refused locally",
+                ObservationTransport.identityRejection(emptyId) != null);
+
+        // The clock window, which is the field failure that looks like a transport fault.
+        long now = System.currentTimeMillis();
+        ObservationTransport.PendingObservation okObs =
+                new ObservationTransport.PendingObservation("obs-1", "camera", "motion", "synthetic",
+                        now, 1L, 0.5d, "fraction", "present", 0.9d, "synthetic");
+        check("D13 a normal observation is accepted locally",
+                ObservationTransport.observationRejection(okObs, now) == null,
+                "got " + ObservationTransport.observationRejection(okObs, now));
+
+        ObservationTransport.PendingObservation skewed =
+                new ObservationTransport.PendingObservation("obs-2", "camera", "motion", "synthetic",
+                        now + 300000L, 2L, 0.5d, "fraction", "present", 0.9d, "synthetic");
+        check("D14 an observation timestamped 5 min in the future is refused locally as clock skew",
+                ObservationTransport.observationRejection(skewed, now) != null,
+                "a skewed phone clock would otherwise be refused remotely as malformed_timestamp");
+
+        ObservationTransport.PendingObservation ancient =
+                new ObservationTransport.PendingObservation("obs-3", "camera", "motion", "synthetic",
+                        now - 90000000L, 3L, 0.5d, "fraction", "present", 0.9d, "synthetic");
+        check("D15 an observation older than 24 h is refused locally",
+                ObservationTransport.observationRejection(ancient, now) != null);
+
+        ObservationTransport.PendingObservation zeroSeq =
+                new ObservationTransport.PendingObservation("obs-4", "camera", "motion", "synthetic",
+                        now, 0L, 0.5d, "fraction", "present", 0.9d, "synthetic");
+        check("D16 sequence 0 is refused locally (the receiver rejects value == 0)",
+                ObservationTransport.observationRejection(zeroSeq, now) != null);
+
         // ---- H: the handshake, which had NO coverage before this --------------------------------
         // `expectWelcome` takes an SSLSocket, so nothing could drive it. That is the worst place to
         // have a gap: the welcome carries the resume watermark, the one field a restarted node needs
