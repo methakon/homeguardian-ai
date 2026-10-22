@@ -63,7 +63,7 @@ AlexaContract, preserving its own separate audit DB for request audit only."*
    forwarding interface the hypothesis assumes does not exist; the bounded interface exists *inside* the
    process.
 2. **`HG_MCP_AUDIT_DB` is not a request audit.** `PersistenceAudit` is "durable, privacy-safe audit of
-   DELIVERED alerts … using … the `alerts` table via `AlertRepository`"
+   DELIVERED alerts … using … the `home_alerts` table via `AlertRepository`"
    (`src/core/PersistenceAudit.h:3-11`); its API is `record_alert` / `total_alert_count` /
    `prune_older_than*` (`:65-101`) — there is no request concept. So an MCP-side "audit DB" written by the
    MCP path would be a **second writer of alert records**, which the design decision itself forbids.
@@ -147,7 +147,7 @@ Option A is now in the code, not a plan.
 | change | file | why |
 |---|---|---|
 | read-only connection: `SQLITE_OPEN_READONLY` + `PRAGMA query_only` + busy timeout; never creates the file or its parent directory; records whether the READONLY flag sufficed for a WAL store or the connection had to be opened read-write and pinned | `src/persistence/SQLiteDatabase.{h,cpp}` | the guarantee that there is no second writer is SQLite's, not a convention |
-| `AlertRepository(db, ensure_schema=false)` | `src/persistence/AlertRepository.{h,cpp}` | a reader must not run `CREATE TABLE IF NOT EXISTS`: creating an empty `alerts` table inside a missing store IS the "no alerts" masking |
+| `AlertRepository(db, ensure_schema=false)` | `src/persistence/AlertRepository.{h,cpp}` | a reader must not run `CREATE TABLE IF NOT EXISTS`: creating an empty `home_alerts` table inside a missing store IS the "no alerts" masking |
 | `PersistenceAudit(path, Access::read_only)`: opens an existing store, proves it is a HomeGuardian alert store (`count()` must succeed), skips schema creation and migration, throws otherwise | `src/core/PersistenceAudit.{h,cpp}` | a reader that cannot fail closed will report "no alerts" for "no storage" |
 | the MCP server reads `HG_MCP_ALERTS_DB` read-only; `HG_MCP_AUDIT_DB` kept as a **deprecated alias** (it never meant "request audit"); an unopenable store leaves the provider unavailable, which the contract turns into a refusal | `src/main_mcp_server.cpp` | observed, not asserted: the shipped ingress config states the same design ("The SAME file the hub serves … one writer at a time is serialized and readers see a consistent snapshot") |
 

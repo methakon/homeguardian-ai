@@ -259,7 +259,7 @@ Exact output and the host/container numbers are in `docs/DISTRIBUTED_DEPLOYMENT.
 ## 7. End-to-end observation-to-alert proof
 
 The acceptance script drives a real client against the real binary; the delivered observations reach
-`Pipeline` → `DetectionFusionRule` → `AlertPolicy` → SQLite (`alerts` table), and the persisted count
+`Pipeline` → `DetectionFusionRule` → `AlertPolicy` → SQLite (`home_alerts` table), and the persisted count
 is asserted to survive a restart. The host suite additionally proves the same path without sockets
 (`[net][ingest][integration]`, `[net][detectors]`): accepted observation → `to_observation()` →
 `to_event()` → pipeline history with **real** provenance and the correct detector id, plus derived

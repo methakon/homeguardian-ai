@@ -62,7 +62,7 @@ stop_bridge() { kill -TERM "$PID" 2>/dev/null || true; sleep 2; PID=""; }
 DB="$WORK/homeguardian_bridge_audit.db"
 # sqlite3 may be installed outside PATH on this host
 SQ="${HG_SQLITE3:-$(command -v sqlite3 || echo "$HOME/.local/bin/sqlite3")}"
-count() { "$SQ" "$DB" "SELECT count(*) FROM alerts;"; }
+count() { "$SQ" "$DB" "SELECT count(*) FROM home_alerts;"; }
 
 run_scenario() {
   local sc="$1"
@@ -79,8 +79,8 @@ run_scenario() {
 echo "== bridge alert-store retention regression =="
 start_bridge
 run_scenario "synthetic-critical-impact"
-[[ "$(count)" == "2" ]] && ok "2 alerts persisted by the critical scenario" \
-                        || bad "expected 2 persisted alerts, got $(count)"
+[[ "$(count)" == "2" ]] && ok "2 home_alerts persisted by the critical scenario" \
+                        || bad "expected 2 persisted home_alerts, got $(count)"
 stop_bridge
 
 # seed one alert far outside the 30-day window and one just inside it

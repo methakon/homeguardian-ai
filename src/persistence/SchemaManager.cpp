@@ -44,7 +44,7 @@ void SchemaManager::migrate_v1_to_v2() {
     db_->begin_transaction();
     try {
         db_->execute(R"(
-            CREATE TABLE IF NOT EXISTS profiles (
+            CREATE TABLE IF NOT EXISTS home_profiles (
                 profile_id TEXT PRIMARY KEY,
                 display_name TEXT NOT NULL,
                 age_band TEXT,
@@ -56,7 +56,7 @@ void SchemaManager::migrate_v1_to_v2() {
         )");
 
         db_->execute(R"(
-            CREATE TABLE IF NOT EXISTS routines (
+            CREATE TABLE IF NOT EXISTS home_routines (
                 routine_id TEXT PRIMARY KEY,
                 profile_id TEXT NOT NULL,
                 label TEXT NOT NULL,
@@ -66,13 +66,13 @@ void SchemaManager::migrate_v1_to_v2() {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 schema_version INTEGER NOT NULL,
-                FOREIGN KEY (profile_id) REFERENCES profiles(profile_id) ON DELETE CASCADE
+                FOREIGN KEY (profile_id) REFERENCES home_profiles(profile_id) ON DELETE CASCADE
             );
         )");
-        db_->execute("CREATE INDEX IF NOT EXISTS idx_routines_profile ON routines(profile_id);");
+        db_->execute("CREATE INDEX IF NOT EXISTS idx_home_routines_profile ON home_routines(profile_id);");
 
         db_->execute(R"(
-            CREATE TABLE IF NOT EXISTS consent_records (
+            CREATE TABLE IF NOT EXISTS home_consent_records (
                 consent_id TEXT PRIMARY KEY,
                 subject_scope TEXT NOT NULL,
                 purpose TEXT NOT NULL,
@@ -85,8 +85,8 @@ void SchemaManager::migrate_v1_to_v2() {
                 schema_version INTEGER NOT NULL
             );
         )");
-        db_->execute("CREATE INDEX IF NOT EXISTS idx_consent_subject ON consent_records(subject_scope);");
-        db_->execute("CREATE INDEX IF NOT EXISTS idx_consent_purpose ON consent_records(subject_scope, purpose);");
+        db_->execute("CREATE INDEX IF NOT EXISTS idx_home_consent_subject ON home_consent_records(subject_scope);");
+        db_->execute("CREATE INDEX IF NOT EXISTS idx_home_consent_purpose ON home_consent_records(subject_scope, purpose);");
 
         db_->set_user_version(2);
         db_->commit();
@@ -99,7 +99,7 @@ void SchemaManager::migrate_v1_to_v2() {
 
 void SchemaManager::create_v1_schema() {
     db_->execute(R"(
-        CREATE TABLE IF NOT EXISTS events (
+        CREATE TABLE IF NOT EXISTS home_events (
             event_id TEXT PRIMARY KEY,
             schema_version INTEGER NOT NULL,
             type TEXT NOT NULL,
@@ -115,11 +115,11 @@ void SchemaManager::create_v1_schema() {
             processing_metadata TEXT
         );
     )");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id);");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_events_observation_ts ON events(observation_timestamp);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_events_correlation ON home_events(correlation_id);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_events_observation_ts ON home_events(observation_timestamp);");
 
     db_->execute(R"(
-        CREATE TABLE IF NOT EXISTS alerts (
+        CREATE TABLE IF NOT EXISTS home_alerts (
             alert_id TEXT PRIMARY KEY,
             severity TEXT NOT NULL,
             message TEXT NOT NULL,
@@ -130,8 +130,8 @@ void SchemaManager::create_v1_schema() {
             details TEXT NOT NULL
         );
     )");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_alerts_detected_at ON alerts(detected_at);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_alerts_severity ON home_alerts(severity);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_alerts_detected_at ON home_alerts(detected_at);");
 }
 
 } // namespace homeguardian

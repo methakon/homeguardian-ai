@@ -89,7 +89,7 @@ log_ok "hg_alexa_bridge launched and listening on 127.0.0.1:$TEST_PORT"
 
 get_alert_count() {
   if [[ -f "$DB_PATH" ]]; then
-    sqlite3 "$DB_PATH" "SELECT count(*) FROM alerts;" 2>/dev/null || echo "0"
+    sqlite3 "$DB_PATH" "SELECT count(*) FROM home_alerts;" 2>/dev/null || echo "0"
   else
     echo "0"
   fi

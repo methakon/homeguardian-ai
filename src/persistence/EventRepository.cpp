@@ -11,7 +11,7 @@ EventRepository::EventRepository(std::shared_ptr<SQLiteDatabase> db) : db_(std::
 
 void EventRepository::ensure_table() {
     db_->execute(R"(
-        CREATE TABLE IF NOT EXISTS events (
+        CREATE TABLE IF NOT EXISTS home_events (
             event_id TEXT PRIMARY KEY,
             schema_version INTEGER NOT NULL,
             type TEXT NOT NULL,
@@ -27,8 +27,8 @@ void EventRepository::ensure_table() {
             processing_metadata TEXT
         );
     )");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id);");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_events_observation_ts ON events(observation_timestamp);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_events_correlation ON home_events(correlation_id);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_events_observation_ts ON home_events(observation_timestamp);");
 }
 
 void EventRepository::save(const Event& event) {
@@ -36,7 +36,7 @@ void EventRepository::save(const Event& event) {
     sqlite3_stmt* stmt = nullptr;
 
     const char* sql = R"(
-        INSERT INTO events (
+        INSERT INTO home_events (
             event_id, schema_version, type, source,
             observation_timestamp, ingestion_timestamp, monotonic_timestamp,
             confidence, severity, payload, evidence_ref, correlation_id, processing_metadata
@@ -129,7 +129,7 @@ std::optional<Event> EventRepository::find_by_id(const std::string& event_id) {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT * FROM events WHERE event_id = ?;";
+    const char* sql = "SELECT * FROM home_events WHERE event_id = ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("EventRepository::find_by_id prepare failed");
     }
@@ -149,7 +149,7 @@ std::vector<Event> EventRepository::find_recent(size_t limit) {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT * FROM events ORDER BY observation_timestamp DESC LIMIT ?;";
+    const char* sql = "SELECT * FROM home_events ORDER BY observation_timestamp DESC LIMIT ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("EventRepository::find_recent prepare failed");
     }
@@ -169,7 +169,7 @@ std::vector<Event> EventRepository::find_by_correlation_id(const std::string& co
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT * FROM events WHERE correlation_id = ? ORDER BY observation_timestamp ASC;";
+    const char* sql = "SELECT * FROM home_events WHERE correlation_id = ? ORDER BY observation_timestamp ASC;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("EventRepository::find_by_correlation_id prepare failed");
     }
@@ -189,7 +189,7 @@ size_t EventRepository::count() {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM events;", -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM home_events;", -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("EventRepository::count prepare failed");
     }
 
@@ -209,7 +209,7 @@ size_t EventRepository::delete_older_than(std::chrono::system_clock::time_point 
     auto cutoff_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         cutoff.time_since_epoch()).count();
 
-    const char* sql = "DELETE FROM events WHERE observation_timestamp < ?;";
+    const char* sql = "DELETE FROM home_events WHERE observation_timestamp < ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("EventRepository::delete_older_than prepare failed");
     }
@@ -227,7 +227,7 @@ size_t EventRepository::delete_older_than(std::chrono::system_clock::time_point 
 }
 
 size_t EventRepository::delete_all() {
-    db_->execute("DELETE FROM events;");
+    db_->execute("DELETE FROM home_events;");
     return static_cast<size_t>(db_->rows_modified());
 }
 

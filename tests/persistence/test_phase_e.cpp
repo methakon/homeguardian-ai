@@ -56,13 +56,13 @@ TEST_CASE("SchemaManager migrates to version 2", "[persistence][migration]") {
     REQUIRE(db->get_user_version() == SchemaManager::LATEST_VERSION);
 
     // Tables exist.
-    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM profiles;"));
-    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM routines;"));
-    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM consent_records;"));
+    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM home_profiles;"));
+    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM home_routines;"));
+    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM home_consent_records;"));
 
     // Phase D tables still exist (migration is additive).
-    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM events;"));
-    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM alerts;"));
+    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM home_events;"));
+    REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM home_alerts;"));
 
     db->close();
 }
@@ -227,9 +227,9 @@ TEST_CASE("Migration transaction rollback leaves schema unchanged on failure", "
         db->open(E_TEST_DB);
         SchemaManager schema(db);
         schema.initialize();                 // brings DB to v2
-        db->execute("DROP TABLE IF EXISTS consent_records;");
-        db->execute("DROP TABLE IF EXISTS routines;");
-        db->execute("DROP TABLE IF EXISTS profiles;");
+        db->execute("DROP TABLE IF EXISTS home_consent_records;");
+        db->execute("DROP TABLE IF EXISTS home_routines;");
+        db->execute("DROP TABLE IF EXISTS home_profiles;");
         db->execute("PRAGMA user_version = 1;");
         db->close();
     }
@@ -240,11 +240,11 @@ TEST_CASE("Migration transaction rollback leaves schema unchanged on failure", "
         auto db = std::make_shared<SQLiteDatabase>();
         db->open(E_TEST_DB);
         REQUIRE(db->get_user_version() == 1);
-        REQUIRE_THROWS(db->execute("SELECT COUNT(*) FROM profiles;"));  // v2 table absent
+        REQUIRE_THROWS(db->execute("SELECT COUNT(*) FROM home_profiles;"));  // v2 table absent
 
         db->begin_transaction();
         try {
-            db->execute("CREATE TABLE profiles (profile_id TEXT PRIMARY KEY);");
+            db->execute("CREATE TABLE home_profiles (profile_id TEXT PRIMARY KEY);");
             db->execute("CREATE TABLE (;;; broken");  // parse error -> throw
             db->commit();
             FAIL("expected commit to throw");
@@ -254,7 +254,7 @@ TEST_CASE("Migration transaction rollback leaves schema unchanged on failure", "
 
         // Rollback undid the partial CREATE: profiles must still be absent and
         // the version must remain 1.
-        REQUIRE_THROWS(db->execute("SELECT COUNT(*) FROM profiles;"));
+        REQUIRE_THROWS(db->execute("SELECT COUNT(*) FROM home_profiles;"));
         REQUIRE(db->get_user_version() == 1);
         db->close();
     }

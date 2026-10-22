@@ -364,7 +364,7 @@ ALERTS_BEFORE="$(python3 - "$WORK/ingest_audit.db" <<'PY'
 import sqlite3, sys
 try:
     connection = sqlite3.connect(sys.argv[1])
-    print(connection.execute("select count(*) from alerts").fetchone()[0])
+    print(connection.execute("select count(*) from home_alerts").fetchone()[0])
 except Exception:
     print(0)
 PY
@@ -380,7 +380,7 @@ ALERTS_AFTER="$(python3 - "$WORK/ingest_audit.db" <<'PY'
 import sqlite3, sys
 try:
     connection = sqlite3.connect(sys.argv[1])
-    print(connection.execute("select count(*) from alerts").fetchone()[0])
+    print(connection.execute("select count(*) from home_alerts").fetchone()[0])
 except Exception:
     print(0)
 PY

@@ -152,7 +152,7 @@ card. For each run the page shows, from backend data only:
 5. **What was persisted** — the count written this run and the durable total.
 6. **Consent** — authorized vs denied acquisitions and whether enforcement held.
 
-The **Alert timeline** is rendered from `GET /api/alerts` (real rows from the
+The **Alert timeline** is rendered from `GET /api/home_alerts` (real rows from the
 local SQLite audit store) using `textContent` — the previous hardcoded
 "synthetic simulator presence notice" string is gone.
 

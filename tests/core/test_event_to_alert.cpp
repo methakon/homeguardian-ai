@@ -112,7 +112,7 @@ TEST_CASE("Event-to-alert: a single observation does not satisfy the min-count r
     rt.shutdown();
 }
 
-TEST_CASE("Event-to-alert: valid events pass validation; rule fires on min-count",
+TEST_CASE("Event-to-alert: valid home_events pass validation; rule fires on min-count",
           "[event2alert][validation]") {
     Logger::initialize("error");
     auto pipeline = make_pipeline_with_rule();

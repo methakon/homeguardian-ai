@@ -750,7 +750,7 @@ enforcement verified") under strict privacy boundaries:
 ## v17 — scenario demo exposure and consent isolation (2026-10-13)
 
 **What the demo now exposes (loopback only).**
-- `/api/alerts` returns the most recent alert METADATA from the local audit
+- `/api/home_alerts` returns the most recent alert METADATA from the local audit
   store: `alert_id`, `severity`, `rule`, `message`, `confidence`, `detected_at`,
   `contributing_events`, and a derived explanation string. No media, no
   transcripts, no embeddings, no personal identifiers. Alert messages in this

@@ -133,13 +133,13 @@ PY
 count() { python3 -c "
 import sqlite3,sys
 try:
-    c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(len(c.execute('select alert_id from alerts').fetchall()))
+    c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(len(c.execute('select alert_id from home_alerts').fetchall()))
 except Exception: print('none')" "$1"; }
 row() { python3 -c "
 import sqlite3,sys
 try:
     c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)
-    for r in c.execute('select alert_id,severity,rule_name,round(confidence,3) from alerts'): print('   %s | %s | %s | confidence=%s' % r)
+    for r in c.execute('select alert_id,severity,rule_name,round(confidence,3) from home_alerts'): print('   %s | %s | %s | confidence=%s' % r)
 except Exception as e: print('   (none)')" "$1"; }
 
 echo "== POSITIVE: two allowlisted detectors, detection-mapped states, one live window =="

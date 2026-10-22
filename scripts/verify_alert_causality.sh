@@ -148,7 +148,7 @@ store_count() {
 import sqlite3, sys
 try:
     c = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
-    print(len(c.execute("SELECT alert_id FROM alerts").fetchall()))
+    print(len(c.execute("SELECT alert_id FROM home_alerts").fetchall()))
 except Exception:
     print("none")
 PY

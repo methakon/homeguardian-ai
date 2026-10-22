@@ -13,7 +13,7 @@ void RoutineRepository::ensure_table() {
     // to profiles and ON DELETE CASCADE. ensure_table is a defensive fallback
     // so the repository is usable in isolation/tests.
     db_->execute(R"(
-        CREATE TABLE IF NOT EXISTS routines (
+        CREATE TABLE IF NOT EXISTS home_routines (
             routine_id TEXT PRIMARY KEY,
             profile_id TEXT NOT NULL,
             label TEXT NOT NULL,
@@ -23,10 +23,10 @@ void RoutineRepository::ensure_table() {
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             schema_version INTEGER NOT NULL,
-            FOREIGN KEY (profile_id) REFERENCES profiles(profile_id) ON DELETE CASCADE
+            FOREIGN KEY (profile_id) REFERENCES home_profiles(profile_id) ON DELETE CASCADE
         );
     )");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_routines_profile ON routines(profile_id);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_routines_profile ON home_routines(profile_id);");
 }
 
 void RoutineRepository::save(const Routine& routine) {
@@ -34,7 +34,7 @@ void RoutineRepository::save(const Routine& routine) {
     sqlite3_stmt* stmt = nullptr;
 
     const char* sql = R"(
-        INSERT INTO routines (
+        INSERT INTO home_routines (
             routine_id, profile_id, label, schedule, time_zone,
             enabled, created_at, updated_at, schema_version
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
@@ -92,7 +92,7 @@ std::optional<Routine> RoutineRepository::find_by_id(const std::string& routine_
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT routine_id, profile_id, label, schedule, time_zone, enabled, created_at, updated_at, schema_version FROM routines WHERE routine_id = ?;";
+    const char* sql = "SELECT routine_id, profile_id, label, schedule, time_zone, enabled, created_at, updated_at, schema_version FROM home_routines WHERE routine_id = ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("RoutineRepository::find_by_id prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
@@ -112,7 +112,7 @@ std::vector<Routine> RoutineRepository::find_by_profile(const std::string& profi
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT routine_id, profile_id, label, schedule, time_zone, enabled, created_at, updated_at, schema_version FROM routines WHERE profile_id = ? ORDER BY created_at ASC;";
+    const char* sql = "SELECT routine_id, profile_id, label, schedule, time_zone, enabled, created_at, updated_at, schema_version FROM home_routines WHERE profile_id = ? ORDER BY created_at ASC;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("RoutineRepository::find_by_profile prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
@@ -132,7 +132,7 @@ size_t RoutineRepository::count() {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM routines;", -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM home_routines;", -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("RoutineRepository::count prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
 
@@ -146,7 +146,7 @@ size_t RoutineRepository::count() {
 }
 
 size_t RoutineRepository::delete_all() {
-    db_->execute("DELETE FROM routines;");
+    db_->execute("DELETE FROM home_routines;");
     return static_cast<size_t>(db_->rows_modified());
 }
 

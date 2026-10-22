@@ -13,7 +13,7 @@ void ConsentRepository::ensure_table() {
     // Table is created by the SchemaManager migration (v2). ensure_table is a
     // defensive fallback so the repository is usable in isolation/tests.
     db_->execute(R"(
-        CREATE TABLE IF NOT EXISTS consent_records (
+        CREATE TABLE IF NOT EXISTS home_consent_records (
             consent_id TEXT PRIMARY KEY,
             subject_scope TEXT NOT NULL,
             purpose TEXT NOT NULL,
@@ -26,8 +26,8 @@ void ConsentRepository::ensure_table() {
             schema_version INTEGER NOT NULL
         );
     )");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_consent_subject ON consent_records(subject_scope);");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_consent_purpose ON consent_records(subject_scope, purpose);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_consent_subject ON home_consent_records(subject_scope);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_consent_purpose ON home_consent_records(subject_scope, purpose);");
 }
 
 void ConsentRepository::save(const ConsentRecord& record) {
@@ -35,7 +35,7 @@ void ConsentRepository::save(const ConsentRecord& record) {
     sqlite3_stmt* stmt = nullptr;
 
     const char* sql = R"(
-        INSERT INTO consent_records (
+        INSERT INTO home_consent_records (
             consent_id, subject_scope, purpose, data_categories, decision,
             policy_version, recorded_at, expires_at, provenance, schema_version
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
@@ -102,7 +102,7 @@ std::optional<ConsentRecord> ConsentRepository::find_by_id(const std::string& co
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT consent_id, subject_scope, purpose, data_categories, decision, policy_version, recorded_at, expires_at, provenance, schema_version FROM consent_records WHERE consent_id = ?;";
+    const char* sql = "SELECT consent_id, subject_scope, purpose, data_categories, decision, policy_version, recorded_at, expires_at, provenance, schema_version FROM home_consent_records WHERE consent_id = ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("ConsentRepository::find_by_id prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
@@ -122,7 +122,7 @@ std::vector<ConsentRecord> ConsentRepository::find_by_subject(const std::string&
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT consent_id, subject_scope, purpose, data_categories, decision, policy_version, recorded_at, expires_at, provenance, schema_version FROM consent_records WHERE subject_scope = ? ORDER BY recorded_at ASC;";
+    const char* sql = "SELECT consent_id, subject_scope, purpose, data_categories, decision, policy_version, recorded_at, expires_at, provenance, schema_version FROM home_consent_records WHERE subject_scope = ? ORDER BY recorded_at ASC;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("ConsentRepository::find_by_subject prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
@@ -142,7 +142,7 @@ std::vector<ConsentRecord> ConsentRepository::find_by_purpose(const std::string&
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT consent_id, subject_scope, purpose, data_categories, decision, policy_version, recorded_at, expires_at, provenance, schema_version FROM consent_records WHERE subject_scope = ? AND purpose = ? ORDER BY recorded_at ASC;";
+    const char* sql = "SELECT consent_id, subject_scope, purpose, data_categories, decision, policy_version, recorded_at, expires_at, provenance, schema_version FROM home_consent_records WHERE subject_scope = ? AND purpose = ? ORDER BY recorded_at ASC;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("ConsentRepository::find_by_purpose prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
@@ -163,7 +163,7 @@ size_t ConsentRepository::count() {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM consent_records;", -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM home_consent_records;", -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("ConsentRepository::count prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
 
@@ -177,7 +177,7 @@ size_t ConsentRepository::count() {
 }
 
 size_t ConsentRepository::delete_all() {
-    db_->execute("DELETE FROM consent_records;");
+    db_->execute("DELETE FROM home_consent_records;");
     return static_cast<size_t>(db_->rows_modified());
 }
 

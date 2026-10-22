@@ -57,9 +57,9 @@ void build_v1_db_with_alerts() {
                               {"keep-event-1"}, 0.9, "sim-presence", json::object()));
     events.save(Event::create_observation("keep-event-1", "sim_alexa_enabled", json::object()));
     // Force back to a v1-only shape: drop v2 tables and set version to 1.
-    db->execute("DROP TABLE IF EXISTS consent_records;");
-    db->execute("DROP TABLE IF EXISTS routines;");
-    db->execute("DROP TABLE IF EXISTS profiles;");
+    db->execute("DROP TABLE IF EXISTS home_consent_records;");
+    db->execute("DROP TABLE IF EXISTS home_routines;");
+    db->execute("DROP TABLE IF EXISTS home_profiles;");
     db->execute("PRAGMA user_version = 1;");
     db->close();
 }
@@ -79,9 +79,9 @@ TEST_CASE("Integrity: v1->v2 migration preserves alerts, events, and indexes",
         REQUIRE(db->get_user_version() == SchemaManager::LATEST_VERSION);
 
         // v2 tables now exist.
-        REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM profiles;"));
-        REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM routines;"));
-        REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM consent_records;"));
+        REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM home_profiles;"));
+        REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM home_routines;"));
+        REQUIRE_NOTHROW(db->execute("SELECT COUNT(*) FROM home_consent_records;"));
 
         // Alert metadata + identifier preserved exactly.
         AlertRepository alerts(db);
@@ -100,9 +100,9 @@ TEST_CASE("Integrity: v1->v2 migration preserves alerts, events, and indexes",
 
         // Indexes exist (query the schema, not just a return code).
         REQUIRE_NOTHROW(db->execute(
-            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_alerts_severity';"));
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_home_alerts_severity';"));
         REQUIRE_NOTHROW(db->execute(
-            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_alerts_detected_at';"));
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_home_alerts_detected_at';"));
 
         // Primary-key constraint is enforced (duplicate id rejected).
         REQUIRE_THROWS(alerts.save(Alert::create("keep-alert-1", Severity::info, "dup",
@@ -146,7 +146,7 @@ TEST_CASE("Integrity: failed migration rolls back; schema and version unchanged"
         // table then hits a broken statement and is rolled back.
         db->begin_transaction();
         try {
-            db->execute("CREATE TABLE profiles (profile_id TEXT PRIMARY KEY);");
+            db->execute("CREATE TABLE home_profiles (profile_id TEXT PRIMARY KEY);");
             db->execute("CREATE TABLE (;;; broken");  // parse error -> throw
             db->commit();
             FAIL("expected commit to throw");
@@ -154,7 +154,7 @@ TEST_CASE("Integrity: failed migration rolls back; schema and version unchanged"
             db->rollback();
         }
         // Rollback undid the partial create; version stays 1.
-        REQUIRE_THROWS(db->execute("SELECT COUNT(*) FROM profiles;"));
+        REQUIRE_THROWS(db->execute("SELECT COUNT(*) FROM home_profiles;"));
         REQUIRE(db->get_user_version() == 1);
         // Pre-existing v1 data intact.
         AlertRepository alerts(db);

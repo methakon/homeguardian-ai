@@ -11,7 +11,7 @@ AlertRepository::AlertRepository(std::shared_ptr<SQLiteDatabase> db, bool ensure
 
 void AlertRepository::ensure_table() {
     db_->execute(R"(
-        CREATE TABLE IF NOT EXISTS alerts (
+        CREATE TABLE IF NOT EXISTS home_alerts (
             alert_id TEXT PRIMARY KEY,
             severity TEXT NOT NULL,
             message TEXT NOT NULL,
@@ -22,8 +22,8 @@ void AlertRepository::ensure_table() {
             details TEXT NOT NULL
         );
     )");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);");
-    db_->execute("CREATE INDEX IF NOT EXISTS idx_alerts_detected_at ON alerts(detected_at);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_alerts_severity ON home_alerts(severity);");
+    db_->execute("CREATE INDEX IF NOT EXISTS idx_home_alerts_detected_at ON home_alerts(detected_at);");
 }
 
 void AlertRepository::save(const Alert& alert) {
@@ -31,7 +31,7 @@ void AlertRepository::save(const Alert& alert) {
     sqlite3_stmt* stmt = nullptr;
 
     const char* sql = R"(
-        INSERT INTO alerts (
+        INSERT INTO home_alerts (
             alert_id, severity, message, contributing_event_ids,
             detected_at, confidence, rule_name, details
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
@@ -84,7 +84,7 @@ std::optional<Alert> AlertRepository::find_by_id(const std::string& alert_id) {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT * FROM alerts WHERE alert_id = ?;";
+    const char* sql = "SELECT * FROM home_alerts WHERE alert_id = ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("AlertRepository::find_by_id prepare failed");
     }
@@ -104,7 +104,7 @@ std::vector<Alert> AlertRepository::find_recent(size_t limit) {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT * FROM alerts ORDER BY detected_at DESC LIMIT ?;";
+    const char* sql = "SELECT * FROM home_alerts ORDER BY detected_at DESC LIMIT ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("AlertRepository::find_recent prepare failed");
     }
@@ -127,7 +127,7 @@ std::vector<Alert> AlertRepository::find_by_severity(Severity severity) {
     const char* sev_str = severity == Severity::info ? "info" :
                           severity == Severity::warning ? "warning" : "critical";
 
-    const char* sql = "SELECT * FROM alerts WHERE severity = ? ORDER BY detected_at DESC;";
+    const char* sql = "SELECT * FROM home_alerts WHERE severity = ? ORDER BY detected_at DESC;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("AlertRepository::find_by_severity prepare failed");
     }
@@ -147,7 +147,7 @@ size_t AlertRepository::count() {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM alerts;", -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM home_alerts;", -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("AlertRepository::count prepare failed");
     }
 
@@ -167,7 +167,7 @@ size_t AlertRepository::delete_older_than(std::chrono::system_clock::time_point 
     auto cutoff_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         cutoff.time_since_epoch()).count();
 
-    const char* sql = "DELETE FROM alerts WHERE detected_at < ?;";
+    const char* sql = "DELETE FROM home_alerts WHERE detected_at < ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("AlertRepository::delete_older_than prepare failed");
     }
@@ -185,7 +185,7 @@ size_t AlertRepository::delete_older_than(std::chrono::system_clock::time_point 
 }
 
 size_t AlertRepository::delete_all() {
-    db_->execute("DELETE FROM alerts;");
+    db_->execute("DELETE FROM home_alerts;");
     return static_cast<size_t>(db_->rows_modified());
 }
 

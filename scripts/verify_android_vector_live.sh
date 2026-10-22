@@ -200,7 +200,7 @@ STORE_STATE="$(python3 - "$STORE" <<'PY'
 import sqlite3, sys
 try:
     c = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
-    rows = c.execute("SELECT alert_id FROM alerts").fetchall()
+    rows = c.execute("SELECT alert_id FROM home_alerts").fetchall()
     print(f"{len(rows)}|{' '.join(r[0] for r in rows)}")
 except Exception:
     print("none|")

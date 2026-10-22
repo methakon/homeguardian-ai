@@ -12,7 +12,7 @@ void ProfileRepository::ensure_table() {
     // Table is created by the SchemaManager migration (v2). ensure_table is a
     // defensive fallback so the repository is usable in isolation/tests.
     db_->execute(R"(
-        CREATE TABLE IF NOT EXISTS profiles (
+        CREATE TABLE IF NOT EXISTS home_profiles (
             profile_id TEXT PRIMARY KEY,
             display_name TEXT NOT NULL,
             age_band TEXT,
@@ -29,7 +29,7 @@ void ProfileRepository::save(const FamilyProfile& profile) {
     sqlite3_stmt* stmt = nullptr;
 
     const char* sql = R"(
-        INSERT INTO profiles (
+        INSERT INTO home_profiles (
             profile_id, display_name, age_band, enabled,
             created_at, updated_at, schema_version
         ) VALUES (?, ?, ?, ?, ?, ?, ?);
@@ -82,7 +82,7 @@ std::optional<FamilyProfile> ProfileRepository::find_by_id(const std::string& pr
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT profile_id, display_name, age_band, enabled, created_at, updated_at, schema_version FROM profiles WHERE profile_id = ?;";
+    const char* sql = "SELECT profile_id, display_name, age_band, enabled, created_at, updated_at, schema_version FROM home_profiles WHERE profile_id = ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("ProfileRepository::find_by_id prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
@@ -102,7 +102,7 @@ std::vector<FamilyProfile> ProfileRepository::find_all() {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "SELECT profile_id, display_name, age_band, enabled, created_at, updated_at, schema_version FROM profiles ORDER BY created_at ASC;";
+    const char* sql = "SELECT profile_id, display_name, age_band, enabled, created_at, updated_at, schema_version FROM home_profiles ORDER BY created_at ASC;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("ProfileRepository::find_all prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
@@ -120,7 +120,7 @@ size_t ProfileRepository::count() {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM profiles;", -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM home_profiles;", -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("ProfileRepository::count prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
 
@@ -140,7 +140,7 @@ size_t ProfileRepository::remove(const std::string& profile_id) {
     sqlite3* raw = db_->raw();
     sqlite3_stmt* stmt = nullptr;
 
-    const char* sql = "DELETE FROM profiles WHERE profile_id = ?;";
+    const char* sql = "DELETE FROM home_profiles WHERE profile_id = ?;";
     if (sqlite3_prepare_v2(raw, sql, -1, &stmt, nullptr) != SQLITE_OK) {
         throw DatabaseException("ProfileRepository::remove prepare failed: " + std::string(sqlite3_errmsg(raw)));
     }
@@ -158,7 +158,7 @@ size_t ProfileRepository::remove(const std::string& profile_id) {
 }
 
 size_t ProfileRepository::delete_all() {
-    db_->execute("DELETE FROM profiles;");
+    db_->execute("DELETE FROM home_profiles;");
     return static_cast<size_t>(db_->rows_modified());
 }
 
