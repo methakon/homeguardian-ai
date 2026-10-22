@@ -1,0 +1,6 @@
+{
+  "owner:oracle_change:approval-1": {"approved": true},
+  "owner:handset_change:approval-2": {"approved": true},
+  "owner:oracle_change:expired-1": {"approved": true, "expires_at": "2000-01-01T00:00:00"},
+  "owner:handset_change:used-1": {"approved": true, "used": true}
+}

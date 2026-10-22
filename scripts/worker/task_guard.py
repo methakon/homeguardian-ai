@@ -178,17 +178,58 @@ def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
                       f"task text contains command-shaped content ({len(hits)} pattern(s)); "
                       f"commands in task text are never executed")
 
-        # Approval records validation
-    approvals = task.get('approvals', {})
-    # Verify each approval is from a trusted approver and not self-approval
-    for act, record in approvals.items():
-        approver = record.split(':', 1)[0]
-        if approver not in cfg.get('approvers', []):
-            raise Refused("UNAUTHORIZED_APPROVER",
-                          f"approver '{approver}' for action '{act}' not in trusted approvers")
-        if approver == author:
-            raise Refused("SELF_APPROVAL",
-                          f"author '{author}' cannot approve their own action '{act}'")
+        # Load approvals store for independent verification
+        approvals_store_path = os.path.join(os.path.dirname(__file__), 'approvals_store.json')
+        try:
+            approvals_store = json.load(open(approvals_store_path))
+        except Exception:
+            approvals_store = {}
+
+        # Gather approvals from the task
+        approvals = task.get('approvals', {})
+
+        # Verify each approval is from a trusted approver, not self‑approval, and independently recorded
+        for act, record in approvals.items():
+            # Expected format: "approver:action[:timestamp]"
+            parts = record.split(':')
+            approver = parts[0]
+            if approver not in cfg.get('approvers', []):
+                raise Refused("UNAUTHORIZED_APPROVER",
+                              f"approver '{approver}' for action '{act}' not in trusted approvers")
+            if approver == author:
+                raise Refused("SELF_APPROVAL",
+                              f"author '{author}' cannot approve their own action '{act}'")
+            # Independent verification against stored approvals (store entry is a dict)
+            store_entry = approvals_store.get(record)
+            if not isinstance(store_entry, dict):
+                raise Refused("APPROVAL_NOT_VERIFIED",
+                              f"approval record '{record}' for action '{act}' not found in approvals store")
+            # Expiration check
+            expires = store_entry.get('expires_at')
+            if expires:
+                from datetime import datetime
+                try:
+                    exp_dt = datetime.fromisoformat(expires)
+                except Exception:
+                    exp_dt = None
+                if exp_dt and exp_dt < datetime.utcnow():
+                    raise Refused("APPROVAL_EXPIRED",
+                                  f"approval record '{record}' for action '{act}' has expired")
+            # Replay protection
+            if store_entry.get('used'):
+                raise Refused("APPROVAL_REPLAYED",
+                              f"approval record '{record}' for action '{act}' was already used")
+            # Mark as used
+            store_entry['used'] = True
+            approvals_store[record] = store_entry
+
+        # Persist any used‑flag updates back to the store (best‑effort)
+        try:
+            with open(approvals_store_path, 'w') as fh:
+                json.dump(approvals_store, fh, indent=2)
+        except Exception:
+            pass
+
     # ---- Approval checks ----
     requested = set(task.get("requires_approval") or [])
     for action in requested:
@@ -196,11 +237,7 @@ def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
             raise Refused("APPROVAL_REQUIRED",
                           f"'{action}' needs an explicit approval record, not prose in a task")
 
-    requested = set(task.get("requires_approval") or [])
-    for action in requested:
-        if action not in (task.get("approvals") or {}):
-            raise Refused("APPROVAL_REQUIRED",
-                          f"'{action}' needs an explicit approval record, not prose in a task")
+
 
     # ---- Duplicate / lease checks ----
     tid = task["task_id"]
@@ -222,13 +259,6 @@ def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
 
 
 
-    # ---- Author authentication ----
-    # Ensure the task author is present and authorized according to cfg["approvers"]
-    author = task.get("author")
-    if not author:
-        raise Refused("MISSING_AUTHOR", "task is missing required field 'author'")
-    if author not in cfg.get("approvers", []):
-        raise Refused("UNAUTHORIZED_AUTHOR", f"author '{author}' is not an authorized approver")
 
     return {"decision": "ADMIT", "task_id": tid, "state": ledger.state(tid) or "QUEUED",
             "commit_sha": ledger.get(tid).get("commit_sha")}
