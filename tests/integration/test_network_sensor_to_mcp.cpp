@@ -21,6 +21,7 @@
 #include "core/DetectionFusionRule.h"
 #include "core/FusionEngine.h"
 #include "core/Observation.h"
+#include "core/PersistenceAudit.h"
 #include "core/SecurityObservation.h"
 #include "mcp/McpProtocol.h"
 #include "mcp/McpTools.h"
@@ -30,6 +31,7 @@
 #include "net/ObservationProducer.h"
 
 #include <atomic>
+#include <cstdio>
 #include <set>
 #include <chrono>
 #include <memory>
@@ -345,6 +347,12 @@ TEST_CASE("e2e: an authorized network observation reaches the real engine and th
         std::printf("e2e: %zu detected observation(s) up to confidence %.3f from ONE detector class "
                     "produced no alert (fused confidence below the rule's 0.5 gate)\n",
                     detected, best_confidence);
+        // ---- NO FALSE ALERT, asserted on the tool output ------------------------------------------
+        // The mission's negative half. Until now this fixture proved only that the payload CONTAINS a field
+        // named alert_count - a tool that always answered "1" would have passed. A fixture that must not
+        // alert has to leave the MCP answer at zero.
+        REQUIRE(tool_text(summary).find("\"alert_count\":0") != std::string::npos);
+        REQUIRE(tool_text(summary).find("\"alert_ids\":[]") != std::string::npos);
     } else {
         // If it ever does deliver, the MCP answers must show it.
         REQUIRE(status_after.find(hub.delivered.front().alert_id) != std::string::npos);
@@ -711,4 +719,65 @@ TEST_CASE("e2e corroboration: two distinct detector classes vote in the same win
     std::printf("corroboration MCP get_alert_summary: %s\n", text.c_str());
     REQUIRE(text.find("\"alert_count\":" + std::to_string(hub.delivered.size())) != std::string::npos);
     REQUIRE(text.find(a.alert_id) != std::string::npos);
+}
+
+TEST_CASE("e2e: an MCP session writes to no alert store, and the application's store stays its own",
+          "[e2e][ownership][store]") {
+    // OWNERSHIP, MEASURED. The proposed design says the MCP server keeps "its own separate audit DB for
+    // request audit only". Both halves are checkable and the code contradicts one of them:
+    //   * PersistenceAudit is an ALERT store - "durable, privacy-safe audit of DELIVERED alerts ... the alerts
+    //     table via AlertRepository" (src/core/PersistenceAudit.h:3-11). It has no request concept at all.
+    //   * record_alert is called ONLY by the ingress (src/main_ingress.cpp:276,284) and src/mcp/* never
+    //     references PersistenceAudit - so an MCP-side "audit DB" written by the MCP path would be a SECOND
+    //     writer of alert records, the hazard the ownership decision forbids.
+    // Measured here: a real MCP session against application state adds no row to any store, a delivered alert
+    // belongs to the store it was written to and to no other, and the two survive a restart independently.
+    // The absence of request auditing is asserted rather than described.
+    const std::string app_db = "/tmp/hg_app_alerts_" + std::to_string(::getpid()) + ".db";
+    const std::string mcp_db = "/tmp/hg_mcp_audit_" + std::to_string(::getpid()) + ".db";
+    std::remove(app_db.c_str());
+    std::remove(mcp_db.c_str());
+
+    SensorHub hub;
+    {
+        PersistenceAudit app_store(app_db);
+        PersistenceAudit mcp_side(mcp_db);
+        REQUIRE(app_store.record_alert(Alert::create("app-alert-1", Severity::warning,
+                                                     "synthetic application alert", {}, 0.9, "fusion",
+                                                     json::object())));
+        REQUIRE(app_store.total_alert_count() == 1);
+        REQUIRE(mcp_side.total_alert_count() == 0);
+
+        // A genuinely served MCP session against the application's own state.
+        SensorVerifier verifier;
+        EngineStatusProvider provider(hub.app, hub.delivered, true);
+        ToolRegistry tools = make_homeguardian_tools(verifier, provider);
+        SessionState session;
+        Dispatcher dispatcher(tools);
+        REQUIRE(dispatcher.handle(kInitialize, session, "sensor-hub-token").has_body);
+        const auto summary =
+            mcp_call(tools, session, "tools/call", R"({"name":"get_alert_summary","arguments":{}})");
+        const std::string text = tool_text(summary);
+        std::printf("ownership: app-store alerts=%zu mcp-side alerts=%zu mcp answer=%s\n",
+                    app_store.total_alert_count(), mcp_side.total_alert_count(), text.c_str());
+
+        // SEPARATION: a served request changed NEITHER store.
+        REQUIRE(mcp_side.total_alert_count() == 0);
+        REQUIRE(mcp_side.alerts_written() == 0);
+        REQUIRE(app_store.total_alert_count() == 1);
+    }
+
+    // Independence across a restart: reopening the application's store returns its alert and counts it as
+    // historical (written by a previous process), while the MCP-side store still holds nothing.
+    {
+        PersistenceAudit reopened(app_db);
+        REQUIRE(reopened.total_alert_count() == 1);
+        REQUIRE(reopened.historical_alert_count() == 1);
+    }
+    {
+        PersistenceAudit still_empty(mcp_db);
+        REQUIRE(still_empty.total_alert_count() == 0);
+    }
+    std::remove(app_db.c_str());
+    std::remove(mcp_db.c_str());
 }
