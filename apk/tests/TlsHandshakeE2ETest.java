@@ -507,6 +507,59 @@ public final class TlsHandshakeE2ETest {
                     t.sentCount() == 0, "sentCount=" + t.sentCount());
         }
 
+        // ---- T9: THE GENERATION COUNTER, with a control that actually fires ---------------------
+        // T6 could not discriminate: `stop()` interrupts AND joins(3000), so the old worker is
+        // normally dead before `start()` runs and the `generation == myGeneration` test is never
+        // reached. Crippling the check therefore changed nothing, and a test whose control does not
+        // fire proves nothing. That is recorded rather than glossed.
+        //
+        // This case reaches the check directly. A newer generation is installed while `running`
+        // stays TRUE, which is exactly the state after a fast stop-then-start: a stale worker that is
+        // still blocked must notice the generation moved and stop. Nothing else stops it here - the
+        // interrupt and the join are not involved, and `running` would keep it alive.
+        //
+        // Observable: how many connections the peer sees. The stale worker retries on its own
+        // connection if and only if the generation test is missing.
+        {
+            MultiPeer mp = new MultiPeer(dir, 4);
+            mp.start();
+            // A LONGER read timeout than the other cases: the worker must still be blocked in its
+            // socket read when the generation moves, so the comparison is what ends it rather than a
+            // timeout that happens to coincide.
+            Config c9 = config(dir, mp.port());
+            c9.readTimeoutMs = 3000;
+            ObservationTransport t = new ObservationTransport(c9);
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            Thread.sleep(700);                       // worker connects, sends hello, blocks on the read
+            int connectionsBefore = mp.connectionCount();
+
+            // Install a newer generation WITHOUT stop(): `running` stays true, so the generation
+            // comparison is the only thing that can end the loop.
+            java.lang.reflect.Field genField =
+                    ObservationTransport.class.getDeclaredField("generation");
+            genField.setAccessible(true);
+            long g = genField.getLong(t);
+            genField.setLong(t, g + 1);              // a newer generation exists
+            // Must exceed one FULL cycle: socket read timeout (3000) + retry backoff (3000). A
+            // shorter wait measures nothing, because neither the protected nor the crippled worker
+            // has had the chance to retry yet - which is why an earlier version of this control
+            // appeared not to fire.
+            Thread.sleep(10000);
+
+            int connectionsAfter = mp.connectionCount();
+            t.stop();
+            mp.close();
+            mp.await(1500);
+
+            check("T9a a stale worker stops when the generation moves (running stays true)",
+                    connectionsAfter == connectionsBefore,
+                    "connections before=" + connectionsBefore + " after=" + connectionsAfter
+                            + " - a stale worker retried on its own connection");
+            check("T9b the worker had genuinely connected first, so this is not a no-op",
+                    connectionsBefore >= 1, "connectionsBefore=" + connectionsBefore);
+        }
+
         System.out.println();
         if (failed > 0) {
             System.out.println("  FAILED: " + failed + " of " + (passed + failed));
