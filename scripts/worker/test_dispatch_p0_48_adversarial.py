@@ -84,7 +84,7 @@ def main():
 # --------------------------------------------------------------------------------- repairs 1 and 4
 def _cfg():
     return {"worker_id": "hg-hermes-network", "branch": "experiment/hg-lan-mtls-07",
-            "authorized_scope": ["scripts/worker/"]}
+            "authorized_scope": ["scripts/worker/", "deploy/oracle/"]}
 
 
 def _protected_task(**over):
@@ -99,6 +99,8 @@ def _protected_task(**over):
 def repair_tests():
     g = load()
     print("\n  [repair 1: no authenticated context -> protected op must fail closed]")
+    print("    (note: the protected scope must ALSO be within the authorized scope, or scope confinement")
+    print("     fires first - which it does, ahead of the context check, as intended)")
     bad = 0
     try:
         g.validate(_protected_task(), _cfg(), ledger=None, approvals_store=None,
