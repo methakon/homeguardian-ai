@@ -20,6 +20,7 @@ inlet for the Wi-Fi test.
 | Real camera acquisition and bounded processing | PASS | Camera permission granted through the normal OS dialog; 320×240 frames processed with no geometry skips or frame drops |
 | Microphone | NOT RUN | Audio remained off and sample count remained zero |
 | Existing EdgeService preservation | PASS for this attempt | The same foreground-service process remained alive before and after the checks; its app and credentials were not replaced |
+| Existing on-phone C++ engine and MCP | PASS for current read-only operation | Live handset self-probe at 02:17:34 IST succeeded in 51 ms: authenticated initialize, tool discovery and status call; engine reported `Running`, `read_only=true`, `capture_enabled=false` |
 | Android-compatible test keystores | PASS for loading | On-phone probe reproduced failure for modern PKCS#12 files, then loaded one entry from each compatible device and CA store |
 | Native C++ ingress setup | COMPONENT VERIFIED | Real ingress started with mTLS, an isolated SQLite database and an explicit `motion-activity` evidence allowlist; this does not prove it accepted a physical observation |
 | Native MCP and audit baseline | COMPONENT VERIFIED | Authenticated initialize and `get_alert_summary` returned `alert_count=0`, `alert_ids=[]`, `read_only=true` against the isolated database |
@@ -27,9 +28,28 @@ inlet for the Wi-Fi test.
 | Physical change → persisted alert | NOT VERIFIED | No physical alert was committed; latest database check returned zero alerts |
 | Exact alert returned by MCP after restart | NOT VERIFIED | There is no accepted physical alert id to correlate and recover |
 | Wi-Fi / USB-disconnected operation | NOT VERIFIED | Wi-Fi route and test server certificate were checked; unstable USB prevented completing the phone's endpoint configuration |
-| Continuous deployment on the phone | NOT VERIFIED | The test hub was host-side and temporary; this is not a new persistent phone deployment |
+| Continuous deployment of the new physical pipeline | NOT VERIFIED | The acceptance hub was host-side and temporary. The separate existing on-phone EdgeService and MCP are running, but this does not close the physical-alert gate or prove unattended reliability |
 
 ## Actual physical observations
+
+### Existing on-phone runtime versus the acceptance hub
+
+A fresh read-only check at 02:17 IST on 2026-10-23 confirmed the existing Android
+foreground EdgeService is running on the Mi A3. Its authenticated on-device MCP
+self-probe completed initialization, discovered `get_homeguardian_status` and
+`get_alert_summary`, and successfully called the status tool. The latest observed
+probe completed at 02:17:34 IST in 51 ms and reported:
+
+```json
+{"capture_enabled":false,"read_only":true,"state":"Running"}
+```
+
+This verifies the existing on-phone engine and read-only MCP operation, not merely
+an installed APK or a host listener. It does not verify current sensor capture,
+physical detection, alert creation, alert retrieval or recovery after restart.
+The temporary host-side acceptance servers described elsewhere are a separate
+runtime; stopping them did not stop the existing phone service. This check did not
+restart, reconfigure or replace that service or read its credentials.
 
 A quiet run on the real handset produced these scalar/counter diagnostics. These
 are excerpts from an executed run, not synthetic detector inputs:

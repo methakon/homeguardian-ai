@@ -4,6 +4,12 @@
 
 ## P1 physical-integration checkpoint — 2026-10-23
 
+**Existing phone runtime verified:** a fresh authenticated on-device MCP self-probe
+at 02:17:34 IST completed initialize, tool discovery and a status call in 51 ms.
+The Mi A3's foreground EdgeService reported engine `Running`, `read_only=true` and
+`capture_enabled=false`. The core runtime and read-only MCP are working on the
+phone; this is separate from acceptance of the physical alert pipeline below.
+
 **NOT ACCEPTED:** Android → C++ → durable alert → MCP physical acceptance remains
 open. The Mi A3 sensor app is installed and real 320×240 camera processing was
 observed, but recorded delivery counters stayed at zero and the isolated audit
