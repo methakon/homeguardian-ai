@@ -2,6 +2,18 @@
 
 **Last updated:** 2026-10-23
 
+## Private remote MCP readiness — 2026-10-23
+
+**BLOCKED:** the existing VPS WireGuard server is up and boot-enabled, but the
+phone's supplied public key is not enrolled and its matching local profile has
+no address or peer configured. There is no current phone handshake. Cloud UDP
+ingress is restricted to an old single source that does not match the worker's
+current public IP. The private coordinator is not deployed. Phone MCP remains
+healthy, authenticated, read-only and loopback-only; no public MCP port was opened.
+See [verified facts, minimum preparation and approval gates](PRIVATE_VPN_REMOTE_MCP_READINESS.md).
+The phone already has a boot-registered foreground service; restart after first
+unlock is configured, but a real reboot was not re-tested.
+
 ## P1 physical-integration checkpoint — 2026-10-23
 
 **Existing phone runtime verified:** a fresh authenticated on-device MCP self-probe
