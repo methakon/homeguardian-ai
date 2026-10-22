@@ -85,6 +85,10 @@ def evaluate(records, exc):
                 if bad:
                     findings.append(f"R4 {name}: network_mode=host AND listening on "
                                     f"{bad[0].get('addr')}:{bad[0].get('port')} (reachable off-host)")
+                elif r.get("shared_ns_nonloopback"):
+                    warnings.append(f"R4 {name}: network_mode=host, another process holds a "
+                                    f"non-loopback listener in the shared namespace - NOT attributed "
+                                    f"to this container (attribution would be a false positive)")
                 else:
                     warnings.append(f"R4 {name}: network_mode=host, no non-loopback listener "
                                     f"observed - latent structural risk, not proven exposure")
@@ -92,34 +96,77 @@ def evaluate(records, exc):
 
 
 # --------------------------------------------------------------------------- live gathering
-def ns_listeners(pid):
-    """LISTEN sockets in a pid's network namespace, or None if unreadable."""
+def owned_listeners(pid):
+    """LISTEN sockets OWNED by this pid, or None if unreadable.
+
+    For a host-networked container /proc/<pid>/net/tcp is the HOST's table, so every host listener
+    appears there. Attributing those to the container would report nginx's :80 as a container
+    exposure. Attribution is therefore by socket inode held in the process's own fds, and anything
+    present in the shared namespace but not owned by the pid is reported as unattributed rather than
+    blamed on the container.
+    """
     if not pid:
+        return None
+    owned = set()
+    try:
+        for fd in os.listdir(f"/proc/{pid}/fd"):
+            try:
+                tgt = os.readlink(f"/proc/{pid}/fd/{fd}")
+            except OSError:
+                continue
+            m = re.match(r"socket:\[(\d+)\]", tgt)
+            if m:
+                owned.add(m.group(1))
+    except OSError:
         return None
     out = []
     for f in ("tcp", "tcp6"):
-        p = f"/proc/{pid}/net/{f}"
         try:
-            lines = open(p).read().splitlines()[1:]
+            lines = open(f"/proc/{pid}/net/{f}").read().splitlines()[1:]
         except OSError:
-            return None
+            continue
         for line in lines:
             parts = line.split()
-            if len(parts) < 4 or parts[3] != "0A":          # 0A = LISTEN
+            if len(parts) < 10 or parts[3] != "0A":      # 0A = LISTEN
                 continue
-            # parts[1] is like 0100007F:2256 (little-endian hex ip : port)
+            if parts[9] not in owned:                    # inode column -> must be OUR socket
+                continue
             try:
                 ip_hex, port_hex = parts[1].split(":")
                 port = int(port_hex, 16)
                 if len(ip_hex) == 8:
-                    octets = [int(ip_hex[i:i + 2], 16) for i in (6, 4, 2, 0)]
-                    addr = ".".join(str(o) for o in octets)
+                    o = [int(ip_hex[i:i + 2], 16) for i in (6, 4, 2, 0)]
+                    addr = ".".join(str(x) for x in o)
                 else:
                     addr = "::" if set(ip_hex) <= {"0"} else ip_hex
             except (ValueError, IndexError):
                 continue
             out.append({"addr": addr, "port": port})
     return out
+
+
+def ns_has_nonloopback(pid):
+    """True if the pid's namespace shows a non-loopback LISTEN at all (owned or not)."""
+    if not pid:
+        return False
+    for f in ("tcp", "tcp6"):
+        try:
+            lines = open(f"/proc/{pid}/net/{f}").read().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 4 or parts[3] != "0A":
+                continue
+            ip_hex = parts[1].split(":")[0]
+            if len(ip_hex) == 8:
+                o = [int(ip_hex[i:i + 2], 16) for i in (6, 4, 2, 0)]
+                addr = ".".join(str(x) for x in o)
+            else:
+                addr = ip_hex
+            if not _is_loopback(addr) and addr not in ("0.0.0.0", "::"):
+                return True
+    return False
 
 
 def from_docker():
@@ -150,7 +197,11 @@ def from_docker():
                "ports": pubs,
                "mounts": [{"source": m.get("Source"), "destination": m.get("Destination"),
                            "rw": bool(m.get("RW"))} for m in mounts]}
-        rec["host_listeners"] = ns_listeners(pid) if mode == "host" and pid not in ("", "0") else None
+        if mode == "host":
+            rec["host_listeners"] = owned_listeners(pid) if pid not in ("", "0") else None
+            rec["shared_ns_nonloopback"] = ns_has_nonloopback(pid)
+        else:
+            rec["host_listeners"] = None
         records.append(rec)
     return records
 
@@ -173,6 +224,11 @@ SAFE = [
     {"name": "safe-host-net-loopback-only", "network_mode": "host", "privileged": False,
      "ports": [], "mounts": [],
      "host_listeners": [{"addr": "127.0.0.1", "port": 8790}]},
+    # shares the host namespace; the non-loopback listener belongs to ANOTHER process (nginx on :80).
+    # Blaming this container would be a false positive, so it must WARN, not FAIL.
+    {"name": "safe-host-net-shared-ns", "network_mode": "host", "privileged": False,
+     "ports": [], "mounts": [], "host_listeners": [],
+     "shared_ns_nonloopback": True},
 ]
 
 
@@ -181,7 +237,7 @@ def self_test():
     f1, w1, u1 = evaluate(UNSAFE, exc)
     f2, w2, u2 = evaluate(SAFE, exc)
     rules = sorted({x.split()[0] for x in f1})
-    ok = (len(f1) == 3 and rules == ["R1", "R2", "R3"] and not f2)
+    ok = (len(f1) == 4 and rules == ["R1", "R2", "R3", "R4"] and not f2 and not u2)
     print("  UNSAFE sample:")
     for x in f1:
         print(f"    FAIL {x}")
@@ -189,7 +245,7 @@ def self_test():
     for x in w2:
         print(f"    WARN {x}")
     print(f"    (no FAIL, no UNVERIFIED: {not f2 and not u2})")
-    print(f"  [{'PASS' if ok else 'FAIL'}] controls: unsafe sample fails on R1+R2+R3; safe sample passes")
+    print(f"  [{'PASS' if ok else 'FAIL'}] controls: unsafe fails on R1+R2+R3+R4; safe passes (host-networked container on loopback is WARN, never FAIL)")
     # a host-networked container that only listens on loopback must NOT be failed  (no blanket rule)
     assert not any("safe-host-net-loopback-only" in x for x in f2), "blanket host-network rule!"
     return 0 if ok else 1
@@ -208,7 +264,9 @@ def main():
     if a.json:
         print(json.dumps({"findings": f, "warnings": w, "unverified": u,
                           "containers": len(records),
-                          "verdict": "FAIL" if f else "PASS"}, indent=2))
+                          "verdict": ("FAIL" if f else
+                                      "INDETERMINATE (unverified items present - not a clean pass)"
+                                      if u else "PASS")}, indent=2))
     else:
         print(f"  static boundary check over {len(records)} container(s)")
         for x in f:
@@ -217,8 +275,9 @@ def main():
             print(f"  WARN      {x}")
         for x in u:
             print(f"  UNVERIFIED {x}")
-        print(f"  verdict: {'FAIL' if f else 'PASS'}"
-              f"{' (with warnings)' if w and not f else ''}")
+        v = ("FAIL" if f else
+             "INDETERMINATE - unverified items present, NOT a clean pass" if u else "PASS")
+        print(f"  verdict: {v}{' (with warnings)' if w and not f and not u else ''}")
     return 1 if f else 0
 
 
