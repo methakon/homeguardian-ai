@@ -114,7 +114,7 @@ public class ObservationTransport {
         public String displayName = "";
         public String pkcs12Path = "";      // client certificate + key, app-private
         public String pkcs12PasswordFile = "";  // separate 0600 file; never logged
-        public String trustStorePath = "";   // the private CA, PEM or PKCS#12
+        public String trustStorePath = "";   // the private CA, as PKCS#12 (openSocket loads PKCS12 only)
         public String trustStorePasswordFile = "";
         public int connectTimeoutMs = 5000;
         public int readTimeoutMs = 5000;

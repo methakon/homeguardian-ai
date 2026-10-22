@@ -92,8 +92,8 @@ public final class SyntheticVectorEmitTest {
         final long SEQ = 1L;
         final long NOW = 1761100000000L;          // pinned so the vector is byte-reproducible
         final String OBS_ID = "synthetic-obs-0001";
-        final String SOURCE_TYPE = "camera";
-        final String OBS_TYPE = "motion";
+        final String SOURCE_TYPE = "camera_availability";  // NOT "camera": the ingress allowlists source types
+        final String OBS_TYPE = "availability";  // NOT "motion": that is not an allowlisted observation type
 
         final Config cfg = new Config();
         cfg.deviceId = DEVICE_ID;
