@@ -1,0 +1,20 @@
+{
+  "_comment": "A frame that produces a POSITIVE vote: motion + state on -> detected (SecurityObservation.cpp:78).",
+  "protocol_version_major": 1,
+  "protocol_version_minor": 0,
+  "kind": "observation",
+  "observation_id": "hg-android-synthetic-01-obs-0001",
+  "device_id": "hg-android-synthetic-01",
+  "source_type": "motion",
+  "observation_type": "motion-changed-fraction",
+  "acquisition_mode": "synthetic",
+  "acquired_at_ms": "LIVE-EPOCH-MS",
+  "sequence": 1,
+  "features": {
+    "motion-changed-fraction": 0.9,
+    "state": "on"
+  },
+  "unit": "fraction",
+  "confidence": 0.9,
+  "provenance_claim": "synthetic"
+}

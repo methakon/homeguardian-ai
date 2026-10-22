@@ -1,0 +1,21 @@
+{
+  "_comment": "INVALID, and the reason is machine-checked: state 'present' on a motion source maps to inconclusive (SecurityObservation.cpp:80) and 'inconclusive is not a vote' (FusionEngine.cpp:26). ACSession accepts and audits this frame - which is exactly why it is dangerous: accepted frames are not evidence.",
+  "_expected_invalidity": "state_not_a_detection_for_source_type",
+  "protocol_version_major": 1,
+  "protocol_version_minor": 0,
+  "kind": "observation",
+  "observation_id": "hg-android-synthetic-01-obs-0002",
+  "device_id": "hg-android-synthetic-01",
+  "source_type": "motion",
+  "observation_type": "motion-changed-fraction",
+  "acquisition_mode": "synthetic",
+  "acquired_at_ms": "LIVE-EPOCH-MS",
+  "sequence": 2,
+  "features": {
+    "motion-changed-fraction": 0.9,
+    "state": "present"
+  },
+  "unit": "fraction",
+  "confidence": 0.9,
+  "provenance_claim": "synthetic"
+}

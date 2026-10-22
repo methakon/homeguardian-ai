@@ -1,0 +1,20 @@
+{
+  "_comment": "The corroborating frame: presence + state present -> detected. observation_type availability is in the ingest allowlist (ObservationIngest.h:51-53).",
+  "protocol_version_major": 1,
+  "protocol_version_minor": 0,
+  "kind": "observation",
+  "observation_id": "hg-android-synthetic-02-obs-0001",
+  "device_id": "hg-android-synthetic-02",
+  "source_type": "presence",
+  "observation_type": "availability",
+  "acquisition_mode": "synthetic",
+  "acquired_at_ms": "LIVE-EPOCH-MS",
+  "sequence": 1,
+  "features": {
+    "availability": 0.9,
+    "state": "present"
+  },
+  "unit": "fraction",
+  "confidence": 0.9,
+  "provenance_claim": "synthetic"
+}
