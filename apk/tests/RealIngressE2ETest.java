@@ -72,6 +72,16 @@ public final class RealIngressE2ETest {
 
     private static final String DEVICE_ID = "hg-android-synthetic-01";
 
+    /**
+     * Unique per run.
+     *
+     * The hub is deliberately REUSED between runs (restarting it would drop the watermark and audit
+     * state Hermes 3 relies on) and it remembers every observation_id it has accepted. A fixed id is
+     * therefore refused with `duplicate_observation` - a RETRYABLE refusal that reads like a transport
+     * fault while actually being a stale test fixture. Real senders use fresh ids too.
+     */
+    private static final String RUN = Long.toString(System.currentTimeMillis() % 100000000L);
+
     public static void main(String[] args) throws Exception {
         System.out.println("== REAL C++ D-03 ingress end-to-end (loopback, mutual TLS) ==");
 
@@ -109,7 +119,7 @@ public final class RealIngressE2ETest {
         ObservationTransport t = new ObservationTransport(cfg);
         long seq = t.nextSequence();
         PendingObservation o = new PendingObservation(
-                "real-e2e-" + seq, "camera_availability", "availability", "synthetic",
+                "real-e2e-" + RUN + "-" + seq, "camera_availability", "availability", "synthetic",
                 System.currentTimeMillis(), seq,
                 0.42d, "fraction", "present", 0.90d, "synthetic");
         t.enqueue(o);
@@ -142,7 +152,7 @@ public final class RealIngressE2ETest {
         check("B0 the replaying transport restarts its counter at 1, so it genuinely repeats a sequence",
                 rseq == 1L, "sequence=" + rseq);
         replay.enqueue(new PendingObservation(
-                "real-e2e-replay", "camera_availability", "availability", "synthetic",
+                "real-e2e-replay-" + RUN, "camera_availability", "availability", "synthetic",
                 System.currentTimeMillis(), rseq,
                 0.42d, "fraction", "present", 0.90d, "synthetic"));
         replay.start();
@@ -153,30 +163,40 @@ public final class RealIngressE2ETest {
         final boolean replaySuspended = replay.isSuspended();
         replay.stop();
 
-        check("B1 the hub REFUSED the replayed sequence (replay protection is real and durable)",
-                replayPermanent >= 1,
+        check("B1 the transport NO LONGER produces a replay: its repeated attempt was rebased and "
+                        + "ACCEPTED as a new observation (this is the fix working, not a missing check)",
+                replayPermanent == 0 && replaySent >= 1,
                 "permanent=" + replayPermanent + " sent=" + replaySent
-                        + " - a repeated sequence was accepted, so the watermark is not real");
-        check("B2 the refused replay was NOT counted as delivered (the counter fix holds end-to-end)",
-                replaySent == 0, "sent=" + replaySent);
-        check("B3 a replay refusal does NOT suspend the transport (it is not an authorization loss)",
+                        + " - permanent>0 here means the rebase did not fire and the observation was lost");
+        check("B2 and it was therefore not miscounted as a refusal",
+                replayPermanent == 0, "permanent=" + replayPermanent);
+        check("B3 a rebase does not suspend the transport",
                 !replaySuspended, "suspended=" + replaySuspended);
 
-        // ---- C: the RESTART case, tested for what it actually does ------------------------------
-        // The hub now holds a watermark. A fresh transport simulates a restarted node: it assigns a
-        // sequence at ENQUEUE time, which is before any handshake has happened (NodeSession does the
-        // same). The question is whether the hub accepts the first observation after a restart.
-        //
-        // The watermark is adopted inside expectWelcome(), i.e. DURING the send that follows the
-        // enqueue, so the already-assigned sequence cannot benefit from it. This case therefore
-        // asserts what the design DOES, and the assertion records the consequence rather than
-        // describing it as correct.
+        // ---- B4: SERVER-SIDE replay validation is still intact ---------------------------------
+        // The transport can no longer emit a replay, which is exactly why the hub's own protection has
+        // to be proved independently - otherwise "the hub refused a replay" would silently become a
+        // statement about the client rather than the server, and a weakened server check would go
+        // unnoticed. This deliberately sends a STALE sequence over a fully authenticated connection:
+        // TLS, mutual certificate, hello, welcome, and only then the observation. It never sends a bare
+        // frame, and it changes nothing on the server.
+        final String staleAck = rawAuthenticatedExchange(dir, host, port, cfg.deviceId, -1L);
+        check("B4 the HUB still REFUSES a stale sequence over a properly authenticated socket "
+                        + "(server-side replay validation was not weakened)",
+                staleAck != null && staleAck.contains("replayed_sequence"),
+                "ack=" + staleAck);
+
+        // ---- C: the RESTART case, against the REAL hub ------------------------------------------
+        // The hub now holds a watermark (section A was accepted). A fresh transport simulates a
+        // restarted node: it assigns a sequence at ENQUEUE time, before any handshake (NodeSession
+        // does the same). Before the rebase fix this observation was REFUSED `replayed_sequence` and
+        // dropped permanently; it must now be rebased above the watermark and ACCEPTED.
         ObservationTransport restarted = new ObservationTransport(cfg);
         final long restartedSeq = restarted.nextSequence();
         check("C1 a fresh transport assigns its first sequence at ENQUEUE time, before any handshake",
                 restartedSeq == 1L, "sequence=" + restartedSeq);
         restarted.enqueue(new PendingObservation(
-                "real-e2e-restart", "camera_availability", "availability", "synthetic",
+                "real-e2e-restart-" + RUN, "camera_availability", "availability", "synthetic",
                 System.currentTimeMillis(), restartedSeq,
                 0.42d, "fraction", "present", 0.90d, "synthetic"));
         restarted.start();
@@ -185,20 +205,16 @@ public final class RealIngressE2ETest {
         final long restartedPermanent = restarted.permanentRejectionCount();
         final long restartedSent = restarted.sentCount();
         final boolean restartedSuspended = restarted.isSuspended();
+        final String restartedReason = restarted.suspensionReason();
         restarted.stop();
 
-        // This is the finding, stated plainly: with a watermark already set, a restarted node's first
-        // observation is refused as a replay, because its sequence was fixed before the handshake that
-        // learns the watermark. The transport does adopt the watermark - it simply adopts it too late
-        // for the message already queued.
-        check("C2 the hub refuses a restarted node's first observation as a replay (the watermark was "
-                        + "adopted only AFTER the sequence was assigned)",
-                restartedPermanent >= 1 && restartedSent == 0,
-                "permanent=" + restartedPermanent + " sent=" + restartedSent
-                        + " suspended=" + restartedSuspended);
-        check("C3 the refusal does not suspend, and is not miscounted as a delivery",
-                !restartedSuspended && restartedSent == 0,
-                "suspended=" + restartedSuspended + " sent=" + restartedSent);
+        check("C2 the hub ACCEPTED the restarted node's first observation (the sequence was rebased "
+                        + "above the watermark at the handshake boundary)",
+                restartedSent >= 1L && restartedPermanent == 0L,
+                "sent=" + restartedSent + " permanent=" + restartedPermanent
+                        + " - a refusal here means the observation was LOST to replayed_sequence");
+        check("C3 it was not suspended and not miscounted as a delivery",
+                !restartedSuspended, "suspended=" + restartedSuspended + " " + restartedReason);
 
         // ---- D: adoption itself, isolated from the queue ----------------------------------------
         // expectWelcome() adopts the watermark; these pin the arithmetic so C2's consequence is not
@@ -282,6 +298,77 @@ public final class RealIngressE2ETest {
         final byte[] buf = new byte[len];
         in.readFully(buf);
         return new String(buf, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Send a deliberately STALE sequence over a fully authenticated connection, and return the ack.
+     *
+     * This exists to keep the hub's own replay protection under test after the transport gained a
+     * rebase. Once the client can no longer produce a replay, a test that only drives the transport
+     * would silently stop testing the server: "the hub refused a replay" would become a claim about
+     * the client, and a weakened server check would pass unnoticed.
+     *
+     * It NEVER sends a bare frame. The order is TLS with a client certificate, then `hello`, then the
+     * `welcome` - and the sequence it uses is the hub's own reported watermark, which by definition has
+     * already been accepted, so the hub must refuse it.
+     */
+    static String rawAuthenticatedExchange(String dir, String host, int port, String deviceId,
+                                           long sequenceOverride) throws Exception {
+        SSLSocket socket = openAuthenticated(dir, host, port);
+        try {
+            socket.setSoTimeout(6000);
+            final DataInputStream in = new DataInputStream(socket.getInputStream());
+            final DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+
+            writeFrame(out, "{\"protocol_version_major\":1,\"protocol_version_minor\":0,"
+                    + "\"kind\":\"hello\",\"device_id\":\"" + deviceId + "\","
+                    + "\"display_name\":\"synthetic node\","
+                    + "\"capabilities\":[\"camera_availability\"]}");
+            final String welcome = readFrame(in);
+            if (welcome == null || !welcome.contains("\"welcome\"")) {
+                return "no-welcome: " + welcome;
+            }
+            final long watermark = longField(welcome, "\"last_sequence\":");
+            final long sequence = sequenceOverride >= 0L ? sequenceOverride : watermark;
+
+            writeFrame(out, "{\"protocol_version_major\":1,\"protocol_version_minor\":0,"
+                    + "\"kind\":\"observation\",\"observation_id\":\"raw-replay-probe-" + RUN + "\","
+                    + "\"device_id\":\"" + deviceId + "\","
+                    + "\"source_type\":\"camera_availability\",\"observation_type\":\"availability\","
+                    + "\"acquisition_mode\":\"synthetic\","
+                    + "\"acquired_at_ms\":" + System.currentTimeMillis() + ","
+                    + "\"sequence\":" + sequence + ","
+                    + "\"features\":{\"availability\":1.0,\"state\":\"present\"},"
+                    + "\"unit\":\"fraction\",\"confidence\":0.9,"
+                    + "\"provenance_claim\":\"synthetic\"}");
+            return readFrame(in);
+        } finally {
+            try {
+                socket.close();
+            } catch (Exception e) {
+                // closing twice is not an error
+            }
+        }
+    }
+
+    static long longField(String frame, String key) {
+        if (frame == null) {
+            return -1L;
+        }
+        final int at = frame.indexOf(key);
+        if (at < 0) {
+            return -1L;
+        }
+        final StringBuilder digits = new StringBuilder();
+        for (int i = at + key.length(); i < frame.length(); i++) {
+            final char c = frame.charAt(i);
+            if (c >= '0' && c <= '9') {
+                digits.append(c);
+            } else {
+                break;
+            }
+        }
+        return digits.length() == 0 ? -1L : Long.parseLong(digits.toString());
     }
 
     static String fileOr(String path, String fallback) {

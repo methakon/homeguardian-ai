@@ -80,7 +80,17 @@ public class ObservationTransport {
         public final String observationType;
         public final String acquisitionMode;
         public final long acquiredAtMs;
-        public final long sequence;
+        /**
+         * The sequence this observation will be sent with.
+         *
+         * NOT final, and deliberately so: it is assigned when the caller enqueues, which is before any
+         * handshake has revealed the hub's watermark. If it is at or below that watermark the hub
+         * refuses it as `replayed_sequence` permanently, so {@code rebaseAboveWatermark} raises it once
+         * at the transmission boundary. Every other field here stays immutable - only the sequence
+         * moves, and the observation_id in particular is never touched, because that is the identity
+         * the acknowledgement is correlated against.
+         */
+        public long sequence;
         public final double value;
         public final String unit;
         public final String state;
@@ -607,6 +617,9 @@ public class ObservationTransport {
     private boolean transmit(PendingObservation observation) {
         SSLSocket socket = null;
         terminalFailure = false;
+        // Cleared per attempt: a watermark learned on a previous connection must not drive a rebase
+        // here, only the one the handshake below reports.
+        lastAdoptedWatermark = 0L;
         try {
             socket = openSocket();
             if (!sendHello(socket)) {
@@ -617,6 +630,13 @@ public class ObservationTransport {
                 return false;
             }
             online = true;
+
+            // The sequence was assigned at ENQUEUE time (NodeSession), before this handshake revealed
+            // the hub's watermark. If it is at or below that watermark the hub would refuse it as
+            // `replayed_sequence` - permanently - so raise it here, at the boundary where the
+            // watermark has just become known, and only for this message.
+            rebaseAboveWatermark(observation);
+
             if (!writeFrame(socket, observationToJson(observation).toString())) {
                 return false;
             }
@@ -876,6 +896,53 @@ public class ObservationTransport {
                 sequenceCounter = adoptedSequence(sequenceCounter, watermark);
             }
         }
+        lastAdoptedWatermark = watermark;
+        return true;
+    }
+
+    /**
+     * The highest sequence the hub told us it has already accepted, from the most recent welcome.
+     *
+     * Adopting the watermark into the counter is not by itself enough, which is what this field
+     * exists to fix: {@code NodeSession} assigns a sequence when the caller ENQUEUES, which is before
+     * any handshake has happened, so after a restart the queued message still carries a number the hub
+     * has already seen. Raising the counter does nothing for a message whose sequence is already
+     * fixed, so the rebase below compares against this value directly.
+     */
+    private volatile long lastAdoptedWatermark = 0L;
+
+    /**
+     * Rebase an observation's sequence above the hub's watermark, once, at the transmission boundary.
+     *
+     * The hub refuses a sequence it has already accepted - `replayed_sequence` - and that refusal is
+     * PERMANENT, so the observation is dropped and never retried. A node that restarts would therefore
+     * lose its first observation to every reconnect, because its sequence was assigned before the
+     * handshake that reveals the watermark.
+     *
+     * Three properties are deliberate:
+     *
+     *  1. MONOTONIC, never a rewind. A new sequence is only ever taken from {@link #nextSequence()},
+     *     so it is strictly above both the hub's watermark and everything already sent.
+     *  2. IDEMPOTENT ACROSS RETRIES. It mutates the observation in place, and the queue holds that
+     *     same object, so a retry sees the already-rebased number and does not re-rebase. Two
+     *     different sequences for one observation_id would look like two distinct observations to the
+     *     hub - exactly the duplicate this must not create.
+     *  3. IDENTITY IS UNTOUCHED. Only the sequence moves; the observation_id is the caller's stable
+     *     identifier and is what the acknowledgement is correlated against.
+     *
+     * A watermark of 0 means the hub is fresh, so nothing is rebased and an ordinary first
+     * observation still goes out as sequence 1.
+     *
+     * @return true when the sequence was changed, so callers and tests can tell the two paths apart.
+     */
+    private boolean rebaseAboveWatermark(PendingObservation observation) {
+        final long watermark = lastAdoptedWatermark;
+        if (watermark <= 0L || observation.sequence > watermark) {
+            return false;
+        }
+        observation.sequence = nextSequence();
+        Log.w(TAG, "rebased an observation above the hub watermark " + watermark
+                + " to sequence " + observation.sequence);
         return true;
     }
 

@@ -28,9 +28,11 @@ set -uo pipefail
 
 REPO="${HG_REPO:-/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-s2-svc-transport06}"
 E2E_DIR="${HG_E2E_DIR:-$HOME/.hermes/cache/scratch/hg_e2e}"
+# The container is SHARED with Hermes 3. We never remove it; a run uses its own container name so a
+# failure here cannot disturb theirs. Override with HG_E2E_CONTAINER / HG_E2E_DIR.
 IMAGE="${HG_E2E_IMAGE:-homeguardian-ai:d032test}"
 PORT="${HG_E2E_PORT:-18443}"
-CONTAINER="hg_e2e_ingress"
+CONTAINER="${HG_E2E_CONTAINER:-hg_e2e_ingress_s2}"
 JAVA_HOME="${JAVA_HOME:-$HOME/android-jdk}"
 AJ="${ANDROID_JAR:-$HOME/Android/Sdk/platforms/android-34/android.jar}"
 OUT="$E2E_DIR/classes"
@@ -55,9 +57,29 @@ if [ ! -f /usr/include/openssl/ssl.h ]; then
   say "note: libssl-dev absent on this host, which is why the ingress runs from the image."
 fi
 
-rm -rf "$E2E_DIR"
 mkdir -p "$E2E_DIR/tls" "$E2E_DIR/state" "$OUT"
 D="$E2E_DIR/tls"
+
+# NEVER `rm -rf` THIS TREE. The container bind-mounts it, and a bind mount holds the INODE: deleting the
+# directory leaves a RUNNING container attached to the unlinked one, so its /state reads as empty and
+# every connection is refused with `certificate verify failed` - a symptom that looks like a trust
+# problem and is actually a filesystem one. Regenerating the CA is just as bad: the running ingress
+# loaded its CA at startup, so a new one cannot verify a new client.
+#
+# So the material is generated ONCE and then REUSED, and a fresh generation happens only when there is
+# nothing to reuse. Use HG_E2E_FRESH=1 (with a container of your own) to force it.
+FRESH=0
+if [ "${HG_E2E_FRESH:-0}" = "1" ] || [ ! -f "$D/ca.pem" ] || [ ! -f "$E2E_DIR/ingress.json" ]; then
+  FRESH=1
+fi
+
+if [ "$FRESH" = "0" ]; then
+  say "==> 1-4/6 reusing the existing TEST-ONLY material and registry (regenerating would break the"
+  say "           running container's loaded CA). Fingerprint on disk:"
+  say "           $(openssl x509 -in "$D/client.pem" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2- | tr -d ':' | tr 'A-Z' 'a-z' | cut -c1-24)..."
+fi
+
+if [ "$FRESH" = "1" ]; then
 
 # ---------------------------------------------------------------------------------------------
 # 1. TEST-ONLY TLS material. The server needs an IP SAN for 127.0.0.1, because the transport sets
@@ -152,19 +174,30 @@ printf 'testonly' > "$E2E_DIR/device.p12.pass"
   || die "ca.p12 failed"
 printf 'testonly' > "$E2E_DIR/ca.p12.pass"
 
+fi  # end FRESH generation
+
 # ---------------------------------------------------------------------------------------------
 # 5. Start the REAL ingress.
 # ---------------------------------------------------------------------------------------------
 say "==> 5/6 start the real D-03 ingress on 127.0.0.1:$PORT"
-docker rm -f "$CONTAINER" >/dev/null 2>&1
-docker run -d --name "$CONTAINER" --network host \
-  -v "$E2E_DIR/tls":/pki:ro -v "$E2E_DIR":/state:rw \
-  --entrypoint /src/build/hg_device_ingress "$IMAGE" --config /state/ingress.json >/dev/null 2>&1 \
-  || die "container did not start"
-sleep 4
-docker logs "$CONTAINER" 2>&1 | grep -q 'hg_device_ingress ready' \
-  || { docker logs "$CONTAINER" 2>&1 | tail -5 | sed 's/^/    /'; die "ingress did not report ready"; }
-docker logs "$CONTAINER" 2>&1 | grep 'ready' | sed 's/^/    /'
+# REUSE a healthy container rather than recreating it. This container is shared with Hermes 3, and
+# removing it would drop whatever watermark and audit state they are relying on. Only start a new one
+# when none is running, and say which path was taken so the choice is visible in the output.
+if docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null | grep -q running; then
+  say "reusing the running container $CONTAINER (not removed: it is shared)"
+  docker logs "$CONTAINER" 2>&1 | grep 'ready' | tail -1 | sed 's/^/    /' || true
+else
+  say "no running $CONTAINER, starting one"
+  docker rm -f "$CONTAINER" >/dev/null 2>&1
+  docker run -d --name "$CONTAINER" --network host \
+    -v "$E2E_DIR/tls":/pki:ro -v "$E2E_DIR":/state:rw \
+    --entrypoint /src/build/hg_device_ingress "$IMAGE" --config /state/ingress.json >/dev/null 2>&1 \
+    || die "container did not start"
+  sleep 4
+  docker logs "$CONTAINER" 2>&1 | grep -q 'hg_device_ingress ready' \
+    || { docker logs "$CONTAINER" 2>&1 | tail -5 | sed 's/^/    /'; die "ingress did not report ready"; }
+  docker logs "$CONTAINER" 2>&1 | grep 'ready' | sed 's/^/    /'
+fi
 
 # Assert the isolation rather than claiming it.
 if ss -ltn 2>/dev/null | grep -q ":$PORT "; then

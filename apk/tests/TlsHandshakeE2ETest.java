@@ -146,6 +146,16 @@ public final class TlsHandshakeE2ETest {
         void start() { thread.start(); }
         void await(long ms) throws InterruptedException { thread.join(ms); }
 
+        /** The first OBSERVATION frame this peer received, or null. Frames are recorded in order. */
+        String observationFrame() {
+            for (String f : result.frames) {
+                if (f != null && f.contains("\"kind\":\"observation\"")) {
+                    return f;
+                }
+            }
+            return null;
+        }
+
         @Override public void close() {
             try { serverSocket.close(); } catch (Exception ignored) { }
         }
@@ -311,6 +321,155 @@ public final class TlsHandshakeE2ETest {
     static PendingObservation obs(long seq) {
         return new PendingObservation("obs-" + seq, "camera", "motion", "synthetic",
                 System.currentTimeMillis(), seq, 0.5d, "fraction", "present", 0.9d, "synthetic");
+    }
+
+    // ---- frame inspectors ------------------------------------------------------------------------
+    // These read the sequence and observation_id OUT OF THE WIRE FRAME. Asserting on what the peer
+    // actually received is the only way to catch a stale sequence: a scripted peer can be made to
+    // accept anything, so an assertion on sentCount alone would pass while the transport sent the
+    // wrong number.
+
+    static long sequenceOf(String frame) {
+        return numberField(frame, "\"sequence\":");
+    }
+
+    static String observationIdOf(String frame) {
+        return between(frame, "\"observation_id\":\"", "\"");
+    }
+
+    /** Reads a bare JSON number that follows {@code key}. Returns -1 when absent. */
+    static long numberField(String frame, String key) {
+        if (frame == null) {
+            return -1L;
+        }
+        final int at = frame.indexOf(key);
+        if (at < 0) {
+            return -1L;
+        }
+        final StringBuilder digits = new StringBuilder();
+        for (int i = at + key.length(); i < frame.length(); i++) {
+            final char c = frame.charAt(i);
+            if (c >= '0' && c <= '9') {
+                digits.append(c);
+            } else {
+                break;
+            }
+        }
+        return digits.length() == 0 ? -1L : Long.parseLong(digits.toString());
+    }
+
+    interface Cond {
+        boolean ok();
+    }
+
+    static void waitFor(Cond c, long timeoutMs) throws Exception {
+        final long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (c.ok()) {
+                return;
+            }
+            Thread.sleep(100);
+        }
+    }
+
+    /**
+     * A TLS peer that accepts SEVERAL connections, to exercise retry behaviour.
+     *
+     * The first observation it receives is refused transiently (`queue_full`) and every later one is
+     * accepted, so a retry can be observed on the wire. It records every observation frame it saw, in
+     * order, so a test can prove the retry reused the SAME sequence rather than being rebased twice.
+     */
+    static class MultiAttemptPeer implements AutoCloseable {
+        private final SSLServerSocket serverSocket;
+        private final String welcome;
+        private final List<String> observations = new ArrayList<String>();
+        private final Thread thread;
+        private volatile boolean closed = false;
+
+        MultiAttemptPeer(String dir, String welcome) throws Exception {
+            this.welcome = welcome;
+            final char[] pw = "testonly".toCharArray();
+            final KeyStore ks = KeyStore.getInstance("PKCS12");
+            try (InputStream in = new FileInputStream(dir + "/server.p12")) {
+                ks.load(in, pw);
+            }
+            final KeyManagerFactory kmf =
+                    KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(ks, pw);
+            final SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(kmf.getKeyManagers(), null, null);
+            serverSocket = (SSLServerSocket) ctx.getServerSocketFactory().createServerSocket(0);
+            serverSocket.setNeedClientAuth(false);
+            thread = new Thread(this::serve, "hg-multiatch-peer");
+            thread.setDaemon(true);
+        }
+
+        int port() {
+            return serverSocket.getLocalPort();
+        }
+
+        void start() {
+            thread.start();
+        }
+
+        private void serve() {
+            for (int attempt = 0; attempt < 4 && !closed; attempt++) {
+                try (SSLSocket s = (SSLSocket) serverSocket.accept()) {
+                    s.setSoTimeout(3000);
+                    s.startHandshake();
+                    final DataInputStream in = new DataInputStream(s.getInputStream());
+                    final DataOutputStream out = new DataOutputStream(s.getOutputStream());
+                    final String hello = readFrame(in);
+                    if (hello == null) {
+                        continue;
+                    }
+                    writeFrame(out, welcome);
+                    final String obs = readFrame(in);
+                    if (obs == null) {
+                        continue;
+                    }
+                    synchronized (observations) {
+                        observations.add(obs);
+                    }
+                    // First attempt: transient refusal, so the transport must retry.
+                    final String ack = attempt == 0
+                            ? "{\"protocol_version_major\":1,\"kind\":\"ack\",\"accepted\":false,"
+                                    + "\"reason\":\"queue_full\"}"
+                            : "{\"protocol_version_major\":1,\"kind\":\"ack\",\"accepted\":true,"
+                                    + "\"reason\":\"ok\"}";
+                    writeFrame(out, correlate(ack, obs));
+                    Thread.sleep(60);
+                } catch (Exception e) {
+                    // A closed socket during shutdown is expected; keep serving.
+                }
+            }
+        }
+
+        int observationsSeen() {
+            synchronized (observations) {
+                return observations.size();
+            }
+        }
+
+        String frameAt(int index) {
+            synchronized (observations) {
+                return index < observations.size() ? observations.get(index) : null;
+            }
+        }
+
+        void await(long ms) throws Exception {
+            thread.join(ms);
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            try {
+                serverSocket.close();
+            } catch (Exception e) {
+                // closing twice is not an error
+            }
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -697,6 +856,106 @@ public final class TlsHandshakeE2ETest {
             check("T11e a 'queue_full' refusal is RETRYABLE: not counted as permanent, not suspended",
                     permanent == 0 && !suspended,
                     "permanent=" + permanent + " suspended=" + suspended);
+        }
+
+        // ---- T13: RESTART. The hub's watermark exceeds the queued sequence ----------------------
+        // THE REGRESSION THIS FILE EXISTS TO CATCH.
+        //
+        // A node assigns a sequence when it ENQUEUES (NodeSession does this), which is before any
+        // handshake has happened. After a restart the hub still remembers the highest sequence it
+        // accepted, so that freshly-assigned sequence is at or below the watermark and the hub refuses
+        // it as `replayed_sequence` - permanently, never retried, so the observation is LOST.
+        //
+        // The hub here reports last_sequence=7 while the queued observation carries sequence 1. The
+        // transport MUST rebase it above the watermark before sending. Asserting on the sequence the
+        // PEER RECEIVED is the point: asserting on `sentCount` alone would pass even if the transport
+        // sent the stale number, because a scripted peer can be made to accept anything.
+        {
+            final String welcome = "{\"kind\":\"welcome\",\"protocol_version_major\":1,"
+                    + "\"device_id\":\"hg-android-test-device\",\"last_sequence\":7}";
+            Peer peer = new Peer(dir, welcome,
+                    "{\"protocol_version_major\":1,\"kind\":\"ack\",\"accepted\":true,\"reason\":\"ok\"}");
+            peer.start();
+            ObservationTransport t = new ObservationTransport(config(dir, peer.port()));
+            final PendingObservation queued = obs(t.nextSequence());
+            check("T13a precondition: the queued observation carries a sequence at or below the "
+                            + "hub's watermark, which is what makes it look like a replay",
+                    queued.sequence <= 7L, "queued sequence=" + queued.sequence);
+            final String queuedId = queued.observationId;
+            t.enqueue(queued);
+            t.start();
+            Thread.sleep(1500);
+            final long sent = t.sentCount();
+            final long permanent = t.permanentRejectionCount();
+            final boolean suspended = t.isSuspended();
+            t.stop();
+            peer.await(2000);
+            peer.close();
+
+            final String observationFrame = peer.observationFrame();
+            final long sentSequence = sequenceOf(observationFrame);
+            final String sentObservationId = observationIdOf(observationFrame);
+
+            check("T13b the transport REBASED the sequence above the hub's watermark",
+                    sentSequence > 7L,
+                    "hub received sequence=" + sentSequence
+                            + " (watermark was 7) - it would be refused as replayed_sequence");
+            check("T13c the rebased observation was DELIVERED",
+                    sent >= 1L, "sent=" + sent + " permanent=" + permanent + " suspended=" + suspended);
+            check("T13d it was NOT counted as a permanent refusal",
+                    permanent == 0L, "permanent=" + permanent);
+            check("T13e the observation_id is UNCHANGED by the rebase (identity is stable)",
+                    queuedId.equals(sentObservationId),
+                    "sent id=" + sentObservationId + " queued id=" + queuedId);
+            check("T13f and the transport is not suspended",
+                    !suspended, "suspended=" + suspended);
+        }
+
+        // ---- T14: a fresh hub (watermark 0) must NOT be rebased ---------------------------------
+        // The control for T13. A rebase that always fires would corrupt the ordinary case, so this
+        // proves the transport still sends the sequence it assigned when the hub is fresh.
+        {
+            final String welcome = "{\"kind\":\"welcome\",\"protocol_version_major\":1,"
+                    + "\"device_id\":\"hg-android-test-device\",\"last_sequence\":0}";
+            Peer peer = new Peer(dir, welcome,
+                    "{\"protocol_version_major\":1,\"kind\":\"ack\",\"accepted\":true,\"reason\":\"ok\"}");
+            peer.start();
+            ObservationTransport t = new ObservationTransport(config(dir, peer.port()));
+            final PendingObservation queued = obs(t.nextSequence());
+            t.enqueue(queued);
+            t.start();
+            Thread.sleep(1500);
+            t.stop();
+            peer.await(2000);
+            peer.close();
+            final long sentSequence = sequenceOf(peer.observationFrame());
+            check("T14 against a FRESH hub the first sequence is still 1, not silently rebased",
+                    sentSequence == 1L, "hub received sequence=" + sentSequence);
+        }
+
+        // ---- T15: the rebased sequence must be remembered across a RETRY ------------------------
+        // The hub refuses the first attempt transiently (queue_full) after stating watermark 7. If the
+        // retry were rebased a SECOND time, the hub would see two different sequences for one
+        // observation_id. It must retry with the SAME rebased sequence.
+        {
+            final String welcome = "{\"kind\":\"welcome\",\"protocol_version_major\":1,"
+                    + "\"device_id\":\"hg-android-test-device\",\"last_sequence\":7}";
+            MultiAttemptPeer peer = new MultiAttemptPeer(dir, welcome);
+            peer.start();
+            ObservationTransport t = new ObservationTransport(config(dir, peer.port()));
+            t.enqueue(obs(t.nextSequence()));
+            t.start();
+            waitFor(() -> peer.observationsSeen() >= 2, 9000);
+            final long first = sequenceOf(peer.frameAt(0));
+            final long second = sequenceOf(peer.frameAt(1));
+            t.stop();
+            peer.await(2500);
+            peer.close();
+            check("T15a the retry reused the SAME rebased sequence (one observation_id, one sequence)",
+                    peer.observationsSeen() >= 2 && first == second,
+                    "first=" + first + " second=" + second + " seen=" + peer.observationsSeen());
+            check("T15b and both attempts were above the watermark",
+                    first > 7L && second > 7L, "first=" + first + " second=" + second);
         }
 
         System.out.println();
