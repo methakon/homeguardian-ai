@@ -1,6 +1,22 @@
 # HomeGuardian AI — Status
 
-**Last updated:** 2026-10-17
+**Last updated:** 2026-10-23
+
+## P1 physical-integration checkpoint — 2026-10-23
+
+**NOT ACCEPTED:** Android → C++ → durable alert → MCP physical acceptance remains
+open. The Mi A3 sensor app is installed and real 320×240 camera processing was
+observed, but recorded delivery counters stayed at zero and the isolated audit
+database contains no physical alert. APK installation and host tests are not
+end-to-end acceptance.
+
+Candidate fixes cover network permission, wire vocabulary, Android keystore
+compatibility and transport identity. USB repeatedly re-enumerated with kernel
+error `-71`; a temporary authenticated Wi-Fi ingress was authorized, but phone
+configuration and delivery were not completed. Test listeners are now stopped;
+the existing EdgeService was preserved. See
+[the acceptance report](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md) for measured
+evidence, candidate-only changes, provenance limits and remaining exit criteria.
 
 ## Security Audit & Release Candidate Status
 - **Candidate `52d3d1436e115fe9061127a35f33b35d10c8dd73`:** Evaluated by Hermes Session 1 (P0-1 PASS, P0-2 PASS, P0-3 FAIL). Failed due to hardcoded physical device seed secrets, unauthenticated re-pairing, and lack of heartbeat sequence replay protection.
@@ -8,9 +24,11 @@
 
 ## Current Phase
 
-Simulator-first development — deterministic in-process sensor simulator,
-dual-device shared audio broker, and consent-gated acquisition. Real camera/
-microphone capture remains BLOCKED pending explicit operator approval.
+Simulator-first development with separately authorized physical-device acceptance.
+The deterministic simulator, shared audio broker and consent-gated acquisition
+remain distinct from physical verification. Camera capture on the Mi A3 was
+authorized and observed; microphone capture was not run in this checkpoint.
+Physical alert delivery and restart recovery remain unverified, not complete.
 
 ## Completed Work
 

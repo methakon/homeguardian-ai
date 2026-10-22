@@ -1,5 +1,21 @@
 # HomeGuardian AI — Development Guide
 
+## Physical integration checkpoint — 2026-10-23
+
+Use [Android → C++ → MCP physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md)
+for the current P1 result and exit criteria. Real Mi A3 camera processing is
+observed; physical observation delivery, durable alert creation and MCP readback
+after restart are **not accepted**. Android-stub host tests, APK installation and
+frame counters prove different layers and must not be reported as a physical
+end-to-end pass.
+
+The report describes a separately built acceptance candidate, including Android
+PKCS#12 compatibility, exact transport identity extraction and wire-vocabulary
+corrections. It does not assert those candidate fixes are merged into `main`.
+Do not bypass TLS/SAN validation, upgrade unknown provenance, lower detector
+thresholds or insert an alert by hand to close the physical gate. Keep real device
+identifiers, addresses, credentials and media out of public documentation.
+
 ## Toolchain
 
 | Tool | Version | Purpose |

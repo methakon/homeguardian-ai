@@ -1,5 +1,15 @@
 # HomeGuardian AI — Implementation Roadmap
 
+## Current acceptance gate — P1 physical integration (2026-10-23)
+
+| Item | Status | Evidence and required closure |
+|---|---|---|
+| Android → C++ detection → durable alert → MCP | **IN PROGRESS / NOT ACCEPTED** | Real Mi A3 camera frames and numeric processing observed; no acknowledged physical observation or persisted physical alert yet. USB instability and unfinished Wi-Fi setup remain blockers. Closure requires exact alert-id correlation through MCP and recovery after restart, plus stop/consent controls. See [physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md). |
+
+The historical implementation phases below are not a claim that this physical
+acceptance gate passed. Candidate APK and protocol fixes described in the report
+have not been merged into `main` by publishing this documentation checkpoint.
+
 ## Phase A — Orchestration and Repository Foundation
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
