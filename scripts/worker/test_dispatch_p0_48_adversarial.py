@@ -82,6 +82,17 @@ def main():
 
 
 # --------------------------------------------------------------------------------- repairs 1 and 4
+class _StubLedger:
+    """Minimal ledger stub: the guard dereferences it, so passing None makes the test crash with
+    AttributeError and report a repair as failed for a harness reason rather than a guard reason."""
+
+    def state(self, tid):
+        return None
+
+    def live_lease(self, tid, now=None):
+        return False
+
+
 def _cfg():
     return {"worker_id": "hg-hermes-network", "branch": "experiment/hg-lan-mtls-07",
             "authorized_scope": ["scripts/worker/", "deploy/oracle/"]}
@@ -103,7 +114,7 @@ def repair_tests():
     print("     fires first - which it does, ahead of the context check, as intended)")
     bad = 0
     try:
-        g.validate(_protected_task(), _cfg(), ledger=None, approvals_store=None,
+        g.validate(_protected_task(), _cfg(), ledger=_StubLedger(), approvals_store=None,
                    dispatch_context=None)
         print("    [FAIL] admitted a protected task with NO dispatch context"); bad += 1
     except Exception as exc:                                     # noqa: BLE001
@@ -119,7 +130,7 @@ def repair_tests():
     for label, over in (("empty approvals []", {"approvals": []}),
                         ("absent approvals", {})):
         try:
-            g.validate(_protected_task(**over), _cfg(), ledger=None, approvals_store=None,
+            g.validate(_protected_task(**over), _cfg(), ledger=_StubLedger(), approvals_store=None,
                        dispatch_context=None)
             print(f"    [FAIL] {label}: admitted"); bad += 1
         except Exception as exc:                                 # noqa: BLE001
