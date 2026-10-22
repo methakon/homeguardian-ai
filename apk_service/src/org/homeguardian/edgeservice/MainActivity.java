@@ -1,11 +1,14 @@
 package org.homeguardian.edgeservice;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.util.Log;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -15,6 +18,7 @@ import android.widget.TextView;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import org.json.JSONObject;
 
 /**
  * Operator UI for the HomeGuardian edge service.
@@ -42,7 +46,11 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private Button bridgeStartBtn;
     private Button bridgeStopBtn;
     private TextView bridgeView;
+    private AlertDialog enrollmentDialog;
     private final Handler ui = new Handler();
+    private final Runnable enrollmentTimeout = new Runnable() {
+        public void run() { dismissEnrollment(); }
+    };
     // Last rendered content. A 1 Hz ticker that calls setText() unconditionally emits an
     // accessibility content-changed event every second, which (a) wakes the compositor for
     // nothing on a battery-sensitive edge device and (b) makes the window never report
@@ -78,6 +86,7 @@ public class MainActivity extends Activity implements EdgeState.Listener {
 
     @Override
     protected void onPause() {
+        dismissEnrollment();
         super.onPause();
         ui.removeCallbacks(ticker);
     }
@@ -175,6 +184,9 @@ public class MainActivity extends Activity implements EdgeState.Listener {
         row4.addView(bridgeStartBtn);
         row4.addView(bridgeStopBtn);
         root.addView(row4);
+        root.addView(button("Bridge enrollment", new View.OnClickListener() {
+            public void onClick(View v) { onBridgeEnrollment(); }
+        }));
 
         bridgeView = new TextView(this);
         bridgeView.setTextSize(11f);
@@ -240,7 +252,8 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private void onBridgeStart() {
         String url = endpointField.getText().toString().trim();
         getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putString("endpoint", url).apply();
-        String refusal = TransportPolicy.refusalReason(url);
+        RouteSecurityPolicy.wireAndroidPlatform(this);
+        String refusal = RouteSecurityPolicy.refusalReason(url);
         if (refusal != null) {
             EdgeState.bridgeRunning = false;
             EdgeState.bridgeStatus = "bridge: " + refusal;
@@ -262,6 +275,47 @@ public class MainActivity extends Activity implements EdgeState.Listener {
         i.setAction(EdgeService.ACTION_BRIDGE_STOP);
         startService(i);
         render();
+    }
+
+    /** Explicit, temporary enrollment display. Never reads the local MCP bearer. */
+    private void onBridgeEnrollment() {
+        dismissEnrollment();
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("device_id", OutboundMcpBridge.deviceId(this));
+            payload.put("auth_token", OutboundMcpBridge.authToken(this));
+            enrollmentDialog = new AlertDialog.Builder(this)
+                    .setTitle("Bridge enrollment (30 seconds)")
+                    .setMessage(payload.toString())
+                    .setPositiveButton("Dismiss", null)
+                    .setCancelable(true)
+                    .create();
+            enrollmentDialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
+                public void onDismiss(DialogInterface dialog) {
+                    ((AlertDialog) dialog).setMessage("");
+                    if (enrollmentDialog == dialog) {
+                        ui.removeCallbacks(enrollmentTimeout);
+                        enrollmentDialog = null;
+                    }
+                }
+            });
+            enrollmentDialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            enrollmentDialog.show();
+            ui.postDelayed(enrollmentTimeout, 30000L);
+        } catch (Exception ignored) {
+            dismissEnrollment();
+            EdgeState.bridgeStatus = "bridge: enrollment unavailable";
+            render();
+        }
+    }
+
+    private void dismissEnrollment() {
+        ui.removeCallbacks(enrollmentTimeout);
+        if (enrollmentDialog != null) {
+            enrollmentDialog.setMessage("");
+            enrollmentDialog.dismiss();
+            enrollmentDialog = null;
+        }
     }
 
     // -------------------------------------------------------------- render --

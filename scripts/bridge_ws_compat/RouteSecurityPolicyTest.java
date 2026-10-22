@@ -114,7 +114,9 @@ public class RouteSecurityPolicyTest {
         allow("hub on a /32 route is now ALLOWED",           "ws://203.0.113.1:18994/");
         allow("peer /32 route ALLOWED",                      "ws://203.0.113.9:18994/");
         refuse("unrouted address in the same /24 refused",    "ws://203.0.113.5:18994/", "not reachable over the approved tunnel");
-        refuse("LAN host refused",                            "ws://198.51.100.7:18994/", "egress unprotected");
+        // Still refused, now with the accurate reason: the VPN routes no part of that LAN, so the
+        // failure is "not reachable over the approved tunnel" rather than a competing-route report.
+        refuse("LAN host refused",                            "ws://198.51.100.7:18994/", "not reachable over the approved tunnel");
 
         System.out.println("\n=== B. NORMAL shared-prefix overlay (must keep working) ===");
         platform(net("wlan0", false, "198.51.100.0/24"), net("vpn", true, "203.0.113.0/24"));
@@ -140,7 +142,7 @@ public class RouteSecurityPolicyTest {
         resolverReturns("203.0.113.1");
         allow("name resolving to an overlay address",         "ws://coord.internal:18994/");
         resolverReturns("198.51.100.7");
-        refuse("SAME name re-pointed at the LAN",             "ws://coord.internal:18994/", "egress unprotected");
+        refuse("SAME name re-pointed at the LAN",             "ws://coord.internal:18994/", "not reachable over the approved tunnel");
         resolverReturns("8.8.8.8");
         refuse("SAME name re-pointed at a public address",    "ws://coord.internal:18994/", "not reachable over the approved tunnel");
         resolverReturns("203.0.113.1", "8.8.8.8");
@@ -248,6 +250,29 @@ public class RouteSecurityPolicyTest {
 
         RouteSecurityPolicy.setBinderForTest(null);
         srv.close();
+
+        // A real phone is NEVER VPN-only: Wi-Fi stays attached and advertises its own default
+        // route (0.0.0.0/0) because that is how Android describes an ordinary Wi-Fi network.
+        // Refusing on "some non-VPN route covers it" therefore refuses EVERY endpoint on every
+        // real split-tunnel deployment, measured on a Mi A3 / API 30. The kernel routes by
+        // longest prefix, so the VPN's /32 wins over a /0; that is the only overlap that may pass.
+        System.out.println("\n=== I. SPLIT TUNNEL WITH A NON-VPN DEFAULT ROUTE (the real device shape) ===");
+        platform(net("wlan0", false, "192.168.1.0/24", "0.0.0.0/0"),
+                 net("vpn",   true,  "192.168.77.1/32"));
+        allow("VPN /32 wins against a non-VPN default route",  "ws://192.168.77.1:18994/");
+        refuse("public address outside the VPN /32 refused",   "ws://8.8.8.8:18994/", "not reachable over the approved tunnel");
+        refuse("LAN address still refused",                    "ws://192.168.1.50:18994/", "not reachable over the approved tunnel");
+
+        platform(net("wlan0", false, "203.0.113.1/32"),
+                 net("vpn",   true,  "203.0.113.1/32"));
+        refuse("equal specificity on both paths stays refused", "ws://203.0.113.1:18994/", "egress unprotected");
+
+        platform(net("wlan0", false, "192.168.1.0/24", "0.0.0.0/0"),
+                 net("vpn",   true,  "203.0.113.0/24"));
+        allow("VPN /24 more specific than the Wi-Fi default route", "ws://203.0.113.1:18994/");
+        platform(net("wlan0", false, "203.0.113.0/24", "0.0.0.0/0"),
+                 net("vpn",   true,  "203.0.113.1/32"));
+        allow("VPN /32 inside a LAN /24 that also has a default route", "ws://203.0.113.1:18994/");
 
         System.out.printf("%n=== route-security policy: %d passed, %d failed ===%n", pass, fail);
         System.exit(fail == 0 ? 0 : 1);

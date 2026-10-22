@@ -235,27 +235,39 @@ public final class RouteSecurityPolicy {
                 return "refused: no VPN network is active, and " + host + " is not loopback";
             }
 
-            // P3 first: no non-VPN network may cover the destination. Checked before P2 so an
-            // overlap is refused rather than trusted - the destination must not be reachable on
-            // an unprotected link, whatever the VPN also says.
-            for (NetInfo n : nets) {
-                if (n.vpn) continue;
-                if (covers(n, a)) {
-                    return "refused: " + a.getHostAddress() + " is routed by non-VPN network '"
-                            + n.label + "' - it would egress unprotected";
-                }
-            }
-
-            // P2: the platform must say a VPN network routes this destination. This is the clause
-            // that accepts a thin-prefix route, which interface-subnet containment could not.
-            boolean vpnCovers = false;
+            // LONGEST-PREFIX PRIORITY, not "any non-VPN cover refuses".
+            //
+            // The kernel routes to the most specific matching prefix, so a VPN /32 for the hub
+            // wins over the Wi-Fi network's 0.0.0.0/0. Refusing merely because SOME non-VPN route
+            // covers the destination looked strict but was measured wrong on a real phone: every
+            // attached Wi-Fi network advertises a default route, so that rule refused every
+            // endpoint on every split-tunnel deployment and the bridge could never dial - while
+            // the very same suite passed, because its synthetic Wi-Fi states had no default route.
+            //
+            // The unsafe case is preserved exactly: an overlap where the non-VPN prefix is at
+            // least as specific as the VPN's is refused, because then the packet may egress
+            // unprotected. Only a strictly more specific VPN route is accepted.
+            int vpnBest = -1;
             for (NetInfo n : nets) {
                 if (!n.vpn) continue;
-                if (covers(n, a)) { vpnCovers = true; break; }
+                vpnBest = Math.max(vpnBest, bestPrefix(n, a));
             }
-            if (!vpnCovers) {
+            if (vpnBest < 0) {
                 return "refused: no VPN network routes " + a.getHostAddress()
                         + " - it is not reachable over the approved tunnel";
+            }
+
+            int nonVpnBest = -1;
+            NetInfo claimant = null;
+            for (NetInfo n : nets) {
+                if (n.vpn) continue;
+                int p = bestPrefix(n, a);
+                if (p > nonVpnBest) { nonVpnBest = p; claimant = n; }
+            }
+            if (nonVpnBest >= vpnBest) {
+                return "refused: " + a.getHostAddress() + " is routed by non-VPN network '"
+                        + (claimant == null ? "unknown" : claimant.label)
+                        + "' - it would egress unprotected";
             }
         }
 
@@ -266,11 +278,23 @@ public final class RouteSecurityPolicy {
     // ------------------------------------------------------------------ helpers
 
     private static boolean covers(NetInfo n, InetAddress addr) {
-        if (n.routes == null) return false;
+        return bestPrefix(n, addr) >= 0;
+    }
+
+    /**
+     * Length of the most specific prefix in this network that contains {@code addr}, or -1 when the
+     * network does not route it at all. The length is what decides the kernel's choice, so it is
+     * compared directly rather than collapsed into a boolean.
+     */
+    private static int bestPrefix(NetInfo n, InetAddress addr) {
+        if (n.routes == null) return -1;
+        int best = -1;
         for (Route r : n.routes) {
-            if (inPrefix(addr, r.network, r.prefixLength)) return true;
+            if (!inPrefix(addr, r.network, r.prefixLength)) continue;
+            int p = r.prefixLength < 0 ? 0 : r.prefixLength;
+            if (p > best) best = p;
         }
-        return false;
+        return best;
     }
 
     /**
