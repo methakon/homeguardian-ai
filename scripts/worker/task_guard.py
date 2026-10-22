@@ -211,10 +211,8 @@ def validate(task: dict, cfg: dict, ledger: Ledger) -> dict:
 
     # ---- Prohibited actions enforcement ----
     prohibited = set(task.get("prohibited_actions") or [])
-    required = set(task.get("requires_approval") or [])
-    # If no explicit required approvals, any prohibited action is treated as a request and must be approved
-    actions_to_check = prohibited if not required else prohibited & required
-    for action in actions_to_check:
+    # All prohibited actions must have an explicit approval record from a trusted approver.
+    for action in prohibited:
         if action not in (task.get("approvals") or {}):
             raise Refused("PROHIBITED_ACTION",
                           f"'{action}' is prohibited and requires an explicit approval record")

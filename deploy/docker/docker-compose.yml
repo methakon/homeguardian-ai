@@ -39,7 +39,9 @@ services:
       target: runtime
       args:
         HG_NPROC: "4"
-    image: homeguardian-hub:${HG_TAG:-local}
+    ports:
+      - "${HG_HUB_BIND:-127.0.0.1}:8080:8080"
+
 
     # `init: true` runs a tiny PID-1 init: it forwards SIGTERM and reaps children,
     # which is what makes `docker compose stop` a clean shutdown for the hub.
@@ -99,7 +101,9 @@ services:
       target: runtime
       args:
         HG_NPROC: "4"
-    image: homeguardian-hub:${HG_TAG:-local}
+    ports:
+      - "${HG_HUB_BIND:-127.0.0.1}:8080:8080"
+
     # This service is ALREADY built by the `hub` service (same image/tag), so a
     # plain `docker compose up -d` does not rebuild it twice.
     pull_policy: never
