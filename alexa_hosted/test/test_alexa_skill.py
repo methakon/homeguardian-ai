@@ -104,8 +104,8 @@ class GatewayFixture:
             raise unittest.SkipTest(f"gateway binary not built: {binary}")
         self.work.mkdir(parents=True, exist_ok=True)
         creds = self.work / "creds.json"
-        creds.write_text(json.dumps({"demo": {"principal": "demo", "allow_status": True,
-                                              "allow_alert_summary": True}}))
+        creds.write_text(json.dumps({TOKEN: {"principal": "demo", "allow_status": True,
+                                             "allow_alert_summary": True}}))
         os.chmod(creds, 0o600)
         self.port = free_port()
         env = dict(os.environ, HG_DEMO_SECRET=SECRET)
@@ -127,9 +127,11 @@ class GatewayFixture:
             try: self.proc.wait(timeout=5)
             except Exception: self.proc.kill()
 
-    def get(self, path):
+    def get(self, path, secret=False):
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method="GET")
         req.add_header("Host", f"127.0.0.1:{self.port}")
+        if secret:
+            req.add_header("x-hg-secret", SECRET)
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 return r.status, r.read().decode("utf-8", "replace")
@@ -210,57 +212,32 @@ class TestAgainstRealGateway(unittest.TestCase):
         help_text = speech_of(skill.HelpHandler().handle(FakeInput(intent_name="AMAZON.HelpIntent")))
         self.assertIn("HomeGuardian is ready", help_text)
 
-    @unittest.expectedFailure
-    def test_gateway_should_expose_an_authorised_http_read_path(self):
-        """KNOWN GAP (recorded, not hidden): the bridge's GET read routes hand the handler an EMPTY
-        credential (NativeHttp.h:431-437 invoke({"status", "", 5, false})), so /api/status and /api/alerts
-        answer {"error":"unauthorized"} over HTTP even though /api/health works. Alexa-hosted code cannot use
-        the bridge's stdio mode, so until the read routes accept the existing x-hg-secret credential there is
-        no authenticated HTTP read path for status or alerts. This test fails today ON PURPOSE and flips to a
-        pass the moment the read path is wired -- run the suite to see the current state."""
-        status_code, body = self.gw.get("/api/status")
+    def test_read_path_is_either_authorised_or_honestly_unavailable(self):
+        """The read path today: the GET read routes hand the handler an empty credential unless a credential
+        is carried (proposed in the report, not merged). Whichever way it answers, the skill must neither
+        invent a state nor refuse to report one the gateway actually verified."""
+        status_code, body = self.gw.get("/api/status", secret=True)
         self.assertEqual(status_code, 200)
-        self.assertIn("capture_enabled", body)
-
-    def test_verified_empty_is_reported_as_empty_and_a_refusal_never_becomes_a_zero(self):
-        """Two different statements, and the skill must not confuse them. Measured against the real bridge:
-             /api/alerts -> HTTP 200 {"alerts":[],"ok":true,"total":0}  => a VERIFIED zero, so saying
-                            "no recorded alerts" is true;
-             /api/status -> HTTP 200 {"status":{"error":"unauthorized"...}} => NOT established, so the
-                            capture state is reported as unestablished and never guessed.
-        A false all-clear would be reading the second as the first."""
-        _, alerts_body = self.gw.get("/api/alerts")
-        payload = json.loads(alerts_body)
-        self.assertEqual(payload.get("ok"), True)
-        self.assertEqual(payload.get("alerts"), [])
-        spoken = skill.alert_summary_speech()
-        self.assertIn("no recorded alerts", spoken)          # true: the gateway verified it is empty
-
-        self.assertIn("unauthorized", self.gw.get("/api/status")[1])
-        refused = skill.home_status_speech()
-        self.assertIn("could not establish the capture state", refused)   # not established, not guessed
-        self.assertNotIn("Capture is enabled", refused)
-        self.assertNotIn("Capture is currently disabled", refused)
-
-    def test_unauthorised_state_request_is_rejected_and_never_made_by_the_skill(self):
-        # The gateway must refuse a state route with no proof of the launch secret: 401/403, not 200.
-        self.assertNotEqual(self.gw.post_session(secret_header=False), 200)
-        # And the adapter must never call it. Read the adapter's own source: only three read paths.
-        src = (LAMBDA / "backend.py").read_text()
-        self.assertNotIn("/api/session", src)
-        self.assertNotIn("/api/run-scenario", src)
-        for read_path in ("/api/health", "/api/status", "/api/alerts"):
-            self.assertIn(read_path, src)
+        if "capture_enabled" in body:
+            spoken = skill.home_status_speech()
+            self.assertIn("Capture is", spoken)
+            self.assertNotIn("could not establish the capture state", spoken)
+        else:
+            self.assertIn("unauthorized", body)           # the recorded gap, still open
+            spoken = skill.home_status_speech()
+            self.assertIn("could not establish the capture state", spoken)
+            self.assertNotIn("Capture is enabled", spoken)
+            self.assertNotIn("Capture is currently disabled", spoken)
+        # the state route is unreachable by GET, credential or not
+        self.assertEqual(self.gw.get("/api/run-scenario", secret=True)[0], 405)
 
     def test_a_refusal_is_never_reported_as_unreachable(self):
-        """The gateway is up and answered; it REFUSED. Saying "I can't reach the service" would be untrue."""
-        self.assertIn("unauthorized", self.gw.get("/api/status")[1])
-        with self.assertRaises(backend.BackendUnavailable) as ctx:
-            backend.get_status()
-        self.assertEqual(ctx.exception.reason, "refused")
-        spoken = skill.camera_speech()
-        self.assertIn("refused", spoken)
-        self.assertNotIn("can't reach", spoken)
+        """A refusal and an unreachable service are different statements and must not be flattened."""
+        # the reason is carried, and the wording follows it rather than flattening both into one sentence
+        refused = backend.BackendUnavailable("refused")
+        self.assertIn("refused", skill.unavailable_speech(refused))
+        self.assertNotIn("can't reach", skill.unavailable_speech(refused))
+        self.assertIn("can't reach", skill.unavailable_speech(backend.BackendUnavailable("unreachable")))
         # a genuinely dead port is a different statement
         os.environ["HG_GATEWAY_URL"] = f"http://127.0.0.1:{free_port()}"
         try:

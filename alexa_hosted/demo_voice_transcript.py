@@ -83,8 +83,8 @@ def main() -> int:
     work = pathlib.Path(os.environ.get("TMPDIR", "/tmp")) / f"hg-alexa-demo-{os.getpid()}"
     work.mkdir(parents=True, exist_ok=True)
     creds = work / "creds.json"
-    creds.write_text(json.dumps({"demo": {"principal": "demo", "allow_status": True,
-                                          "allow_alert_summary": True}}))
+    creds.write_text(json.dumps({"demo-token": {"principal": "demo", "allow_status": True,
+                                                "allow_alert_summary": True}}))
     os.chmod(creds, 0o600)
     port = free_port()
     proc = subprocess.Popen(
