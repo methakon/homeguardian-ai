@@ -107,6 +107,8 @@ def admit(comment: dict, policy: dict, identity: dict, ledger: Ledger) -> dict:
                               f"{sorted(hard)} can never be authorized through a task envelope, "
                               f"regardless of author or approval record")
 
+    # Inject author into task for downstream guard validation (author may be absent in the task payload)
+    task['author'] = author
     verdict = validate(task, identity, ledger)          # scope, branch, approval, duplicates
     verdict["declared_prohibited"] = sorted(set(task.get("prohibited_actions") or []))
     verdict["author"] = author
