@@ -182,6 +182,72 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ---------------------------------------------------------------------------
+  # MCP reader: a READ-ONLY view of the application's own alert store.
+  # ---------------------------------------------------------------------------
+  # Option A of docs/HG_OBSERVATION_TO_MCP_SEAM_24.md. There is exactly ONE writer of the store (the
+  # ingress above, which runs Observation -> Event -> Pipeline -> AlertPolicy and commits alerts); this
+  # service only READS it. Two defences, deliberately redundant: the volume is mounted read-only, and the
+  # process itself opens the database read-only (SQLITE_OPEN_READONLY + PRAGMA query_only), so a write
+  # cannot succeed even if the mount were relaxed.
+  #
+  # A store it cannot open is reported as UNAVAILABLE - never as "no alerts". If this service says the
+  # application is unavailable, point HG_MCP_ALERTS_DB at the store the ingress actually writes; do not
+  # "fix" it by creating one (a reader that creates what it reads turns "no storage" into "no alerts").
+  mcp:
+    image: homeguardian-hub:${HG_TAG:-local}
+    pull_policy: never
+    init: true
+    restart: unless-stopped
+
+    # Host networking ON PURPOSE. The MCP binds loopback inside its own namespace, which is the right
+    # posture but unreachable through a published port: a publish arrives on the container interface,
+    # where nothing is listening (the same reason the hub publishes nothing). With `network_mode: host`
+    # the loopback bind IS the host's loopback, so no port is published and no non-loopback bind or
+    # HG_MCP_ALLOW_REMOTE is needed.
+    network_mode: host
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.25
+    pids_limit: 64
+
+    # The store: READ-ONLY, the same file the hub and the ingress share.
+    volumes:
+      - hg_data:/data:ro
+      # MCP credentials. This is a BIND mount rather than a compose secret on purpose: the credential
+      # store requires a 0600 file owned by the effective uid, and refuses anything else (that check is a
+      # feature, not an obstacle). It has no default - an unprovisioned mount must fail loudly instead of
+      # serving unauthenticated.
+      - ${HG_MCP_CREDS_FILE:?set HG_MCP_CREDS_FILE to a 0600 MCP credential file owned by uid ${HG_MCP_UID_GID:-10001} (see docs/MCP_OWNER_ENDPOINT.md)}:/run/secrets/hg_mcp_creds:ro
+
+    # Must be the uid that owns the credential file above (the image's own uid is 10001).
+    user: "${HG_MCP_UID_GID:-10001:10001}"
+
+    environment:
+      # Point this at the store the application writes. The default matches the shipped
+      # deploy/docker/config/ingress.json.example.
+      HG_MCP_ALERTS_DB: "${HG_MCP_ALERTS_DB:-/data/homeguardian_bridge_audit.db}"
+      HG_MCP_BIND: "127.0.0.1"
+      HG_MCP_PORT: "${HG_MCP_PORT:-8790}"
+
+    # The image's entrypoint belongs to the hub; run the reader directly. Its first argument is only read
+    # for one boolean (whether capture is enabled), so the image's hub config keeps that answer consistent
+    # with what the hub itself reports.
+    entrypoint: ["/usr/local/bin/hg_mcp_server", "/etc/homeguardian/hub.json", "/run/secrets/hg_mcp_creds"]
+
+    stop_grace_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   hg_data:
     driver: local
