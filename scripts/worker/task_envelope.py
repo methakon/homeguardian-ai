@@ -27,11 +27,12 @@ import json
 import os
 import re
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from task_guard import Ledger, Refused, validate          # noqa: E402
+from task_guard import ApprovalStore, Ledger, Refused, TrustedDispatchContext, validate  # noqa: E402
 
 DEFAULT_POLICY = os.path.join(HERE, "watcher-policy.json")
 DEFAULT_IDENTITY = os.path.join(HERE, "identity.json")
@@ -64,7 +65,13 @@ def extract_envelope(body: str, tag: str) -> dict:
     return env
 
 
-def admit(comment: dict, policy: dict, identity: dict, ledger: Ledger) -> dict:
+def admit(
+    comment: dict,
+    policy: dict,
+    identity: dict,
+    ledger: Ledger,
+    approvals_store: ApprovalStore | None = None,
+) -> dict:
     """Returns the admission decision. Raises EnvelopeRefused for anything that must not proceed."""
     author = ((comment.get("author") or {}).get("login") or "").strip()
     if not author:
@@ -82,6 +89,21 @@ def admit(comment: dict, policy: dict, identity: dict, ledger: Ledger) -> dict:
     if not isinstance(task, dict):
         raise EnvelopeRefused("MALFORMED_ENVELOPE", "envelope carries no task object")
 
+    # Explicit alias migration: map legacy keys into canonical fields only when full required security fields exist
+    task = dict(task)
+    security_fields = ("expected_branch", "allowed_scope", "acceptance_tests", "prohibited_actions")
+    if all(task.get(f) for f in security_fields):
+        if "mission" in task and "task_id" not in task:
+            task["task_id"] = task["mission"]
+        if "worker" in task and "assigned_to" not in task:
+            task["assigned_to"] = task["worker"]
+        if "detail" in task and "objective" not in task:
+            task["objective"] = task["detail"]
+        elif "notes" in task and "objective" not in task:
+            task["objective"] = task["notes"]
+        if "source" not in task and "source" in env:
+            task["source"] = env["source"]
+
     # `requires_approval` is a REQUEST and is the escalation path that must be hard-blocked.
     # `prohibited_actions` is the task's own safety DECLARATION - declaring a dangerous action
     # as forbidden is good hygiene, so it is recorded, never treated as a request.
@@ -92,7 +114,29 @@ def admit(comment: dict, policy: dict, identity: dict, ledger: Ledger) -> dict:
                               f"{sorted(hard)} can never be authorized through a task envelope, "
                               f"regardless of author or approval record")
 
-    verdict = validate(task, identity, ledger)          # scope, branch, approval, duplicates
+    # Construct authenticated dispatch context from verified comment author
+    dispatch_context = TrustedDispatchContext(
+        actor_id=author,
+        actor_roles=("collaborator",),
+        auth_method="github_issue_comment_verified_author",
+        auth_subject=comment.get("url", "issue:comment"),
+        dispatcher_id="hg_watcher",
+        issued_at=time.time(),
+        request_id=f"req-{os.urandom(8).hex()}",
+    )
+
+    task['author'] = author
+    try:
+        verdict = validate(
+            task,
+            identity,
+            ledger,
+            dispatch_context=dispatch_context,
+            approvals_store=approvals_store,
+        )
+    except Refused as exc:
+        raise EnvelopeRefused(exc.code, exc.detail) from exc
+
     verdict["declared_prohibited"] = sorted(set(task.get("prohibited_actions") or []))
     verdict["author"] = author
     verdict["source"] = env.get("source", comment.get("url", "issue:14"))
@@ -101,23 +145,28 @@ def admit(comment: dict, policy: dict, identity: dict, ledger: Ledger) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--comment", required=True, help="comment JSON (author + body); data only")
+    ap.add_argument("--comment", help="comment JSON (data only; never executed)")
     ap.add_argument("--policy", default=DEFAULT_POLICY)
     ap.add_argument("--identity", default=DEFAULT_IDENTITY)
-    ap.add_argument("--ledger", default=os.path.expanduser("~/.hermes/cache/scratch/hg-worker/ledger.json"))
+    ap.add_argument("--ledger", default=DEFAULT_LEDGER)
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
+    if not a.comment:
+        ap.error("--comment is required")
 
     policy = json.load(open(a.policy))
     identity = json.load(open(a.identity))
+    ledger = Ledger(a.ledger)
     comment = json.load(open(a.comment))
     try:
-        out = admit(comment, policy, identity, Ledger(a.ledger))
-        code = "ADMIT"
-    except (EnvelopeRefused, Refused) as exc:
-        out, code = {"decision": "REFUSE", "code": exc.code, "detail": exc.detail}, "REFUSE"
-    print(json.dumps(out, indent=2) if a.json else f"{code} [{out.get('code','-')}] {out.get('detail') or ''}")
-    return 0 if code == "ADMIT" else 2
+        verdict = admit(comment, policy, identity, ledger)
+    except EnvelopeRefused as exc:
+        out = {"decision": "REFUSE", "code": exc.code, "detail": exc.detail}
+        print(json.dumps(out, indent=2) if a.json else f"REFUSE [{exc.code}] {exc.detail}")
+        return 2
+    print(json.dumps(verdict, indent=2) if a.json else
+          f"ADMIT  {verdict['task_id']} (from {verdict['state']})")
+    return 0
 
 
 if __name__ == "__main__":
