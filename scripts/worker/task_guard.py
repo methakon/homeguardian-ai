@@ -516,6 +516,17 @@ def _within_authorized_root(scoped: str, allowed, base: str | None = None) -> bo
     return False
 
 
+
+def _refuse_fabricated_context(op_kind):
+    """REPAIR 1: protected operations fail closed when no externally authenticated dispatch context
+    exists. A test_fixture context is never accepted as authentication, so privileged dispatch stays
+    disabled."""
+    raise Refused(
+        "AUTHENTICATION_REQUIRED",
+        f"protected operation '{op_kind}' requires an externally authenticated dispatch context; a "
+        f"test_fixture context is never fabricated and privileged dispatch stays disabled")
+
+
 def validate(
     task: dict,
     cfg: dict,
@@ -581,7 +592,17 @@ def validate(
     ops = derive_canonical_operations(task, cfg)
 
     # Check for prohibited or requested operations
+    # REPAIR 4: absence/emptiness is judged against the TRUSTED canonical operation set, never
+    # against task-supplied flags. An empty or missing collection DENIES a protected task.
     task_approvals = task.get("approvals") or {}
+    if not isinstance(task_approvals, dict):
+        raise Refused("APPROVAL_REQUIRED",
+                      f"approvals must map operation -> grant reference, not {type(task_approvals).__name__}")
+    _protected_kinds = sorted({o.operation_kind for o in ops if o.operation_kind in PROTECTED_OPERATIONS})
+    if _protected_kinds and not task_approvals:
+        raise Refused("APPROVAL_REQUIRED",
+                      f"protected operation(s) {_protected_kinds} carry no approval grant; an empty or "
+                      f"absent approvals collection is a denial, never an admission")
 
     for op in ops:
         if op.operation_kind in HARD_PROHIBITED_OPERATIONS:
@@ -598,6 +619,8 @@ def validate(
 
             # Check context
             effective_context = dispatch_context
+            if effective_context is None:      # REPAIR 1: fail closed, never fabricate
+                _refuse_fabricated_context(op.operation_kind)
             if effective_context is None:
                 if author:
                     effective_context = TrustedDispatchContext(
@@ -618,6 +641,8 @@ def validate(
         if not any(op.operation_kind == act for op in ops):
             op = CanonicalOperation(operation_kind=act, target_resource=task.get("target_resource", "*"), worker_id=cfg.get("worker_id", "*"))
             effective_context = dispatch_context
+            if effective_context is None:      # REPAIR 1: fail closed, never fabricate
+                _refuse_fabricated_context(op.operation_kind)
             if effective_context is None:
                 if author:
                     effective_context = TrustedDispatchContext(

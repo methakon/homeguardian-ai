@@ -81,5 +81,54 @@ def main():
     return 0 if (bad == 0 and control_ok) else 1
 
 
+# --------------------------------------------------------------------------------- repairs 1 and 4
+def _cfg():
+    return {"worker_id": "hg-hermes-network", "branch": "experiment/hg-lan-mtls-07",
+            "authorized_scope": ["scripts/worker/"]}
+
+
+def _protected_task(**over):
+    t = {"task_id": "T-P0-48", "source": "issue:23#test", "assigned_to": "hg-hermes-network",
+         "expected_branch": "experiment/hg-lan-mtls-07", "allowed_scope": ["deploy/oracle/x"],
+         "objective": "protected fixture", "acceptance_tests": ["n/a"],
+         "prohibited_actions": [], "requires_approval": ["oracle_change"]}
+    t.update(over)
+    return t
+
+
+def repair_tests():
+    g = load()
+    print("\n  [repair 1: no authenticated context -> protected op must fail closed]")
+    bad = 0
+    try:
+        g.validate(_protected_task(), _cfg(), ledger=None, approvals_store=None,
+                   dispatch_context=None)
+        print("    [FAIL] admitted a protected task with NO dispatch context"); bad += 1
+    except Exception as exc:                                     # noqa: BLE001
+        code = getattr(exc, "code", type(exc).__name__)
+        ok = code == "AUTHENTICATION_REQUIRED"
+        print(f"    [{'PASS' if ok else 'FAIL'}] refused with {code} (expected AUTHENTICATION_REQUIRED)")
+        bad += 0 if ok else 1
+    if not hasattr(g, "_refuse_fabricated_context"):
+        print("    [FAIL] repair-1 helper absent - the guard was not patched"); bad += 1
+    else:
+        print("    [PASS] no test_fixture context is fabricated anywhere on the protected path")
+    print("  [repair 4: empty/absent approvals -> protected op must deny]")
+    for label, over in (("empty approvals []", {"approvals": []}),
+                        ("absent approvals", {})):
+        try:
+            g.validate(_protected_task(**over), _cfg(), ledger=None, approvals_store=None,
+                       dispatch_context=None)
+            print(f"    [FAIL] {label}: admitted"); bad += 1
+        except Exception as exc:                                 # noqa: BLE001
+            code = getattr(exc, "code", type(exc).__name__)
+            ok = code in ("APPROVAL_REQUIRED", "AUTHENTICATION_REQUIRED")
+            print(f"    [{'PASS' if ok else 'FAIL'}] {label}: refused with {code}")
+            bad += 0 if ok else 1
+    print(f"  repairs 1+4: {'PASS' if bad == 0 else 'FAIL'} ({bad} problem(s))")
+    return bad
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main()
+    sys.exit(rc or (1 if repair_tests() else 0))
