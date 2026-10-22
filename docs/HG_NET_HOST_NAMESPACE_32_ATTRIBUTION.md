@@ -24,7 +24,7 @@ share the host's network namespace, a future config change to `0.0.0.0` would ex
 Docker publish to review, which is why the boundary check keeps them at WARN rather than PASS.
 
 **Host listener table (read-only, compared as instructed):** the only LAN-facing listeners are nginx on
-`0.0.0.0:80` and `[::]:80`. No listener exists on 18443 or 18445 on any interface, consistent with
+`0.0.0.0:80` and `[::]:80`. No listener exists on 18443, 18444 or 18445 on any interface, consistent with
 loopback-declared binds.
 
 **Still UNVERIFIED, and stated as such:** the *runtime* socket attribution. The config says what the
