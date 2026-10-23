@@ -65,6 +65,15 @@ def extract_envelope(body: str, tag: str) -> dict:
     return env
 
 
+def _touches_protected(task) -> bool:
+    """Conservative: any requested scope naming a protected target counts as privileged."""
+    for sc in (task.get("allowed_scope") or []):
+        low = str(sc).lower()
+        if any(p in low for p in ("deploy/oracle", "oracle", "devices/", "handset")):
+            return True
+    return False
+
+
 def admit(
     comment: dict,
     policy: dict,
@@ -114,12 +123,24 @@ def admit(
                               f"{sorted(hard)} can never be authorized through a task envelope, "
                               f"regardless of author or approval record")
 
-    # Construct authenticated dispatch context from verified comment author
+    # REPAIR 2: an offline comment dict is DATA. It cannot assert that GitHub verified anything, so
+    # provenance must arrive out-of-band from the API layer (_verified_provenance), never be inferred
+    # from comment.author.login. Privileged requests fail closed without it; benign requests still get a
+    # context, but one whose auth_method does NOT claim verification.
+    _prov = comment.get("_verified_provenance") or {}
+    provenance_ok = bool(_prov.get("api_origin") is True and _prov.get("verified_author") == author)
+    _privileged = bool(task.get("requires_approval")) or _touches_protected(task)
+    if _privileged and not provenance_ok:
+        raise EnvelopeRefused(
+            "PROVENANCE_UNVERIFIED",
+            "privileged task requires authenticated GitHub API-origin provenance bound to the actor; "
+            "caller-supplied comment JSON (including comment.author.login) cannot authorize dispatch")
     dispatch_context = TrustedDispatchContext(
         actor_id=author,
         actor_roles=("collaborator",),
-        auth_method="github_issue_comment_verified_author",
-        auth_subject=comment.get("url", "issue:comment"),
+        auth_method=("github_issue_comment_verified_author" if provenance_ok
+                     else "github_issue_comment_unverified_author"),
+        auth_subject=(str(_prov.get("subject")) if provenance_ok else comment.get("url", "issue:comment")),
         dispatcher_id="hg_watcher",
         issued_at=time.time(),
         request_id=f"req-{os.urandom(8).hex()}",

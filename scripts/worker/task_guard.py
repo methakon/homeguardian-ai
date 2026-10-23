@@ -78,6 +78,7 @@ VALID_AUTH_METHODS = frozenset({
     "mtls_san",
     "local_cli_authenticated",
     "github_issue_comment_verified_author",
+    "github_issue_comment_unverified_author",   # REPAIR 2: offline comment JSON, NO verification claim
     "test_fixture",
 })
 

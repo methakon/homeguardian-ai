@@ -43,8 +43,16 @@ GOOD_TASK = {
 }
 
 
-def comment(body, author="methakon"):
-    return {"author": {"login": author}, "body": body, "url": "issue:14#comment-xyz"}
+def comment(body, author="methakon", verified=True):
+    """A REAL caller attaches provenance from the GitHub API response, out-of-band from the comment
+    body. Default verified=True so these cases exercise the API-verified shape; the unverified shape is
+    the subject of the dedicated repair-2 cases, where provenance is withheld deliberately."""
+    c = {"author": {"login": author}, "body": body, "url": "issue:14#comment-xyz"}
+    if verified:
+        c["_verified_provenance"] = {"api_origin": True, "verified_author": author,
+                                     "subject": "gh-api:methakon/homeguardian-ai",
+                                     "auth_method": "github_issue_comment_verified_author"}
+    return c
 
 
 def env_block(task, tag="hg-task"):
@@ -99,7 +107,7 @@ oracle_task = dict(GOOD_TASK, task_id="T-oracle", requires_approval=["oracle_cha
 check("privileged action without an approval record", "APPROVAL_REQUIRED",
       lambda: admit(comment(env_block(oracle_task)), POLICY, IDENTITY, fresh_ledger()))
 ok_oracle = dict(oracle_task, task_id="T-oracle-ok",
-                 approvals={"oracle_change": "owner:issue-14#approval-1"})
+                 approvals={"oracle_change": "owner:issue-14#approval-2026-10-21"})
 check("privileged action WITH an explicit approval record", "ADMIT",
       lambda: admit(comment(env_block(ok_oracle)), POLICY, IDENTITY, fresh_ledger()))
 
