@@ -208,6 +208,19 @@ def run(portal: Portal) -> None:
     check("portal RSS while serving is modest", True, int(portal.rss_kib()) < 200 * 1024 if portal.rss_kib().isdigit() else False,
           f"{portal.rss_kib()} KiB")
 
+    # LAST on purpose: this deliberately trips the transport's auth-failure lockout, so every later
+    # attempt -- including with the CORRECT secret -- is refused until the window passes. Runs after all
+    # other checks so it cannot mask them. kMaxAuthFailures=5, kLockoutMs=30000 in the transport.
+    print("  --- auth failure lockout ---")
+    codes = [portal.request("POST", "/api/session", b"{}", "application/json",
+                            {"x-hg-secret": f"wrong-{i}"})[0] for i in range(5)]
+    check("five wrong secrets are refused (401)", [401] * 5, codes)
+    check("the correct secret is ALSO refused during the lockout", 401,
+          portal.request("POST", "/api/session", b"{}", "application/json",
+                         {"x-hg-secret": portal.secret})[0],
+          "lockout holds even for valid credentials, by design")
+
+
 
 def degraded_store_case(binary: str, config: str) -> None:
     """A portal whose upload store cannot be created must still serve, and must not invent content.

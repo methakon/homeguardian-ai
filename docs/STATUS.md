@@ -16,7 +16,7 @@ new worktree, nothing deployed or exposed, Alexa lane untouched. Alexa skill fil
 **Exact commands and results:**
 
 ```
-python3 scripts/portal_smoke.py                      36 passed, 0 failed
+python3 scripts/portal_smoke.py                      38 passed, 0 failed
 ./build/homeguardian_tests "[portal],[alexa],[mcp]"  33585 assertions in 55 cases, all passed
 cmake --build build -j4                              exit 0, 0 errors
 ```
@@ -54,6 +54,15 @@ route before the route was known.
   reading the dashboard's JavaScript, not exercised.
 * **Not deployed:** no tunnel, no DNS record, no systemd unit installed, no external request ever
   received. Rollback is `kill <pid>`; the portal holds no external state.
+
+**Rollback:** `kill <pid>` (or `systemctl stop <unit>` if supervised). The portal holds no external
+state — uploads live in the directory passed as `--uploads-dir`, whose `index.jsonl` is rebuilt on load,
+so deleting that directory discards uploads and leaving it keeps them. Nothing else is touched: no
+firewall rule, no DNS record, no mail or SSH configuration, no container.
+
+**Next owner:** Hermes 3 / `hg-hermes-cpp` for the portal itself. Exposing it beyond this machine is
+**not** authorised by this task and must not be attempted before the `Origin`-policy decision above is
+made deliberately by the coordinator, with a separate scoped change.
 
 The portal's own runbook is `docs/PORTAL_DEPLOYMENT.md`; its reusable test is `scripts/portal_smoke.py`.
 
