@@ -42,7 +42,7 @@ SDK model `1.82.0`). Syntax compilation and dependency checks pass. Node regress
 C++ build. An initial Node attempt failed because binaries were absent from the
 checkout's default build path; the explicit existing-binary run passed completely.
 
-**Deployment / simulator: BLOCKED, not accepted.** The existing configured Skill ID
+**Initial deployment checkpoint (see endpoint follow-up below): BLOCKED, not accepted.** The existing configured Skill ID
 is available privately in root `.env` (`ALEXA_SKILL_ID`); it is not proof of the
 console display name or endpoint. Amazon console access reaches a sign-in wall;
 the configured AWS STS session is expired. The selected regional ARN, actual
@@ -59,7 +59,38 @@ Workspace decision: owner explicitly approved temporarily retaining the existing
 `main` checkout beneath `.worktrees/alexa-main`, leaving the canonical root's
 unrelated branch and uncommitted work untouched. Create no further project
 folders/checkouts. Console/AWS reauthentication and the selected regional ARN
-were not supplied at this checkpoint, so deployment remains blocked.
+were not supplied at that initial checkpoint.
+
+### Endpoint follow-up: valid AWS login, cross-account access denied
+
+The owner subsequently supplied the existing Skill ID and all regional Lambda
+ARNs, with default/North America in `us-east-1`, Europe/India in `eu-west-1`, and
+Far East in `us-west-2`, each qualified by alias `Release_0`. Identifiers were
+supplied privately and are not reproduced in public source. A fresh STS
+read now confirms valid credentials, superseding the expired-session blocker.
+
+The authenticated AWS account differs from the account in every supplied endpoint.
+Exact read-only `GetFunctionConfiguration` requests against all three qualified
+ARNs return `AccessDeniedException`: no resource-based policy permits this caller.
+That verifies an access boundary, NOT a nonexistent/wrong function or an Alexa
+invocation failure. No function package, alias target, runtime, handler or logs
+could be read through that personal AWS session. No IAM/policy changes or function
+invocations were attempted.
+
+The three regions, separate account and console Code tab are consistent with
+Alexa-hosted resources. AWS Lambda ARN selection does NOT contradict Alexa-hosted
+hosting: Amazon explicitly provisions Lambda endpoints in these three regions
+for hosted skills, separate from personal AWS resources. Actual hosting metadata
+and deployed bytes still require authorized developer-console or ASK access.
+Do not replace these endpoints, create another skill or broaden permissions to
+work around the account boundary. Inspect the existing skill's Code deployment
+state and use Code -> Logs with the default region (`us-east-1` as supplied) for
+the simulator's actual invocation/error stream. Then compare the deployed source
+with the two reproduced source defects before attributing the simulator failure.
+
+References: [About Alexa-hosted Skills](https://developer.amazon.com/en-US/docs/alexa/hosted-skills/build-a-skill-end-to-end-using-an-alexa-hosted-skill.html)
+and [Create and Manage Alexa-hosted Skills: CloudWatch logs](https://developer.amazon.com/en-US/docs/alexa/hosted-skills/alexa-hosted-skills-create.html).
+Deployment and simulator acceptance remain **NOT VERIFIED**.
 
 ## On-phone analyzer candidate — not yet deployed
 
