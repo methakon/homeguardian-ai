@@ -117,3 +117,9 @@ node_modules/
 # Python bytecode from the provenance validator and its tests
 __pycache__/
 *.pyc
+
+# Secret-bearing environment files: never commit them (the local .env holds DB and proxy secrets).
+# Templates stay tracked, which is why the negation follows the wildcard.
+.env
+.env.*
+!.env.example
