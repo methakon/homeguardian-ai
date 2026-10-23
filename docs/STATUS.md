@@ -142,6 +142,31 @@ configuration is verified, but no genuine Alexa -> SQS -> native C++ -> Alexa
 round trip is accepted. The missing exact execution-role ARN and the empty private
 bridge reply remain concrete blockers; do not replace those gaps with fixtures.
 
+### Execution-role received; configuration moved to the existing .env
+
+The owner supplied the actual hosted Lambda execution-role ARN. A dedicated
+publisher role was created in the owner's account, trusting only that exact
+principal (not the logs SSO role or the entire hosted account). Readback verified
+the trust document and the inline policy's request-send/reply-consume directions,
+exact queue resources and TLS condition; no broad attached policies were added.
+IAM policy simulation verified 12 action/resource decisions, including denial of
+opposite-direction and destructive queue actions. This is not a real hosted-role
+AssumeRole or live Alexa-to-native verification.
+
+At owner direction, the six Alexa operational settings now live in the existing
+canonical project `.env`; unrelated values were left untouched. The generated
+mailbox JSON file was removed. The loader reads only selected Alexa keys from
+`HG_ALEXA_ENV_FILE`, or `.env` beside the deployed modules; environment values
+take precedence. Local application configuration validation succeeded without
+printing/loading unrelated credentials. Do not copy the full workstation `.env`
+into Alexa: deploy only the selected mailbox settings. No `.env` values are tracked
+or published in this change. No worker key, running worker or mailbox Code
+deployment was created; the empty private bridge replies remain unresolved.
+
+The dotenv revision passes **72 Python tests** under both tested SDK combinations,
+plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
+untracked; only code/tests/sanitized documentation are published.
+
 ## On-phone analyzer candidate — not yet deployed
 
 The approved in-place update is being prepared on the isolated Android branch.

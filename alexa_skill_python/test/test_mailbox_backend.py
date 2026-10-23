@@ -107,11 +107,13 @@ class MailboxTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {}, clear=True), mock.patch.object(mb, "_settings", return_value=ENV):
             self.assertEqual(self.run_call(), STATUS)
 
-    def test_deployment_file_accepts_only_the_four_nonsecret_settings(self):
+    def test_dotenv_reads_only_allowlisted_settings(self):
+        data = "\n".join(key + "=" + value for key, value in ENV.items())
+        data += "\nAWS_SECRET_ACCESS_KEY=SYNTHETIC_DO_NOT_LOAD\n"
         with mock.patch.object(mb.Path, "is_file", return_value=True), \
-                mock.patch.object(mb.Path, "open", mock.mock_open(read_data=json.dumps(ENV))):
+                mock.patch.object(mb.Path, "open", mock.mock_open(read_data=data)):
             self.assertEqual(mb._settings(), ENV)
-        for raw in ["null", "[]", "{}", "x" * 4097, json.dumps(dict(ENV, AWS_SECRET_ACCESS_KEY="must-not-be-configured"))]:
+        for raw in ["null", "[]", "{}", "x" * 65537, "HG_ALEXA_MAILBOX_REGION=one\nHG_ALEXA_MAILBOX_REGION=two"]:
             with self.subTest(size=len(raw)), mock.patch.object(mb.Path, "is_file", return_value=True), \
                     mock.patch.object(mb.Path, "open", mock.mock_open(read_data=raw)), self.assertRaises(ValueError):
                 mb._settings()
@@ -131,6 +133,17 @@ class MailboxTests(unittest.TestCase):
             with self.subTest(key=key, value=value), mock.patch.dict("os.environ", {key: value}):
                 self.assertIsNone(self.run_call())
         self.session.client.assert_not_called()
+
+    def test_dotenv_quotes_export_and_transport_precedence(self):
+        data = '# selected application settings only\nexport HG_ALEXA_MAILBOX_REGION="us-east-1"\nHG_ALEXA_TRANSPORT=mailbox # approved mode\nUNRELATED_SECRET=SYNTHETIC_DO_NOT_LOAD\n'
+        with mock.patch.object(mb.Path, "is_file", return_value=True), \
+                mock.patch.object(mb.Path, "open", mock.mock_open(read_data=data)):
+            settings = mb._settings()
+            self.assertEqual(settings, {"HG_ALEXA_MAILBOX_REGION": "us-east-1", "HG_ALEXA_TRANSPORT": "mailbox"})
+            self.assertEqual(mb.configured_transport(), "mailbox")
+        with mock.patch.dict("os.environ", {"HG_ALEXA_TRANSPORT": "loopback"}), mock.patch.object(mb, "_settings") as loader:
+            self.assertEqual(mb.configured_transport(), "loopback")
+            loader.assert_not_called()
 
     def test_forbidden_tool_never_uses_aws(self):
         for tool in ("start_capture", "get_raw_media", "", None, []):

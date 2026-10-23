@@ -96,8 +96,8 @@ VPS worker calls the existing private MCP coordinator and sends an aggregate-onl
 reply to a separate queue. It creates no listener, VPN peer, camera/audio stream,
 public MCP endpoint or new route to the phone.
 
-`lambda/mailbox_backend.py` is selected only by `HG_ALEXA_TRANSPORT=mailbox`, or by
-the presence of a private `lambda/mailbox_config.json` deployment file. With neither,
+`lambda/mailbox_backend.py` is selected only by `HG_ALEXA_TRANSPORT=mailbox` in
+the environment or the approved `.env` file. Without that selection,
 the original loopback adapter remains selected. Invalid transport/configuration,
 AWS authorization failures and unavailable/invalid native replies all return the
 existing unavailable speech, never cached readings or fabricated zero alerts.
@@ -109,12 +109,21 @@ Standalone Lambda environment configuration uses these four values:
 - `HG_ALEXA_REPLY_QUEUE_URL`: the separate reply queue URL in the same account.
 - `HG_ALEXA_MAILBOX_ROLE_ARN`: the narrowly scoped publisher role in that account.
 
-For managed hosting without custom Lambda-environment access, put exactly those
-four string keys in `mailbox_config.json` beside `backend.py` in the Code package.
-The file is gitignored because operational identifiers do not belong in public
-source. It contains NO access keys, session tokens, MCP bearer or household IDs.
-Environment values override the file; `HG_ALEXA_TRANSPORT=loopback` disables mailbox
-selection explicitly. Do not upload a settings file until the role trust is ready.
+The existing canonical project `.env` is the local operational source of truth.
+Set `HG_ALEXA_ENV_FILE` to that file's path for local tools/deployment validation;
+the reader loads only the six allowlisted Alexa settings, not unrelated credentials.
+These are the four mailbox values above, `HG_ALEXA_TRANSPORT`, and
+`ALEXA_LAMBDA_EXECUTION_ROLE_ARN` (the owner-supplied hosted principal for IAM setup).
+Duplicate selected keys fail closed; simple quoting, export and comments are supported.
+Environment values override file values. No interpolation or shell execution occurs.
+
+For managed hosting without custom Lambda-environment access, the loader defaults
+to `.env` beside the deployed Python modules. Deploy ONLY the required mailbox
+settings plus `HG_ALEXA_TRANSPORT=mailbox` there, never the full workstation `.env`,
+personal AWS credentials, MCP bearer or unrelated secrets. The cloud cannot read
+the workstation's file. `.env` files are gitignored, and the previous generated
+JSON configuration has been removed. `HG_ALEXA_TRANSPORT=loopback` explicitly
+disables mailbox mode. Do not enable it before the worker/private path is accepted.
 
 The publisher role must trust ONLY the existing skill's exact Lambda execution-role
 ARN via `sts:AssumeRole`. The developer-console logs SSO role is not that execution
@@ -159,11 +168,12 @@ the source-tested worker as a running service.
 
 Readback currently proves queue configuration only. Native self-probe succeeds,
 but the private bridge's HTTP-200 `{}` replies fail JSON-RPC validation. The
-specific hosted execution-role ARN, bridge repair, worker identity/deployment,
-updated Code deployment and simulator-to-native round trip remain acceptance
+exact-principal publisher trust is now configured and read back; actual hosted
+AssumeRole, bridge repair, worker identity/deployment, updated Code deployment
+and the simulator-to-native round trip remain acceptance
 gates. None may be inferred from local fixture tests or queue existence.
 
-Rollback: disable mailbox selection/remove the private deployment settings and
+Rollback: set `HG_ALEXA_TRANSPORT=loopback` in the deployed `.env`/environment and
 redeploy the existing skill; stop only this worker if started. Revoke only its
 dedicated credentials if created. Remove the two dedicated queues only after
 owner approval and confirming no pending work. Preserve VPN/MCP/mail configuration.

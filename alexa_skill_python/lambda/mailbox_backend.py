@@ -34,21 +34,45 @@ SDK_CONFIG = Config(connect_timeout=0.25, read_timeout=1.25,
 
 
 def _settings():
-    """Non-secret deployment settings for managed hosting without custom env access."""
-    path = Path(__file__).with_name("mailbox_config.json")
+    """Read only Alexa settings; never load unrelated .env credentials into the SDK."""
+    path = Path(os.environ.get("HG_ALEXA_ENV_FILE", str(Path(__file__).with_name(".env"))))
     if not path.is_file():
         return {}
     with path.open(encoding="utf-8") as source:
-        raw = source.read(4097)
-    if len(raw) > 4096:
+        raw = source.read(65537)
+    if len(raw) > 65536:
         raise ValueError("deployment settings are too large")
-    settings = json.loads(raw)
-    expected = {"HG_ALEXA_MAILBOX_REGION", "HG_ALEXA_MAILBOX_ROLE_ARN",
-                "HG_ALEXA_REQUEST_QUEUE_URL", "HG_ALEXA_REPLY_QUEUE_URL"}
-    if (not isinstance(settings, dict) or set(settings) != expected
-            or any(not isinstance(value, str) for value in settings.values())):
-        raise ValueError("invalid deployment settings")
+    allowed = {"HG_ALEXA_MAILBOX_REGION", "HG_ALEXA_MAILBOX_ROLE_ARN", "HG_ALEXA_TRANSPORT",
+               "HG_ALEXA_REQUEST_QUEUE_URL", "HG_ALEXA_REPLY_QUEUE_URL", "ALEXA_LAMBDA_EXECUTION_ROLE_ARN"}
+    settings = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise ValueError("invalid dotenv assignment")
+        if key not in allowed:
+            continue
+        if key in settings:
+            raise ValueError("duplicate Alexa setting")
+        value = value.strip()
+        if value.startswith(("'", '"')):
+            if len(value) < 2 or value[-1] != value[0]:
+                raise ValueError("invalid quoted Alexa setting")
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].rstrip()
+        settings[key] = value
     return settings
+
+
+def configured_transport():
+    value = os.environ.get("HG_ALEXA_TRANSPORT")
+    return value if value is not None else _settings().get("HG_ALEXA_TRANSPORT", "loopback")
 
 
 def _configuration(session):
