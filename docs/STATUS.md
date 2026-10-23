@@ -1177,3 +1177,62 @@ cannot pass vacuously.
 **Next action** — owner/coordinator to choose the PR #28 path (keep widened, retarget to `main`, reset to
 `8d74f53` with the rollback point, or re-cut a narrow branch); then add the concurrent-consumption test and
 resolve the workspace/branch compliance items.
+
+---
+
+## Network tooling source checkpoint — 2026-10-23 (late)
+
+Historical source-branch report, before the follow-up merge into main:
+
+- **`origin/main` merged into this branch**, then **all P0 work landed in main independently** — the entire
+  `fix/hg-worker-dispatch-p0-48` history before the import commit is now an **ancestor of `origin/main`**.
+  Verified: `scripts/worker/task_guard.py`, `scripts/overlay/docker_boundary_check.py`,
+  `scripts/overlay/wg_preflight.sh`, `scripts/mtls_fixtures/vocabulary.py`, `scripts/worker/test_poller.py`
+  are on main and byte-identical to this branch's head.
+- **Consequence: PR #28 is superseded.** Its base `dev/production-integration` is at `8f40870` while main is
+  ~55 commits ahead. It should be **closed, not merged** (owner decision, not taken here).
+- **Import commit `a696a6e`** adds 13 uncovered artifacts found by a repo-wide read-only audit (method and
+  full ranking: issue #23 comment `6371756146`): fusion replay + test + doc (21/21 pass, stdlib-only, 0.46 s),
+  `scripts/ci/*` resource-safety preflight + rebuild-avoidance proposal, `docs/review-reports/*` (the missing
+  `3475515` NO-GO record), `docs/SECURITY.md`, media-policy tooling and an Android session-wire patch.
+  **Imported byte-identical, not reauthored** — provenance is in the commit body.
+- **PR #31 open against `main`** (1 commit, 13 files). Not merged. It will need a rebase as main advances.
+
+**Reported source state:** branch = `main + 1 commit`; worktree clean; four P0 suites exit 0; privileged
+dispatch **DISABLED**; no main write; no merge; Alexa files untouched.
+
+**Open for the owner (not self-resolved):**
+
+1. Rebase this branch and land PR #31, then **close PR #28 as superseded**.
+2. **Workspace/branch policy conflict** (raised earlier, still unresolved): the single-fixed-workspace rule
+   forbids worktrees, while an earlier directive mandated a separate checkout.
+   The canonical root remains checked out on the camera workstream's branch.
+3. Test gap: **concurrent** (not sequential) duplicate grant consumption remains untested.
+
+**Other worktrees reported as holding uncommitted work at that checkpoint**: `vpn-phone-bridge`
+(`EdgeAnalyzer.{h,cpp}` + tests), `planp/backup plan` (`LiveCameraFeed.h` + `/api/camera/*` — the camera
+portal exists only uncommitted), `private-mcp-malformed-messages` (coordinator crash hardening, audit F01),
+`qa-sec-audit` (independent HG-SEC-01 gate).
+
+## Worker tooling follow-up integration
+
+Merged source tip `1cdc6fbdd24da3a348c4cbd66960ebd1d6bee46b` into the existing
+main checkout, without conflicts. The source checkpoint above is historical;
+its pending-import statements are superseded by this record. PR administration
+and other worktrees were not changed.
+
+Combined-tree verification: offline feature replay **21 tests passed**, worker
+guard **12/12**, envelope **16/16 on two consecutive runs**, adversarial scope/
+provenance checks and sequential grant consumption/replay/expiry all exited 0.
+Three imported shell scripts passed `bash -n`. Tests used sandbox HOME and
+temporary state; no live dispatcher, credentials, cameras or cloud jobs ran.
+The replay remains offline/advisory, with `alert_eligible=false`; it does not
+replace or rewire the C++ core. No native runtime or existing worker/security
+implementation was changed, so the completed full pre-final suite was not repeated.
+
+Imported certification tooling is **source-only, not operational acceptance**:
+the remote notebook is absent, result validation is incomplete, and the preflight
+classifier omits some runtime paths. See `scripts/ci/README.md`. Media tooling
+was syntax-checked only; its checksum command must not be used as proof of consent
+or authorization. No historical patch was applied. Truly concurrent grant
+consumption and external-profile poller integration remain unverified.
