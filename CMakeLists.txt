@@ -554,6 +554,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_persistence_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_alexa_contract.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_alexa_credentials.cpp
+        # Backup portal: uploaded-media store (validation, limits, traversal, labelling).
+        ${CMAKE_SOURCE_DIR}/tests/portal/test_portal_uploads.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_consent.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_native_http.cpp

@@ -157,3 +157,6 @@ build_envcontext/
 # HG-CAM-03: private device backups (Panasonic ELUGA I7 and future nodes).
 # Never committed or uploaded - may contain personal media and device identity.
 /devices/backup/
+var/
+portal-uploads/
+*.upload-tmp
