@@ -1,0 +1,11 @@
+# HomeGuardian AI — Alexa skill (Python, Alexa-hosted)
+#
+# Alexa-hosted (Python) skills already provide the ASK SDK in their runtime, so this file exists for
+# two other purposes:
+#   1. to record exactly what the code was tested against, and
+#   2. so the code can be exercised locally without the console.
+#
+# Pinned to the versions this skill was tested with. If you paste only lambda_function.py into the
+# Alexa-hosted Code tab, you do not need to install anything — Alexa-hosted supplies the SDK.
+ask-sdk-core==1.19.0
+ask-sdk-model==1.43.0
