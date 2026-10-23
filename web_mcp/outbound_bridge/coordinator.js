@@ -29,6 +29,8 @@ class McpBridgeCoordinator {
    * @param {string} [options.clientToken] - Shared Bearer token for client HTTP callers
    * @param {string[]} [options.allowedSubnets] - Permitted remote IP prefixes (default: loopback and 10.42.0.0/24 VPN)
    * @param {Map<string, { authToken: string, name: string, revoked: boolean }>} [options.authorizedDevices]
+   * @param {number} [options.maxClientSessions=1024] - Active plus initializing sessions (1..65536)
+   * @param {number} [options.clientSessionTtlMs=1800000] - Idle session expiry (1..86400000 ms)
    */
   constructor(options = {}) {
     const bindAddr = options.bindAddress || '127.0.0.1';
@@ -51,6 +53,14 @@ class McpBridgeCoordinator {
 
     // Client sessions (Streamable HTTP MCP)
     this.clientSessions = new Map(); // sessionId -> { createdAt, lastSeen }
+    this.initializingSessions = 0;
+    this.maxClientSessions = options.maxClientSessions ?? 1024;
+    this.clientSessionTtlMs = options.clientSessionTtlMs ?? 1800000;
+    for (const [name, max] of [['maxClientSessions', 65536], ['clientSessionTtlMs', 86400000]]) {
+      if (!Number.isSafeInteger(this[name]) || this[name] < 1 || this[name] > max) {
+        throw new Error(`${name} must be an integer between 1 and ${max}`);
+      }
+    }
 
     // Internal servers
     this.wss = null;
@@ -68,6 +78,11 @@ class McpBridgeCoordinator {
   }
 
   authorizeDevice(deviceId, authToken, name = 'Mi A3 Edge Node') {
+    const previous = this.authorizedDevices.get(deviceId);
+    if (this.activeEdge && this.activeEdge.deviceId === deviceId &&
+        (!previous || previous.revoked || previous.authToken !== authToken)) {
+      this._terminateEdgeConnection(this.activeEdge.ws, 4403, 'Device credentials rotated');
+    }
     this.authorizedDevices.set(deviceId, {
       authToken,
       name,
@@ -120,14 +135,19 @@ class McpBridgeCoordinator {
     this.wss.on('connection', (ws, req) => this._handleEdgeConnection(ws, req));
 
     // 2. Initialize HTTP server for client Streamable HTTP MCP ingress
-    this.httpServer = http.createServer((req, res) => this._handleClientHttp(req, res));
+    this.httpServer = http.createServer((req, res) => {
+      this._handleClientHttp(req, res).catch(() => this._failClientHttp(res));
+    });
     await new Promise((resolve, reject) => {
       this.httpServer.listen(this.httpPort, this.bindAddress, () => resolve());
       this.httpServer.on('error', reject);
     });
 
     // 3. Start background heartbeat liveness monitor
-    this.livenessTimer = setInterval(() => this._checkEdgeLiveness(), 5000);
+    this.livenessTimer = setInterval(() => {
+      this._checkEdgeLiveness();
+      this._pruneClientSessions();
+    }, 5000);
   }
 
   async close() {
@@ -206,6 +226,11 @@ class McpBridgeCoordinator {
         return;
       }
 
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
+        this._terminateEdgeConnection(ws, 4400, 'Frame must be a JSON object');
+        return;
+      }
+
       if (!authenticated) {
         // First frame must be bridge_auth
         if (msg.type !== MESSAGE_TYPES.BRIDGE_AUTH) {
@@ -231,9 +256,7 @@ class McpBridgeCoordinator {
         // If an existing edge session is open, drop it cleanly
         if (this.activeEdge && this.activeEdge.ws !== ws) {
           this.stats.reconnectCount++;
-          try {
-            this.activeEdge.ws.close(1000, 'Superceded by new authenticated connection');
-          } catch (_) {}
+          this._terminateEdgeConnection(this.activeEdge.ws, 1000, 'Superceded by new authenticated connection');
         }
 
         const sessionId = `edge_sess_${crypto.randomBytes(16).toString('hex')}`;
@@ -241,6 +264,7 @@ class McpBridgeCoordinator {
         this.activeEdge = {
           ws,
           deviceId,
+          authToken: msg.auth_token,
           sessionId,
           connectedAt: now,
           lastSeen: now,
@@ -285,7 +309,7 @@ class McpBridgeCoordinator {
 
   _verifyEdgeAuth(msg) {
     const { device_id, auth_token, bridge_version } = msg;
-    if (!device_id || !auth_token) {
+    if (typeof device_id !== 'string' || !device_id || typeof auth_token !== 'string' || !auth_token) {
       return { ok: false, code: ERROR_CODES.AUTH_REQUIRED, error: 'device_id and auth_token required' };
     }
 
@@ -300,6 +324,9 @@ class McpBridgeCoordinator {
 
     // Constant-time token comparison
     const a = Buffer.from(auth_token);
+    if (typeof reg.authToken !== 'string') {
+      return { ok: false, code: ERROR_CODES.INVALID_CREDENTIALS, error: 'Invalid registered credentials' };
+    }
     const b = Buffer.from(reg.authToken);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
       return { ok: false, code: ERROR_CODES.INVALID_CREDENTIALS, error: 'Invalid device auth_token' };
@@ -309,9 +336,13 @@ class McpBridgeCoordinator {
   }
 
   _handleAuthenticatedEdgeFrame(ws, msg) {
-    if (this.activeEdge) {
-      this.activeEdge.lastSeen = Date.now();
+    if (!this.activeEdge || this.activeEdge.ws !== ws) return;
+    const reg = this.authorizedDevices.get(this.activeEdge.deviceId);
+    if (!reg || reg.revoked || reg.authToken !== this.activeEdge.authToken) {
+      this._terminateEdgeConnection(ws, 4403, 'Device credentials no longer authorized');
+      return;
     }
+    this.activeEdge.lastSeen = Date.now();
 
     switch (msg.type) {
       case MESSAGE_TYPES.HEARTBEAT_PING:
@@ -345,6 +376,15 @@ class McpBridgeCoordinator {
   }
 
   _terminateEdgeConnection(ws, code, reason) {
+    // Revoke authority synchronously; close handshakes may deliver queued frames.
+    if (this.activeEdge && this.activeEdge.ws === ws) {
+      this.activeEdge = null;
+      for (const entry of this.pendingRequests.values()) {
+        clearTimeout(entry.timer);
+        entry.reject(new Error(ERROR_CODES.EDGE_OFFLINE));
+      }
+      this.pendingRequests.clear();
+    }
     try {
       ws.close(code, reason);
     } catch (_) {}
@@ -433,8 +473,29 @@ class McpBridgeCoordinator {
   // Client Streamable HTTP MCP Ingress Handler
   // --------------------------------------------------------------------------
 
+  _failClientHttp(res) {
+    if (res.writableEnded || res.destroyed) return;
+    if (res.headersSent) { res.destroy(); return; }
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'internal_error' }));
+  }
+
+  _pruneClientSessions() {
+    const now = Date.now();
+    for (const [id, session] of this.clientSessions) {
+      if (now - session.lastSeen >= this.clientSessionTtlMs) this.clientSessions.delete(id);
+    }
+  }
+
   async _handleClientHttp(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+    let url;
+    try {
+      url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+    } catch (_) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid_request_target' }));
+      return;
+    }
 
     if (url.pathname === '/health' || url.pathname === '/status') {
       const edge = this.getEdgeInfo();
@@ -486,6 +547,7 @@ class McpBridgeCoordinator {
     }
 
     // 3. Handle DELETE (Session teardown)
+    this._pruneClientSessions();
     if (req.method === 'DELETE') {
       const sessId = req.headers['mcp-session-id'];
       if (!sessId || !this.clientSessions.has(sessId)) {
@@ -509,16 +571,24 @@ class McpBridgeCoordinator {
 
     // 5. Read body with bounded size
     let bodyRaw = '';
+    let bodyBytes = 0;
+    let bodyRejected = false;
     req.on('data', (chunk) => {
-      bodyRaw += chunk;
-      if (bodyRaw.length > LIMITS.MAX_MESSAGE_BYTES) {
+      if (bodyRejected) return;
+      bodyBytes += Buffer.byteLength(chunk);
+      if (bodyBytes > LIMITS.MAX_MESSAGE_BYTES) {
+        bodyRejected = true;
+        bodyRaw = '';
         res.writeHead(413, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'payload_too_large' }));
         req.destroy();
+        return;
       }
+      bodyRaw += chunk;
     });
 
-    req.on('end', async () => {
+    const handleBody = async () => {
+      if (bodyRejected) return;
       let jsonRpc;
       try {
         jsonRpc = JSON.parse(bodyRaw);
@@ -528,12 +598,25 @@ class McpBridgeCoordinator {
         return;
       }
 
+      if (!jsonRpc || typeof jsonRpc !== 'object' || Array.isArray(jsonRpc)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }));
+        return;
+      }
+
       // Check session requirement
       let clientSessionId = req.headers['mcp-session-id'];
-      if (jsonRpc.method === 'initialize') {
+      const initializing = jsonRpc.method === 'initialize';
+      this._pruneClientSessions();
+      if (initializing) {
+        if (this.clientSessions.size + this.initializingSessions >= this.maxClientSessions) {
+          res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '2' });
+          res.end(JSON.stringify({ error: 'client_session_limit' }));
+          return;
+        }
         // Mint new client session
         clientSessionId = `coord_sess_${crypto.randomBytes(32).toString('hex')}`;
-        this.clientSessions.set(clientSessionId, { createdAt: Date.now(), lastSeen: Date.now() });
+        this.initializingSessions++;
       } else {
         if (!clientSessionId || !this.clientSessions.has(clientSessionId)) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -546,12 +629,22 @@ class McpBridgeCoordinator {
       // Dispatch to remote edge hardware
       try {
         const edgeReply = await this.dispatchMcpRequest(jsonRpc, clientSessionId);
-        res.writeHead(edgeReply.statusCode, {
-          'Content-Type': 'application/json',
-          'Mcp-Session-Id': clientSessionId,
-        });
+        if (res.destroyed || res.writableEnded) return;
+        let replyBody = edgeReply.body;
+        if (typeof replyBody === 'string') {
+          try { replyBody = JSON.parse(replyBody); } catch (_) { replyBody = null; }
+        }
+        const initSucceeded = edgeReply.statusCode >= 200 && edgeReply.statusCode < 300 &&
+          replyBody && typeof replyBody === 'object' && !replyBody.error && replyBody.result;
+        if (initializing && initSucceeded) {
+          this.clientSessions.set(clientSessionId, { createdAt: Date.now(), lastSeen: Date.now() });
+        }
+        const headers = { 'Content-Type': 'application/json' };
+        if (!initializing || initSucceeded) headers['Mcp-Session-Id'] = clientSessionId;
+        res.writeHead(edgeReply.statusCode, headers);
         res.end(typeof edgeReply.body === 'string' ? edgeReply.body : JSON.stringify(edgeReply.body));
       } catch (err) {
+        if (initializing) this.clientSessions.delete(clientSessionId);
         const status = err.status || 500;
         const respHeaders = { 'Content-Type': 'application/json' };
         if (status === 503) {
@@ -562,8 +655,11 @@ class McpBridgeCoordinator {
           error: err.code || 'BRIDGE_DISPATCH_ERROR',
           message: err.message,
         }));
+      } finally {
+        if (initializing) this.initializingSessions--;
       }
-    });
+    };
+    req.on('end', () => handleBody().catch(() => this._failClientHttp(res)));
   }
 }
 

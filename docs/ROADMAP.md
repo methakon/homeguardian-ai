@@ -2,6 +2,12 @@
 
 ## Current acceptance gate — P1 physical integration (2026-10-23)
 
+Sequential corrective batches on `main`: coordinator security is source-tested
+(13 security regression tests plus 46 existing real-native bridge checks passed;
+not deployed), followed by producer provenance and detector wiring. These repairs
+do not themselves close physical acceptance. See
+[coordinator security fixes](COORDINATOR_SECURITY_FIXES.md).
+
 | Item | Status | Evidence and required closure |
 |---|---|---|
 | Android → C++ detection → durable alert → MCP | **IN PROGRESS / NOT ACCEPTED** | Real Mi A3 camera frames and numeric processing observed; no acknowledged physical observation or persisted physical alert yet. USB instability and unfinished Wi-Fi setup remain blockers. Closure requires exact alert-id correlation through MCP and recovery after restart, plus stop/consent controls. See [physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md). |

@@ -167,6 +167,30 @@ The dotenv revision passes **72 Python tests** under both tested SDK combination
 plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
 untracked; only code/tests/sanitized documentation are published.
 
+### Coordinator security corrective batch — 2026-10-23
+
+Implemented on `main`, **SOURCE-TESTED / NOT DEPLOYED**. Malformed HTTP targets,
+non-object HTTP/WS JSON and invalid credential types are rejected without crashing
+the coordinator; async HTTP entry/body failures are contained. Token rotation
+synchronously removes existing channel authority and rejects pending requests;
+unchanged-token reload preserves the channel. Superseded/revoked sockets cannot
+heartbeat or resolve requests. Client sessions now have finite defaults (1,024
+active/initializing sessions, 30-minute idle expiry), reserved initialization
+capacity, and no retained/advertised session after failed or disconnected init.
+Rejected oversized bodies cannot dispatch later on `end`.
+
+`bash scripts/test_outbound_bridge.sh`: **13 security regressions passed, 0
+failed/skipped; existing real-native bridge checks 46 passed, 0 failed**. This run
+used the freshly built main-checkout `hg_build/hg_mcp_server`, real workstation
+loopback HTTP/WS for recovery checks, and synthetic local credentials. Node syntax
+and `git diff --check` passed. Missing native binaries fail rather than silently
+skip. Test temporary files remain inside this project. Full C++ regression/build
+preparation is separate; no claim of phone/VPS deployment or physical acceptance.
+See [coordinator security fixes](COORDINATOR_SECURITY_FIXES.md).
+
+The next authorized batches are producer provenance and detector wiring, in that
+order. No live service, VPN, capture, credential or cloud configuration was changed.
+
 ### Current Alexa acceptance — 2026-10-23
 
 **Owner-reported deployed Custom Skill functional acceptance:** the owner reported
