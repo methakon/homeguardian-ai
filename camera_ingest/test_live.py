@@ -104,16 +104,24 @@ class TestLiveFrames(unittest.TestCase):
              "-of", "default=noprint_wrappers=1", source.stream_url()],
             capture_output=True, text=True, timeout=30,
         )
-        # Plain ffprobe cannot send our Authorization header, so a non-decode here is
-        # not a device fault. Decoding is proven through the relay in
-        # TestLiveThroughRelay, which is the path a consumer would actually use.
-        self.assertIsNotNone(probe.returncode)
+        # Plain ffprobe cannot send our Authorization header, so this direct attempt
+        # is expected to be REJECTED. Asserting the rejection is meaningful: it proves
+        # the camera is not open and that the relay is doing real work. The successful
+        # decode is proven in TestLiveThroughRelay.
+        self.assertNotEqual(probe.returncode, 0, "the camera answered an unauthenticated request")
+        self.assertIn("401", probe.stderr, f"expected a 401, got: {probe.stderr[:200]}")
 
 
 @unittest.skipUnless(REACHABLE, SKIP_REASON)
 @unittest.skipUnless(shutil.which("ffprobe"), "ffprobe not installed")
 class TestLiveThroughRelay(unittest.TestCase):
     """The end-to-end path: camera -> relay (holds the secret) -> consumer (no secret)."""
+
+    # This encoder writes cropping offsets in the SPS that ffmpeg considers out of
+    # range. ffmpeg still decodes correctly and exits 0; it only logs this. It is a
+    # device quirk, not a fault, so it is tolerated explicitly - any OTHER decoder
+    # message still fails the test.
+    BENIGN_DECODER_MESSAGES = ("crop values invalid", "Last message repeated")
 
     def test_a_consumer_decodes_real_frames_without_any_credential(self) -> None:
         source = JuanHttpSource(host=CAMERA_HOST, credential=_credential(), stream="sub")
@@ -145,13 +153,30 @@ class TestLiveThroughRelay(unittest.TestCase):
             # it sends Basic. Verified by tracing the header on the wire.
             consumer_url = relay.url.replace("http://", f"http://{relay.token}:@")
             decode = subprocess.run(
-                ["ffmpeg", "-v", "error", "-i", consumer_url,
-                 "-frames:v", "30", "-f", "null", "-"],
+                ["ffmpeg", "-v", "error", "-progress", "pipe:1", "-nostats",
+                 "-i", consumer_url, "-frames:v", "30", "-f", "null", "-"],
                 capture_output=True, text=True, timeout=60,
             )
-            # A clean decode writes nothing to stderr.
             self.assertEqual(decode.returncode, 0, f"ffmpeg failed: {decode.stderr[:400]}")
-            self.assertEqual(decode.stderr.strip(), "", f"decoder complained: {decode.stderr[:400]}")
+
+            # `frame=N` on the progress stream is the count actually decoded. This is
+            # a stronger assertion than an empty stderr: silence is not proof of a
+            # good decode, and this camera always emits a benign cropping warning.
+            frames = [
+                int(line.split("=", 1)[1])
+                for line in decode.stdout.splitlines()
+                if line.startswith("frame=")
+            ]
+            self.assertTrue(frames, f"no progress reported: {decode.stdout[:200]}")
+            self.assertEqual(frames[-1], 30, f"decoded {frames[-1]} of 30 frames")
+
+            # Any decoder complaint that is not the known-benign one is a failure.
+            unexpected = [
+                line for line in decode.stderr.splitlines()
+                if line.strip()
+                and not any(b in line for b in self.BENIGN_DECODER_MESSAGES)
+            ]
+            self.assertEqual(unexpected, [], f"unexpected decoder output: {unexpected}")
 
     def test_the_relay_denies_a_consumer_without_the_token(self) -> None:
         source = JuanHttpSource(host=CAMERA_HOST, credential=_credential(), stream="snapshot")
