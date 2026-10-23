@@ -74,6 +74,30 @@ def _touches_protected(task) -> bool:
     return False
 
 
+def api_verified_comment(raw: dict, *, api_origin: bool, subject: str = "gh-api") -> dict:
+    """AUDIT BOUNDARY (repair 2) - the ONLY way provenance is ever minted.
+
+    A comment fetched through an AUTHENTICATED GitHub API request is API-origin: its author field is
+    GitHub's own assertion, not text a user wrote. Only that path may pass api_origin=True.
+
+    Anything read from a file, a fixture, a cache or an untrusted source must NOT call this with
+    api_origin=True - and therefore cannot authorize a privileged task, because admit() refuses
+    privileged requests whose provenance is absent. Keeping the mint in one named place makes the trust
+    decision auditable instead of implied by whichever caller happened to build the dict.
+    """
+    author = raw.get("author")
+    login = author.get("login") if isinstance(author, dict) else author
+    out = dict(raw)
+    if api_origin and login:
+        out["_verified_provenance"] = {
+            "api_origin": True,
+            "verified_author": login,
+            "subject": subject,
+            "auth_method": "github_issue_comment_verified_author",
+        }
+    return out
+
+
 def admit(
     comment: dict,
     policy: dict,
@@ -167,6 +191,9 @@ def admit(
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--comment", help="comment JSON (data only; never executed)")
+    ap.add_argument("--api-origin", action="store_true",
+                    help="assert this JSON came from an AUTHENTICATED GitHub API fetch; without it a "
+                         "privileged task is refused (PROVENANCE_UNVERIFIED). Never pass for a file.")
     ap.add_argument("--policy", default=DEFAULT_POLICY)
     ap.add_argument("--identity", default=DEFAULT_IDENTITY)
     ap.add_argument("--ledger", default=DEFAULT_LEDGER)

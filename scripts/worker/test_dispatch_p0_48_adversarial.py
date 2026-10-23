@@ -149,6 +149,93 @@ def repair_tests():
     return bad
 
 
+
+
+# --------------------------------------------------------------- repair 2 end-to-end (mint boundary)
+def repair2_tests():
+    import importlib.util as _iu
+    import json as _json
+    sys.dont_write_bytecode = True
+
+    def _load(name, fname):
+        spec = _iu.spec_from_file_location(name, os.path.join(HERE, fname))
+        m = _iu.module_from_spec(spec)
+        sys.modules[name] = m
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        spec.loader.exec_module(m)
+        return m
+
+    env = _load("task_envelope", "task_envelope.py")
+    policy = _json.load(open(os.path.join(HERE, "watcher-policy.json")))
+    identity = _json.load(open(os.path.join(HERE, "identity.json")))
+    ledger = _load("task_guard", "task_guard.py").Ledger(":memory:")
+
+    def block(task):
+        return "prose\n\n```hg-task\n" + _json.dumps({"source": "issue:14", "task": task}) + "\n```\n"
+
+    priv = {"task_id": "T-R2-priv", "source": "issue:14", "assigned_to": identity.get("worker_id", "hg-hermes-network"),
+            "expected_branch": identity.get("branch", "experiment/hg-lan-mtls-07"),
+            "allowed_scope": ["scripts/worker/"], "objective": "privileged fixture",
+            "acceptance_tests": ["n/a"], "prohibited_actions": [], "requires_approval": ["oracle_change"]}
+    benign = dict(priv, task_id="T-R2-benign", requires_approval=[], allowed_scope=["scripts/worker/"])
+    raw = {"author": {"login": "methakon"}, "body": block(priv), "url": "issue:14#c"}
+
+    print("\n  [repair 2: caller-controlled provenance]")
+    bad = 0
+
+    # (a) the security property: bare JSON cannot authorize a privileged task
+    try:
+        env.admit(raw, policy, identity, ledger)
+        print("    [FAIL] privileged task ADMITTED from bare caller-supplied JSON"); bad += 1
+    except Exception as exc:                                     # noqa: BLE001
+        code = getattr(exc, "code", type(exc).__name__)
+        ok = code == "PROVENANCE_UNVERIFIED"
+        print(f"    [{'PASS' if ok else 'FAIL'}] bare JSON, privileged: refused with {code}")
+        bad += 0 if ok else 1
+
+    # (b) the API-minted form is still refused for the wrong reason to prove (a) is provenance, not luck
+    minted = env.api_verified_comment(raw, api_origin=True, subject="gh-api:methakon/homeguardian-ai")
+    try:
+        env.admit(minted, policy, identity, ledger)
+        print("    [PASS] API-minted privileged comment passes the provenance gate (reaches approval logic)")
+    except Exception as exc:                                     # noqa: BLE001
+        code = getattr(exc, "code", type(exc).__name__)
+        ok = code != "PROVENANCE_UNVERIFIED"
+        print(f"    [{'PASS' if ok else 'FAIL'}] API-minted: got {code} (proves (a) is provenance, "
+              f"not a blanket refusal)")
+        bad += 0 if ok else 1
+
+    # (c) the mint is inert without an explicit API-origin assertion
+    notminted = env.api_verified_comment(raw, api_origin=False)
+    inert = "_verified_provenance" not in notminted
+    print(f"    [{'PASS' if inert else 'FAIL'}] api_origin=False mints NOTHING (file/cache path cannot "
+          f"claim verification)")
+    bad += 0 if inert else 1
+
+    # (d) benign still works, but with a method that does NOT claim verification
+    try:
+        v = env.admit({"author": {"login": "methakon"}, "body": block(benign), "url": "issue:14#c"},
+                      policy, identity, ledger)
+        ok = isinstance(v, dict) and v.get("decision") in ("ADMIT", "QUEUED")
+        print(f"    [{'PASS' if ok else 'FAIL'}] benign request still ADMITTED (repair 2 did not break it)")
+        bad += 0 if ok else 1
+        # HONEST SCOPE: the verdict dict does not expose the built context, so this case CANNOT observe
+        # the auth_method. An earlier version of this case "passed" by comparing None to the verified
+        # string - a vacuous pass, the exact class flagged earlier this session. The method's honesty is
+        # instead guaranteed by construction (admit() picks 'unverified' iff provenance_ok is false) and
+        # asserted directly by cases (a)-(c).
+        print("           NOTE: verdict does not expose dispatch_context; the unverified method is "
+              "guaranteed by construction, not observed here - recorded as a limitation")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"    [FAIL] benign request refused: {getattr(exc,'code',exc)} - benign admission broke"); bad += 1
+
+    print(f"  repair 2: {'PASS' if bad == 0 else 'FAIL'} ({bad} problem(s))")
+    return bad
+
+
 if __name__ == "__main__":
     rc = main()
-    sys.exit(rc or (1 if repair_tests() else 0))
+    rc2 = 1 if repair_tests() else 0
+    rc3 = 1 if repair2_tests() else 0
+    sys.exit(rc or rc2 or rc3)
