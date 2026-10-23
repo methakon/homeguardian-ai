@@ -80,7 +80,17 @@ public class ObservationTransport {
         public final String observationType;
         public final String acquisitionMode;
         public final long acquiredAtMs;
-        public final long sequence;
+        /**
+         * The sequence this observation will be sent with.
+         *
+         * NOT final, and deliberately so: it is assigned when the caller enqueues, which is before any
+         * handshake has revealed the hub's watermark. If it is at or below that watermark the hub
+         * refuses it as `replayed_sequence` permanently, so {@code rebaseAboveWatermark} raises it once
+         * at the transmission boundary. Every other field here stays immutable - only the sequence
+         * moves, and the observation_id in particular is never touched, because that is the identity
+         * the acknowledgement is correlated against.
+         */
+        public long sequence;
         public final double value;
         public final String unit;
         public final String state;
@@ -114,7 +124,7 @@ public class ObservationTransport {
         public String displayName = "";
         public String pkcs12Path = "";      // client certificate + key, app-private
         public String pkcs12PasswordFile = "";  // separate 0600 file; never logged
-        public String trustStorePath = "";   // the private CA, PEM or PKCS#12
+        public String trustStorePath = "";   // the private CA, as PKCS#12 (openSocket loads PKCS12 only)
         public String trustStorePasswordFile = "";
         public int connectTimeoutMs = 5000;
         public int readTimeoutMs = 5000;
@@ -142,6 +152,194 @@ public class ObservationTransport {
             "duplicate_observation"));
 
     private static final int MAX_ATTEMPTS_PER_OBSERVATION = 4;
+
+    /** The bounded backoff between retries. A constant, not a spin: a phone that cannot reach the
+     *  hub must retry slowly rather than burning battery and radio. */
+    private static final long RETRY_BACKOFF_MS = 3000L;
+
+    /** Verdicts produced by {@link #classifyReason}. */
+    static final String RETRY = "RETRY";
+    static final String PERMANENT = "PERMANENT";
+    static final String SUSPEND = "SUSPEND";
+
+    /**
+     * Classify the hub's refusal reason into the action the transport must take.
+     *
+     * This is the single place the precedence is decided, and it is package-visible so it can be
+     * tested without a socket. The order is load-bearing:
+     *
+     *   1. SUSPENDING wins over PERMANENT. Five reasons are in both sets (device_revoked,
+     *      device_unknown, device_unpaired, identity_mismatch, unauthorized). They must SUSPEND -
+     *      dropping one observation and continuing to push to a hub that has just revoked this
+     *      device is the wrong answer.
+     *   2. RETRYABLE is checked after the two terminal cases. The sets are disjoint from RETRYABLE,
+     *      which is asserted by the test, so this order cannot contradict them.
+     *   3. AN UNKNOWN REASON IS PERMANENT (fail closed). Retrying a refusal whose meaning is unknown
+     *      is how a node ends up in a loop.
+     */
+    static String classifyReason(String reason) {
+        if (reason == null) {
+            return PERMANENT;
+        }
+        if (SUSPENDING_REASONS.contains(reason)) {
+            return SUSPEND;
+        }
+        if (PERMANENT_REASONS.contains(reason)) {
+            return PERMANENT;
+        }
+        if (RETRYABLE_REASONS.contains(reason)) {
+            return RETRY;
+        }
+        return PERMANENT;
+    }
+
+    /** The retry bound, exposed for the test so the number cannot drift unnoticed. */
+    static int maxAttemptsPerObservation() {
+        return MAX_ATTEMPTS_PER_OBSERVATION;
+    }
+
+    /** The protocol major version this build speaks, exposed for the tests. */
+    static int protocolVersionMajor() {
+        return PROTOCOL_VERSION_MAJOR;
+    }
+
+    // ---- ingress bounds, mirrored from the receiver so failures are LOCAL -----------------------
+    // The D-03 receiver enforces these on ingress (src/net/DeviceProtocol.h):
+    //     kMaxFrameBytes           4096
+    //     kMaxFeatureKeys            24      >= the 2 this producer emits
+    //     kMaxFeatureStringChars     64
+    //     kMaxSequence       (1ULL << 60)
+    //     bounded_string(device_id,   96)
+    //     bounded_string(display_name, 64)
+    //     capabilities: array <= 16, each entry <= 32 chars
+    //     kMaxFutureSkewMs       120000      acquired_at_ms must not be >2 min ahead
+    //     kMaxObservationAgeMs 86400000      ... nor >24 h old
+    //
+    // Emitting a value outside these bounds does not fail here: it fails at the hub, as a remote
+    // `bad_json` with no indication which field was wrong. Checking locally turns a confusing remote
+    // refusal into an immediate, nameable one.
+    static final int MAX_DEVICE_ID_CHARS = 96;
+    static final int MAX_DISPLAY_NAME_CHARS = 64;
+    static final int MAX_CAPABILITY_CHARS = 32;
+    static final int MAX_CAPABILITIES = 16;
+    static final int MAX_FEATURE_STRING_CHARS = 64;
+    static final int MAX_FEATURE_KEYS = 24;
+    static final long MAX_SEQUENCE = 1L << 60;
+    static final long MAX_FUTURE_SKEW_MS = 120000L;
+    static final long MAX_OBSERVATION_AGE_MS = 86400000L;
+
+    /**
+     * Why the configured identity would be refused by the receiver, or null when it is acceptable.
+     * Deliberately returns the reason rather than a boolean, so a caller can say which field is wrong.
+     */
+    static String identityRejection(Config config) {
+        if (config.deviceId == null || config.deviceId.length() == 0) {
+            return "device_id is empty";
+        }
+        if (config.deviceId.length() > MAX_DEVICE_ID_CHARS) {
+            return "device_id is " + config.deviceId.length() + " chars, receiver allows "
+                    + MAX_DEVICE_ID_CHARS;
+        }
+        if (config.displayName != null && config.displayName.length() > MAX_DISPLAY_NAME_CHARS) {
+            return "display_name is " + config.displayName.length() + " chars, receiver allows "
+                    + MAX_DISPLAY_NAME_CHARS;
+        }
+        return null;
+    }
+
+    /**
+     * Why this observation would be refused on its own fields, or null when acceptable.
+     *
+     * The timestamp window is the one that bites in the field: a phone whose clock drifts more than
+     * two minutes ahead of the hub has every observation refused as `malformed_timestamp`, which
+     * looks like a transport fault rather than a clock fault.
+     */
+    static String observationRejection(PendingObservation o, long nowMs) {
+        if (o == null) {
+            return "no observation";
+        }
+        if (o.sequence <= 0L || o.sequence > MAX_SEQUENCE) {
+            return "sequence " + o.sequence + " is out of range";
+        }
+        if (o.observationId.length() > 64) {
+            return "observation_id is " + o.observationId.length() + " chars";
+        }
+        if (o.acquiredAtMs > nowMs + MAX_FUTURE_SKEW_MS) {
+            return "acquired_at_ms is more than " + MAX_FUTURE_SKEW_MS
+                    + " ms ahead of the sender clock (clock skew)";
+        }
+        if (o.acquiredAtMs < nowMs - MAX_OBSERVATION_AGE_MS) {
+            return "acquired_at_ms is older than " + MAX_OBSERVATION_AGE_MS + " ms";
+        }
+        if (o.state != null && o.state.length() > MAX_FEATURE_STRING_CHARS) {
+            return "feature string state is " + o.state.length() + " chars, receiver allows "
+                    + MAX_FEATURE_STRING_CHARS;
+        }
+        return null;
+    }
+
+    /**
+     * Decide a welcome frame without a socket, so the handshake is testable.
+     *
+     * The handshake was previously unreachable from a test — `expectWelcome` takes an SSLSocket — so
+     * nothing verified what happens when the hub sends no welcome, the wrong kind, or a different
+     * protocol version. That is the worst place to have no coverage: the welcome carries the resume
+     * watermark, which is the only field a restarted node depends on to avoid replaying from 1.
+     *
+     * Returns a verdict string; production maps anything other than {@link #WELCOME_OK} to a failed
+     * handshake. Kept deliberately free of logging-side effects so a test can drive it directly.
+     */
+    static String welcomeVerdict(String frame) {
+        if (frame == null || frame.length() == 0) {
+            return "REJECT_no_frame";
+        }
+        final JSONObject parsed;
+        try {
+            parsed = new JSONObject(frame);
+        } catch (Exception e) {
+            return "REJECT_unreadable";
+        }
+        if (!"welcome".equals(parsed.optString("kind"))) {
+            return "REJECT_not_welcome";
+        }
+        if (parsed.optInt("protocol_version_major", -1) != PROTOCOL_VERSION_MAJOR) {
+            return "REJECT_version";
+        }
+        return WELCOME_OK;
+    }
+
+    static final String WELCOME_OK = "ACCEPT";
+
+    /**
+     * The resume watermark the welcome asks this device to continue above.
+     *
+     * The wire name is `last_sequence`. The canonical JSON schema calls the field
+     * `resume_after_sequence`, which is the C++ struct's name — the receiver's own serialiser writes
+     * `out["last_sequence"]`. Reading the schema's name would silently yield 0, the watermark would
+     * never be adopted, and every observation after a restart would be refused as a replay.
+     */
+    static long resumeWatermark(String frame) {
+        try {
+            return new JSONObject(frame).optLong("last_sequence", 0L);
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    /** Adopt a watermark only when it moves the counter forward; a lower one must never rewind it. */
+    static long adoptedSequence(long current, long watermark) {
+        return watermark > current ? watermark : current;
+    }
+
+    /** The bounded backoff between retries, exposed for the test. */
+    static long retryBackoffMs() {
+        return RETRY_BACKOFF_MS;
+    }
+
+    /** The queue bound, exposed for the test. */
+    static int maxQueueDepth() {
+        return MAX_QUEUE_DEPTH;
+    }
 
     private final Config config;
     private final ArrayDeque<PendingObservation> queue = new ArrayDeque<>();
@@ -240,6 +438,14 @@ public class ObservationTransport {
 
     public void start() {
         if (running) {
+            return;
+        }
+        // Refuse a configuration the receiver would reject, HERE rather than at the hub. A device_id
+        // one character over the bound fails remotely as `bad_json` with no field named; failing
+        // locally names it and leaves the transport stopped instead of retrying a doomed handshake.
+        final String identityProblem = identityRejection(config);
+        if (identityProblem != null) {
+            Log.w(TAG, "refusing to start: " + identityProblem);
             return;
         }
         running = true;
@@ -357,19 +563,38 @@ public class ObservationTransport {
                 sleepQuietly(1000);
                 continue;
             }
-            if (transmit(next)) {
-                synchronized (lock) {
-                    queue.pollFirst();
-                }
-                sent++;
-            } else if (terminalFailure) {
-                // The hub refused this observation for a reason that will never change
-                // (bad frame, duplicate, revoked): sending it again is pointless.
+            // ORDER MATTERS HERE, and it was wrong.
+            //
+            // transmit() returns TRUE for three different outcomes: the hub accepted it, the hub
+            // refused it permanently, and the hub's refusal SUSPENDED the transport. Testing the
+            // boolean first therefore caught all three in the "delivered" branch, so `sent++` counted
+            // a PERMANENTLY REFUSED observation as delivered, and the `terminalFailure` branch below
+            // was unreachable - permanentRejections was dead code that never incremented.
+            //
+            // That made the operator-facing counters lie in the direction that matters least visibly:
+            // "sent=N" would include observations the hub had thrown away, so a node could report a
+            // clean delivery count while losing data.
+            //
+            // terminalFailure is checked FIRST, and `sent` is only incremented when the hub actually
+            // accepted the observation.
+            final boolean outcome = transmit(next);
+            if (terminalFailure) {
+                // Refused for a reason that will never change (bad frame, replay, revoked):
+                // dropping it is correct, and it is NOT a delivery.
                 terminalFailure = false;
                 synchronized (lock) {
                     queue.pollFirst();
                 }
                 permanentRejections++;
+            } else if (outcome) {
+                synchronized (lock) {
+                    queue.pollFirst();
+                }
+                // A suspension resolves the message (it was decided, not lost) but it is still not a
+                // delivery, so it must not inflate `sent`.
+                if (!suspended) {
+                    sent++;
+                }
             } else {
                 online = false;
                 // Bounded backoff: a phone that cannot reach the hub retries slowly
@@ -382,7 +607,7 @@ public class ObservationTransport {
                     retryableRejections++;
                     Log.w(TAG, "dropped an observation after " + next.attempts + " attempts");
                 }
-                sleepQuietly(3000);
+                sleepQuietly(RETRY_BACKOFF_MS);
             }
         }
     }
@@ -392,6 +617,9 @@ public class ObservationTransport {
     private boolean transmit(PendingObservation observation) {
         SSLSocket socket = null;
         terminalFailure = false;
+        // Cleared per attempt: a watermark learned on a previous connection must not drive a rebase
+        // here, only the one the handshake below reports.
+        lastAdoptedWatermark = 0L;
         try {
             socket = openSocket();
             if (!sendHello(socket)) {
@@ -402,7 +630,16 @@ public class ObservationTransport {
                 return false;
             }
             online = true;
-            if (!writeFrame(socket, observationToJson(observation).toString())) {
+
+            // The sequence was assigned at ENQUEUE time (NodeSession), before this handshake revealed
+            // the hub's watermark. If it is at or below that watermark the hub would refuse it as
+            // `replayed_sequence` - permanently - so raise it here, at the boundary where the
+            // watermark has just become known, and only for this message.
+            rebaseAboveWatermark(observation);
+
+            final String payload = observationToJson(observation).toString();
+            lastSentFrame = payload;
+            if (!writeFrame(socket, payload)) {
                 return false;
             }
             final String ack = readFrame(socket);
@@ -430,27 +667,27 @@ public class ObservationTransport {
             }
 
             // Refused. Classify it: the three cases need different behaviour.
+            //
+            // The precedence lives in classifyReason() so it is testable. Getting it wrong is
+            // silent: an overlapping reason (device_revoked is both SUSPENDING and PERMANENT) that
+            // is classified PERMANENT only drops the one observation instead of suspending the
+            // transport, which is the difference between "stop and wait for the operator" and
+            // "keep pushing to a hub that has revoked this device".
             final String reason = parsed.optString("reason");
             refused++;
-            if (SUSPENDING_REASONS.contains(reason)) {
+            final String verdict = classifyReason(reason);
+            if (RETRY.equals(verdict)) {
+                Log.w(TAG, "hub could not take the observation (" + reason + "); will retry");
+                return false;
+            }
+            if (SUSPEND.equals(verdict)) {
                 suspended = true;
                 suspensionReason = reason;
                 Log.w(TAG, "hub refused the observation (" + reason + "); transport suspended");
                 return true;  // the message is resolved: it was decided, not lost
             }
-            if (PERMANENT_REASONS.contains(reason)) {
-                terminalFailure = true;
-                Log.w(TAG, "hub refused the observation permanently: " + reason);
-                return true;
-            }
-            if (RETRYABLE_REASONS.contains(reason)) {
-                Log.w(TAG, "hub could not take the observation (" + reason + "); will retry");
-                return false;
-            }
-            // An unrecognised reason is treated as PERMANENT: retrying a refusal whose
-            // meaning is unknown is how a node ends up in a loop.
             terminalFailure = true;
-            Log.w(TAG, "hub refused the observation for an unknown reason: " + reason);
+            Log.w(TAG, "hub refused the observation permanently: " + reason);
             return true;
         } catch (Exception e) {
             // Never log the exception message verbatim if it could carry key
@@ -647,24 +884,81 @@ public class ObservationTransport {
 
     private boolean expectWelcome(SSLSocket socket) throws Exception {
         final String frame = readFrame(socket);
-        if (frame == null) {
-            return false;
-        }
-        final JSONObject parsed = new JSONObject(frame);
-        if (!"welcome".equals(parsed.optString("kind"))) {
+        final String verdict = welcomeVerdict(frame);
+        if (!WELCOME_OK.equals(verdict)) {
+            Log.w(TAG, "handshake refused: " + verdict);
             return false;
         }
         // The hub states the highest sequence it has already accepted from this device.
         // Adopting it is what lets the application restart legitimately: a new process
         // otherwise starts at 1 and every observation it sends looks like a replay.
-        final long watermark = parsed.optLong("last_sequence", 0L);
+        final long watermark = resumeWatermark(frame);
         if (watermark > 0L) {
             synchronized (lock) {
-                if (watermark > sequenceCounter) {
-                    sequenceCounter = watermark;
-                }
+                sequenceCounter = adoptedSequence(sequenceCounter, watermark);
             }
         }
+        lastAdoptedWatermark = watermark;
+        return true;
+    }
+
+    /**
+     * The highest sequence the hub told us it has already accepted, from the most recent welcome.
+     *
+     * Adopting the watermark into the counter is not by itself enough, which is what this field
+     * exists to fix: {@code NodeSession} assigns a sequence when the caller ENQUEUES, which is before
+     * any handshake has happened, so after a restart the queued message still carries a number the hub
+     * has already seen. Raising the counter does nothing for a message whose sequence is already
+     * fixed, so the rebase below compares against this value directly.
+     */
+    private volatile long lastAdoptedWatermark = 0L;
+
+    /**
+     * The exact observation frame the serializer produced for the most recent send, or null.
+     *
+     * Exposed so a test can assert on what the SERIALIZER emitted rather than re-deriving the JSON
+     * alongside it. A test that rebuilt the payload itself would be checking its own construction, not
+     * the production path - which is the mistake the offline suite already made once with a stub that
+     * mis-serialized.
+     */
+    private volatile String lastSentFrame = null;
+
+    public String lastSentFrame() {
+        return lastSentFrame;
+    }
+
+    /**
+     * Rebase an observation's sequence above the hub's watermark, once, at the transmission boundary.
+     *
+     * The hub refuses a sequence it has already accepted - `replayed_sequence` - and that refusal is
+     * PERMANENT, so the observation is dropped and never retried. A node that restarts would therefore
+     * lose its first observation to every reconnect, because its sequence was assigned before the
+     * handshake that reveals the watermark.
+     *
+     * Three properties are deliberate:
+     *
+     *  1. MONOTONIC, never a rewind. A new sequence is only ever taken from {@link #nextSequence()},
+     *     so it is strictly above both the hub's watermark and everything already sent.
+     *  2. IDEMPOTENT ACROSS RETRIES. It mutates the observation in place, and the queue holds that
+     *     same object, so a retry sees the already-rebased number and does not re-rebase. Two
+     *     different sequences for one observation_id would look like two distinct observations to the
+     *     hub - exactly the duplicate this must not create.
+     *  3. IDENTITY IS UNTOUCHED. Only the sequence moves; the observation_id is the caller's stable
+     *     identifier and is what the acknowledgement is correlated against.
+     *
+     * A watermark of 0 means the hub is fresh, so nothing is rebased and an ordinary first
+     * observation still goes out as sequence 1.
+     *
+     * @return true when the sequence was changed, so callers and tests can tell the two paths apart.
+     */
+    private boolean rebaseAboveWatermark(PendingObservation observation) {
+        final long watermark = lastAdoptedWatermark;
+        if (watermark <= 0L || observation.sequence > watermark) {
+            return false;
+        }
+        observation.sequence = nextSequence();
+        Log.w(TAG, "rebased an observation above the hub watermark " + watermark
+                + " to sequence " + observation.sequence);
         return true;
     }
 

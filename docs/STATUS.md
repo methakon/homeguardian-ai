@@ -2,6 +2,28 @@
 
 **Last updated:** 2026-10-23
 
+## Service-transport branch integration
+
+Owner-authorized merge of `experiment/hg-panasonic-service-transport-06`, remote
+tip `6f8e2ad`, into main after `062bdc4`. Includes Android welcome/version handling,
+resume-watermark adoption, refusal accounting, host regression fixtures, and the
+camera source/loopback relay/private-interface gateway adapters.
+
+The single merge conflict was resolved by retaining main's native producer
+provenance default `real` from `ea8b1c1`; Java fallback and generated synthetic
+fixtures remain `synthetic`. Imported branch audit/runbook documents describe
+their historical branch state, not a replacement for current main acceptance.
+Main's coordinator security, detector wiring and replay shutdown fixes are retained.
+
+Merged-tree verification: production Java compiled against Android 34; isolated
+JVM suites passed with 45 lifecycle, 43 schema, 27 transport-policy, 59 cross-receiver,
+34 real-socket TLS and 19 synthetic-vector checks. Receiver vocabulary was derived
+from current main (`HG_RECEIVER_REF=HEAD`), not the imported historical default.
+Camera source/relay/gateway suites passed all 87 tests with fake media sources.
+Live-camera tests and the Docker-based Java-to-C++ runner were not run; no physical
+capture or deployment acceptance is claimed. No APK, VPN, VPS, AWS configuration,
+or currently deployed Alexa service was changed.
+
 ## Alexa Python recovery and supplied-source diagnosis — 2026-10-23
 
 The canonical voice adapter is `alexa_skill_python/`, restored on `main` in
