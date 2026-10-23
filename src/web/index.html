@@ -900,6 +900,7 @@ document.addEventListener('DOMContentLoaded', function () {
 //      placeholder image is drawn in its place.
 let camStatusTimer = null;
 let camFrameTimer = null;
+let camConfigured = null;
 
 function camSetBadge(state) {
   const el = document.getElementById('camBadge');
@@ -918,8 +919,11 @@ function camSetOverlay(text) {
 function camRenderStatus(d) {
   const box = document.getElementById('camMetrics');
   if (!box) return;
+  camConfigured = !!(d && d.configured);
   if (!d || !d.configured) {
     camSetBadge('NOT CONFIGURED');
+    const img = document.getElementById('camFrame');
+    if (img) img.removeAttribute('src');
     camSetOverlay('No camera configured on this portal.');
     box.innerHTML = '';
     return;
@@ -947,13 +951,16 @@ function camRenderStatus(d) {
 }
 
 async function camRefreshStatus() {
-  if (!heldSecret) {
-    camSetBadge('AUTHORIZATION REQUIRED');
-    camSetOverlay('Authorize with the operator secret before viewing the camera.');
-    return;
-  }
   try {
-    const r = await fetch('/api/camera/status', {headers: {'X-HG-Secret': heldSecret}});
+    // Status is answerable without the operator secret only when no camera is
+    // configured; with a camera present the server answers 401 and we ask for it.
+    const headers = heldSecret ? {'X-HG-Secret': heldSecret} : {};
+    const r = await fetch('/api/camera/status', {headers: headers});
+    if (r.status === 401) {
+      camSetBadge('AUTHORIZATION REQUIRED');
+      camSetOverlay('Authorize with the operator secret before viewing the camera.');
+      return;
+    }
     if (!r.ok) throw new Error('camera_unavailable');
     camRenderStatus(await r.json());
   } catch (e) {
@@ -966,7 +973,7 @@ let camFrameBusy = false;
 let camObjectUrl = null;
 async function camTickFrame() {
   const img = document.getElementById('camFrame');
-  if (!img || !heldSecret || camFrameBusy) return;
+  if (!img || !heldSecret || camFrameBusy || camConfigured === false) return;
   camFrameBusy = true;
   try {
     const r = await fetch('/api/camera/frame?t=' + Date.now(), {

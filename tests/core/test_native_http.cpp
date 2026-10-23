@@ -180,6 +180,34 @@ TEST_CASE("NativeHttp: a public hostname is refused unless explicitly configured
     REQUIRE(h.calls == 1);
 }
 
+TEST_CASE("NativeHttp: camera status is readable without a secret only when unconfigured",
+          "[nativehttp][camera-auth]") {
+    Rec h;
+    auto handler = recording_handler(h);
+    SessionStore sessions;
+    sessions.operator_secret = kTestSecret;
+    // No camera handler: nothing physical exists, so the "not configured" answer is public.
+    const auto none = hg_native_http::dispatch(
+        req("GET /api/camera/status HTTP/1.1"), "", handler, sessions, test_now_ms(), kTestPort);
+    REQUIRE(starts_with(none, "HTTP/1.1 200"));
+    REQUIRE(h.calls == 1);
+    REQUIRE(h.last_op == "camera_status");
+
+    // With a camera configured the same route requires the operator secret again.
+    int frames = 0;
+    CameraHandler camera = [&frames](int& status, std::string& mime) {
+        ++frames;
+        status = 200;
+        mime = "image/jpeg";
+        return std::string("frame");
+    };
+    const auto configured = hg_native_http::dispatch(
+        req("GET /api/camera/status HTTP/1.1"), "", handler, sessions, test_now_ms(), kTestPort,
+        {}, camera);
+    REQUIRE(starts_with(configured, "HTTP/1.1 401"));
+    REQUIRE(frames == 0);
+}
+
 TEST_CASE("NativeHttp: /api/status and scenario invoke the real handler", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
     auto s = dispatch(req("GET /api/status HTTP/1.1"), "<html>", handler);

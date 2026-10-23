@@ -523,7 +523,17 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         // Physical media is private even on loopback. A local listener and an
         // Origin check are not operator authorization. Never fetch a camera on
         // behalf of an unauthenticated browser or local process.
+        //
+        // One exception, and it reveals nothing: when no camera is configured at
+        // all there is no physical state to protect, so the status answer
+        // "configured: false" is readable without the operator secret. That keeps
+        // a published page from showing "authorize" for a camera that does not
+        // exist. With a camera present, the status AND the frame still require
+        // authorization.
+        const bool camera_status_route = path == "/api/camera/status" ||
+                                         path.rfind("/api/camera/status?", 0) == 0;
         if (path.rfind("/api/camera/", 0) == 0 &&
+            !(camera_status_route && !camera) &&
             !sessions.authorize(presented_secret, now_ms))
             return json_error(401, "unauthorized");
         // LIVE PHYSICAL CAMERA -- read-only, and a DIFFERENT provenance class from /api/feed.
