@@ -197,6 +197,9 @@ struct HandlerRequest {
     // For op == "media": the media id from /media/<id>. Already path-validated by the transport
     // (no %, backslash, #, NUL; bounded length); the handler validates its charset.
     std::string_view media_id;
+    // The request's Content-Type header (already validated to be one of the allowlisted media
+    // types on the upload route). The handler requires it to agree with the file signature.
+    std::string_view content_type;
 };
 
 // A handler receives a validated request and MUST return a JSON body. It also
@@ -261,7 +264,8 @@ inline std::string response(unsigned status, std::string_view mime, const std::s
         + "\r\nContent-Length: " + std::to_string(body.size())
         + "\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff"
         + "\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer"
-        + "\r\nCross-Origin-Resource-Policy: same-origin";
+        + "\r\nCross-Origin-Resource-Policy: same-origin"
+        + "\r\nX-Content-Type-Options: nosniff";
     // The dashboard is fully self-contained (no external refs); a restrictive
     // CSP is defence-in-depth against an XSS that would otherwise run remote JS.
     if (mime.rfind("text/html", 0) == 0) {
@@ -488,6 +492,7 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         HandlerRequest req;
         req.op = "upload";
         req.body = std::string_view(request).substr(header_end + 4);
+        req.content_type = content_type;
         return invoke(req);
     }
     // A body must actually have arrived, and must be a JSON object (never a form post).

@@ -183,18 +183,30 @@ inline ValidationResult validate_media(std::string_view bytes, std::string_view 
     if (bytes.empty()) { r.error = "empty_body"; return r; }
     if (client_name.size() > 200) { r.error = "name_too_long"; return r; }
 
-    const auto dot = client_name.find_last_of('.');
-    if (dot == std::string_view::npos) { r.error = "unsupported_format"; return r; }
-    std::string ext;
-    for (size_t i = dot + 1; i < client_name.size(); ++i) {
-        const char c = client_name[i];
-        if (!std::isalnum(static_cast<unsigned char>(c))) { r.error = "unsupported_format"; return r; }
-        ext.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-    }
-    if (ext == "jpeg") ext = "jpg";
-
     const std::string sniffed = sniff_signature(bytes);
     if (sniffed.empty()) { r.error = "unsupported_format"; return r; }
+
+    // Extension: taken from the client's name when one was supplied, and then required to agree
+    // with the signature. An HTTP upload supplies NO name (the extension is derived from the
+    // verified signature instead), which is strictly safer than trusting a client's filename.
+    std::string ext;
+    if (client_name.empty()) {
+        if (sniffed == "image/png") ext = "png";
+        else if (sniffed == "image/jpeg") ext = "jpg";
+        else if (sniffed == "image/webp") ext = "webp";
+        else if (sniffed == "video/mp4") ext = "mp4";
+        else if (sniffed == "video/webm") ext = "webm";
+        else { r.error = "unsupported_format"; return r; }
+    } else {
+        const auto dot = client_name.find_last_of('.');
+        if (dot == std::string_view::npos) { r.error = "unsupported_format"; return r; }
+        for (size_t i = dot + 1; i < client_name.size(); ++i) {
+            const char c = client_name[i];
+            if (!std::isalnum(static_cast<unsigned char>(c))) { r.error = "unsupported_format"; return r; }
+            ext.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+        if (ext == "jpeg") ext = "jpg";
+    }
 
     // Signature agrees with the extension, and with the declared MIME type. All three, not any one.
     const bool ext_ok =
