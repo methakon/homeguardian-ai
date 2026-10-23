@@ -54,6 +54,7 @@ GATE_SECURITY_BOUNDS="NOT_RUN"
 GATE_OUTBOUND_COORDINATOR="NOT_RUN"
 GATE_CAMERA_SAFETY_BOUNDARY="NOT_RUN"
 GATE_CLEAN_PROCESS_SHUTDOWN="NOT_RUN"
+GATE_NATIVE_DETECTOR_WIRING="NOT_RUN"
 SUMMARY_PRINTED=0
 TMP_DIR=""
 MCP_PID=""
@@ -88,7 +89,8 @@ print_summary() {
   fi
   for g in "$GATE_BUILD_PREREQ" "$GATE_NATIVE_MCP_PROTOCOL" "$GATE_MCP_HANDSHAKE" \
            "$GATE_READ_ONLY_TOOLS" "$GATE_MUTATING_TOOLS_EXCLUDED" "$GATE_SECURITY_BOUNDS" \
-           "$GATE_OUTBOUND_COORDINATOR" "$GATE_CAMERA_SAFETY_BOUNDARY" "$GATE_CLEAN_PROCESS_SHUTDOWN"; do
+           "$GATE_OUTBOUND_COORDINATOR" "$GATE_CAMERA_SAFETY_BOUNDARY" "$GATE_CLEAN_PROCESS_SHUTDOWN" \
+           "$GATE_NATIVE_DETECTOR_WIRING"; do
     if [[ "$g" != "PASS" ]]; then
       all_gates_passed=0
     fi
@@ -114,6 +116,7 @@ print_summary() {
   echo -e "OUTBOUND_COORDINATOR:   ${GATE_OUTBOUND_COORDINATOR} (Loopback binding, auth token, 503 fail-closed offline)"
   echo -e "CAMERA_SAFETY_BOUNDARY: ${GATE_CAMERA_SAFETY_BOUNDARY} (media_capture_enabled=false, 0 physical video streams)"
   echo -e "CLEAN_PROCESS_SHUTDOWN: ${GATE_CLEAN_PROCESS_SHUTDOWN} (All child processes exited cleanly, 0 leaks)"
+  echo -e "NATIVE_DETECTOR_WIRING: ${GATE_NATIVE_DETECTOR_WIRING} (Ingress detector feed, idle availability, shutdown; synthetic mTLS, no hardware)"
   echo -e "TOTAL_CHECKS_PASSED:    ${PASS_COUNT}"
   echo -e "TOTAL_CHECKS_FAILED:    ${FAIL_COUNT}"
   echo -e "${BOLD}================================================================================${NC}"
@@ -593,6 +596,43 @@ else
   GATE_CAMERA_SAFETY_BOUNDARY="FAIL"
   log_fail "Active physical camera descriptors detected: $ACTIVE_CAM_PROCS"
   exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# 6b. Native ingress detector wiring (synthetic mTLS, not hardware)
+# ------------------------------------------------------------------------------
+log_info "\nStep 6b: Verifying Native Ingress Detector Wiring (synthetic mTLS)..."
+
+# The wiring check is structural and always runs: if the suite stopped being
+# registered, a green special-runner result would otherwise be meaningless.
+INGRESS_SUITE_SRC="$REPO_ROOT/tests/net/test_production_ingress.cpp"
+INGRESS_SUITE_RUNNER="$REPO_ROOT/tests/net/run_production_ingress.py"
+if grep -q "test_production_ingress.cpp" "$REPO_ROOT/CMakeLists.txt" \
+   && grep -q "production_ingress_tls" "$REPO_ROOT/CMakeLists.txt" \
+   && [[ -f "$INGRESS_SUITE_SRC" && -f "$INGRESS_SUITE_RUNNER" ]]; then
+  log_ok "Ingress detector-wiring suite is registered in the canonical CMake/CTest gate"
+else
+  GATE_NATIVE_DETECTOR_WIRING="FAIL"
+  log_fail "Ingress detector-wiring suite is not registered in CMakeLists.txt / missing sources"
+  exit 1
+fi
+
+# Execution needs the TLS-enabled test binary plus openssl to mint throwaway certs.
+if [[ -x "$BUILD_DIR/homeguardian_tests" ]] && command -v openssl >/dev/null 2>&1; then
+  if HG_INGRESS_TESTS_BIN="$BUILD_DIR/homeguardian_tests" \
+     timeout 180 "${HG_PYTHON:-python3}" "$INGRESS_SUITE_RUNNER" > "$TMP_DIR/ingress_wiring.log" 2>&1; then
+    INGRESS_ASSERTIONS="$(tail -n 3 "$TMP_DIR/ingress_wiring.log" | grep -oE '[0-9]+ assertions in [0-9]+ test cases' | head -1)"
+    log_ok "Ingress detector wiring passed over real loopback mTLS (${INGRESS_ASSERTIONS:-see log})"
+    GATE_NATIVE_DETECTOR_WIRING="PASS"
+  else
+    GATE_NATIVE_DETECTOR_WIRING="FAIL"
+    log_fail "Ingress detector wiring failed"
+    tail -n 25 "$TMP_DIR/ingress_wiring.log" >&2
+    exit 1
+  fi
+else
+  GATE_NATIVE_DETECTOR_WIRING="SKIP"
+  log_fail "Ingress detector wiring NOT EXECUTED: needs $BUILD_DIR/homeguardian_tests (OpenSSL) + openssl. This gate is not a pass."
 fi
 
 # ------------------------------------------------------------------------------

@@ -107,6 +107,10 @@ private:
     void pump_detectors_locked();
     void availability_loop();
     void sweep_availability_locked();
+    // Flush durable replay state only when no worker can still mutate it. The old
+    // flush inside request_stop() ran concurrently with workers finishing calls.
+    void flush_replay_after_stop();
+    std::atomic<bool> replay_flushed_{false};
     // Bound by the registry capacity; retained solely to reauthorize quiet-device
     // transitions against the credential that produced their accepted evidence.
     std::map<std::string, std::string> detector_credentials_;

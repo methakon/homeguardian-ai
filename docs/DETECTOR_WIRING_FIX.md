@@ -1,6 +1,7 @@
 # Production detector wiring (D-03 ingress)
 
-Date: 2026-10-23. State: SOURCE-TESTED / NOT DEPLOYED. Third corrective batch.
+Date: 2026-10-23. State: SOURCE-TESTED / NOT DEPLOYED. Third corrective batch,
+re-verified and extended on 2026-10-23 after independent review.
 
 ## Defect closed
 
@@ -34,6 +35,23 @@ going quiet could never be evaluated on its own.
   the TLS ingress test is compiled into the test binary and a
   `production_ingress_tls` ctest is registered only when OpenSSL is found.
 
+### Review follow-up: shutdown race and canonical-gate inclusion
+
+- `request_stop()` no longer flushes durable replay state. `ReplayState` has no
+  internal lock, so that flush ran concurrently with a worker finishing
+  `complete()`/`abandon()` — a data race on the watermark file. The flush now runs
+  in `flush_replay_after_stop()`, called only after every worker has been joined
+  (in `run()` and in the destructor) and guarded against running twice.
+- Two new regressions: the maintenance worker stops within 2 s with **no inbound
+  frame at all** and delivers nothing; and stopping at the same moment an
+  authorization revocation becomes due neither hangs behind the core lock nor
+  delivers a transition after the stop (three consecutive attempts).
+- The suite is now part of the canonical release gate. `scripts/verify_judge_release.sh`
+  gained `NATIVE_DETECTOR_WIRING` (step 6b): it always asserts the suite is
+  registered in `CMakeLists.txt`/CTest and that its sources exist, then executes it
+  over real loopback mTLS. Missing TLS prerequisites produce `SKIP` — never `PASS` —
+  and any execution failure fails the gate.
+
 ## Verification
 
 Build (project-local rootless OpenSSL staging, no system packages):
@@ -42,10 +60,10 @@ Build (project-local rootless OpenSSL staging, no system packages):
     -> both targets built
 
 Real mutual-TLS regression (fresh synthetic CA/certs per run, no direct
-`observe()` call in the fixture; 4 cases):
+`observe()` call in the fixture; 6 cases):
 
     python3 tests/net/run_production_ingress.py
-    -> All tests passed (325 assertions in 4 test cases)
+    -> All tests passed (392 assertions in 6 test cases)
     ctest --test-dir hg_build -R production_ingress_tls
     -> 1/1 Passed (12.22 s)
 
@@ -64,8 +82,14 @@ Shipped binary over synthetic-CA mutual TLS:
     -> accepted=3 rejected=0, clean SIGTERM stop, exit 0
 
 Regression: full native suite from `hg_build` with `HG_SOURCE_DIR` set ->
-**76,092 assertions in 777 test cases, all passed**. The new ingress cases are
+**76,095 assertions in 777 test cases, all passed**. The new ingress cases are
 tagged `[.]`, so they run through the ctest/runner above rather than by default.
+
+Canonical gate (same tree, `HG_BUILD_DIR=hg_build`):
+
+    bash scripts/verify_judge_release.sh
+    -> VERDICT PASS, COMMIT_SHA 4b54d2d, 29 checks passed / 0 failed
+       NATIVE_DETECTOR_WIRING  PASS (392 assertions in 6 test cases)
 
 Implementation-time RED was observed before each fix (no derived output, no idle
 sweep, idle delivery after rotation, and a timed-out queued connection during the
@@ -74,7 +98,8 @@ the GREEN figures above were re-run and observed independently.
 
 ## Boundaries
 
-This is source and synthetic-mTLS acceptance on the workstation. No phone, VPS,
+This is source and synthetic-mTLS acceptance on the workstation: generated test
+certificates and synthetic observations, not hardware. No phone, VPS,
 Docker service, capture, credential or cloud state was changed, and no physical
 observation or alert is claimed. Known limits: the availability cadence is a fixed
 250 ms pulse; idle delivery re-checks registry state and the bound credential, not

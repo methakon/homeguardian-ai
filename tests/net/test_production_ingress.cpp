@@ -289,3 +289,98 @@ TEST_CASE("Queued real TLS connections are never starved by the maintenance wait
     std::lock_guard<std::mutex> lock(f.mutex);
     REQUIRE(f.accepted.size() == 9);
 }
+
+// Shutdown must not depend on a connection ever arriving: the maintenance worker
+// sleeps in its own wait and has to be woken, joined and its durable state flushed
+// only after every worker is gone.
+TEST_CASE("Maintenance worker stops cleanly with no inbound frame", "[production-ingress][.]") {
+    Logger::initialize("off");
+    const char* path = std::getenv("HG_INGRESS_TEST_DIR");
+    REQUIRE(path != nullptr);
+    const std::string dir = path;
+    std::ifstream fingerprint(dir + "/fingerprint");
+    std::string credential;
+    fingerprint >> credential;
+    REQUIRE_FALSE(credential.empty());
+
+    DeviceRegistry registry;
+    DeviceRegistry::Device device;
+    device.device_id = "hg-tls-fixture";
+    device.device_type = "hub-fixture";
+    device.credential_id = credential;
+    device.paired = true;
+    device.is_synthetic = true;
+    std::string error;
+    REQUIRE(registry.pair(device, &error));
+    REQUIRE(registry.set_consent(device.device_id, true, "fixture-subject", "security_monitor", kNow));
+    REQUIRE(registry.set_capture_enabled(device.device_id, true));
+    REQUIRE(registry.save(dir + "/registry-idle.json", &error));
+
+    ObservationIngest ingest{registry, ObservationIngest::defaults(), [&] { return kNow; }};
+    IngestDetectors detectors{IngestDetectors::defaults(), [&] { return kNow; }};
+    DeviceIngressServer::Config config;
+    config.tls.bind_address = "127.0.0.1";
+    config.tls.port = 0;
+    config.tls.certificate_path = dir + "/server.pem";
+    config.tls.private_key_path = dir + "/server.key";
+    config.tls.ca_path = dir + "/ca.pem";
+    config.authorization_refresh_ms = 1;
+    config.replay_state_path = dir + "/replay-idle.json";
+    std::remove(config.replay_state_path.c_str());
+
+    std::atomic<int> deliveries{0};
+    auto server = std::make_unique<DeviceIngressServer>(config, registry, ingest, detectors,
+        DeviceIngressServer::Sinks{
+            [&](const SecurityObservation&) { deliveries.fetch_add(1); },
+            [&](const Observation&) { deliveries.fetch_add(1); }},
+        "", "", dir + "/registry-idle.json");
+    REQUIRE(server->start(&error));
+
+    std::atomic<bool> finished{false};
+    std::thread runner([&] { server->run(); finished.store(true); });
+    // Let at least one maintenance tick run while no connection exists.
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    const auto started = std::chrono::steady_clock::now();
+    server->request_stop();
+    while (!finished.load() && std::chrono::steady_clock::now() - started < std::chrono::seconds(5)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    INFO("shutdown took " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms");
+    REQUIRE(finished.load());
+    REQUIRE(elapsed < std::chrono::seconds(2));
+    if (runner.joinable()) runner.join();
+    // A second stop request from the destructor path must stay harmless.
+    server->request_stop();
+    server.reset();
+    REQUIRE(deliveries.load() == 0); // nothing was authorized into an idle sweep
+}
+
+// Stopping while the maintenance worker is mid-sweep must not deliver a transition
+// after the stop, and must not hang behind the core lock.
+TEST_CASE("Shutdown racing authorization revocation delivers nothing after stop",
+          "[production-ingress][.]") {
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        Fixture f;
+        REQUIRE(f.send(f.sample(1)).reason == RejectReason::none);
+        nlohmann::json authorization;
+        { std::ifstream input(f.dir + "/registry.json"); input >> authorization; }
+        authorization["devices"][0]["credential_id"] = "replacement-credential";
+        { std::ofstream output(f.dir + "/replacement.json"); output << authorization.dump(); }
+        REQUIRE(std::rename((f.dir + "/replacement.json").c_str(),
+                            (f.dir + "/registry.json").c_str()) == 0);
+        f.client.close();
+        f.clock.store(kNow + 91000);   // offline transition becomes due
+        f.server->request_stop();      // ...at the same moment as the stop
+        const auto started = std::chrono::steady_clock::now();
+        if (f.runner.joinable()) f.runner.join();
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        INFO("join took " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms");
+        REQUIRE(elapsed < std::chrono::seconds(2));
+        size_t at_stop = 0;
+        { std::lock_guard<std::mutex> lock(f.mutex); at_stop = f.accepted.size(); }
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        std::lock_guard<std::mutex> lock(f.mutex);
+        REQUIRE(f.accepted.size() == at_stop);
+    }
+}

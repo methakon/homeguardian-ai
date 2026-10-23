@@ -85,6 +85,7 @@ DeviceIngressServer::~DeviceIngressServer() {
     for (std::thread& worker : workers_) {
         if (worker.joinable()) worker.join();
     }
+    flush_replay_after_stop();
     listener_.close_listener();
 }
 
@@ -259,6 +260,12 @@ void DeviceIngressServer::request_stop() {
     stopping_.store(true);
     queue_cv_.notify_all();
     maintenance_cv_.notify_all();
+}
+
+void DeviceIngressServer::flush_replay_after_stop() {
+    if (!replay_ || replay_flushed_.exchange(true)) return;
+    // Safe here only because every worker has been joined: ReplayState has no
+    // internal lock, so flushing while a worker was mid-complete was a data race.
     if (replay_) {
         // Flush once more at shutdown so the last accepted sequence is durable even if
         // a write was skipped, and record a failed final write loudly.
@@ -313,6 +320,7 @@ void DeviceIngressServer::run() {
     for (std::thread& worker : workers_) {
         if (worker.joinable()) worker.join();
     }
+    flush_replay_after_stop();
 }
 
 void DeviceIngressServer::availability_loop() {

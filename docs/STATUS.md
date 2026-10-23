@@ -217,17 +217,25 @@ longer claim `Provenance::real` or invent a `security_monitor` consent. The
 optional ingress also links now: `src/core/ActivityEpisode.cpp` was missing from
 `HG_INGEST_CORE_SOURCES`.
 
-Verified: real mutual-TLS regression `python3 tests/net/run_production_ingress.py`
-**325 assertions in 4 cases passed**; `ctest -R production_ingress_tls` **1/1
-passed (12.22 s)**; shipped-binary synthetic-CA smoke **accepted=3 rejected=0**,
-clean SIGTERM exit 0; full native suite from `hg_build` with `HG_SOURCE_DIR` set
-**76,092 assertions in 777 cases, all passed**. Implementation-time RED (no derived
+Verified (re-run on the reviewed tree): real mutual-TLS regression
+`python3 tests/net/run_production_ingress.py` **392 assertions in 6 cases passed**;
+`ctest -R production_ingress_tls` **1/1 passed**; shipped-binary synthetic-CA smoke
+**accepted=3 rejected=0**, clean SIGTERM exit 0; full native suite from `hg_build`
+with `HG_SOURCE_DIR` set **76,095 assertions in 777 cases, all passed**; canonical
+gate `bash scripts/verify_judge_release.sh` **PASS, 29 checks, 0 failed**, including
+the new `NATIVE_DETECTOR_WIRING` gate that executes this suite. Implementation-time RED (no derived
 output, no idle sweep, idle delivery after rotation, a queued connection starved by
 the maintenance wait) was observed before each fix; the GREEN runs above were
 re-executed independently. See [detector wiring](DETECTOR_WIRING_FIX.md).
 
-These ingress cases are tagged `[.]` and run through that ctest/runner rather than
-by default. Limits: fixed 250 ms availability cadence, idle delivery re-checks
+Review follow-up fixed two things: `request_stop()` used to flush durable replay
+state while a worker could still be writing it (a data race), now flushed only after
+every worker is joined; and shutdown is now regressed with **no inbound frame** plus
+stop-racing-revocation cases. These ingress cases are tagged `[.]` and run through
+that ctest/runner rather than the default binary run — but they are part of the
+canonical gate above, and a missing TLS prerequisite yields `SKIP`, never `PASS`.
+These are synthetic-certificate, synthetic-observation host tests, not hardware.
+Limits: fixed 250 ms availability cadence, idle delivery re-checks
 registry state and the bound credential rather than the live socket, and default
 fusion policy keeps detector evidence advisory. Nothing was deployed to the phone,
 VPS, Docker service or cloud; no physical observation or alert is claimed.

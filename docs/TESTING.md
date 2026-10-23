@@ -110,9 +110,15 @@ registered ctest rather than the default suite:
 ```
 cmake --build hg_build --target homeguardian_tests hg_device_ingress -j2
 ctest --test-dir hg_build -R production_ingress_tls --output-on-failure
-python3 tests/net/run_production_ingress.py        # 4 cases, 325 assertions
+python3 tests/net/run_production_ingress.py        # 6 cases, 392 assertions
 python3 tests/net/run_ingress_binary_smoke.py      # shipped binary, real handshake
 ```
+
+These run inside the canonical release gate as `NATIVE_DETECTOR_WIRING`
+(`bash scripts/verify_judge_release.sh`, step 6b): the gate always checks the suite
+is registered in `CMakeLists.txt`/CTest, then executes it. Without the TLS-enabled
+test binary or `openssl` the gate reports `SKIP` — it never reports `PASS` for a run
+that did not happen. `HG_INGRESS_TESTS_BIN` selects the binary explicitly.
 
 These generate a throwaway CA and client/server certificates inside `hg_build` and
 bind an ephemeral loopback port. They prove the production wiring path on the

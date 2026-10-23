@@ -9,6 +9,10 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 build = root / "hg_build"
+# The canonical gate may have built the suite elsewhere; never guess silently.
+tests_bin = Path(os.environ.get("HG_INGRESS_TESTS_BIN", build / "homeguardian_tests"))
+if not tests_bin.is_file():
+    sys.exit("missing TLS-enabled test binary: " + str(tests_bin))
 with tempfile.TemporaryDirectory(prefix="production-ingress-", dir=build) as directory:
     d = Path(directory)
     def openssl(*args):
@@ -27,6 +31,6 @@ with tempfile.TemporaryDirectory(prefix="production-ingress-", dir=build) as dir
     der = openssl("x509", "-in", "client.pem", "-outform", "DER")
     (d / "fingerprint").write_text(hashlib.sha256(der).hexdigest())
     env = dict(os.environ, HG_INGRESS_TEST_DIR=str(d))
-    result = subprocess.run([str(build / "homeguardian_tests"),
-                             * (sys.argv[1:] or ["[production-ingress]"])], cwd=root, env=env)
+    result = subprocess.run([str(tests_bin),
+                             * (sys.argv[1:] or ["[production-ingress]"]), ], cwd=root, env=env)
     sys.exit(result.returncode)
