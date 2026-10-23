@@ -76,6 +76,17 @@ class TestWorker(unittest.TestCase):
         self.assertFalse(self.worker.handle(self.message()))
         self.mcp.fetch.assert_called_once()
 
+    def test_idle_keepalive_stays_private_and_does_not_publish_readings(self):
+        now = [100.0]
+        worker = worker_module.Worker(self.sqs, "request-queue-fixture", "reply-queue-fixture", self.mcp, clock=lambda: now[0])
+        self.sqs.receive_message.return_value = {}
+        now[0] = 161.0
+        worker.poll()
+        self.mcp.fetch.assert_called_once_with("get_homeguardian_status", 164.0)
+        self.sqs.send_message.assert_not_called()
+        worker.poll()
+        self.mcp.fetch.assert_called_once()
+
     def test_invalid_counts_never_become_readings(self):
         for count in [-1, True, "0", None]:
             with self.subTest(count=count):

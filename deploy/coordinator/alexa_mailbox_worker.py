@@ -151,6 +151,7 @@ class Worker:
     def __init__(self, sqs, request_url, reply_url, mcp, clock=time.time):
         self.sqs, self.request_url, self.reply_url, self.mcp, self.clock = sqs, request_url, reply_url, mcp, clock
         self.seen = {}
+        self.last_keepalive = self.clock()
 
     def handle(self, message):
         receipt = message.get("ReceiptHandle")
@@ -190,6 +191,14 @@ class Worker:
         return True
 
     def poll(self):
+        # Interim mitigation for the installed Android bridge's stale native
+        # session cache. The server default idle TTL is 1800 seconds; keep this
+        # authenticated control session active without publishing unsolicited data.
+        # This does not repair recovery after an extended outage/phone bridge restart.
+        now = self.clock()
+        if now - self.last_keepalive >= 60:
+            self.last_keepalive = now
+            self.mcp.fetch("get_homeguardian_status", now + 3)
         response = self.sqs.receive_message(QueueUrl=self.request_url, MaxNumberOfMessages=1,
                                            WaitTimeSeconds=10, VisibilityTimeout=10)
         for message in response.get("Messages", []):
