@@ -2,6 +2,35 @@
 
 **Last updated:** 2026-10-24
 
+## Real camera analysis wiring (motion + statistical change)
+
+Owner-approved scope: wire the existing detectors through the real acquisition path,
+report every other category as unavailable, and expose committed alerts through the
+established Alexa request/response lane. No new classifier and no unsolicited
+notification sender was added.
+
+`--camera-analysis` now connects an explicitly named, registry-authorized source to:
+bounded HTTP JPEG fetch (server cadence) → bounded `ffmpeg` decode to one 160x120 luma
+plane → existing `CameraActivitySession`/`ActivityChangeDetector` → existing `Pipeline`
+with the explicit `camera-motion-activity` allowlist → durable commit. Source identity,
+consent, purpose, revocation and capture are re-read before every acquisition **and**
+before every commit; any refusal resets baseline, pipeline history and policy. The
+reserved synthetic registry id keeps fixture provenance `synthetic`, and status reports
+`audio/speech/identity/visitors/falls/animals/emergencies` as unavailable.
+
+`AlertPolicy::admit_durable` advances cooldown only after the durable write succeeds, so
+a failed insert can no longer consume the cooldown window.
+
+Verified: camera-analysis target **4 cases / 146 assertions** (CTest 1/1); independent
+generated-JPEG end-to-end **40 frames → 40 observations → 2 commits**, IDs/count/severity
+matched across rule output, SQLite, the separate MCP process and both ASK intents, with
+five authorization negatives each blocked before any fetch; camera preview regressions
+**6 tests**; portal smoke **38 checks**; runtime catalogue **20 cases / 40 ASK responses**;
+full native **76,430 assertions / 790 cases**, all passing.
+
+Not proven: physical camera acceptance, deployment, continuous video, and proactive
+Alexa notification. See [Real-event pipeline acceptance](REAL_EVENT_PIPELINE_ACCEPTANCE.md).
+
 ## Camera-source follow-up and real-event acceptance
 
 Integrated `experiment/hg-panasonic-service-transport-06` at

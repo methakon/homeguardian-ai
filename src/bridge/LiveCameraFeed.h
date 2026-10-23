@@ -180,9 +180,20 @@ public:
         CameraFrame out;
         {
             std::lock_guard<std::mutex> lock(m_);
+            // Cadence is enforced HERE, on the server, not only in the browser: one fetch per
+            // minimum interval regardless of how many callers or tabs ask. A refused request is
+            // NOT a camera failure and does not advance the attempt clock.
+            if (last_attempt_at_ms_ != 0 &&
+                now_ms - last_attempt_at_ms_ < LiveCameraPolicy::kMinFetchIntervalMs) {
+                out.error = "rate_limited";
+                return out;
+            }
+            if (last_attempt_at_ms_ != 0 && now_ms < last_attempt_at_ms_) {
+                out.error = "clock_went_backward";   // fail closed rather than trust a rewound clock
+                return out;
+            }
             last_attempt_at_ms_ = now_ms;
         }
-
         if (!cfg_.allow_plaintext) {
             out.error = "plaintext_not_enabled";
             record_failure(out.error, now_ms);
@@ -336,8 +347,9 @@ public:
         j += ",\"provenance\":\"" + s.provenance + "\"";
         j += ",\"delivery\":\"" + s.delivery + "\"";
         j += ",\"is_continuous_video\":false";
-        // A preview is not detector input. Keep this explicit until bounded
-        // decoding, source authorization and the native writer are connected.
+        // These two keys are the DEFAULT (analysis not wired on this object). The portal
+        // overwrites them with the real value when --camera-analysis is enabled, so a preview
+        // is never labelled as detector input by default.
         j += ",\"analysis_connected\":false";
         j += ",\"analysis_state\":\"not_wired\"";
         j += ",\"connected\":" + std::string(s.state == FeedState::Live || s.state == FeedState::Stale ? "true" : "false");

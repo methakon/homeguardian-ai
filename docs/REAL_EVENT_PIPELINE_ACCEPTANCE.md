@@ -2,16 +2,22 @@
 
 ## Current verdict
 
-**NOT ACCEPTED for physical-camera event analysis or automatic Alexa notification.**
+**WIRED for motion and statistical change only; still NOT physical or production accepted.**
 The camera-source follow-up integrates source tip
-`98280bf4ffb1f3b8147f3e81256657735191adea` with main after `7e87535`.
-Fetching that branch again returned the same tip. No deployment, hardware capture,
-cloud invocation, sensor activation or existing service reconfiguration was performed.
+`98280bf4ffb1f3b8147f3e81256657735191adea` with main after `7e87535`. Fetching that
+branch again returned the same tip.
 
-The imported camera route is an operator-authorized **refreshing JPEG snapshot**
-viewer, not continuous video and not an analysis worker. Its status explicitly
-reports `analysis_connected=false`. Successful preview requests must not be counted
-as analyzed events, persisted alerts or notifications.
+When analysis is explicitly enabled for a named, registry-authorized source, each
+fetched JPEG is bounded-decoded to a 160x120 luma plane, measured by the existing
+`CameraActivitySession`/`ActivityChangeDetector`, submitted to the existing
+`Pipeline` with `camera-motion-activity` as the explicit evidence allowlist, and a
+qualifying alert is committed to the durable store **before** cooldown advances.
+The existing MCP reader and the existing ASK intents then report it.
+
+Everything below remains true: this is a refreshing snapshot source, not continuous
+video; no identity, visitor, fall, speech, animal or emergency classifier exists;
+and no deployment, hardware capture or cloud invocation was performed here. With
+analysis off, the route is still a preview only and reports `analysis_connected=false`.
 
 ## Nine-category capability assessment
 
@@ -20,38 +26,62 @@ are relative to the integrated checkout.
 
 | Requested category | Existing implementation | Physical-camera status |
 |---|---|---|
-| People and household activity | `src/core/CameraActivitySession.cpp` measures changes between decoded luma planes; explicitly excludes identification of people, gestures and activities | JPEG preview is not decoded or submitted to this session; motion analysis is not person recognition |
-| Authorized camera/video events | Snapshot fetcher plus separate `src/camera/RegistryAuthorizer.cpp` device identity/consent/revocation checks | Preview now requires operator authorization, explicit plaintext opt-in, a secure password file and capture enabled; device-registry authorization and continuous analysis are not connected to this route |
+| People and household activity | `src/core/CameraActivitySession.cpp` measures changes between decoded luma planes; explicitly excludes identification of people, gestures and activities | **Wired**: fetched frames are decoded and analysed when analysis is enabled — reported strictly as motion, never as a person or activity |
+| Authorized camera/video events | Snapshot fetcher plus `src/camera/RegistryAuthorizer.cpp` identity/consent/purpose/revocation checks, re-read before every acquisition and before every commit | **Wired** for snapshots: unauthorized, unpaired, revoked, consent-withdrawn or capture-disabled sources are refused before any fetch, and withdrawal resets baseline/policy/history |
 | Audio/environment sounds | `src/audio/AudioActivitySession.cpp` analyzes PCM level and statistical change; `src/hg_audio_bridge.cpp` supplies real microphone PCM | JPEG has no audio; a separately authorized microphone/audio transport is required, and semantic sound recognition is not established |
 | Voice/spoken interactions | `src/voice/VoiceResponseController.cpp` produces spoken output; ASK accepts configured intents | No camera-side speech recognition; spoken output and Alexa intent handling are not local ASR |
 | Visitor/delivery events | `src/core/SecurityObservation.h` represents motion, presence and contact states | No validated visitor/package recognition or delivery classifier found; generic motion must not be labelled a delivery |
-| Unusual household activity | `ActivityChangeDetector`, `AnomalyMonitor` and vector drift components; ingress calls motion/audio change detectors | Statistical mechanisms exist, but portal snapshots do not reach them; a deviation does not establish a dangerous event |
+| Unusual household activity | `ActivityChangeDetector` (level/trend) plus `AnomalyMonitor` (z-score, advisory only — not in the evidence allowlist) | **Wired** as statistical change over real decoded frames; a deviation is reported and does not by itself establish a dangerous household event |
 | Falls/potential safety incidents | `SyntheticImpactClassifier` and `SyntheticImpactRule` demonstrate transient-then-stillness with synthetic intensities | Not physical fall detection; never route generic camera motion into synthetic critical-impact evidence |
 | Routine changes | `src/core/Routine.h` stores configuration; scalar/vector baseline detectors measure numerical change | No wired household schedule-learning/evaluation path found; a missing observation means not confirmed, not a missed medication/meal |
 | Animal/environment activity | `src/core/AnimalActivity.cpp` evaluates bounded hypotheses; `PrecursorSuite` requires corroborating motion/audio/vector/environment inputs | Not connected to physical portal capture; JPEG alone cannot provide all required inputs; no species or disaster prediction claim |
 
-## First missing physical hop and downstream gates
+## Implemented analysis path, and what is still missing
 
-Current preview path:
+Implemented, opt-in (`--camera-analysis` and an explicitly named source):
 
-    authenticated browser request -> bounded HTTP JPEG fetch -> browser image
-
-Required analysis path, **not implemented by this merge**:
-
-    source identity + current consent/revocation/capture checks
-    -> bounded acquisition independent of an open browser
-    -> bounded decoding and feature extraction
-    -> timestamped, provenance-preserving observations
-    -> qualified native detector/fusion decisions
-    -> durable alert commit by the authorized writer
+    operator-authorized browser request
+    -> source identity + consent/purpose/revocation/capture re-read from the registry
+    -> bounded HTTP JPEG fetch (server-enforced cadence)
+    -> bounded ffmpeg decode to one 160x120 luma plane
+    -> existing CameraActivitySession/ActivityChangeDetector observation
+    -> existing Pipeline + detection rule (explicit allowlist: camera-motion-activity)
+    -> durable commit BEFORE cooldown state advances (admit_durable)
     -> independent MCP read of the same alert ID
-    -> established ASK/mailbox response
+    -> existing ASK intents speak the same count/severity
+
+Configuration contract:
+
+    hg_alexa_bridge --http CONFIG CREDS --port P --secret-file S --uploads-dir D \
+      --camera-host H --camera-port P2 --camera-allow-plaintext \
+      --camera-password-file PW --camera-analysis --camera-registry REG.json \
+      --camera-device-id ID --camera-credential-id <64 hex>
+    HG_BRIDGE_AUDIT_DB=<same file as HG_MCP_AUDIT_DB>
+
+Missing any of the analysis flags exits 3 before serving. Acquisition is triggered by
+the authorized frame request; there is no unattended background capture loop, so
+nothing is acquired while nobody is viewing.
+
+Still missing or unproven:
+
+- **Physical acceptance.** No real camera was contacted. The verified fixture is a
+  generated JPEG peer, and its provenance is derived as `synthetic` from the reserved
+  registry id — a fixture cannot be labelled a physical observation.
+- **Deployment.** Nothing was deployed; the working classic ASK/SQS/phone lane is
+  unchanged.
+- **Proactive Alexa delivery.** The established path is request/response. An
+  `alerts_delivered` counter or a spoken summary is not unsolicited notification.
+- **Continuous video.** Snapshot polling only; the H.264 path still needs a streaming
+  client and muxer.
+- **Categories without an implementation** (audio, speech, visitors/deliveries, falls,
+  routines, animals, emergencies) are reported `unavailable` in the status payload
+  rather than synthesized from motion.
 
 Additional unresolved gates:
 
-- The camera session's `camera-motion-activity` detector is not in the conservative
-  default fusion allowlist. Configure intended evidence explicitly; do not admit
-  all detectors or lower thresholds to force alerts.
+- The camera path uses the documented episode opt-in because the default rule needs
+  two usable votes that one real sensor cannot produce. Thresholds were not lowered;
+  an empty allowlist ("accept all") is still refused.
 - Portal, ingress and MCP use different database defaults. The acceptance fixture
   aligns the writer/reader explicitly; that does not align a deployed installation.
 - Ingress/Application policy admission precedes persistence. A failed write can
@@ -85,6 +115,17 @@ not a reason to replace the established working lane.
   loading, unauthenticated fetch, missing plaintext opt-in, malformed-port abort
   and capture-switch bypass before their corrections.
 - Portal smoke: **38 checks passed**, in a temporary working directory and store.
+- Camera analysis focused target: **4 cases / 146 assertions passed** (CTest 1/1):
+  bounded decode, server-side cadence, fail-closed authorization, durable commit and
+  post-revocation reset.
+- Independent end-to-end camera check (**generated JPEG peer, not a camera**):
+  **40 frames acquired → 40 observations → 2 durable commits** with
+  `observations_processed=40`, `decode_failures=0`, `commit_failures=0`,
+  `suppressed_alerts=4`; the same alert IDs, count and severity were read back from
+  SQLite and the separate MCP process, and both ASK intents spoke
+  "There are 2 alerts recorded. The highest severity is warning." Five authorization
+  negatives (capture disabled, consent withdrawn, revoked, unpaired, credential
+  mismatch) each refused with **zero** camera requests reaching the peer.
 - Complete runtime catalogue: **10 IDs**, executed with capture on and off,
   **20 cases / 40 actual Python ASK SDK responses verified**. Each case stops its
   writer before comparing exact rule-output IDs/count/severity with SQLite, a

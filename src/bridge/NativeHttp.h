@@ -252,6 +252,31 @@ inline bool is_loopback_authority(std::string_view host) {
     return h == "127.0.0.1" || h == "localhost";
 }
 
+// One explicitly configured public hostname, for a deliberate reverse-proxy/tunnel
+// deployment. Empty by default: a missing setting keeps the loopback-only policy exactly
+// as it was, so an unconfigured portal cannot be reached through any proxy.
+inline std::string_view configured_public_host() {
+    // Read per request so a test (or an operator) can change it without a restart,
+    // and so the default stays "unset => loopback only".
+    const char* v = std::getenv("HG_HTTP_PUBLIC_HOST");
+    return (v != nullptr && *v != '\0') ? std::string_view(v) : std::string_view();
+}
+
+inline bool is_configured_public_host(std::string_view host) {
+    const std::string_view allowed = configured_public_host();
+    if (allowed.empty() || host.empty()) return false;
+    // Host may carry a port; compare the authority's host part exactly.
+    const auto colon = host.find(':');
+    const std::string_view h = colon == std::string_view::npos ? host : host.substr(0, colon);
+    return h == allowed;
+}
+
+inline bool is_configured_public_origin(std::string_view origin) {
+    const char* v = std::getenv("HG_HTTP_PUBLIC_ORIGIN");
+    if (v == nullptr || *v == '\0' || origin.empty()) return false;
+    return origin == v;
+}
+
 inline std::string response(unsigned status, std::string_view mime, const std::string& body) {
     const char* reason = "Error";
     switch (status) {
@@ -381,12 +406,14 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         if (key == "host") {
             if (host_seen) return json_error(400, "malformed");
             host_seen = true;
-            if (!is_loopback_authority(value)) return json_error(403, "forbidden_host");
+            if (!is_loopback_authority(value) && !is_configured_public_host(value))
+                return json_error(403, "forbidden_host");
         } else if (key == "origin") {
             if (origin_seen) return json_error(400, "malformed");  // duplicate
             origin_seen = true;
             // Exact same-origin (scheme + loopback host + this listener's port).
-            if (!is_same_local_origin(value, server_port)) origin_ok = false;
+            if (!is_same_local_origin(value, server_port) && !is_configured_public_origin(value))
+                origin_ok = false;
         } else if (key == "content-length") {
             // A cheap digit-count guard that keeps the accumulation below from overflowing. It was
             // 6 digits (a 999,999-byte maximum), which was correct while the only bodies were "{}"

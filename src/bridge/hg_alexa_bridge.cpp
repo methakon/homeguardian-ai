@@ -40,6 +40,7 @@
 #include "bridge/NativeHttp.h"
 #include "bridge/PortalUploads.h"
 #include "bridge/LiveCameraFeed.h"
+#include "bridge/CameraAnalysis.h"
 #include "hg_web_assets.h"
 
 #include <chrono>
@@ -662,7 +663,9 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                   const std::string& camera_host = std::string(),
                   uint16_t camera_port = 80,
                   const std::string& camera_user = std::string("admin"),
-                  const std::string& camera_password = std::string()) {
+                  const std::string& camera_password = std::string(),
+                  bool camera_analysis = false, const std::string& camera_registry = "",
+                  const std::string& camera_device_id = "", const std::string& camera_credential_id = "") {
     // Bounded retention for the BRIDGE's own durable alert store. The config the
     // bridge is handed declares alert_retention_days (30 by default) and the
     // demo server writes to its own audit DB, so honour the retention window
@@ -687,6 +690,8 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                    std::chrono::steady_clock::now().time_since_epoch())
             .count();
     };
+    std::unique_ptr<portal::CameraAnalysis> analysis;
+    if (camera_analysis) analysis = std::make_unique<portal::CameraAnalysis>(camera_registry, camera_device_id, camera_credential_id, audit);
     // The live physical camera. Constructed only when the operator named a host on the command
     // line, so an unconfigured portal has no camera object at all. The credential arrives from a
     // FILE (see --camera-password-file); it is never read from argv and never logged.
@@ -767,6 +772,10 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
             // LIVE PHYSICAL CAMERA status. Reports the true state and its own delivery mechanism.
             // It reports NOTHING when no camera is configured, rather than inventing a device.
             status_out = 200;
+            if (analysis) {
+                if (!app.get_status().capture_enabled.load()) analysis->withdraw();
+                else analysis->authorize();
+            }
             if (!live_camera) {
                 out["ok"] = true;
                 out["configured"] = false;
@@ -775,9 +784,23 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
             } else {
                 out["ok"] = true;
                 out["configured"] = true;
-                out["source_class"] = "live_physical_camera";
-                out["note"] = "physical observation; distinct from synthetic demo and uploaded replay";
+                // The class the panel shows is derived from the ANALYSIS provenance when analysis is
+                // on, so a fixture device (reserved synthetic id) can never be labelled physical.
+                const std::string source_provenance =
+                    analysis ? analysis->status()["provenance"].get<std::string>() : "none";
+                const bool synthetic_source = source_provenance == "synthetic";
+                out["source_class"] = synthetic_source ? "synthetic_camera_fixture"
+                                    : analysis ? (source_provenance == "real" ? "live_physical_camera"
+                                                                             : "unverified_camera_source")
+                                               : "live_physical_camera";
+                out["note"] = synthetic_source
+                    ? "synthetic fixture camera; not a physical camera observation"
+                    : "physical observation; distinct from synthetic demo and uploaded replay";
+                out["analysis"] = analysis ? analysis->status() : json{{"enabled",false},{"state","disabled"}};
                 out["camera"] = json::parse(live_camera->status_json(live_now_ms()));
+                out["camera"]["analysis_connected"] = static_cast<bool>(analysis);
+                out["camera"]["analysis_state"] = analysis ? analysis->status()["state"] : json("disabled");
+                if (analysis) out["camera"]["provenance"] = analysis->status()["provenance"];
             }
         } else if (req.op == "feed") {
             // Uploaded media, always labelled simulated. Never a live camera, never a claim that a device
@@ -874,19 +897,26 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
     // something else in its place.
     hg_native_http::CameraHandler camera_handler;
     if (live_camera) {
-        camera_handler = [&live_camera, &live_now_ms, &app](int& cam_status, std::string& mime_out) -> std::string {
+        camera_handler = [&live_camera, &live_now_ms, &app, &analysis](int& cam_status, std::string& mime_out) -> std::string {
             if (!app.get_status().capture_enabled.load()) {
+                if (analysis) analysis->withdraw();
                 cam_status = 503;
                 mime_out = "application/json";
                 return R"({"ok":false,"error":"capture_disabled"})";
             }
+            if (analysis && !analysis->authorize()) {
+                cam_status=403; mime_out="application/json";
+                return R"({"ok":false,"error":"source_unauthorized"})";
+            }
             const auto frame = live_camera->fetch_frame(live_now_ms());
             if (!frame.ok) {
+                if (analysis) analysis->note_no_frame();
                 // Fail honestly: a status code and a reason, never a stale frame dressed as live.
                 cam_status = 503;
                 mime_out = "application/json";
                 return std::string(R"({"ok":false,"error":"camera_unavailable"})");
             }
+            if (analysis) analysis->process(frame.jpeg);
             cam_status = 200;
             mime_out = "image/jpeg";
             return std::string(frame.jpeg.begin(), frame.jpeg.end());
@@ -916,7 +946,8 @@ int main(int argc, char* argv[]) {
     std::string camera_user = "admin";
     std::string camera_password;          // loaded from a 0600 file, NEVER from argv
     std::string camera_password_file;
-    bool camera_allow_plaintext = false;
+    bool camera_allow_plaintext = false, camera_analysis = false;
+    std::string camera_registry, camera_device_id, camera_credential_id;
     int base = 1;
     if (argc >= 2 && std::string(argv[1]) == "--http") {
         http_mode = true;
@@ -959,6 +990,14 @@ int main(int argc, char* argv[]) {
         } else if (a == "--token" && i + 1 < argc) {
             std::cerr << "SECURITY WARNING: passing --token on command line exposes credential in /proc and ps. Use --token-file or HG_HTTP_TOKEN instead.\n";
             http_token = argv[++i];
+        } else if (a == "--camera-analysis") {
+            camera_analysis = true;
+        } else if (a == "--camera-registry" && i + 1 < argc) {
+            camera_registry = argv[++i];
+        } else if (a == "--camera-device-id" && i + 1 < argc) {
+            camera_device_id = argv[++i];
+        } else if (a == "--camera-credential-id" && i + 1 < argc) {
+            camera_credential_id = argv[++i];
         } else if (a == "--camera-host" && i + 1 < argc) {
             camera_host = argv[++i];
         } else if (a == "--camera-port" && i + 1 < argc) {
@@ -998,6 +1037,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (camera_analysis && (!http_mode || camera_host.empty() || camera_registry.empty() ||
+        camera_device_id.empty() || camera_credential_id.empty())) {
+        std::cerr << "camera analysis requires explicit source configuration\n"; return 3;
+    }
     // Never silently discard the configured camera credential or opt into
     // plaintext merely because a host was supplied. Read the exact opened file
     // with owner-only permissions, no symlink following and a hard size cap.
@@ -1070,7 +1113,7 @@ int main(int argc, char* argv[]) {
     PersistenceAudit* audit = nullptr;
     std::unique_ptr<PersistenceAudit> audit_owner;
     try {
-        audit_owner = std::make_unique<PersistenceAudit>("homeguardian_bridge_audit.db");
+        audit_owner = std::make_unique<PersistenceAudit>(std::getenv("HG_BRIDGE_AUDIT_DB") ? std::getenv("HG_BRIDGE_AUDIT_DB") : "homeguardian_bridge_audit.db");
         audit = audit_owner.get();
     } catch (const std::exception&) {
         audit = nullptr;  // degraded -> provider reports unavailable
@@ -1119,7 +1162,8 @@ int main(int argc, char* argv[]) {
     if (http_mode) {
         return run_http_mode(app, audit, *verifier, provider, http_token, http_port,
                              alert_retention_days, http_secret, uploads_dir,
-                             camera_host, camera_port, camera_user, camera_password);
+                             camera_host, camera_port, camera_user, camera_password,
+                             camera_analysis, camera_registry, camera_device_id, camera_credential_id);
     }
 
     std::ios::sync_with_stdio(false);

@@ -59,6 +59,9 @@ public:
     // when the alert should be delivered (first occurrence, re-notification
     // after cooldown, or a fresh condition after it cleared).
     bool admit(const Alert& alert, bool& suppressed);
+    // Atomically advance cooldown only after the durable sink succeeds. Callback
+    // must not re-enter this policy. Failed writes do not count as delivery.
+    bool admit_durable(const Alert& alert, bool& suppressed, const std::function<bool()>& commit);
 
     // Mark that a cycle produced NO alert for a key (condition cleared). Re-arms
     // the key so its next alert is delivered immediately. Unknown keys are

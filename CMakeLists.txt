@@ -329,6 +329,12 @@ target_link_libraries(hg_audio_bridge PRIVATE
 add_executable(hg_alexa_bridge
     ${HG_WEB_ASSETS}          # generated: dependency ordering + rebuild trigger
     src/bridge/hg_alexa_bridge.cpp
+    src/core/CameraActivitySession.cpp
+    src/core/ChangeCharacter.cpp
+    src/core/ActivityDetectors.cpp
+    src/core/BoundedFeatures.cpp
+    src/net/DeviceRegistry.cpp
+    src/camera/RegistryAuthorizer.cpp
     # Sensor/integration status route: the adapter's own config validation and the
     # real (empty) device registry are reported to the dashboard, so these two
     # translation units ARE referenced by the bridge.
@@ -728,6 +734,43 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         )
         target_link_libraries(homeguardian_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
     endif()
+
+    # Focused camera-analysis tests: JPEG fixture -> bounded decode -> existing native
+    # motion/episode detection -> qualified fusion/policy -> durable alert. Kept as its own
+    # executable so this path can be run (and read) without building the whole suite.
+    add_executable(hg_camera_analysis_tests
+        ${CMAKE_SOURCE_DIR}/tests/portal/test_camera_analysis.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/CameraActivitySession.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ChangeCharacter.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ActivityDetectors.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/BoundedFeatures.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Observation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/UUID.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AlertPolicy.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/FusionEngine.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ActivityEpisode.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Pipeline.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/EventValidator.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Logger.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnomalyDetector.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnomalyMonitor.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/PersistenceAudit.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/DeviceRegistry.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/RegistryAuthorizer.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/SQLiteDatabase.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/SchemaManager.cpp
+        ${CMAKE_SOURCE_DIR}/src/persistence/AlertRepository.cpp
+    )
+    target_include_directories(hg_camera_analysis_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/third_party/sqlite
+        ${CMAKE_SOURCE_DIR}/third_party/catch2/single_include)
+    target_link_libraries(hg_camera_analysis_tests PRIVATE
+        catch2_main spdlog::spdlog nlohmann_json::nlohmann_json sqlite3_static)
+    add_test(NAME hg_camera_analysis_tests COMMAND hg_camera_analysis_tests)
+    set_tests_properties(hg_camera_analysis_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     include(CTest)
     add_test(NAME homeguardian_tests COMMAND homeguardian_tests)

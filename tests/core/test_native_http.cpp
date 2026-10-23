@@ -146,6 +146,40 @@ TEST_CASE("NativeHttp: physical camera reads require operator authorization",
     REQUIRE(frames == 1);
 }
 
+TEST_CASE("NativeHttp: a public hostname is refused unless explicitly configured",
+          "[nativehttp][public-host]") {
+    Rec h;
+    auto handler = recording_handler(h);
+    const std::string request =
+        "GET /api/status HTTP/1.1\r\nHost: portal.example.test\r\n"
+        "Origin: https://portal.example.test\r\n\r\n";
+    REQUIRE(starts_with(dispatch(request, "", handler), "HTTP/1.1 403"));
+    REQUIRE(h.calls == 0);
+
+    setenv("HG_HTTP_PUBLIC_HOST", "portal.example.test", 1);
+    setenv("HG_HTTP_PUBLIC_ORIGIN", "https://portal.example.test", 1);
+    const auto allowed = dispatch(request, "", handler);
+    unsetenv("HG_HTTP_PUBLIC_HOST");
+    unsetenv("HG_HTTP_PUBLIC_ORIGIN");
+    REQUIRE(starts_with(allowed, "HTTP/1.1 200"));
+    REQUIRE(h.calls == 1);
+
+    // Any other host and any other origin stay refused even with the setting present.
+    setenv("HG_HTTP_PUBLIC_HOST", "portal.example.test", 1);
+    setenv("HG_HTTP_PUBLIC_ORIGIN", "https://portal.example.test", 1);
+    const auto other_host = dispatch(
+        "GET /api/status HTTP/1.1\r\nHost: evil.example.test\r\nOrigin: https://portal.example.test\r\n\r\n",
+        "", handler);
+    const auto other_origin = dispatch(
+        "GET /api/status HTTP/1.1\r\nHost: portal.example.test\r\nOrigin: https://evil.example.test\r\n\r\n",
+        "", handler);
+    unsetenv("HG_HTTP_PUBLIC_HOST");
+    unsetenv("HG_HTTP_PUBLIC_ORIGIN");
+    REQUIRE(starts_with(other_host, "HTTP/1.1 403"));
+    REQUIRE(starts_with(other_origin, "HTTP/1.1 403"));
+    REQUIRE(h.calls == 1);
+}
+
 TEST_CASE("NativeHttp: /api/status and scenario invoke the real handler", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
     auto s = dispatch(req("GET /api/status HTTP/1.1"), "<html>", handler);

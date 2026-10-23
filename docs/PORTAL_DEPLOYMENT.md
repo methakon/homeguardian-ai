@@ -141,12 +141,21 @@ no firewall rule, no DNS record, no mail or SSH configuration, no container.
   carry `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and a same-origin CORP.
 * **The private MCP surface is not exposed** by this portal.
 
-**Unproven integration — read before exposing this with a tunnel.** The transport's `Origin` check requires
-the request to come from *this* loopback host and port, which is a strong defence while the portal is used
-locally, but a reverse proxy or tunnel presents a *different* scheme/host and will be refused. Putting a
-tunnel in front of the portal therefore needs that check widened deliberately — for instance by accepting
-a configured external origin while keeping the loopback bind and the CSRF session requirement — and that
-change has not been made or tested here. Do not assume an HTTPS front will work until it is.
+**Serving behind a reverse proxy or tunnel.** A proxy presents a different scheme/host, which the
+loopback-only policy refuses by design. The supported way to publish the portal is to name exactly one
+public hostname:
+
+    HG_HTTP_PUBLIC_HOST=portal.example.org
+    HG_HTTP_PUBLIC_ORIGIN=https://portal.example.org
+
+Both are empty by default, so an unconfigured portal stays loopback-only and a proxy cannot reach it.
+Only that exact `Host` and that exact `Origin` are accepted; every other host or origin is still refused
+with 403, the listener still binds `127.0.0.1`, and mutations still require the operator-secret CSRF
+session. Covered by `[nativehttp][public-host]`, including the negative cases.
+
+This is how `homeguardian.berhampore.in` is published: a Cloudflare tunnel on the deployment host whose
+ingress points at `http://127.0.0.1:<portal port>`, with the portal bound to loopback. No inbound port is
+opened on that host and no other hostname is affected.
 
 Other unverified items: the login/authorization experience is the operator-secret panel only (no per-user
 accounts); and the dashboard's behaviour when the *application* is degraded (as opposed to the upload store
@@ -167,9 +176,26 @@ owner-owned regular file, not a symlink; it is bounded and rejected when absent
 or insecure. The configured media-capture switch must be enabled for a fetch.
 Do not enable it without authorization for the intended source and scene.
 
-This is a refreshing snapshot preview, **not continuous video or event
-analysis**. The source's detector/registry integration remains incomplete and
-the UI reports `event analysis: not connected`. See
+This is a refreshing snapshot preview, **not continuous video**. Analysis is opt-in
+and requires an explicitly named, registry-authorized source:
+
+    --camera-analysis --camera-registry REG.json \
+    --camera-device-id <id> --camera-credential-id <64 hex>
+
+With those gates, every authorized fetched frame is decoded to a bounded luma plane and
+measured by the existing motion/statistical detectors; a qualifying alert is committed
+durably and is then readable through the existing MCP server and ASK intents. Anything
+missing exits 3 before serving. The registry is re-read before every acquisition and
+before every commit, so revocation, withdrawn consent or capture-disable takes effect on
+the next request and resets the baseline. Identity is operator-configured, never taken
+from the browser.
+
+Set `HG_BRIDGE_AUDIT_DB` (writer) to the same file as `HG_MCP_AUDIT_DB` (reader), or the
+Alexa summary will read a different store. Without `--camera-analysis` the UI reports
+`event analysis: not connected`.
+
+Unsupported categories (audio, speech, identity, visitors, falls, routines, animals,
+emergencies) are reported `unavailable`; nothing is inferred from motion. See
 `REAL_EVENT_PIPELINE_ACCEPTANCE.md` before making any real monitoring or Alexa
 notification claim. No deployment or physical-camera acceptance is implied by
 these source instructions.

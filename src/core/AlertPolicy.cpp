@@ -35,6 +35,10 @@ void AlertPolicy::evict_if_needed() {
 }
 
 bool AlertPolicy::admit(const Alert& alert, bool& suppressed) {
+    return admit_durable(alert, suppressed, [] { return true; });
+}
+
+bool AlertPolicy::admit_durable(const Alert& alert, bool& suppressed, const std::function<bool()>& commit) {
     std::lock_guard<std::mutex> lk(m_);
     suppressed = false;
 
@@ -44,6 +48,7 @@ bool AlertPolicy::admit(const Alert& alert, bool& suppressed) {
     auto it = state_.find(key);
     if (it == state_.end()) {
         // First time we've seen this key: always deliver (fresh condition).
+        if (!commit()) return false;
         KeyState st;
         st.last_delivered = now;
         st.active = true;
@@ -58,6 +63,7 @@ bool AlertPolicy::admit(const Alert& alert, bool& suppressed) {
     KeyState& st = it->second;
 
     if (!st.active) {
+        if (!commit()) return false;
         // Condition had cleared and now re-fired: deliver immediately (fresh).
         st.active = true;
         st.last_delivered = now;
@@ -73,6 +79,7 @@ bool AlertPolicy::admit(const Alert& alert, bool& suppressed) {
         (elapsed < std::chrono::system_clock::duration::zero());
 
     if (cooldown_expired) {
+        if (!commit()) return false;
         // Re-notification after cooldown (or clock went backward): deliver.
         st.last_delivered = now;
         delivered_count_++;
