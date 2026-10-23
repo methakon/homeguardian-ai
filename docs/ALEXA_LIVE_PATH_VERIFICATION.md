@@ -62,10 +62,11 @@ SHA-256 of deployed files compared with `main` (`abaf5ea`):
 | `deploy/coordinator/alexa_mailbox_worker.py` | `ce2f2bd7debf…` | yes |
 | `deploy/coordinator/homeguardian-alexa-mailbox.service` | `8e3f39a85626…` | yes |
 | `deploy/coordinator/service.js` | `6c0e49739458…` | yes |
-| `web_mcp/outbound_bridge/coordinator.js` | `216f9d375bc5…` | **no** — deployed `216f9d37`, current `214e9cee` |
+| `web_mcp/outbound_bridge/coordinator.js` | `216f9d375bc5…` | **no** — deployed content digest `216f9d37…`, current `214e9cee…` (these are SHA-256 digests, not commit ids) |
 
 The deployed coordinator therefore **predates** the committed coordinator
-hardening (`8458cd8`). That fix is source-tested and pushed, not deployed; the
+hardening (commit `8458cd8`, whose `coordinator.js` digest is `214e9cee…`). That
+fix is source-tested and pushed, not deployed; the
 running coordinator still has the malformed-input/Lifecycle exposure documented in
 `docs/COORDINATOR_SECURITY_FIXES.md`. Deploying it is a separate approved change and
 was deliberately not performed while the Alexa lane is working.

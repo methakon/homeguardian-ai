@@ -191,8 +191,9 @@ change and with capture still disabled:
   role) obtained validated correlated replies from the deployed worker —
   2.634 s for status and 1.190 s for alerts, 2 of 2 correlated.
 - **Deployed code and permissions:** worker, unit and `service.js` SHAs match
-  `main`; the deployed `coordinator.js` (`216f9d37…`) **predates** the committed
-  coordinator hardening (`214e9cee…`), so that fix remains source-tested and
+  `main`; the deployed `coordinator.js` (content digest `216f9d37…`) **predates**
+  the committed coordinator hardening (commit `8458cd8`, digest `214e9cee…`), so
+  that fix remains source-tested and
   undeployed. Worker identity keeps one Active key, no groups, no managed policies
   and only the two TLS-required, queue-scoped statements.
 
