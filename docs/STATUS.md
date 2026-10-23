@@ -112,17 +112,22 @@ Fresh phone evidence distinguishes the fault: its read-only native self-probe
 reports `Running`, `read_only=true`, `capture_enabled=false`; installed APK bytes
 match the previously accepted artifact. The VPN handshake is fresh and the
 coordinator's edge TCP connection comes from the phone peer. However private
-initialize/status requests now return HTTP 200 with only `{}`, not valid JSON-RPC.
+Initialize/status requests then returned HTTP 200 with only `{}`, not valid JSON-RPC.
 HTTP/auth/session admission therefore MUST NOT be called a successful native
-initialize or tool result. Probe sessions were torn down. The empty bridge reply
-remains unresolved; the working local core is not evidence that relay data works.
+initialize or tool result. Probe sessions were torn down. **SUPERSEDED 2026-10-23
+21:43 IST** — the root cause was the installed bridge retaining a stale native
+session; after reconnecting only that bridge, valid JSON-RPC initialize/tool results
+were obtained (see [live path verification](ALEXA_LIVE_PATH_VERIFICATION.md)). The
+permanent bridge-side recovery fix is still open.
 No phone reinstall/restart, capture, VPN, firewall, mail or public-listener change
 was made. Application-private access was denied as expected and not bypassed.
 
-The initial mailbox worker has 11 local fixture tests, including strict tool and
+The initial mailbox worker had 11 local fixture tests, including strict tool and
 destination allowlists, stale/replayed request refusal, aggregate-only replies,
-authenticated MCP session cleanup and HTTP-200-empty-object rejection. It is
-source-tested only, not deployed or accepted end to end.
+authenticated MCP session cleanup and HTTP-200-empty-object rejection. It was
+source-tested only at that point. **SUPERSEDED** — the worker is deployed, active and
+boot-enabled, and real correlated request/reply round trips have since passed
+([live path verification](ALEXA_LIVE_PATH_VERIFICATION.md)).
 
 The Alexa-side mailbox client and explicit backend transport selector are now
 implemented with matching producer/consumer contract tests. The combined Python
@@ -135,12 +140,14 @@ accepted only as an actual validated tool result, never as an unavailable defaul
 Managed hosting can use a gitignored, non-secret `mailbox_config.json` with exactly
 four deployment settings instead of requiring Lambda environment-edit permissions.
 It contains only region, queue URLs and the publisher role ARN, never credentials.
-The default deployment stays on the existing loopback/unavailable path until
-mailbox mode is explicitly configured. No mailbox Code deployment, running VPS
-worker, dedicated worker credential or hosted role trust is claimed. The queues'
-configuration is verified, but no genuine Alexa -> SQS -> native C++ -> Alexa
-round trip is accepted. The missing exact execution-role ARN and the empty private
-bridge reply remain concrete blockers; do not replace those gaps with fixtures.
+The default deployment stayed on the existing loopback/unavailable path until
+mailbox mode was explicitly configured. No mailbox Code deployment, running VPS
+worker, dedicated worker credential or hosted role trust was claimed at that point.
+**SUPERSEDED** — mailbox Code deployment was performed by the owner, the dedicated
+worker credential and VPS service exist, and genuine mailbox round trips pass; the
+execution-role ARN was supplied and the empty bridge reply was a stale-session
+effect. Owner-attested Alexa replies: status `Running`/capture disabled, alerts
+none recorded. See [live path verification](ALEXA_LIVE_PATH_VERIFICATION.md).
 
 ### Execution-role received; configuration moved to the existing .env
 
@@ -166,6 +173,34 @@ deployment was created; the empty private bridge replies remain unresolved.
 The dotenv revision passes **72 Python tests** under both tested SDK combinations,
 plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
 untracked; only code/tests/sanitized documentation are published.
+
+### RESOLVED — Alexa → mailbox → native C++ path re-verified (2026-10-23 21:43 IST)
+
+The earlier checkpoints below that describe an empty `{}` bridge reply and "no
+accepted mailbox round trip" are **SUPERSEDED**. Both are now proven against the
+deployed components, with no redeployment, restart, reinstall or configuration
+change and with capture still disabled:
+
+- **Native JSON-RPC, not HTTP-200/`{}`:** through the deployed private endpoint,
+  `initialize` returned `jsonrpc 2.0`, id 1, `protocolVersion 2025-11-25`,
+  `serverInfo {homeguardian-mcp 1.0.0}` and a session id; `tools/list` returned
+  exactly `get_alert_summary` and `get_homeguardian_status`; both `tools/call`s
+  returned genuine read-only payloads (`Running`, `capture_enabled=false`;
+  `alert_count=0`, empty severity); `DELETE` closed the session.
+- **Real mailbox request/reply:** operator-origin IAM (not root, not the hosted
+  role) obtained validated correlated replies from the deployed worker —
+  2.634 s for status and 1.190 s for alerts, 2 of 2 correlated.
+- **Deployed code and permissions:** worker, unit and `service.js` SHAs match
+  `main`; the deployed `coordinator.js` (`216f9d37…`) **predates** the committed
+  coordinator hardening (`214e9cee…`), so that fix remains source-tested and
+  undeployed. Worker identity keeps one Active key, no groups, no managed policies
+  and only the two TLS-required, queue-scoped statements.
+
+Full commands, vantage points and limits: [live path verification](ALEXA_LIVE_PATH_VERIFICATION.md).
+Still open: Alexa-Lambda-origin re-run (hosted Code unchanged since deployment),
+sustained reliability after the earlier unavailable launch, permanent bridge
+stale-session recovery, reboot/network recovery, deployed coordinator hardening,
+and any physical sensor-to-alert acceptance.
 
 ### Production detector wiring corrective batch — 2026-10-23
 
@@ -268,6 +303,10 @@ follow-up. Long-outage, reboot and changed-network recovery remain unverified.
 
 ### Historical checkpoint: real mailbox/native path recovered; Code deployment pending
 
+**Superseded 2026-10-23 21:43 IST** by [live path verification](ALEXA_LIVE_PATH_VERIFICATION.md):
+Code deployment happened, and native + mailbox round trips are re-verified. Retained
+for the recovery history below.
+
 Inspection of the accepted installed APK's actual DEX confirms its bridge sets
 the required Accept header. A memory-only trace of the already established phone
 control connection confirms the phone itself sent `body={}`/status 200; raw frames
@@ -300,7 +339,8 @@ alerts returned `alert_count=0`, empty highest severity, `read_only=true` in
 **1.659 s**. Correlation, tool schema, expiry and session cleanup were validated.
 These are genuine native results, not cached evidence or local fixture outputs.
 
-**At this historical checkpoint, Alexa-Lambda origin / simulator-to-native was NOT VERIFIED.** The Code package
+**At this historical checkpoint, Alexa-Lambda origin / simulator-to-native was NOT VERIFIED** (later owner-reported
+simulator replies and the re-verified native/mailbox path supersede the deployment gate). The Code package
 has not been updated from this session. The browser reaches Amazon Sign-In, no
 saved login is available, and secure login prompting is unavailable in this CLI.
 The worker's publisher-role trust is data access, not hosted-Code administration.

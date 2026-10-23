@@ -11,6 +11,16 @@
 
 ### Source hardening checkpoint (not a deployment receipt)
 
+**Deployed state, 2026-10-23 21:43 IST.** `homeguardian-alexa-mailbox` is active and
+boot-enabled on the coordinator host; `homeguardian-coordinator` is active. The
+deployed worker, its unit and `service.js` match `main`. The deployed
+`coordinator.js` does **not** yet include the hardening below — it predates the
+committed fix — so the running coordinator still carries the malformed-input and
+client-session exposure. Rolling that fix out is a separate approved change and was
+not performed while the Alexa lane is working. Native and mailbox round trips were
+re-verified without any restart or reconfiguration; see
+[live path verification](../../docs/ALEXA_LIVE_PATH_VERIFICATION.md).
+
 The coordinator now contains malformed HTTP/WS input and HTTP async-handler
 failures; credential rotation removes established-channel authority immediately.
 Unchanged-token reload preserves a connection. Superseded/revoked sockets cannot
