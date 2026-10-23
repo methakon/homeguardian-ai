@@ -2,6 +2,59 @@
 
 **Last updated:** 2026-10-23
 
+## Alexa Python recovery and supplied-source diagnosis — 2026-10-23
+
+The canonical voice adapter is `alexa_skill_python/`, restored on `main` in
+`0b0fde1efbf141cfc8ce9ef592afce42fccc2080`, with exported-Lambda/intent contracts in
+`8371e33de56d37e520ced9f96ae101b29c6c9e38`. Both commits were pushed to `origin/main`
+and their file blob hashes independently verified using the GitHub API. Python
+implementations were recoverable on other branches, not present in the reachable
+history of the inspected main baseline. This is missing integration, not proven
+deletion from main. The Node `alexa_skill/` prototype remains separate and unchanged.
+
+Owner-supplied source was exercised with real `boto3==1.28.78` and
+`ask-sdk-core==1.19.0`, using an explicitly synthetic backend (no AWS/backend
+requests). Both dependencies installed and passed `pip check`. Two deterministic
+source defects were reproduced for Launch, Help and Stop:
+
+- First supplied version exports `build_skill().lambda_handler` instead of
+  calling the factory. Invocation raises
+  `TypeError: SkillBuilder.lambda_handler() takes 1 positional argument but 3 were given`.
+- Second version calls the factory, but both versions' custom `_Response.build()`
+  assign a plain string to `Response.output_speech`. With the real SDK the second
+  version serializes `response.outputSpeech` as a string, not the required
+  `{type: PlainText, text: ...}` or SSML object. That is an invalid Alexa response.
+- The separately recovered historical `.reprompt()`/`.ask()` mismatch is a different
+  source defect; it is NOT present in these supplied versions. Do not attribute
+  the console failure to it without matching deployed source/logs.
+
+The canonical implementation uses the real SDK response builder and callable
+Lambda factory, validates malformed envelopes, escapes backend SSML text and
+rejects invalid counts. MCP transport initializes an authenticated session before
+the two allowlisted read-only tools, attempts authenticated teardown, bounds
+response size/timeouts and refuses redirects/proxies/non-loopback destinations.
+
+Local verification: **39 Python tests passed**, with both the canonical pinned
+SDK model (`1.43.0`) and the owner's dependency combination (which locally resolved
+SDK model `1.82.0`). Syntax compilation and dependency checks pass. Node regression:
+**77 passed, 0 failed**, using existing root `hg_build/hg_alexa_bridge` and
+`hg_build/homeguardian` binaries via `HG_BRIDGE_PATH`/`HG_APP_PATH`, not a fresh
+C++ build. An initial Node attempt failed because binaries were absent from the
+checkout's default build path; the explicit existing-binary run passed completely.
+
+**Deployment / simulator: BLOCKED, not accepted.** The existing configured Skill ID
+is available privately in root `.env` (`ALEXA_SKILL_ID`); it is not proof of the
+console display name or endpoint. Amazon console access reaches a sign-in wall;
+the configured AWS STS session is expired. The selected regional ARN, actual
+Lambda runtime/handler, deployed package and matching CloudWatch group remain
+unverified. No hosting, endpoint, permission, VPN or gateway change was made;
+no duplicate skill was created and no Alexa deployment/simulator pass is claimed.
+Use the existing skill only. Reauthenticate authorized console/AWS access to
+inspect its exact target before deploying; do not send secret keys or bearer tokens.
+The `utils.py` S3 helper is unused by the canonical handlers and needs no added
+S3 permissions. Alexa-cloud-to-private-C++ connectivity is still not established;
+unavailable voice responses are intentional, never fabricated household data.
+
 ## On-phone analyzer candidate — not yet deployed
 
 The approved in-place update is being prepared on the isolated Android branch.

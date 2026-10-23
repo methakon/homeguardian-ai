@@ -84,6 +84,20 @@ class TestLambdaEnvelope(unittest.TestCase):
         result = lf.lambda_handler(envelope("SessionEndedRequest"), None)
         self.assertFalse(speech(result))
 
+    def test_backend_text_cannot_break_ssml(self):
+        fixtures = [("HomeStatusIntent", "get_homeguardian_status", {"state": "<bad&state>"}),
+                    ("GetAlertSummaryIntent", "get_alert_summary", {"alert_count": 1, "highest_severity": "<bad&severity>"})]
+        for intent, method, data in fixtures:
+            with self.subTest(intent=intent), mock.patch.object(backend, method, return_value=data):
+                result = lf.lambda_handler(envelope("IntentRequest", intent), None)
+                ET.fromstring(speech(result))
+
+    def test_invalid_counts_are_not_spoken_as_real_alerts(self):
+        for count in [-1, True, "0", None]:
+            with self.subTest(count=count), mock.patch.object(backend, "get_alert_summary", return_value={"alert_count": count}):
+                result = lf.lambda_handler(envelope("IntentRequest", "GetAlertSummaryIntent"), None)
+                self.assertIn("no alert summary", speech(result))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -59,11 +59,21 @@ invented status, zero alerts, routines or camera analysis.
     .venv/bin/python -m unittest discover -s alexa_skill_python/test -v
     .venv/bin/python -m pip check
 
-The recovered baseline passed 26 tests with the actual SDK. Exported-Lambda
-contracts add malformed envelopes, full SDK serialization for every model intent,
-explicit Stop/Cancel session closure and fallback/routine behavior (33 tests total
-at this milestone). This is not a declaration that the legacy MCP transport is
-ready for live integration; backend/session and failure checks are still required.
+The recovered baseline passed 26 tests with the actual SDK. The current suite adds
+malformed envelopes, full SDK serialization for every model intent, explicit
+Stop/Cancel session closure, fallback/routine behavior, SSML escaping, invalid
+counts, initialization/session teardown, invalid configuration, timeout and
+oversized backend responses. Transport tests use explicitly synthetic fixtures;
+they are not evidence of live phone connectivity.
+
+The adapter authenticates initialize, tools/call and DELETE with the same bearer,
+uses the returned MCP session, and attempts cleanup even after tool failure.
+Responses are limited to 64 KiB; redirects and environment proxies are disabled
+so a loopback URL cannot forward credentials elsewhere. Each HTTP phase has a
+maximum one-second socket timeout, within a three-second phase-boundary budget.
+
+See the existing `docs/STATUS.md` Alexa checkpoint for the exact reproduction of
+the two owner-supplied source failures and current test/deployment evidence.
 
 ## Backend boundary
 

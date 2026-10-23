@@ -1,9 +1,8 @@
-"""HomeGuardian AI — Alexa custom skill (ASK SDK for Python, Alexa-hosted).
+"""HomeGuardian AI — read-only Alexa voice adapter using the real Python ASK SDK.
 
-DROP-IN TARGET: an Alexa-hosted (Python) skill, "Start from Scratch", en-US. Alexa-hosted stores code
-in its own Lambda editor and the model in the console, so this file is written to be pasted whole into
-the Code tab, with the model pasted into the Build tab. No build step, no dependencies beyond the SDK
-that Alexa-hosted provides.
+Target the EXISTING skill only. Verify its endpoint and runtime before deploying;
+Python source does not establish whether hosting is Alexa-hosted or standalone Lambda.
+The Lambda entry point is lambda_function.lambda_handler; see README.md for packaging.
 
 INTENTS IMPLEMENTED  (Launch, HomeStatus, RecentAlerts, Help, Stop)
   LaunchRequest                greeting, then the same status read as HomeStatus
@@ -28,14 +27,14 @@ WHAT IS DELIBERATELY NOT CLAIMED
   - No Alexa-cloud-to-hub access is established by these files. The private phone/VPS connection
     does not make an AWS Lambda's loopback reach the phone or authorize public gateway exposure.
   - No household sensor data is fabricated. If the hub returns nothing, the skill says nothing.
-  - No credentials are read, echoed, logged or spoken.
-  - Deployment to the console is NOT claimed: that requires the owner to create the skill and paste
-    these files. See README.md.
+  - Credentials are read only by the backend adapter and never echoed, logged or spoken.
+  - Deployment to the existing console skill is NOT claimed. Do not create a duplicate skill.
 """
 
 from __future__ import annotations
 
 import logging
+from html import escape
 
 import ask_sdk_core.utils as ask_utils
 from ask_sdk_core.dispatch_components import AbstractExceptionHandler, AbstractRequestHandler
@@ -91,15 +90,15 @@ def _status_speech(status: dict | None) -> str:
     parts: list[str] = []
     state = status.get("state")
     if isinstance(state, str) and state:
-        parts.append("The hub state is %s." % state)
+        parts.append("The hub state is %s." % escape(state))
     capture = status.get("capture_enabled")
     if isinstance(capture, bool):
         parts.append("Capture is %s." % ("enabled" if capture else "disabled"))
     devices = status.get("device_count")
-    if isinstance(devices, int):
+    if type(devices) is int and devices >= 0:
         parts.append("%d device%s registered." % (devices, "" if devices == 1 else "s"))
     alerts = status.get("alert_count")
-    if isinstance(alerts, int):
+    if type(alerts) is int and alerts >= 0:
         parts.append("%d alert%s recorded." % (alerts, "" if alerts == 1 else "s"))
 
     if not parts:
@@ -115,7 +114,7 @@ def _alerts_speech(summary: dict | None) -> str:
         return UNAVAILABLE_ALERTS_SPEECH
 
     count = summary.get("alert_count")
-    if not isinstance(count, int):
+    if type(count) is not int or count < 0:
         return "Your hub is reachable, but it returned no alert summary I can report."
     if count == 0:
         return "There are no alerts recorded for your home."
@@ -124,7 +123,7 @@ def _alerts_speech(summary: dict | None) -> str:
                                                 "" if count == 1 else "s")]
     severity = summary.get("highest_severity")
     if isinstance(severity, str) and severity:
-        parts.append("The highest severity is %s." % severity)
+        parts.append("The highest severity is %s." % escape(severity))
     return " ".join(parts)
 
 

@@ -18,7 +18,7 @@ So every failure path here returns `None`, and every caller in lambda_function.p
 
 SCOPE AND SAFETY
   - The endpoint is LOOPBACK by default (127.0.0.1:8790) and this module deliberately refuses to send
-    a request to a non-loopback host unless it is explicitly configured, because the mission states the
+    a request to a non-loopback host even when it is explicitly configured, because the mission states the
     phone-side MCP listener stays loopback-only. The existing private phone/VPS connection does not
     establish an Alexa-cloud route. We therefore make no claim of live Alexa remote access.
   - The bearer token is read from the environment at call time, never logged, never echoed into a
@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import time
 import urllib.error
 import urllib.request
 
@@ -41,8 +42,9 @@ import urllib.request
 DEFAULT_MCP_HOST = "127.0.0.1"
 DEFAULT_MCP_PORT = 8790
 
-# Bounded so a hung hub cannot hold an Alexa session open past its own timeout.
+# Socket timeouts plus a phase-boundary operation budget; this is not an Alexa-cloud route.
 CONNECT_TIMEOUT_S = 3.0
+MAX_BODY_BYTES = 64 * 1024
 
 TOOL_STATUS = "get_homeguardian_status"
 TOOL_ALERT_SUMMARY = "get_alert_summary"
@@ -62,7 +64,12 @@ class BackendUnavailable(Exception):
 
 def _endpoint() -> tuple[str, int]:
     host = os.environ.get("HG_MCP_HOST", DEFAULT_MCP_HOST)
-    port = int(os.environ.get("HG_MCP_PORT", str(DEFAULT_MCP_PORT)))
+    try:
+        port = int(os.environ.get("HG_MCP_PORT", str(DEFAULT_MCP_PORT)))
+    except ValueError:
+        raise BackendUnavailable("invalid port configuration") from None
+    if not 1 <= port <= 65535:
+        raise BackendUnavailable("invalid port configuration")
     if host not in ("127.0.0.1", "::1", "localhost"):
         # Explicit, loud, and refuses to proceed on a guess.
         raise BackendUnavailable("mcp host is not loopback; refusing to send")
@@ -71,7 +78,21 @@ def _endpoint() -> tuple[str, int]:
 
 def _token() -> str | None:
     token = os.environ.get("HG_MCP_TOKEN")
+    if token and ("\r" in token or "\n" in token):
+        raise BackendUnavailable("invalid token configuration")
     return token if token else None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _open(request, timeout):
+    # Neither proxy environment variables nor redirects may move credentials
+    # away from the explicitly allowed loopback destination.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    return opener.open(request, timeout=timeout)
 
 
 def _rpc(tool: str, household_id: str | None) -> dict:
@@ -85,48 +106,70 @@ def _rpc(tool: str, household_id: str | None) -> dict:
         # Not an error worth logging loudly: the local demo simply has no credential yet.
         raise BackendUnavailable("no MCP token configured")
 
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {"name": tool, "arguments": {}},
-    }
+    if tool not in (TOOL_STATUS, TOOL_ALERT_SUMMARY):
+        raise BackendUnavailable("tool is not permitted")
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
         "Authorization": "Bearer " + token,
     }
     if household_id:
+        if not isinstance(household_id, str) or "\r" in household_id or "\n" in household_id:
+            raise BackendUnavailable("invalid household header")
         # Forwarded, not interpreted. The hub decides what this household may read.
         headers["X-HG-Household"] = household_id
 
-    request = urllib.request.Request(
-        "http://%s:%d/mcp" % (host, port),
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
+    url_host = "[::1]" if host == "::1" else host
+    url = "http://%s:%d/mcp" % (url_host, port)
+    deadline = time.monotonic() + CONNECT_TIMEOUT_S
 
+    def send(payload=None, session=None, method="POST"):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BackendUnavailable("backend operation timed out")
+        request_headers = dict(headers)
+        if session:
+            request_headers["Mcp-Session-Id"] = session
+        request = urllib.request.Request(url, data=None if payload is None else json.dumps(payload).encode("utf-8"),
+                                         headers=request_headers, method=method)
+        try:
+            with _open(request, timeout=min(1.0, remaining)) as response:
+                raw = response.read(MAX_BODY_BYTES + 1)
+                session_header = response.getheader("Mcp-Session-Id")
+            if len(raw) > MAX_BODY_BYTES:
+                raise BackendUnavailable("backend response is too large")
+            return raw.decode("utf-8"), session_header
+        except (urllib.error.URLError, socket.timeout, OSError, ValueError, UnicodeError):
+            raise BackendUnavailable("backend request failed") from None
+
+    session = None
     try:
-        with urllib.request.urlopen(request, timeout=CONNECT_TIMEOUT_S) as response:
-            body = response.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:
-        # Deliberately does not include the body: an auth failure body can echo the request, and the
-        # request carries the token.
-        raise BackendUnavailable("hub returned HTTP %d" % exc.code) from None
-    except (urllib.error.URLError, socket.timeout, OSError):
-        raise BackendUnavailable("hub is unreachable") from None
+        body, session = send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "homeguardian-alexa", "version": "1.0"}}})
+        if not isinstance(session, str) or not session or len(session) > 512 or "\r" in session or "\n" in session:
+            session = None
+            raise BackendUnavailable("backend did not establish a usable session")
+        _parse_envelope(body, expected_id=1)
+        body, _ = send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                        "params": {"name": tool, "arguments": {}}}, session=session)
+        _parse_envelope(body, expected_id=2)
+        return _parse_rpc(body)
+    finally:
+        if session:
+            try:
+                send(session=session, method="DELETE")
+            except BackendUnavailable:
+                pass
 
-    return _parse_rpc(body)
 
-
-def _parse_rpc(body: str) -> dict:
+def _parse_envelope(body: str, expected_id=None) -> dict:
     """Extract the tool result from a JSON-RPC response, tolerating an SSE-framed body.
 
     The MCP server may answer with `text/event-stream`, in which case the JSON sits on `data:` lines.
     """
     text = body.strip()
-    if text.startswith("event:") or "\ndata:" in text:
+    if text.startswith(("event:", "data:")) or "\ndata:" in text:
         chunks = [
             line[len("data:"):].strip()
             for line in text.splitlines()
@@ -143,11 +186,20 @@ def _parse_rpc(body: str) -> dict:
 
     if not isinstance(parsed, dict):
         raise BackendUnavailable("hub returned an unexpected shape")
+    if parsed.get("jsonrpc") != "2.0" or (expected_id is not None and parsed.get("id") != expected_id):
+        raise BackendUnavailable("hub returned an invalid response envelope")
     if "error" in parsed:
         raise BackendUnavailable("hub reported an error")
     result = parsed.get("result")
     if not isinstance(result, dict):
         raise BackendUnavailable("hub returned no result")
+    if result.get("isError") is True:
+        raise BackendUnavailable("hub reported a tool error")
+    return result
+
+
+def _parse_rpc(body: str) -> dict:
+    result = _parse_envelope(body)
 
     # A tools/call result carries content blocks of text.
     content = result.get("content")
