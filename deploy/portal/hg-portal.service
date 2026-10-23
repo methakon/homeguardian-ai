@@ -1,0 +1,63 @@
+# HomeGuardian portal — systemd unit (loopback only, resource-capped for a small VPS).
+#
+# The portal is a Node service that serves the operator dashboard and spawns the native C++ MCP server as a
+# child. It binds 127.0.0.1 itself (web_mcp/server.js:726), so this unit never exposes a public port. External
+# reachability is the Cloudflare Tunnel's job (see cloudflared-ingress.yml) — never a public bind, and never
+# the private MCP endpoint.
+#
+# Resource caps are deliberate: the target host also runs OpenSMTPD + Dovecot. MemoryMax leaves the mail
+# services and the OS > 700 MB on a 954 MB instance; CPUQuota keeps a busy dashboard from starving them.
+#
+# Install: see README.md. Replace the two <PLACEHOLDER> values; nothing here reads a credential from a file
+# inside the unit, and no secret belongs in this file.
+
+[Unit]
+Description=HomeGuardian web portal (read-only operator dashboard over the native MCP server)
+Documentation=file://<APP_DIR>/deploy/portal/README.md
+After=network-online.target
+Wants=network-online.target
+# The portal and its child MCP server are the only things this unit manages. It must not touch mail or SSH.
+Conflicts=nothing-by-design
+
+[Service]
+Type=simple
+User=<PORTAL_USER>
+Group=<PORTAL_USER>
+WorkingDirectory=<APP_DIR>
+# Loopback port for the dashboard, and the port the child hg_mcp_server binds. 18990 is the MCP default the
+# portal already uses (web_mcp/server.js:25); 8790 is NOT used here and must never be published.
+Environment=NODE_ENV=production
+Environment=HG_WEB_PORT=8800
+Environment=HG_MCP_PORT=18990
+ExecStart=/usr/bin/env node web_mcp/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+# --- resource envelope for a shared VPS (see docs/ORACLE_VPS_DEPLOYMENT_PLAN.md in the submission branch) ---
+MemoryMax=180M
+MemoryHigh=150M
+CPUQuota=25%
+TasksMax=64
+
+# --- hardening: no privilege, no new privileges, minimal write surface ---
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+# The portal needs to write its own data directory only (store it outside the application tree).
+ReadWritePaths=<DATA_DIR>
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hg-portal
+
+[Install]
+WantedBy=multi-user.target

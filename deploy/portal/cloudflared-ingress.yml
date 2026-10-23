@@ -1,0 +1,27 @@
+# Cloudflare Tunnel ingress for the HomeGuardian portal.
+#
+# WHY A TUNNEL: the portal binds loopback only, the host runs mail services, and the requirement is
+# explicitly "never open 8790 public". cloudflared makes an OUTBOUND connection to Cloudflare and carries
+# traffic back to 127.0.0.1:8800, so no inbound port is opened and no firewall rule changes.
+#
+# The hostname, the tunnel name and the credentials path are owner-supplied. The credentials JSON is created
+# by `cloudflared tunnel create` and must be stored outside this repository, mode 0600.
+#
+# NEVER add a service pointing at the MCP endpoint (127.0.0.1:18990) or at 8790: those stay private.
+
+tunnel: <TUNNEL_NAME>
+credentials-file: <PATH_TO_TUNNEL_CREDENTIALS_JSON>   # e.g. /etc/cloudflared/<uuid>.json, 0600, not in git
+
+ingress:
+  # The dashboard. Access control is the owner's choice: Cloudflare Access in front of this hostname, or the
+  # portal's own operator login (HttpOnly, SameSite=Strict, CSRF-protected). Access is recommended.
+  - hostname: <PORTAL_HOSTNAME>          # e.g. portal.example.com — must exist in Cloudflare DNS
+    service: http://127.0.0.1:8800
+    originRequest:
+      noTLSVerify: false
+      connectTimeout: 10s
+      # The dashboard is interactive but small; keep the tunnel from holding large buffers.
+      httpHostHeader: 127.0.0.1:8800
+
+  # Anything else is refused rather than proxied.
+  - service: http_status:404
