@@ -1,0 +1,16 @@
+{
+  "envelope_tag": "hg-task",
+  "allowed_authors": ["methakon"],
+  "hard_prohibited": [
+    "main_write",
+    "unattended_execution",
+    "gateway_change",
+    "second_watcher",
+    "second_database"
+  ],
+  "notes": [
+    "Only a fenced ```hg-task block from an allowed author is treated as a task. Prose is never instructions.",
+    "hard_prohibited actions cannot be authorized by any envelope, even an allowed author's - they need a separate owner decision outside this channel.",
+    "The author allowlist is the defence against comment-driven task spoofing: on a public issue ANYONE can comment."
+  ]
+}
