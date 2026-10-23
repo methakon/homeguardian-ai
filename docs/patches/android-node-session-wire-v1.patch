@@ -1,0 +1,46 @@
+--- a/apk/src/org/homeguardian/harness/NodeSession.java
++++ b/apk/src/org/homeguardian/harness/NodeSession.java
+@@ -76,10 +76,10 @@
+             if (line.length() == 0) {
+                 continue;
+             }
+-            final String sourceType = stringField(line, "source_type");
+-            final String observationType = stringField(line, "observation_type");
++            String sourceType = stringField(line, "source_type");
++            String observationType = stringField(line, "observation_type");
+             final String unit = stringField(line, "unit");
+-            final String state = stringField(line, "state");
++            String state = stringField(line, "state");
+             final String provenance = stringField(line, "provenance");
+             final double value = numberField(line, "value");
+             final double confidence = numberField(line, "confidence");
+@@ -87,6 +87,24 @@
+             if (sourceType == null || observationType == null || Double.isNaN(value)) {
+                 parseFailures++;
+                 continue;
++            }
++            // JNI feature names are not the closed D-03 wire vocabulary.
++            // Keep raw motion inconclusive: the HUB's unchanged sustained-change
++            // detector, not this serializer, decides whether activity changed.
++            if ("camera".equals(sourceType)) {
++                if (!"motion_fraction".equals(observationType)) {
++                    continue; // mean-delta is a local diagnostic, not a D-03 metric
++                }
++                sourceType = "motion";
++                observationType = "motion-changed-fraction";
++                state = "unknown";
++            } else if ("microphone".equals(sourceType)) {
++                sourceType = "microphone_availability";
++                if ("audio_energy_rms".equals(observationType)) observationType = "audio-rms";
++                else if ("audio_peak".equals(observationType)) observationType = "audio-peak";
++                else if ("audio_zero_crossing_rate".equals(observationType)) observationType = "audio-zero-crossing-rate";
++                else continue;
++                state = "online"; // a consent-authorized sample exists, not a distress claim
+             }
+             final long sequence = transport.nextSequence();
+             final String observationId = (deviceId.length() > 0 ? deviceId : "node") + "-" + sequence;
+@@ -253,4 +271,4 @@
+                 && new File(dir, CA_P12).isFile()
+                 && new File(dir, CA_P12_PASS).isFile();
+     }
+-}+}
