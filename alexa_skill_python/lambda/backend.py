@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import socket
 import time
 import urllib.error
@@ -217,18 +218,27 @@ def _parse_rpc(body: str) -> dict:
 
 def get_homeguardian_status(household_id: str | None = None) -> dict | None:
     """Return the hub's own status reading, or None when it cannot be obtained."""
+    return _read(TOOL_STATUS, household_id)
+
+
+def _read(tool: str, household_id: str | None) -> dict | None:
+    """Select only an explicitly configured transport; never weaken loopback policy."""
     try:
-        return _rpc(TOOL_STATUS, household_id)
-    except BackendUnavailable:
+        configured = Path(__file__).with_name("mailbox_config.json").is_file()
+        transport = os.environ.get("HG_ALEXA_TRANSPORT", "mailbox" if configured else "loopback")
+        if transport == "mailbox":
+            from mailbox_backend import get_result
+            return get_result(tool, household_id)
+        if transport != "loopback":
+            return None
+        return _rpc(tool, household_id)
+    except (BackendUnavailable, ImportError):
         return None
 
 
 def get_alert_summary(household_id: str | None = None) -> dict | None:
     """Return the hub's own alert summary, or None when it cannot be obtained."""
-    try:
-        return _rpc(TOOL_ALERT_SUMMARY, household_id)
-    except BackendUnavailable:
-        return None
+    return _read(TOOL_ALERT_SUMMARY, household_id)
 
 
 def backend_available() -> bool:

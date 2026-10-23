@@ -124,6 +124,24 @@ destination allowlists, stale/replayed request refusal, aggregate-only replies,
 authenticated MCP session cleanup and HTTP-200-empty-object rejection. It is
 source-tested only, not deployed or accepted end to end.
 
+The Alexa-side mailbox client and explicit backend transport selector are now
+implemented with matching producer/consumer contract tests. The combined Python
+suite passes **71 tests** under both tested SDK-model combinations; dependency
+checks and syntax compilation pass. Python 3.8 syntax parsing also passes, but
+this is not execution against the managed runtime. Tests caught and corrected
+rejection of the native zero-alert payload's empty severity string; a zero is
+accepted only as an actual validated tool result, never as an unavailable default.
+
+Managed hosting can use a gitignored, non-secret `mailbox_config.json` with exactly
+four deployment settings instead of requiring Lambda environment-edit permissions.
+It contains only region, queue URLs and the publisher role ARN, never credentials.
+The default deployment stays on the existing loopback/unavailable path until
+mailbox mode is explicitly configured. No mailbox Code deployment, running VPS
+worker, dedicated worker credential or hosted role trust is claimed. The queues'
+configuration is verified, but no genuine Alexa -> SQS -> native C++ -> Alexa
+round trip is accepted. The missing exact execution-role ARN and the empty private
+bridge reply remain concrete blockers; do not replace those gaps with fixtures.
+
 ## On-phone analyzer candidate — not yet deployed
 
 The approved in-place update is being prepared on the isolated Android branch.
