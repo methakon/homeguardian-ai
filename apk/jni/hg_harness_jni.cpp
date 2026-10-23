@@ -123,6 +123,26 @@ struct Node {
         double value = 0.0;
         double confidence = 0.0;
         int64_t acquired_at_ms = 0;
+        // RESOLVED TO "real" - matching main, and corrected after the merge suite proved my
+        // first instinct wrong.
+        //
+        // The original value was "real_device", which the wire decoder rejects as an unknown token,
+        // so BOTH branches had to change it: this branch (a5b580f) first chose "synthetic"; main
+        // (ea8b1c1) chose "real".
+        //
+        // Main's choice is the correct one, and the two are not equivalent:
+        //   * A native observation is acquired from a REAL sensor (the authorized camera/audio
+        //     callbacks), so "real" is the truthful value here.
+        //   * The producer must not default provenance to a claim of physical origin, but that rule,
+        //     and canonical section 6.2, apply to the ABSENT-field path - which is the Java fallback
+        //     in NodeSession ("provenance == null ? \"synthetic\""), not this field. Keeping the two
+        //     distinct is the whole point: native=real, absent=synthetic.
+        //   * "real_device" remains rejected by the hub's closed vocabulary; that was the defect.
+        //
+        // A claim is still only a claim: the hub derives authoritative provenance from the
+        // authenticated peer, pairing, consent and capture gates, and it refuses a real claim on a
+        // session it knows to be synthetic (PanasonicNodeReceiver: "provenance_claim_widens_session").
+        // So "real" here can never substitute for authentication.
         std::string provenance = "real";
     };
     std::deque<Observation> observations;
