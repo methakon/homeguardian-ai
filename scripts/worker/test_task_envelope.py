@@ -24,7 +24,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from task_envelope import EnvelopeRefused, admit, extract_envelope   # noqa: E402
+from task_envelope import EnvelopeRefused, admit, api_verified_comment, extract_envelope   # noqa: E402
 from task_guard import Ledger, Refused
 
 # ISOLATION: admit() reaches for the module-default approvals DB, which is a shared on-disk file. On a
@@ -57,9 +57,10 @@ def comment(body, author="methakon", verified=True):
     the subject of the dedicated repair-2 cases, where provenance is withheld deliberately."""
     c = {"author": {"login": author}, "body": body, "url": "issue:14#comment-xyz"}
     if verified:
-        c["_verified_provenance"] = {"api_origin": True, "verified_author": author,
-                                     "subject": "gh-api:methakon/homeguardian-ai",
-                                     "auth_method": "github_issue_comment_verified_author"}
+        # Mint exactly as the real API-fetching caller does. Hand-writing the _verified_provenance key
+        # would (correctly) be rejected now: minted provenance carries a per-process nonce, so a payload
+        # that ships its own provenance cannot claim API origin.
+        c = api_verified_comment(c, api_origin=True, subject="gh-api:methakon/homeguardian-ai")
     return c
 
 

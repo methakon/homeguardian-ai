@@ -230,6 +230,18 @@ def repair2_tests():
     except Exception as exc:                                     # noqa: BLE001
         print(f"    [FAIL] benign request refused: {getattr(exc,'code',exc)} - benign admission broke"); bad += 1
 
+    # (e) a payload that SHIPS its own provenance must not be believed - the nonce defeats it
+    forged = dict(raw, _verified_provenance={"api_origin": True, "verified_author": "methakon"})
+    try:
+        env.admit(forged, policy, identity, ledger)
+        print("    [FAIL] forged in-band provenance was ACCEPTED - 'out-of-band' would be a fiction")
+        bad += 1
+    except Exception as exc:                                     # noqa: BLE001
+        code = getattr(exc, "code", type(exc).__name__)
+        ok = code == "PROVENANCE_UNVERIFIED"
+        print(f"    [{'PASS' if ok else 'FAIL'}] forged in-band provenance refused with {code}")
+        bad += 0 if ok else 1
+
     print(f"  repair 2: {'PASS' if bad == 0 else 'FAIL'} ({bad} problem(s))")
     return bad
 

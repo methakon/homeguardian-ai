@@ -74,6 +74,9 @@ def _touches_protected(task) -> bool:
     return False
 
 
+_MINT_NONCE = __import__("secrets").token_hex(16)
+
+
 def api_verified_comment(raw: dict, *, api_origin: bool, subject: str = "gh-api") -> dict:
     """AUDIT BOUNDARY (repair 2) - the ONLY way provenance is ever minted.
 
@@ -94,6 +97,7 @@ def api_verified_comment(raw: dict, *, api_origin: bool, subject: str = "gh-api"
             "verified_author": login,
             "subject": subject,
             "auth_method": "github_issue_comment_verified_author",
+            "nonce": _MINT_NONCE,
         }
     return out
 
@@ -152,7 +156,12 @@ def admit(
     # from comment.author.login. Privileged requests fail closed without it; benign requests still get a
     # context, but one whose auth_method does NOT claim verification.
     _prov = comment.get("_verified_provenance") or {}
-    provenance_ok = bool(_prov.get("api_origin") is True and _prov.get("verified_author") == author)
+    # The nonce is the crux: provenance written by THIS process carries a secret only the mint knows, so
+    # a JSON payload that ships its own _verified_provenance (a file, a cache, a fixture) cannot claim
+    # API origin. Without this, "out-of-band" was a fiction - the claim sat in the same dict as the data.
+    provenance_ok = bool(_prov.get("api_origin") is True
+                         and _prov.get("verified_author") == author
+                         and _prov.get("nonce") == _MINT_NONCE)
     _privileged = bool(task.get("requires_approval")) or _touches_protected(task)
     if _privileged and not provenance_ok:
         raise EnvelopeRefused(
