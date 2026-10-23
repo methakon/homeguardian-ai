@@ -1,0 +1,98 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "home guardian",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "HomeStatusIntent",
+          "slots": [],
+          "samples": [
+            "what is the home status",
+            "what's the status of my home",
+            "is my home okay",
+            "how is my home",
+            "status of the hub",
+            "is the hub okay",
+            "what is the hub status",
+            "give me the home status",
+            "tell me the home status",
+            "how is the system"
+          ]
+        },
+        {
+          "name": "RecentAlertsIntent",
+          "slots": [],
+          "samples": [
+            "what are my recent alerts",
+            "any recent alerts",
+            "have there been any alerts",
+            "are there any alerts",
+            "read me my alerts",
+            "what alerts do I have",
+            "any new alerts",
+            "tell me about recent alerts",
+            "show me recent alerts"
+          ]
+        },
+        {
+          "name": "GetAlertSummaryIntent",
+          "slots": [],
+          "samples": [
+            "get the alert summary",
+            "give me the alert summary",
+            "alert summary",
+            "what is the alert summary",
+            "summarise the alerts",
+            "summarize the alerts"
+          ]
+        }
+      ],
+      "types": []
+    },
+    "dialog": {
+      "intents": [
+        {
+          "name": "HomeStatusIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        },
+        {
+          "name": "RecentAlertsIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        },
+        {
+          "name": "GetAlertSummaryIntent",
+          "confirmationRequired": false,
+          "prompts": {},
+          "slots": []
+        }
+      ]
+    },
+    "prompts": [
+      {
+        "id": "ConfirmIntent",
+        "variations": [
+          {
+            "type": "PlainText",
+            "value": "Is that what you wanted?"
+          }
+        ]
+      }
+    ]
+  }
+}
