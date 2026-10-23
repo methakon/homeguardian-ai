@@ -509,3 +509,27 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | End-to-end | `scripts/verify_mcp.sh` -> **43 passed / 0 failed** against the real binary over loopback |
 | Not implemented | OAuth 2.1 client registration, TLS, server-initiated SSE stream, resources/prompts, per-token quotas, session resumability - see docs/MCP_SERVER.md section 7 |
 | Unchanged | engine, web demo, NDJSON bridge, and every existing target; `main` untouched |
+
+
+## Coordinator handover update — 2026-10-23 12:41 IST
+
+### Alexa skill diagnostic checkpoint (owner-console evidence)
+
+- Skill: `HomeGuardian AI(dhar)`, locale en-US, invocation `home guardian`.
+- Owner reports both `open home guardian` and `ask home guardian for help` return Alexa's generic “There was a problem with the requested skill's response.”
+- Alexa Code-tab screenshot shows `lambda_function.py`, `backend.py`, `requirements.txt`, and `utils.py`; the displayed handler file begins with `import backend` before the Alexa SDK imports. The owner supplied `utils.py` contents: an S3 presigned-URL helper using `boto3`, `S3_PERSISTENCE_REGION`, and `S3_PERSISTENCE_BUCKET`. No evidence yet shows that helper is invoked during skill startup.
+- Owner reports CloudWatch Logs currently shows no logs. This is not proof of no invocation until the correct Lambda function and log group are identified.
+- Alexa Build → Endpoint screenshot shows **AWS Lambda ARN** selected, with regional ARN fields populated. This conflicts with `alexa_hosted/DEPLOYMENT.md`, which documents the intended console path as Alexa-hosted Python. Do not change endpoint configuration blindly.
+- Root cause remains **unconfirmed**. Candidate causes: endpoint ARN references the wrong/nonexistent Lambda; endpoint points at a runtime/code package different from the intended Alexa-hosted deployment; or a Python import/module initialization failure before handler execution.
+- Backend adapter defaults `HG_GATEWAY_URL` to `http://127.0.0.1:8080`; that is unsuitable for reaching a separate C++ gateway from AWS Lambda, but cannot alone explain Help failing because Help is intended not to call the backend.
+- Next diagnostic: read the full Default Region ARN from the Endpoint page and verify the exact Lambda function exists in `us-east-1`; if it exists, inspect its runtime and that function's own Monitor/CloudWatch logs. Do not add AWS permissions or change the ARN until verified. Do not share secrets or .env contents.
+- Acceptance state: **Alexa simulator acceptance FAIL / blocked**; C++ backend live connection remains unverified; skill should remain private/unpublished until owner authorizes otherwise.
+
+### Worker reliability audit update (owner-provided Hermes report; not independently re-run here)
+
+- Hermes 1 reports branch `fix/hg-worker-dispatch-p0-48` at `a303d895edcb0dc40ea57254891d863d32625eca`, PR #28 open/unmerged, and lane `experiment/hg-lan-mtls-07` at `139e53b45cdf`.
+- Reported targeted tests: `test_poller.py`, `test_dispatch_p0_48_adversarial.py`, `test_p0_48_grant_atomicity.py`, `test_task_envelope.py` all exit 0 (16/16 reported). Queue-pull and idle-resume Kanban tasks reportedly completed; duplicate/unauthorized/prose/bare-JSON negatives reportedly rejected.
+- Critical acceptance gap remains: GitHub-comment → poller → real-dispatch is **BLOCKED**, with task `HG-LAN-MTLS-07-006` blocked and dispatch attempt rc=1. Hermes attributes this to fetched comments lacking API provenance attachment `api_verified_comment(..., api_origin=True)`. Privileged dispatch must remain disabled until this path is fixed and independently verified.
+- Hermes 3 report: main HEAD `503a9a6`; native MCP investigation found a missing/unavailable alert-store path explains a generic tool refusal in one fixture; a present store returned read-only status and zero alerts. Portal device listing remains unsupported by current two-tool MCP contract and would require a new authorized read-only tool. Google sign-in remains blocked pending owner-created OAuth Web client ID. Treat all as worker-reported evidence unless independently rechecked.
+
+These notes preserve the distinction between owner-console observations, worker-reported results, and independently verified repository facts.
