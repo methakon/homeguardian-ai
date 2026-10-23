@@ -264,8 +264,7 @@ inline std::string response(unsigned status, std::string_view mime, const std::s
         + "\r\nContent-Length: " + std::to_string(body.size())
         + "\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff"
         + "\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer"
-        + "\r\nCross-Origin-Resource-Policy: same-origin"
-        + "\r\nX-Content-Type-Options: nosniff";
+        + "\r\nCross-Origin-Resource-Policy: same-origin";
     // The dashboard is fully self-contained (no external refs); a restrictive
     // CSP is defence-in-depth against an XSS that would otherwise run remote JS.
     if (mime.rfind("text/html", 0) == 0) {
