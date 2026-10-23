@@ -9,6 +9,24 @@
 
 ## 1. Architecture & Security Invariants
 
+### Source hardening checkpoint (not a deployment receipt)
+
+The coordinator now contains malformed HTTP/WS input and HTTP async-handler
+failures; credential rotation removes established-channel authority immediately.
+Unchanged-token reload preserves a connection. Superseded/revoked sockets cannot
+update liveness or resolve requests. Client sessions default to a 1,024-session
+active/initializing cap and 30-minute idle expiry, configurable through validated
+`maxClientSessions` and `clientSessionTtlMs` constructor options. Failed and
+disconnected initialization does not retain or advertise a session.
+
+Run `bash scripts/test_outbound_bridge.sh` from the repository checkout after
+building `hg_build/hg_mcp_server` and installing locked npm dependencies. The runner
+includes 13 security regressions and 46 existing real-native bridge checks;
+`HG_MCP_SERVER_BIN` can select an explicit executable, whose provenance must be
+recorded separately. No native prerequisite is silently skipped. Current results
+are source/local-loopback acceptance only; this update does not install or restart
+the production service. Details: [security checkpoint](../../docs/COORDINATOR_SECURITY_FIXES.md).
+
 The Coordinator acts as the central authenticated rendezvous for HomeGuardian remote control:
 1. **Outbound-Only Ingress**: The edge device (Xiaomi Mi A3) dials outbound to `ws://10.42.0.1:18994/`. The coordinator never initiates connections to the phone, preserving NAT traversal and battery.
 2. **Mutual Authentication**: The phone authenticates using its provisioned `device_id` and 32-byte hex CSPRNG `auth_token`. Unrecognized or revoked tokens close with WebSocket code `4401` or `4403`.

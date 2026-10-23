@@ -30,7 +30,9 @@ const {
 } = require('../web_mcp/outbound_bridge');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
-const CXX_BIN = path.join(REPO_ROOT, 'build', 'hg_mcp_server');
+const CXX_BIN = process.env.HG_MCP_SERVER_BIN
+  ? path.resolve(process.env.HG_MCP_SERVER_BIN)
+  : path.join(REPO_ROOT, 'hg_build', 'hg_mcp_server');
 const CXX_CONFIG = path.join(REPO_ROOT, 'config', 'homeguardian.demo.json');
 
 const PORTS = {
@@ -111,7 +113,10 @@ async function sleep(ms) {
 // ----------------------------------------------------------------------------
 
 async function setup() {
-  tmpDir = fs.mkdtempSync(path.join('/tmp', 'hg-outbound-test-'));
+  fs.accessSync(CXX_BIN, fs.constants.X_OK); // Missing native prerequisite is a failure, never a skip.
+  const tempRoot = path.join(REPO_ROOT, 'hg_build', 'test-tmp');
+  fs.mkdirSync(tempRoot, { recursive: true });
+  tmpDir = fs.mkdtempSync(path.join(tempRoot, 'hg-outbound-test-'));
 
   // 1. Provision 0600 credentials file for real C++ MCP server
   const credsPath = path.join(tmpDir, 'mcp_creds.json');

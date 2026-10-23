@@ -2,6 +2,14 @@
 
 ## Current acceptance gate — P1 physical integration (2026-10-23)
 
+Sequential corrective batches on `main`: coordinator security is source-tested
+(13 security regression tests plus 46 existing real-native bridge checks passed;
+not deployed). Producer provenance is source/Java-compile/host-parser tested
+(45 JVM lifecycle checks, 43 schema checks, 24 native regression assertions passed;
+not installed). Detector wiring is next. These repairs do not themselves close
+physical acceptance. See [coordinator security fixes](COORDINATOR_SECURITY_FIXES.md)
+and [provenance wire fix](PROVENANCE_WIRE_FIX.md).
+
 | Item | Status | Evidence and required closure |
 |---|---|---|
 | Android → C++ detection → durable alert → MCP | **IN PROGRESS / NOT ACCEPTED** | Real Mi A3 camera frames and numeric processing observed; no acknowledged physical observation or persisted physical alert yet. USB instability and unfinished Wi-Fi setup remain blockers. Closure requires exact alert-id correlation through MCP and recovery after restart, plus stop/consent controls. See [physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md). |
@@ -124,11 +132,11 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-12 | Ubuntu (Linux) sensor backend: discovery + interfaces + host tests | — | Non-capture SensorDiscovery (V4L2/PipeWire metadata); consent-enforcement host tests reusing ConsentGuardedDevice | DONE (non-capture, host) |
 | F22-13 | Ubuntu camera/mic/speaker capture adapters | F22-12 | V4L2 camera + ALSA/PipeWire mic + speaker adapters behind IMediaDevice; delivery-gated; bounded buffers | PROPOSED (awaiting approval) |
 | F22-14 | Docker container for C++ core service | — | Documented trade-offs; no privileged container; sensors stay on host; consent gate in delivery path | PROPOSED (not implemented) |
-| F22-15 | Alexa+ integration (custom/Smart Home skill) | — | AVS deprecated for Alexa Built-in; viable route = Alexa skill → authenticated endpoint → C++ service | RESEARCH ONLY (not integrated) |
+| F22-15 | Alexa+ integration (custom/Smart Home skill) | — | Read-only Custom Skill via authenticated outbound SQS mailbox to private phone C++ MCP; owner-reported status/alerts acceptance in docs/STATUS.md; Smart Home/Alexa+ certification not established | PARTIAL (Custom Skill functional; reliability open) |
 | F22-16 | Simulator-first backend + host safety tests | — | Deterministic SimulatedSensorBackend behind IMediaDevice/ConsentGuardedDevice; 12 host tests (lifecycle, consent deny/withdraw/expire, delivery boundary, bounded buffers, error recovery, shutdown) | DONE (host, simulator) |
 | F22-17 | Real Linux capture (V4L2/ALSA/PipeWire) or Docker env if simulator insufficient | F22-16 | Only if a requirement is proven un-simulatable; simulator currently covers all in-scope behaviors | DEFERRED (simulator sufficient) |
 | F22-18 | Alexa custom skill (ASK SDK v2) + handler tests | — | HomeStatusIntent/GetAlertSummaryIntent/GetRoutineStatusIntent/Help/Stop with mock backend behind a documented interface; 13 Node tests pass | DONE (handler + unit tests) |
-| F22-19 | Alexa skill deployment + console-simulator verification | F22-18 | Deploy to Alexa-hosted skill (auto Lambda, $0); build interaction model; run text simulator; record results | OPTIONAL (manual console steps — see alexa_skill/README.md) |
+| F22-19 | Alexa skill deployment + console-simulator verification | F22-18 | Owner reported Python Code deployment and genuine status/alerts replies; separate operator-origin mailbox smoke 4/4; see alexa_skill_python/README.md and docs/STATUS.md | FUNCTIONAL (owner report; intermittent unavailability unresolved) |
 | F22-20 | Realistic Linux sensor simulation (config, signals, speaker) | F22-16 | Config struct: camera dimensions + frame-rate pacing; mic sample_rate/channels + noise/sine/square/silence signals; speaker play/error; configurable ring capacity | DONE (host, simulator) |
 | F22-21 | End-to-end Linux simulator workflow + failure/consent scenarios | F22-20 | camera+mic+speaker → consent-gated delivery → synthetic test processor → pipeline rule/alert → safe speaker response; ordering, bounded memory, cleanup; failure & consent scenarios | DONE (host, simulator) |
 | F22-22 | Product-readiness audit (build reproducibility, docs accuracy, portability) | F22-21 | Reproduced documented build in a fresh dir; fixed stale README + hardcoded CMake paths; hardened .gitignore; full regression + sanitizers green | DONE (audit) |

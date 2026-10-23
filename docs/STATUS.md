@@ -156,6 +156,194 @@ References: [About Alexa-hosted Skills](https://developer.amazon.com/en-US/docs/
 and [Create and Manage Alexa-hosted Skills: CloudWatch logs](https://developer.amazon.com/en-US/docs/alexa/hosted-skills/alexa-hosted-skills-create.html).
 Deployment and simulator acceptance remain **NOT VERIFIED**.
 
+### Owner simulator acceptance and approved outbound mailbox follow-up
+
+The owner subsequently reported successful deployment to the existing skill and
+working Launch, Help, unavailable-alert and Stop responses. These are
+**owner-reported simulator checks**, not independent deployed-source readback or
+live C++ connectivity. Stop spoke Goodbye when tested inside an active session.
+
+The owner approved an outbound-only AWS request/reply mailbox with narrowly scoped
+queue/IAM resources and a bounded VPS worker, and read-only Mi A3 diagnostics.
+Two dedicated queues (`homeguardian-alexa-requests`, `homeguardian-alexa-replies`)
+were created in the owner's account in `us-east-1`; readback verified managed
+encryption, TLS-required policies, 60-second retention and 16-KiB message caps.
+No hosted-role grant, AWS access key or running worker was created at this stage.
+The exact skill Lambda execution-role ARN is still required for narrow publisher
+trust; the logs-viewing SSO role is not an acceptable substitute.
+
+Fresh phone evidence distinguishes the fault: its read-only native self-probe
+reports `Running`, `read_only=true`, `capture_enabled=false`; installed APK bytes
+match the previously accepted artifact. The VPN handshake is fresh and the
+coordinator's edge TCP connection comes from the phone peer. However private
+initialize/status requests now return HTTP 200 with only `{}`, not valid JSON-RPC.
+HTTP/auth/session admission therefore MUST NOT be called a successful native
+initialize or tool result. Probe sessions were torn down. The empty bridge reply
+remains unresolved; the working local core is not evidence that relay data works.
+No phone reinstall/restart, capture, VPN, firewall, mail or public-listener change
+was made. Application-private access was denied as expected and not bypassed.
+
+The initial mailbox worker has 11 local fixture tests, including strict tool and
+destination allowlists, stale/replayed request refusal, aggregate-only replies,
+authenticated MCP session cleanup and HTTP-200-empty-object rejection. It is
+source-tested only, not deployed or accepted end to end.
+
+The Alexa-side mailbox client and explicit backend transport selector are now
+implemented with matching producer/consumer contract tests. The combined Python
+suite passes **71 tests** under both tested SDK-model combinations; dependency
+checks and syntax compilation pass. Python 3.8 syntax parsing also passes, but
+this is not execution against the managed runtime. Tests caught and corrected
+rejection of the native zero-alert payload's empty severity string; a zero is
+accepted only as an actual validated tool result, never as an unavailable default.
+
+Managed hosting can use a gitignored, non-secret `mailbox_config.json` with exactly
+four deployment settings instead of requiring Lambda environment-edit permissions.
+It contains only region, queue URLs and the publisher role ARN, never credentials.
+The default deployment stays on the existing loopback/unavailable path until
+mailbox mode is explicitly configured. No mailbox Code deployment, running VPS
+worker, dedicated worker credential or hosted role trust is claimed. The queues'
+configuration is verified, but no genuine Alexa -> SQS -> native C++ -> Alexa
+round trip is accepted. The missing exact execution-role ARN and the empty private
+bridge reply remain concrete blockers; do not replace those gaps with fixtures.
+
+### Execution-role received; configuration moved to the existing .env
+
+The owner supplied the actual hosted Lambda execution-role ARN. A dedicated
+publisher role was created in the owner's account, trusting only that exact
+principal (not the logs SSO role or the entire hosted account). Readback verified
+the trust document and the inline policy's request-send/reply-consume directions,
+exact queue resources and TLS condition; no broad attached policies were added.
+IAM policy simulation verified 12 action/resource decisions, including denial of
+opposite-direction and destructive queue actions. This is not a real hosted-role
+AssumeRole or live Alexa-to-native verification.
+
+At owner direction, the six Alexa operational settings now live in the existing
+canonical project `.env`; unrelated values were left untouched. The generated
+mailbox JSON file was removed. The loader reads only selected Alexa keys from
+`HG_ALEXA_ENV_FILE`, or `.env` beside the deployed modules; environment values
+take precedence. Local application configuration validation succeeded without
+printing/loading unrelated credentials. Do not copy the full workstation `.env`
+into Alexa: deploy only the selected mailbox settings. No `.env` values are tracked
+or published in this change. No worker key, running worker or mailbox Code
+deployment was created; the empty private bridge replies remain unresolved.
+
+The dotenv revision passes **72 Python tests** under both tested SDK combinations,
+plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
+untracked; only code/tests/sanitized documentation are published.
+
+### Producer provenance corrective batch — 2026-10-23
+
+Implemented on `main`, **SOURCE/Java-COMPILE/HOST-PARSER TESTED / NOT INSTALLED**.
+The native acquired-observation default now emits canonical `real` instead of
+`real_device`; Java absent-field fallback stays `synthetic`. The receiver vocabulary
+and authenticated provenance derivation were not weakened. Source-derived tests
+consume the actual native default through the Java field extractor and real C++
+wire decoder, including all authorization gates and legacy-token rejection.
+
+Observed RED: JVM schema 42 passed/1 failed; native parser rejected the producer
+default with `unknown provenance_claim`. Parent GREEN: production Java compilation
+against android-34 succeeded; isolated JVM lifecycle **45 passed**, schema **43
+passed**, no failures; rebuilt main native regression **24 assertions / 1 case
+passed**. These are source/JVM/host proofs, not JNI execution or APK/device evidence.
+See [provenance wire fix](PROVENANCE_WIRE_FIX.md). Detector wiring is next; its real
+TLS ingress build currently exposes a missing ActivityEpisode link dependency,
+which will be addressed with that batch. No live runtime changed.
+
+### Coordinator security corrective batch — 2026-10-23
+
+Implemented on `main`, **SOURCE-TESTED / NOT DEPLOYED**. Malformed HTTP targets,
+non-object HTTP/WS JSON and invalid credential types are rejected without crashing
+the coordinator; async HTTP entry/body failures are contained. Token rotation
+synchronously removes existing channel authority and rejects pending requests;
+unchanged-token reload preserves the channel. Superseded/revoked sockets cannot
+heartbeat or resolve requests. Client sessions now have finite defaults (1,024
+active/initializing sessions, 30-minute idle expiry), reserved initialization
+capacity, and no retained/advertised session after failed or disconnected init.
+Rejected oversized bodies cannot dispatch later on `end`.
+
+`bash scripts/test_outbound_bridge.sh`: **13 security regressions passed, 0
+failed/skipped; existing real-native bridge checks 46 passed, 0 failed**. This run
+used the freshly built main-checkout `hg_build/hg_mcp_server`, real workstation
+loopback HTTP/WS for recovery checks, and synthetic local credentials. Node syntax
+and `git diff --check` passed. Missing native binaries fail rather than silently
+skip. Test temporary files remain inside this project. Full C++ regression/build
+preparation is separate; no claim of phone/VPS deployment or physical acceptance.
+See [coordinator security fixes](COORDINATOR_SECURITY_FIXES.md).
+
+The next authorized batches are producer provenance and detector wiring, in that
+order. No live service, VPN, capture, credential or cloud configuration was changed.
+
+### Current Alexa acceptance — 2026-10-23
+
+**Owner-reported deployed Custom Skill functional acceptance:** the owner reported
+successful Code deployment, then received `The hub state is Running. Capture is
+disabled.` and, using the full invocation `ask home guardian what are my recent
+alerts`, `There are no alerts recorded for your home.` Both read-only voice
+functions have returned the expected native readings. This is owner-attested
+simulator evidence; deployed source bytes and Skill I/O were not independently
+retrieved. It is not Smart Home, camera, Alexa+ or production certification.
+
+A subsequent independent **operator-origin mailbox smoke passed 4/4** real
+requests (two status, two alerts), with genuine read-only results and no capture.
+The worker health check showed active/running with zero restarts. This smoke is
+not a Lambda-origin latency reproduction and does not resolve intermittent failures.
+
+**Reliability remains OPEN:** the owner also observed an unavailable launch before
+a successful status response. The worker journal contains a `ReadTimeoutError`,
+but it is not correlated to that failed invocation; the cause remains unproven.
+Bare follow-up alert phrases were silent, whereas the full invocation succeeded.
+The status handler supplies no reprompt; session/routing is consistent with that
+behavior, but Skill I/O is needed to establish exactly which requests reached it.
+Keep using full invocations for isolated acceptance tests. Do not infer zero alerts
+from silence, replace unavailable results with cached readings, or change timeouts
+without reproducing the failure. No additional skill deployment, phone/VPS restart,
+capture enablement, VPN change or queue/IAM configuration change was performed for this
+follow-up. Long-outage, reboot and changed-network recovery remain unverified.
+
+### Historical checkpoint: real mailbox/native path recovered; Code deployment pending
+
+Inspection of the accepted installed APK's actual DEX confirms its bridge sets
+the required Accept header. A memory-only trace of the already established phone
+control connection confirms the phone itself sent `body={}`/status 200; raw frames
+and credentials were not printed or persisted. Source inspection identifies a
+stale-session recovery defect: native HTTP rejects unknown/expired sessions with
+404, while the bridge retains its session ID unless a specific error string is
+returned and masks the native status as 200. Reconnecting ONLY the outbound bridge
+through the app controls recovered both genuine read-only native tools. The C++
+service PID was unchanged; no native restart, APK reinstall, VPN or capture change
+was performed. The permanent Android-side session-recovery fix remains open.
+
+The dedicated worker IAM identity was provisioned with only request-consume and
+reply-send permissions. An owner-only credential file was installed on the target
+VPS; STS verified the worker user, not personal/root identity. Actual AWS requests
+in the wrong queue direction were denied. Two failed installer attempts (restricted
+PATH, then new-key propagation) revoked their issued keys before retry; no root
+credentials were transferred. The successful install verified source/unit bytes,
+file permissions, unchanged mail/coordinator PIDs and an unchanged TCP listener set.
+
+`homeguardian-alexa-mailbox` is active and boot-enabled, with 96-MiB RAM and 10% CPU
+caps. The bounded process is supervised and privately keeps the native control
+session active once per minute without sending unsolicited readings to AWS. This
+is a mitigation, not proof of recovery after a long outage. The source revision
+passed **73 Python tests** before deployment. The publisher trust and worker role
+remain scoped in opposite directions; no broad AWS policy was added.
+
+**Real operator-origin AWS -> VPS -> phone C++ -> AWS verification PASS:**
+status returned `Running`, `read_only=true`, `capture_enabled=false` in **2.085 s**;
+alerts returned `alert_count=0`, empty highest severity, `read_only=true` in
+**1.659 s**. Correlation, tool schema, expiry and session cleanup were validated.
+These are genuine native results, not cached evidence or local fixture outputs.
+
+**At this historical checkpoint, Alexa-Lambda origin / simulator-to-native was NOT VERIFIED.** The Code package
+has not been updated from this session. The browser reaches Amazon Sign-In, no
+saved login is available, and secure login prompting is unavailable in this CLI.
+The worker's publisher-role trust is data access, not hosted-Code administration.
+A private five-file Code source bundle was prepared with selected `.env` settings,
+verified against source, protected and excluded from Git. It contains no worker
+key, MCP bearer or personal AWS credentials. Authorized console deployment and
+the resulting real simulator call are the remaining release gates. Reboot,
+changed-network and long-outage recovery remain unverified.
+
 ## On-phone analyzer candidate — not yet deployed
 
 The approved in-place update is being prepared on the isolated Android branch.

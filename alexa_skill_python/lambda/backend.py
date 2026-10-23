@@ -217,18 +217,33 @@ def _parse_rpc(body: str) -> dict:
 
 def get_homeguardian_status(household_id: str | None = None) -> dict | None:
     """Return the hub's own status reading, or None when it cannot be obtained."""
+    return _read(TOOL_STATUS, household_id)
+
+
+def _read(tool: str, household_id: str | None) -> dict | None:
+    """Select only an explicitly configured transport; never weaken loopback policy."""
     try:
-        return _rpc(TOOL_STATUS, household_id)
-    except BackendUnavailable:
+        transport = os.environ.get("HG_ALEXA_TRANSPORT")
+        if transport is None:
+            try:
+                from mailbox_backend import configured_transport
+            except ImportError:
+                transport = "loopback"
+            else:
+                transport = configured_transport()
+        if transport == "mailbox":
+            from mailbox_backend import get_result
+            return get_result(tool, household_id)
+        if transport != "loopback":
+            return None
+        return _rpc(tool, household_id)
+    except (BackendUnavailable, ImportError, OSError, ValueError):
         return None
 
 
 def get_alert_summary(household_id: str | None = None) -> dict | None:
     """Return the hub's own alert summary, or None when it cannot be obtained."""
-    try:
-        return _rpc(TOOL_ALERT_SUMMARY, household_id)
-    except BackendUnavailable:
-        return None
+    return _read(TOOL_ALERT_SUMMARY, household_id)
 
 
 def backend_available() -> bool:

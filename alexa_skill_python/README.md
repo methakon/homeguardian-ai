@@ -88,6 +88,125 @@ Without an approved reachable backend, the correct voice response is a clear
 unavailability message. A working Help/Launch response is still useful to
 separate skill/SDK/schema failures from backend reachability.
 
+## Approved outbound-only AWS mailbox (prepared, not live-accepted)
+
+The owner approved a mailbox rather than an inbound public relay. The voice
+adapter sends an allowlisted request to a dedicated SQS request queue; a bounded
+VPS worker calls the existing private MCP coordinator and sends an aggregate-only
+reply to a separate queue. It creates no listener, VPN peer, camera/audio stream,
+public MCP endpoint or new route to the phone.
+
+`lambda/mailbox_backend.py` is selected only by `HG_ALEXA_TRANSPORT=mailbox` in
+the environment or the approved `.env` file. Without that selection,
+the original loopback adapter remains selected. Invalid transport/configuration,
+AWS authorization failures and unavailable/invalid native replies all return the
+existing unavailable speech, never cached readings or fabricated zero alerts.
+
+Standalone Lambda environment configuration uses these four values:
+
+- `HG_ALEXA_MAILBOX_REGION`: the approved initial deployment uses `us-east-1`.
+- `HG_ALEXA_REQUEST_QUEUE_URL`: the dedicated request queue URL.
+- `HG_ALEXA_REPLY_QUEUE_URL`: the separate reply queue URL in the same account.
+- `HG_ALEXA_MAILBOX_ROLE_ARN`: the narrowly scoped publisher role in that account.
+
+The existing canonical project `.env` is the local operational source of truth.
+Set `HG_ALEXA_ENV_FILE` to that file's path for local tools/deployment validation;
+the reader loads only the six allowlisted Alexa settings, not unrelated credentials.
+These are the four mailbox values above, `HG_ALEXA_TRANSPORT`, and
+`ALEXA_LAMBDA_EXECUTION_ROLE_ARN` (the owner-supplied hosted principal for IAM setup).
+Duplicate selected keys fail closed; simple quoting, export and comments are supported.
+Environment values override file values. No interpolation or shell execution occurs.
+
+For managed hosting without custom Lambda-environment access, the loader defaults
+to `.env` beside the deployed Python modules. Deploy ONLY the required mailbox
+settings plus `HG_ALEXA_TRANSPORT=mailbox` there, never the full workstation `.env`,
+personal AWS credentials, MCP bearer or unrelated secrets. The cloud cannot read
+the workstation's file. `.env` files are gitignored, and the previous generated
+JSON configuration has been removed. `HG_ALEXA_TRANSPORT=loopback` explicitly
+disables mailbox mode. Do not enable it before the worker/private path is accepted.
+
+The publisher role must trust ONLY the existing skill's exact Lambda execution-role
+ARN via `sts:AssumeRole`. The developer-console logs SSO role is not that execution
+role. Do not trust an entire hosted AWS account to work around a missing ARN.
+Publisher permissions are request-queue `sqs:SendMessage` and reply-queue
+`sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:ChangeMessageVisibility`, scoped to
+the two queue ARNs. The VPS worker has the opposite direction: consume/delete
+requests and send replies. No broad AWS managed policy is needed. Personal/root
+AWS credentials must NEVER be installed on the VPS or copied into Lambda code.
+
+The created dedicated queues use managed encryption, TLS-required policies,
+60-second retention and 16-KiB message caps. Request envelopes expire after five
+seconds, contain only a random correlation ID/tool/time bounds, and cannot choose
+an endpoint, token or arguments. Replies contain only state/capture/read-only or
+alert-count/highest-severity/read-only aggregates. Raw media, device/alert IDs and
+household identity are not transmitted. This is a single-household private-skill
+adapter, NOT a multi-tenant authorization or account-linking implementation.
+
+The consumer checks exact correlation, operation, expiry and schema. A shared
+standard reply queue can time out under concurrent contention; mismatched replies
+are returned visible and never deleted as this caller's data. The nominal
+five-second budget is NOT a hard wall-clock guarantee: SDK calls, credential
+providers and DNS can overrun a phase boundary. Simulator latency remains an
+independent acceptance item.
+
+`deploy/coordinator/alexa_mailbox_worker.py` has no listener and processes one
+request at a time. Run it only with dedicated owner-only AWS credentials and the
+existing protected private MCP token file. Its required environment is:
+
+- The mailbox region and request/reply URLs above (no publisher role needed).
+- `HG_ALEXA_WORKER_CREDENTIALS_FILE`: mode 0600 INI credentials, named profile
+  `homeguardian-alexa-worker`; inherited root/default profiles are not used.
+- `HG_PRIVATE_MCP_URL`: the operator-approved private coordinator `/mcp` URL.
+- `HG_PRIVATE_MCP_APPROVED_IP`: exact approved private IP for non-loopback URLs;
+  public/link-local/metadata destinations remain refused.
+- `HG_PRIVATE_MCP_TOKEN_FILE`: existing protected coordinator application token.
+
+The CLI is bounded to 300 seconds by default; `--duration-seconds` accepts 1..3600.
+SIGTERM/SIGINT stop its polling loop. `deploy/coordinator/homeguardian-alexa-mailbox.service`
+supervises one-hour worker processes with a 96-MiB memory cap, 10% CPU quota,
+non-root identity and read-only system protections. This dedicated outbound-only
+service is now deployed, active and boot-enabled. Reboot recovery is not tested.
+It uses its own queue-scoped IAM identity/owner-only credential file, never root
+credentials. Actual wrong-direction queue requests were rejected by AWS.
+
+Reconnecting only the outbound phone bridge recovered genuine private native
+results while retaining the same C++ service PID and VPN. The installed bridge
+retains a native session ID and fails to clear it on HTTP 404, whose empty body it
+misreports as HTTP 200. A permanent phone-side session-recovery update remains
+open. The worker mitigates idle expiry with a private authenticated status read
+once per minute; it discards that reading and does not publish unsolicited data.
+This is not proven recovery after a long worker outage or a changed phone network.
+
+Real operator-origin AWS -> VPS -> phone C++ -> AWS mailbox reads returned status
+and alerts in 2.085 and 1.659 seconds. This verifies genuine mailbox data, not the
+hosted skill's AssumeRole/deployment. No operator credentials left the workstation.
+The owner subsequently reported successful Code deployment and simulator replies
+for both native status (`Running`, capture disabled) and alerts (none recorded).
+An independent follow-up operator-origin smoke passed four real mailbox reads.
+This is functional acceptance, not a reliability sign-off: an intermittent
+unavailable launch remains unresolved, and a worker `ReadTimeoutError` is not yet
+correlated to the failed invocation. Deployed bytes and Skill I/O were not
+independently retrieved. Console administration still requires an authorized
+login; the publisher role does not grant Code-editor or hosted-Lambda administration.
+
+For isolated simulator checks, use full invocations such as `ask home guardian
+what are my recent alerts`. The status and alerts intent responses do not include
+a reprompt, so bare follow-ups may occur outside an active skill conversation.
+Silence is not an alert count; inspect Skill I/O if a full invocation is silent.
+
+A private Code-editor source bundle contains exactly `lambda_function.py`,
+`backend.py`, `mailbox_backend.py`, `requirements.txt` and a selected-settings `.env`.
+It contains no worker key, MCP token or personal AWS credentials. Use those files
+in the existing skill's Code tab and Save/Deploy. Do not extract the bundle over
+the canonical project root (its selected-settings `.env` is NOT the full project
+configuration), do not publish the private bundle, and do not upload it as a
+standalone Lambda ZIP: dependencies are specified for the hosted build, not vendored.
+
+Rollback: set `HG_ALEXA_TRANSPORT=loopback` in the deployed `.env`/environment and
+redeploy the existing skill; stop only this worker if started. Revoke only its
+dedicated credentials if created. Remove the two dedicated queues only after
+owner approval and confirming no pending work. Preserve VPN/MCP/mail configuration.
+
 ## Console deployment boundary
 
 Do not change the skill's hosting mode or endpoint ARN based on directory names.

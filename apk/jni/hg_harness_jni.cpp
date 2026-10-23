@@ -123,7 +123,7 @@ struct Node {
         double value = 0.0;
         double confidence = 0.0;
         int64_t acquired_at_ms = 0;
-        std::string provenance = "real_device";
+        std::string provenance = "real";
     };
     std::deque<Observation> observations;
     uint64_t observations_emitted = 0;
