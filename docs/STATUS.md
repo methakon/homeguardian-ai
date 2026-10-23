@@ -1317,3 +1317,40 @@ classifier omits some runtime paths. See `scripts/ci/README.md`. Media tooling
 was syntax-checked only; its checksum command must not be used as proof of consent
 or authorization. No historical patch was applied. Truly concurrent grant
 consumption and external-profile poller integration remain unverified.
+
+## Published Google portal and physical-camera acceptance
+
+The HTTPS portal now serves the existing dashboard through the cookieless Google
+OIDC gateway. The dedicated client is configured server-side. The owner confirmed
+successful real login after popup-handoff recovery. Household reads require an
+explicit protected, exact-subject grant; the owner's selected verified identity
+is granted read-only access, not every Google user. Other identities and mutations
+remain denied. Source milestones: `5ca476f` and `57b3a6c`.
+
+Focused verification at `57b3a6c`: OAuth/grants/bridge 258 assertions passed;
+MCP client 26 passed; dashboard/security 161 passed. Deployed gateway digest
+matched source. A server-local session preflight using the deployed gateway module
+and service UID returned owner-authorized `/api/me` 200, native status 200,
+alerts 200 and devices 200. This was not another real Google login: its session
+was created locally for authorization/backend verification and revoked afterward.
+The genuine backend reported zero alerts/devices and camera `configured:false`;
+these are not evidence of live monitoring.
+
+Physical camera discovery found the previously identified second camera at a new
+DHCP lease, confirmed against its historical NIC identity. Device addresses and
+fingerprints remain outside this public report. Vendor discovery and its vendor
+TCP listener respond; standard snapshot HTTP/RTSP/ONVIF listeners do not. Existing
+JUAN HTTP and Bubble adapters do not implement this V380 encrypted-generation
+transport. Historical protocol evidence already records an unsupported-generation
+result; no real decoded frame or physical-camera alert has been accepted.
+
+The existing Oracle-to-phone read-only MCP path was freshly queried without
+changing its configuration: both native status and alert-summary tools returned
+genuine data. Status reported `Running`, `capture_enabled:false`; alerts reported
+zero. This verifies read connectivity, not capture, physical detection or a spoken
+Echo response. Alexa developer-console UI acceptance remains blocked by the
+available browser's Amazon sign-in state.
+
+Workstation shutdown remains conditional on independently working live capture,
+analysis and alert readback. Those criteria are not met; do not shut down or claim
+the requested physical-monitoring acceptance from synthetic tests.
