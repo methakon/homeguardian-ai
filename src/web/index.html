@@ -185,6 +185,32 @@
   </div>
 
   <div class="grid" style="margin-top:16px;">
+    <!-- LIVE PHYSICAL CAMERA. A separate card from Uploaded media on purpose: this is real
+         observation from an authorized physical device, which is a different provenance class
+         from an operator upload or a synthetic scenario. They must never be visually merged. -->
+    <div class="card" id="liveCameraCard">
+      <h2>Outside Main Gate <span class="tag live" id="camBadge">CONNECTING</span></h2>
+      <div class="banner" id="camBanner"><b>Live physical camera.</b> Real frames from the
+      authorized exterior camera outside the main gate. This is <b>refreshing snapshot</b> delivery,
+      <b>not continuous video</b> — the panel says so because the source says so, and it will not
+      relabel a stale frame as live.</div>
+      <div style="position:relative; background:#000; border-radius:6px; overflow:hidden; min-height:180px; display:flex; align-items:center; justify-content:center;">
+        <img id="camFrame" alt="Live view — Outside Main Gate"
+             style="max-width:100%; max-height:360px; display:block;">
+        <div id="camOverlay" class="empty"
+             style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55);">
+          Connecting to camera…
+        </div>
+      </div>
+      <div class="metrics" id="camMetrics" style="margin-top:10px;"></div>
+      <div class="row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+        <button class="primary" id="camReconnect">⟳ Reconnect</button>
+        <button id="camFullscreen">⛶ Full screen</button>
+        <span style="font-size:11px; color:var(--muted);">Source: authorized exterior camera ·
+          physical observation · distinct from synthetic and uploaded sources</span>
+      </div>
+    </div>
+
     <!-- Privacy / how it works -->
     <div class="card" id="mediaCard">
       <h2>Uploaded media — simulated camera feed</h2>
@@ -863,6 +889,103 @@ document.addEventListener('DOMContentLoaded', function () {
   if (b) b.addEventListener('click', uploadMedia);
   refreshFeed();
   setInterval(refreshFeed, 10000);
+});
+
+// ---- LIVE PHYSICAL CAMERA ---------------------------------------------------
+// Real frames from the authorized exterior camera. Two deliberate rules:
+//   1. The LIVE/STALE badge comes from the SERVER's freshness measurement, never from whether
+//      the image request succeeded. A cached frame that loads fine is still STALE if the server
+//      says so, and the overlay says so too.
+//   2. Failure is shown as failure. The previous frame is never re-labelled live, and no
+//      placeholder image is drawn in its place.
+let camStatusTimer = null;
+let camFrameTimer = null;
+
+function camSetBadge(state) {
+  const el = document.getElementById('camBadge');
+  if (!el) return;
+  el.textContent = state;
+  el.className = 'tag ' + (state === 'LIVE' ? 'live' : 'synth');
+}
+
+function camSetOverlay(text) {
+  const ov = document.getElementById('camOverlay');
+  if (!ov) return;
+  if (text) { ov.style.display = 'flex'; ov.textContent = text; }
+  else { ov.style.display = 'none'; ov.textContent = ''; }
+}
+
+function camRenderStatus(d) {
+  const box = document.getElementById('camMetrics');
+  if (!box) return;
+  if (!d || !d.configured) {
+    camSetBadge('NOT CONFIGURED');
+    camSetOverlay('No camera configured on this portal.');
+    box.innerHTML = '';
+    return;
+  }
+  const c = d.camera || {};
+  camSetBadge(c.state || 'UNKNOWN');
+  // STALE and DISCONNECTED are shown honestly over the media area.
+  if (c.state === 'STALE') camSetOverlay('Frame is stale — ' + Math.round((c.frame_age_ms || 0) / 1000) + 's old. Reconnecting…');
+  else if (c.state === 'DISCONNECTED') camSetOverlay('Camera disconnected.');
+  else if (c.state === 'LIVE') camSetOverlay('');
+
+  const age = (c.frame_age_ms == null || c.frame_age_ms < 0) ? '—' : (c.frame_age_ms / 1000).toFixed(1) + 's';
+  const res = c.width ? (c.width + '×' + c.height) : '—';
+  box.innerHTML =
+    '<span>state <b>' + (c.state || '—') + '</b></span>' +
+    '<span>source <b>' + (c.provenance || '—') + '</b></span>' +
+    '<span>delivery <b>' + (c.delivery || '—') + '</b></span>' +
+    '<span>continuous video <b>' + (c.is_continuous_video ? 'yes' : 'no') + '</b></span>' +
+    '<span>resolution <b>' + res + '</b></span>' +
+    '<span>frame age <b>' + age + '</b></span>' +
+    '<span>last frame <b>' + (c.last_frame_bytes || 0) + ' B</b></span>' +
+    '<span>frames <b>' + (c.frames_served || 0) + '</b></span>' +
+    (c.fetch_failures ? '<span>failures <b>' + c.fetch_failures + '</b></span>' : '');
+}
+
+async function camRefreshStatus() {
+  try {
+    const r = await fetch('/api/camera/status');
+    camRenderStatus(await r.json());
+  } catch (e) {
+    camSetBadge('DISCONNECTED');
+    camSetOverlay('Portal unreachable.');
+  }
+}
+
+function camTickFrame() {
+  const img = document.getElementById('camFrame');
+  if (!img) return;
+  // Cache-busted so the browser cannot serve a cached frame as though it were new.
+  img.src = '/api/camera/frame?t=' + Date.now();
+}
+
+function camStart() {
+  camRefreshStatus();
+  camTickFrame();
+  if (camStatusTimer) clearInterval(camStatusTimer);
+  if (camFrameTimer) clearInterval(camFrameTimer);
+  camStatusTimer = setInterval(camRefreshStatus, 2000);
+  camFrameTimer = setInterval(camTickFrame, 2000);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  const rc = document.getElementById('camReconnect');
+  if (rc) rc.addEventListener('click', function () { camSetOverlay('Reconnecting…'); camStart(); });
+  const fs = document.getElementById('camFullscreen');
+  if (fs) fs.addEventListener('click', function () {
+    const img = document.getElementById('camFrame');
+    if (img && img.requestFullscreen) img.requestFullscreen();
+  });
+  const img = document.getElementById('camFrame');
+  if (img) img.addEventListener('error', function () {
+    // An image load failure is shown as a failure; nothing is substituted for it.
+    camSetBadge('ERROR');
+    camSetOverlay('No frame available.');
+  });
+  camStart();
 });
 
 })();
