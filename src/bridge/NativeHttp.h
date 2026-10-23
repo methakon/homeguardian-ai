@@ -498,9 +498,14 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         // authorized physical device. They are separate routes so no caller can ever render one as
         // the other. The status payload states its own delivery mechanism and whether it is
         // continuous video, so the UI cannot overstate it.
-        if (path == "/api/camera/status")
+        if (path == "/api/camera/status" || path.substr(0, 19) == "/api/camera/status?")
             return invoke({"camera_status", "", 5, false});
-        if (path == "/api/camera/frame") {
+        // The frame route MUST accept a query string. `path` here is the whole request target
+        // INCLUDING the query (see the parse above), and the dashboard appends a cache-buster
+        // (?t=<ms>) so the browser can never serve a cached frame as though it were new. Without
+        // this, the browser's request 404s and the image renders broken while a bare curl succeeds
+        // -- which is exactly how this failed the first time. Same shape as the run-scenario match.
+        if (path == "/api/camera/frame" || path.substr(0, 18) == "/api/camera/frame?") {
             // With no camera handler configured the route does not exist, rather than serving
             // something else in its place.
             if (!camera) return json_error(404, "not_found");
