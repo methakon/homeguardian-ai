@@ -93,8 +93,19 @@ the rate limit is a property of the transport rather than of the portal.
 ## 4. Logs
 
 The process logs to stderr (and to journald under systemd): the resolved uploads directory at startup,
-`DEMO_READY <port>` when listening, and — with `HG_DEBUG_BODY=1` — one line per request body stating sizes
-only, never content. Request bodies, credentials and the operator secret are never logged.
+`DEMO_READY <port>` when listening, and — with `HG_DEBUG_BODY=1` — three diagnostics that say only what is
+needed to locate a framing refusal:
+
+* `hg_body:` one line per request: the header/body boundary, the declared and received body sizes, whether
+  the buffered cap was hit, and the cap itself. This is the line that proves a body arrived whole.
+* `hg_req:` one line per dispatched request: path, method, total size, the framing values each refusal is
+  decided from, and whether `Host`/`Origin` were seen. **No secret appears here**: a credential in the URL
+  is refused before this point.
+* `hg_hdr:` one line per header **name** as the header scan parses it (names only, never values). The last
+  name printed before a refusal identifies the header being processed when it was refused.
+
+All three print sizes, names and status only — never a header value, a body, a credential or the operator
+secret. Nothing is logged unless `HG_DEBUG_BODY` is set to a non-empty, non-`0` value.
 
 ## 5. Upload limits and validation (what will be refused)
 
