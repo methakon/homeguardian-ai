@@ -37,7 +37,7 @@ from the portal host: 10.0.0.99:3306 reachable
 authentication:       SELECT CURRENT_USER() -> mylife@%
 ```
 
-## What is blocked, and why it is an owner action
+## Why the portal uses the shared database with an `hf_` prefix
 
 The application account has `USAGE` only:
 
@@ -53,19 +53,28 @@ CREATE DATABASE homeguardian
   -> ERROR 1044 (42000): Access denied for user 'mylife'@'%' to database 'homeguardian'
 ```
 
-`scripts/mysql/homeguardian_schema.sql` contains the exact provisioning statement and
-the four tables the portal uses. It needs a MySQL administrator and must be run once:
+A dedicated database is therefore not available, so the portal uses the existing
+database the account already owns and namespaces its tables with `hf_`:
 
 ```
-mysql -h 10.0.0.99 -u <admin> -p < scripts/mysql/homeguardian_schema.sql
+MYSQL_DATABASE=myjob_agent
+MYSQL_TABLE_PREFIX=hf_
 ```
 
-The script creates no user password literal; the account's secret is set out of band.
-Use a dedicated `homeguardian` account scoped to `10.0.0.%` with
-`SELECT, INSERT, UPDATE, DELETE` on `homeguardian.*` in preference to reusing the
-account that also owns `myjob_agent`.
+`scripts/mysql/homeguardian_schema.sql` creates only `hf_portal_audit`,
+`hf_alert_mirror` and `hf_device_visibility`. It creates no other object, alters no
+existing table, and can be re-run safely. It runs as the application account:
 
-After the grant, verify from the portal host without printing the secret:
+```
+set -a; . /opt/homeguardian/portal/db.env; set +a
+MYSQL_PWD="$MYSQL_PASSWORD" mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" \
+  -u "$MYSQL_USER" "$MYSQL_DATABASE" < scripts/mysql/homeguardian_schema.sql
+```
+
+If an administrator later grants a dedicated database, change the two values above and
+re-run the script with the `hf_` prefix removed; nothing else depends on the name.
+
+Verify from the portal host without printing the secret:
 
 ```
 set -a; . /opt/homeguardian/portal/db.env; set +a
@@ -77,9 +86,9 @@ MYSQL_PWD="$MYSQL_PASSWORD" mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" \
 
 | table | purpose |
 |---|---|
-| `portal_audit` | sign-in and portal-action audit; the browser holds no durable identity, so the server is the record |
-| `alert_mirror` | read-only copy of alerts the native store already committed; the C++ application stays the authority and sole writer |
-| `device_visibility` | owner-approved per-household visibility; empty by default, so a public account sees no private device |
+| `hf_portal_audit` | sign-in and portal-action audit; the browser holds no durable identity, so the server is the record |
+| `hf_alert_mirror` | read-only copy of alerts the native store already committed; the C++ application stays the authority and sole writer |
+| `hf_device_visibility` | owner-approved per-household visibility; empty by default, so a public account sees no private device |
 
 The native core keeps SQLite as its store. MySQL is the portal-side record, not a
 second source of truth for alerts: a mirror row may lag or be missing, and the portal
