@@ -138,7 +138,7 @@ class LaunchRequestHandler(AbstractRequestHandler):
         speech = "Welcome to HomeGuardian. " + _status_speech(status)
         return (
             handler_input.response_builder.speak(speech)
-            .reprompt("You can ask for your home status or recent alerts.")
+            .ask("You can ask for your home status or recent alerts.")
             .response
         )
 
@@ -172,7 +172,7 @@ class HelpIntentHandler(AbstractRequestHandler):
     def handle(self, handler_input: HandlerInput) -> Response:
         return (
             handler_input.response_builder.speak(HELP_SPEECH)
-            .reprompt("What would you like to know?")
+            .ask("What would you like to know?")
             .response
         )
 

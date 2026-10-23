@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import re
 import unittest
 from unittest import mock
 
@@ -64,6 +65,7 @@ backend = sys.modules["backend"]
 # does not satisfy the real contract cannot test code that runs against it.
 # ------------------------------------------------------------------------------------------------
 
+from ask_sdk_core.response_helper import ResponseFactory
 from ask_sdk_model.intent import Intent
 from ask_sdk_model.intent_request import IntentRequest
 from ask_sdk_model.launch_request import LaunchRequest
@@ -95,34 +97,71 @@ def _intent_request(name):
     return IntentRequest(intent=Intent(name=name))
 
 
-class RecordingResponseBuilder:
-    """Records what the handler asked Alexa to say, without needing the real SDK response builder."""
-
-    def __init__(self):
-        self.speech = None
-        self.reprompt_text = None
-        self.response = "RESPONSE"
-
-    def speak(self, text):
-        self.speech = text
-        return self
-
-    def reprompt(self, text):
-        self.reprompt_text = text
-        return self
-
-
 class FakeHandlerInput:
+    """A HandlerInput whose response builder is the REAL one.
+
+    This used to be a hand-written recorder that implemented `.speak()` and `.reprompt()`. The SDK's
+    ResponseFactory has NO `.reprompt()` — that is the JavaScript ASK SDK's method. So the double was
+    MORE PERMISSIVE THAN REALITY, every test passed, and the deployed skill raised
+    `AttributeError: 'ResponseFactory' object has no attribute 'reprompt'` on exactly the two handlers
+    that reprompt (LaunchRequest and HelpIntent) — the identical-failure symptom the owner reported.
+
+    Using the real ResponseFactory means the tests exercise the real API surface and cannot invent a
+    method the runtime lacks. Responses are dicts, so assertions read `response.outputSpeech.ssml`.
+    """
+
     def __init__(self, request):
         self.request_envelope = _Envelope(request)
-        self.response_builder = RecordingResponseBuilder()
+        self.response_builder = ResponseFactory()
+        self.service_client_factory = None
+
+
+def _unwrap_ssml(value):
+    """Strip the <speak> wrapper the real ResponseFactory adds, returning bare text."""
+    if not value:
+        return ""
+    match = re.match(r"^\s*<speak>(.*)</speak>\s*$", value, re.DOTALL)
+    return (match.group(1) if match else value).strip()
+
+
+def _speech_of(response):
+    """The spoken text, from either form this can arrive in.
+
+    A handler called directly returns the ask_sdk_model `Response` OBJECT, while `lambda_handler`
+    returns the SERIALISED dict. Reading only one of those is how a test ends up asserting on None.
+    """
+    if response is None:
+        return ""
+    if isinstance(response, dict):
+        output = response.get("response", {}).get("outputSpeech") or {}
+        return _unwrap_ssml(output.get("ssml") or output.get("text"))
+    output = getattr(response, "output_speech", None)
+    if output is None:
+        return ""
+    return _unwrap_ssml(getattr(output, "ssml", None) or getattr(output, "text", None))
+
+
+def _reprompt_of(response):
+    """The reprompt text, from either form."""
+    if response is None:
+        return ""
+    if isinstance(response, dict):
+        reprompt = response.get("response", {}).get("reprompt") or {}
+        output = reprompt.get("outputSpeech") or {}
+        return _unwrap_ssml(output.get("ssml") or output.get("text"))
+    reprompt = getattr(response, "reprompt", None)
+    if reprompt is None:
+        return None
+    output = getattr(reprompt, "output_speech", None)
+    if output is None:
+        return ""
+    return _unwrap_ssml(getattr(output, "ssml", None) or getattr(output, "text", None))
 
 
 def speak_of(handler, request):
-    """Run a handler and return the speech text it produced."""
+    """Run a handler with the real response builder and return the speech text it produced."""
     handler_input = FakeHandlerInput(request)
-    handler.handle(handler_input)
-    return handler_input.response_builder.speech
+    return _speech_of(handler.handle(handler_input)) or ""
 
 
 LAUNCH = LaunchRequest()
@@ -230,6 +269,53 @@ class TestDispatchAndBoundaries(unittest.TestCase):
         s.assert_not_called()
         a.assert_not_called()
 
+    def test_every_handler_runs_against_the_real_response_factory(self):
+        """THE REGRESSION FOR THE DEPLOYED FAILURE.
+
+        The deployed skill raised `AttributeError: 'ResponseFactory' object has no attribute 'reprompt'`
+        on LaunchRequest and HelpIntent - the two handlers that reprompt - and the owner saw the same
+        failure for both. The old test double implemented `.reprompt()`, so it could never catch this.
+
+        This runs EVERY handler through the REAL ResponseFactory. Any SDK method the code calls that
+        does not exist therefore raises here, in a test, instead of in the console.
+        """
+        with mock.patch.object(lf.backend, "get_homeguardian_status", return_value=None), \
+                mock.patch.object(lf.backend, "get_alert_summary", return_value=None):
+            for handler, request in (
+                (lf.LaunchRequestHandler(), LAUNCH),
+                (lf.HomeStatusIntentHandler(), HOME_STATUS),
+                (lf.RecentAlertsIntentHandler(), RECENT_ALERTS),
+                (lf.RecentAlertsIntentHandler(), ALERT_SUMMARY),
+                (lf.HelpIntentHandler(), HELP),
+                (lf.CancelOrStopIntentHandler(), STOP),
+                (lf.SessionEndedRequestHandler(), SESSION_ENDED),
+            ):
+                with self.subTest(handler=type(handler).__name__):
+                    response = handler.handle(FakeHandlerInput(request))
+                    # Direct handler call -> ask_sdk_model Response object (lambda_handler serialises).
+                    self.assertIsNotNone(response)
+                    self.assertIsNotNone(_speech_of(response))
+
+    def test_reprompting_handlers_set_a_reprompt_via_ask(self):
+        """Launch and Help must keep the session open. In the Python SDK that is `.ask()`, not
+        `.reprompt()`; asserting the reprompt is actually present is what makes the method choice
+        observable rather than incidental."""
+        with mock.patch.object(lf.backend, "get_homeguardian_status", return_value=None):
+            for handler, request in (
+                (lf.LaunchRequestHandler(), LAUNCH),
+                (lf.HelpIntentHandler(), HELP),
+            ):
+                with self.subTest(handler=type(handler).__name__):
+                    response = handler.handle(FakeHandlerInput(request))
+                    self.assertIsNotNone(_reprompt_of(response),
+                                         "a reprompting handler must set one")
+
+    def test_the_python_sdk_has_no_reprompt_method(self):
+        """Pins the fact the bug was made of, so a future edit 'restoring' .reprompt() fails here."""
+        self.assertFalse(hasattr(ResponseFactory, "reprompt"))
+        self.assertTrue(hasattr(ResponseFactory, "ask"))
+        self.assertTrue(hasattr(ResponseFactory, "speak"))
+
     def test_handlers_are_mutually_exclusive(self):
         cases = [
             (lf.LaunchRequestHandler(), LAUNCH, True),
@@ -257,13 +343,16 @@ class TestDispatchAndBoundaries(unittest.TestCase):
 
     def test_catch_all_handler_does_not_leak_an_exception_message(self):
         """A transport exception message can carry a URL or header; only the class may be logged."""
-        speech = lf.CatchAllExceptionHandler().handle(
+        response = lf.CatchAllExceptionHandler().handle(
             FakeHandlerInput(HOME_STATUS),
             RuntimeError("Bearer supersecret-token-abcdef0123456789 at http://127.0.0.1:8790/mcp"),
         )
-        self.assertEqual("RESPONSE", speech)
-        # The handler must not have spoken the exception text.
-        self.assertIn("currently unavailable", lf.UNAVAILABLE_SPEECH)
+        spoken = _speech_of(response) or ""
+        # It must say the unavailable line...
+        self.assertIn("currently unavailable", spoken)
+        # ...and must NOT echo the exception text, which here carries a fake token and a URL.
+        self.assertNotIn("supersecret", spoken)
+        self.assertNotIn("8790", spoken)
 
 
 class TestBackendSafety(unittest.TestCase):
