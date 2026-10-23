@@ -1,6 +1,29 @@
 # HomeGuardian AI — Status
 
-**Last updated:** 2026-10-23
+**Last updated:** 2026-10-24
+
+## Camera-source follow-up and real-event acceptance
+
+Integrated `experiment/hg-panasonic-service-transport-06` at
+`98280bf4ffb1f3b8147f3e81256657735191adea` after `7e87535`; a second fetch returned
+the same source tip. Preserved prior main records while resolving STATUS conflicts.
+Corrected camera password-file loading, malformed-port handling, explicit
+plaintext opt-in, operator authorization before camera reads, and capture-switch
+enforcement. The private snapshot UI sends authorization in headers, never URLs.
+
+Verified: full native **76,430 assertions / 790 cases**, camera regression **6
+tests**, portal smoke **38 checks**, and the complete runtime catalogue **10
+scenarios x capture on/off = 20 cases / 40 actual ASK SDK responses**. Exact
+alert IDs, counts and severity agreed between native rule output, SQLite,
+independent MCP and ASK handlers. These are local synthetic/fixture tests.
+
+**Real-event goal remains incomplete.** Physical snapshots are not connected to
+analysis; status/UI explicitly say so. Several requested semantic categories are
+unimplemented, synthetic-only or require audio/environmental inputs absent from
+JPEG. The established ASK/SQS lane is pull-based, not proactive notification.
+See [Real-event pipeline acceptance](REAL_EVENT_PIPELINE_ACCEPTANCE.md) for all
+nine categories, per-scenario results and the missing production gates. Nothing
+was deployed, captured from hardware or changed in the working cloud/phone lane.
 
 ## Pre-final verification — 23:48 IST
 

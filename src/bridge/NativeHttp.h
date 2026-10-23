@@ -222,6 +222,15 @@ using Handler = std::function<std::string(const HandlerRequest&, int& status_out
 using MediaHandler =
     std::function<std::string(const std::string& id, int& status_out, std::string& mime_out)>;
 
+// The LIVE physical camera is a THIRD kind of response and gets its own OPTIONAL callback, on the
+// same principle as MediaHandler: defaulted and appended, so every existing caller and test stays
+// source-compatible. It is deliberately NOT folded into MediaHandler, because an uploaded file and
+// a live camera are different provenance classes -- an upload is a recording, a camera frame is
+// physical observation -- and the panel must never conflate them. A caller that supplies no camera
+// handler simply gets 404 for the camera frame route.
+using CameraHandler =
+    std::function<std::string(int& status_out, std::string& mime_out)>;
+
 // Stop flag for clean shutdown. A signal handler sets this (async-signal-safe);
 // the accept loop notices it within one listener-timeout tick.
 inline std::atomic<bool> g_stop{false};
@@ -285,7 +294,8 @@ inline std::string json_error(unsigned status, std::string_view error) {
 inline std::string dispatch(std::string_view request, std::string_view html,
                             const Handler& handler,
                       SessionStore& sessions,
-                            int64_t now_ms, uint16_t server_port, const MediaHandler& media = MediaHandler()) {
+                            int64_t now_ms, uint16_t server_port, const MediaHandler& media = MediaHandler(),
+                            const CameraHandler& camera = CameraHandler()) {
     const auto header_end = request.find("\r\n\r\n");
     // A request MAY carry a body: the POST routes do, and the GET branch rejects one explicitly.
     // The header block itself must still be complete (not truncated mid-request).
@@ -483,6 +493,34 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         // camera: the payload says so, and the handler reports only recorded uploads.
         if (path == "/api/feed")
             return invoke({"feed", "", 5, false});
+        // Physical media is private even on loopback. A local listener and an
+        // Origin check are not operator authorization. Never fetch a camera on
+        // behalf of an unauthenticated browser or local process.
+        if (path.rfind("/api/camera/", 0) == 0 &&
+            !sessions.authorize(presented_secret, now_ms))
+            return json_error(401, "unauthorized");
+        // LIVE PHYSICAL CAMERA -- read-only, and a DIFFERENT provenance class from /api/feed.
+        // /api/feed lists recordings an operator uploaded; this is live observation from an
+        // authorized physical device. They are separate routes so no caller can ever render one as
+        // the other. The status payload states its own delivery mechanism and whether it is
+        // continuous video, so the UI cannot overstate it.
+        if (path == "/api/camera/status" || path.substr(0, 19) == "/api/camera/status?")
+            return invoke({"camera_status", "", 5, false});
+        // The frame route MUST accept a query string. `path` here is the whole request target
+        // INCLUDING the query (see the parse above), and the dashboard appends a cache-buster
+        // (?t=<ms>) so the browser can never serve a cached frame as though it were new. Without
+        // this, the browser's request 404s and the image renders broken while a bare curl succeeds
+        // -- which is exactly how this failed the first time. Same shape as the run-scenario match.
+        if (path == "/api/camera/frame" || path.substr(0, 18) == "/api/camera/frame?") {
+            // With no camera handler configured the route does not exist, rather than serving
+            // something else in its place.
+            if (!camera) return json_error(404, "not_found");
+            int cam_status = 200;
+            std::string cam_mime;
+            std::string cam_body = camera(cam_status, cam_mime);
+            return response(static_cast<unsigned>(cam_status),
+                            cam_mime.empty() ? "application/octet-stream" : cam_mime, cam_body);
+        }
         if (is_media_route) {
             // /media/<id>: read-only bytes of a previously uploaded, validated file. The transport
             // has already refused %, backslash, #, NUL and over-long paths, so the id cannot escape
@@ -655,7 +693,8 @@ inline void send_all(int fd, const std::string& bytes) {
 // Returns only after a bind/listen/accept failure or request_shutdown().
 inline int serve(uint16_t port, std::string_view html, const Handler& handler,
                  std::string operator_secret = std::string(),
-                 const MediaHandler& media = MediaHandler()) {
+                 const MediaHandler& media = MediaHandler(),
+                 const CameraHandler& camera = CameraHandler()) {
     const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listener < 0) return 2;
     const int reuse = 1;
@@ -785,7 +824,7 @@ inline int serve(uint16_t port, std::string_view html, const Handler& handler,
         const auto output = too_large
             ? json_error(413, "too_large")
             : dispatch(input, html, handler, sessions, now_ms(),
-                       ntohs(addr.sin_port), media);
+                       ntohs(addr.sin_port), media, camera);
         send_all(client, output);
         ::close(client);
     }

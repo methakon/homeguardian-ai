@@ -151,3 +151,25 @@ change has not been made or tested here. Do not assume an HTTPS front will work 
 Other unverified items: the login/authorization experience is the operator-secret panel only (no per-user
 accounts); and the dashboard's behaviour when the *application* is degraded (as opposed to the upload store
 being unusable) is covered only by reading its JavaScript, not exercised.
+
+## 8. Optional private camera preview
+
+The camera follow-up adds `/api/camera/status` and `/api/camera/frame?t=...`.
+These are **operator-authorized reads**, not public media routes. Use the
+dashboard's authorization panel; the browser sends `X-HG-Secret` in request
+headers and displays received bytes through a temporary blob URL. Credentials
+must never appear in the URL.
+
+Enabling a configured source additionally requires `--camera-host`, a valid
+`--camera-port`, `--camera-password-file` and the deliberate
+`--camera-allow-plaintext` opt-in. The password file must be an owner-only,
+owner-owned regular file, not a symlink; it is bounded and rejected when absent
+or insecure. The configured media-capture switch must be enabled for a fetch.
+Do not enable it without authorization for the intended source and scene.
+
+This is a refreshing snapshot preview, **not continuous video or event
+analysis**. The source's detector/registry integration remains incomplete and
+the UI reports `event analysis: not connected`. See
+`REAL_EVENT_PIPELINE_ACCEPTANCE.md` before making any real monitoring or Alexa
+notification claim. No deployment or physical-camera acceptance is implied by
+these source instructions.

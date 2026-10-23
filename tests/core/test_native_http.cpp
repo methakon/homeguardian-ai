@@ -116,6 +116,36 @@ TEST_CASE("NativeHttp: valid /api/health returns 200 JSON", "[nativehttp][h04]")
     REQUIRE(h.calls == 0);  // health is a static answer, handler untouched
 }
 
+TEST_CASE("NativeHttp: physical camera reads require operator authorization",
+          "[nativehttp][camera-auth]") {
+    Rec h;
+    auto handler = recording_handler(h);
+    SessionStore sessions;
+    sessions.operator_secret = kTestSecret;
+    int frames = 0;
+    CameraHandler camera = [&frames](int& status, std::string& mime) {
+        ++frames;
+        status = 200;
+        mime = "image/jpeg";
+        return std::string("fixture-frame");
+    };
+    for (const auto* path : {"/api/camera/frame", "/api/camera/frame?t=1",
+                             "/api/camera/status", "/api/camera/status?t=1"}) {
+        const auto unauth = hg_native_http::dispatch(
+            req(std::string("GET ") + path + " HTTP/1.1"), "", handler,
+            sessions, test_now_ms(), kTestPort, {}, camera);
+        REQUIRE(starts_with(unauth, "HTTP/1.1 401"));
+        REQUIRE(frames == 0);
+        REQUIRE(h.calls == 0);
+    }
+    const auto authorized = hg_native_http::dispatch(
+        req("GET /api/camera/frame?t=2 HTTP/1.1",
+            std::string("Host: 127.0.0.1\r\nX-HG-Secret: ") + kTestSecret + "\r\n"),
+        "", handler, sessions, test_now_ms(), kTestPort, {}, camera);
+    REQUIRE(starts_with(authorized, "HTTP/1.1 200"));
+    REQUIRE(frames == 1);
+}
+
 TEST_CASE("NativeHttp: /api/status and scenario invoke the real handler", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
     auto s = dispatch(req("GET /api/status HTTP/1.1"), "<html>", handler);
