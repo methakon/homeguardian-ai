@@ -1,0 +1,1032 @@
+// HomeGuardian AI — Cookieless OIDC Gateway
+//
+// The public front door for the HomeGuardian portal. It terminates Google OIDC
+// (Authorization Code + PKCE, server-side token exchange), issues an in-memory
+// Bearer session, and proxies ONLY a fixed allowlist of read-only tools to the
+// native C++ `hg_mcp_server` through `mcp_adapter.js`.
+//
+// Hard invariants:
+//   * No cookies, ever. No Set-Cookie is emitted and inbound Cookie headers are
+//     ignored. The browser keeps its session token in a JS closure only.
+//   * Every authenticated principal is VIEWER. Private data (camera, frames,
+//     feed, uploads, device identities, raw media, consent, mutations) is denied
+//     by default; only /api/status and /api/alerts reach the MCP backend.
+//   * The MCP bearer token never leaves this process. Responses are shaped
+//     server-side and error details are redacted.
+//   * An unreachable/failing backend is reported as `unavailable` (HTTP 503),
+//     never as an empty or zeroed success.
+//   * The portal page is the SAME page the C++ bridge serves (src/web/index.html)
+//     — this gateway does not ship a second dashboard.
+//
+// Requires only node builtins plus the already-present ./mcp_adapter module.
+
+'use strict';
+
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+
+const { HomeGuardianMcpClient } = require('./mcp_adapter');
+const {
+  OidcConfig,
+  OidcProvider,
+  OidcError,
+  ROLE_VIEWER,
+  publicPrincipal,
+} = require('./oauth');
+
+const DEFAULT_PORTAL_PATH = path.join(__dirname, '..', 'src', 'web', 'index.html');
+const PORTAL_ASSET_PATH = '/assets/portal-session.js';
+const MAX_BODY_BYTES = 64 * 1024;
+const SESSION_TOKEN_RE = /^[0-9a-f]{64}$/;
+
+// ---------------------------------------------------------------------------
+// Session store (hashed tokens, TTL, explicit revocation)
+// ---------------------------------------------------------------------------
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token), 'utf8').digest('hex');
+}
+
+class SessionStore {
+  constructor({ ttlMs = 3600 * 1000, now = Date.now, maxSessions = 2000 } = {}) {
+    this.ttlMs = ttlMs;
+    this.now = now;
+    this.maxSessions = maxSessions;
+    this.sessions = new Map(); // sha256(token) -> session
+  }
+
+  create(principal) {
+    this._sweep();
+    if (this.sessions.size >= this.maxSessions) {
+      const oldest = this.sessions.keys().next();
+      if (!oldest.done) this.sessions.delete(oldest.value);
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    const now = this.now();
+    const session = {
+      tokenHash: hashToken(token),
+      principal,
+      createdAt: now,
+      expiresAt: now + this.ttlMs,
+    };
+    this.sessions.set(session.tokenHash, session);
+    return { token, session };
+  }
+
+  /** Look up a live session by raw token. Expired sessions are destroyed. */
+  get(token) {
+    if (typeof token !== 'string' || !SESSION_TOKEN_RE.test(token)) return null;
+    const key = hashToken(token);
+    const session = this.sessions.get(key);
+    if (!session) return null;
+    if (this.now() > session.expiresAt) {
+      this.sessions.delete(key);
+      return null;
+    }
+    return session;
+  }
+
+  revoke(token) {
+    if (typeof token !== 'string' || token.length === 0) return false;
+    return this.sessions.delete(hashToken(token));
+  }
+
+  get size() {
+    this._sweep();
+    return this.sessions.size;
+  }
+
+  _sweep() {
+    const now = this.now();
+    for (const [key, session] of this.sessions) {
+      if (now > session.expiresAt) this.sessions.delete(key);
+    }
+  }
+}
+
+/**
+ * One-time hand-off code between the OAuth redirect and the browser's
+ * in-memory token exchange. Singles use + TTL, so a leaked URL fragment cannot
+ * be replayed after the first exchange.
+ */
+class OneTimeCodeStore {
+  constructor({ ttlMs = 60 * 1000, now = Date.now, maxCodes = 256 } = {}) {
+    this.ttlMs = ttlMs;
+    this.now = now;
+    this.maxCodes = maxCodes;
+    this.codes = new Map();
+  }
+
+  issue(payload) {
+    this._sweep();
+    if (this.codes.size >= this.maxCodes) {
+      const oldest = this.codes.keys().next();
+      if (!oldest.done) this.codes.delete(oldest.value);
+    }
+    const code = crypto.randomBytes(32).toString('base64url');
+    this.codes.set(code, { payload, expiresAt: this.now() + this.ttlMs });
+    return code;
+  }
+
+  take(code) {
+    if (typeof code !== 'string' || code.length === 0) return null;
+    const entry = this.codes.get(code);
+    if (!entry) return null;
+    this.codes.delete(code); // single use, taken before any validation
+    if (this.now() > entry.expiresAt) return null;
+    return entry.payload;
+  }
+
+  get size() {
+    this._sweep();
+    return this.codes.size;
+  }
+
+  _sweep() {
+    const now = this.now();
+    for (const [key, entry] of this.codes) {
+      if (now > entry.expiresAt) this.codes.delete(key);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MCP backend (read-only, allowlisted tools only)
+// ---------------------------------------------------------------------------
+
+function redactDetail(message) {
+  return String(message || '')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .slice(0, 200);
+}
+
+class McpBackend {
+  constructor({ client, factory, timeoutMs = 6000 } = {}) {
+    this.client = client || null;
+    this.factory = factory || null;
+    this.timeoutMs = timeoutMs;
+    this.initialized = false;
+    this.initializePromise = null;
+  }
+
+  _getClient() {
+    if (!this.client) {
+      if (!this.factory) throw new Error('no MCP client configured');
+      this.client = this.factory();
+    }
+    return this.client;
+  }
+
+  async _ensureInitialized(client) {
+    if (this.initialized) return;
+    if (typeof client.initialize !== 'function') {
+      this.initialized = true;
+      return;
+    }
+    if (!this.initializePromise) {
+      this.initializePromise = Promise.resolve()
+        .then(() => client.initialize())
+        .then(() => {
+          this.initialized = true;
+        })
+        .finally(() => {
+          this.initializePromise = null;
+        });
+    }
+    await this.initializePromise;
+  }
+
+  /** Invoke one allowlisted read-only tool. Resolves to parsed tool data. */
+  async callTool(name, args = {}) {
+    const client = this._getClient();
+    await this._ensureInitialized(client);
+    const result = await this._withTimeout(client.callTool(name, args));
+    if (!result || typeof result !== 'object') {
+      throw new Error('MCP returned no usable payload');
+    }
+    if (result.rawText !== undefined && result.data !== undefined) {
+      if (result.data === null || typeof result.data !== 'object') {
+        throw new Error('MCP tool returned an empty payload');
+      }
+      return result.data;
+    }
+    if (Array.isArray(result) || Object.keys(result).length === 0) {
+      throw new Error('MCP tool returned an empty payload');
+    }
+    return result;
+  }
+
+  _withTimeout(promise) {
+    if (!this.timeoutMs || this.timeoutMs <= 0) return Promise.resolve(promise);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('MCP backend timed out')), this.timeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      Promise.resolve(promise).then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+}
+
+// VIEWER read allowlist. Everything else — including /api/devices — is denied.
+const VIEWER_READ_ROUTES = Object.freeze({
+  '/api/status': { tool: 'get_homeguardian_status', shape: 'status' },
+  '/api/alerts': { tool: 'get_alert_summary', shape: 'alerts' },
+});
+
+// Explicitly named private surfaces, denied with a specific reason for auditability.
+const PRIVATE_ROUTE_REASONS = Object.freeze({
+  '/api/devices': 'device_identities',
+  '/api/device': 'device_identities',
+  '/api/feed': 'media_feed',
+  '/api/upload': 'uploads',
+  '/api/uploads': 'uploads',
+  '/api/delete': 'mutations',
+  '/api/camera/frame': 'camera_frames',
+  '/api/camera/status': 'camera_state',
+  '/api/camera': 'camera',
+  '/api/consent': 'consent',
+  '/api/integrations': 'integration_identities',
+  '/api/scenarios': 'scenario_control',
+  '/api/run-scenario': 'mutations',
+  '/api/mcp/scenario': 'mutations',
+  '/api/session': 'operator_credentials',
+  '/api/admin': 'admin',
+});
+
+// ---------------------------------------------------------------------------
+// Portal assets: same page as the C++ bridge, plus CSP hashes and a session shim
+// ---------------------------------------------------------------------------
+
+const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served by the OIDC gateway).
+   The session token lives in this closure for the lifetime of the tab: no cookies,
+   no persistent browser storage. Google/MCP credentials never reach the browser. */
+(function () {
+  'use strict';
+  var state = { token: null, role: null, expiresAt: 0 };
+  var nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+  if (!nativeFetch) return;
+
+  function absolute(url) {
+    try { return new URL(url, location.href); } catch (e) { return null; }
+  }
+  function isSameOriginApi(url) {
+    if (typeof url !== 'string') return false;
+    var parsed = absolute(url);
+    if (!parsed) return false;
+    if (parsed.origin !== location.origin) return false;
+    return parsed.pathname.indexOf('/api/') === 0;
+  }
+  function clear() {
+    state.token = null; state.role = null; state.expiresAt = 0;
+    document.documentElement.setAttribute('data-hg-auth', 'anonymous');
+  }
+  function announce() {
+    document.documentElement.setAttribute('data-hg-auth', state.role ? 'viewer' : 'anonymous');
+    try {
+      window.dispatchEvent(new CustomEvent('hg:session', {
+        detail: { authenticated: !!state.token, role: state.role }
+      }));
+    } catch (e) {}
+  }
+
+  window.fetch = function (input, init) {
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    var opts = {};
+    if (init) {
+      for (var key in init) {
+        if (Object.prototype.hasOwnProperty.call(init, key)) opts[key] = init[key];
+      }
+    }
+    if (state.token && isSameOriginApi(url)) {
+      var headers = new Headers(opts.headers || {});
+      if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + state.token);
+      opts.headers = headers;
+    }
+    opts.credentials = 'omit'; // cookieless by construction
+    return nativeFetch(input, opts);
+  };
+
+  function exchange(code) {
+    return nativeFetch('/api/session/exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code }),
+      credentials: 'omit',
+      cache: 'no-store'
+    }).then(function (res) {
+      return res.json().then(function (body) {
+        if (!res.ok || !body || !body.token) throw new Error((body && body.error) || 'exchange_failed');
+        state.token = body.token;
+        state.role = body.role;
+        state.expiresAt = Date.now() + (Number(body.expires_in) || 0) * 1000;
+        announce();
+        return body;
+      });
+    }).catch(function () {
+      clear();
+      return null;
+    });
+  }
+
+  function logout() {
+    var headers = { 'Content-Type': 'application/json' };
+    if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    return nativeFetch('/api/logout', {
+      method: 'POST', headers: headers, body: '{}', credentials: 'omit', cache: 'no-store'
+    }).catch(function () {}).then(function () {
+      clear();
+      announce();
+    });
+  }
+
+  window.__hg = {
+    role: function () { return state.role; },
+    authenticated: function () { return !!state.token; },
+    expiresAt: function () { return state.expiresAt; },
+    logout: logout,
+    ready: null
+  };
+
+  var match = /(?:^#|&)session=([A-Za-z0-9_-]{16,128})/.exec(location.hash || '');
+  if (match) {
+    var code = match[1];
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    window.__hg.ready = exchange(code);
+  } else {
+    clear();
+  }
+})();
+`;
+
+function sha256Base64(body) {
+  return crypto.createHash('sha256').update(body, 'utf8').digest('base64');
+}
+
+/**
+ * Extract CSP source hashes for every inline <script> and <style> block. The
+ * page is never modified on disk; only the served copy gets one extra external
+ * script tag, so hashes are computed once from the file bytes.
+ */
+function computeInlineHashes(html) {
+  const scriptHashes = [];
+  const styleHashes = [];
+  const scriptRe = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+  const styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+  let match;
+  while ((match = scriptRe.exec(html)) !== null) scriptHashes.push(`'sha256-${sha256Base64(match[1])}'`);
+  while ((match = styleRe.exec(html)) !== null) styleHashes.push(`'sha256-${sha256Base64(match[1])}'`);
+  return { scriptHashes, styleHashes };
+}
+
+function buildCsp(inline) {
+  const scriptSrc = ["'self'", ...inline.scriptHashes].join(' ');
+  // Inline style="" attributes cannot be hashed (30 of them in the bridge page),
+  // so styles keep 'unsafe-inline'. Scripts never do: hashes only, no 'unsafe-inline'.
+  const styleSrc = ["'self'", "'unsafe-inline'"].join(' ');
+  return [
+    "default-src 'self'",
+    `script-src ${scriptSrc}`,
+    `style-src ${styleSrc}`,
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "connect-src 'self'",
+    "font-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+  ].join('; ');
+}
+
+function securityHeaders(res, csp) {
+  res.setHeader('Content-Security-Policy', csp);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+}
+
+function loadPortal(portalPath) {
+  const html = fs.readFileSync(portalPath, 'utf8');
+  const inline = computeInlineHashes(html);
+  const shimTag = `<script src="${PORTAL_ASSET_PATH}" defer></script>`;
+  const served = html.includes('</body>') ? html.replace('</body>', `  ${shimTag}\n</body>`) : html + shimTag;
+  return { html: served, inline, csp: buildCsp(inline), sourcePath: portalPath };
+}
+
+// ---------------------------------------------------------------------------
+// HTTP helpers
+// ---------------------------------------------------------------------------
+
+function sendJson(res, status, body, extraHeaders = {}) {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(payload),
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    Pragma: 'no-cache',
+    ...extraHeaders,
+  });
+  res.end(payload);
+}
+
+function sendText(res, status, text, contentType = 'text/plain; charset=utf-8', extraHeaders = {}) {
+  res.writeHead(status, {
+    'Content-Type': contentType,
+    'Content-Length': Buffer.byteLength(text),
+    'Cache-Control': 'no-store',
+    ...extraHeaders,
+  });
+  res.end(text);
+}
+
+function redirect(res, location, status = 302) {
+  res.writeHead(status, {
+    Location: location,
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    Pragma: 'no-cache',
+    'Content-Length': '0',
+  });
+  res.end();
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new OidcError('payload_too_large', 'request body exceeds limit', 413));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw.trim()) {
+        resolve({});
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        resolve(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {});
+      } catch (_) {
+        reject(new OidcError('malformed_json', 'request body is not valid JSON', 400));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function bearerToken(req) {
+  const header = req.headers.authorization;
+  if (typeof header !== 'string') return null;
+  const match = /^Bearer ([0-9a-f]{64})$/.exec(header.trim());
+  return match ? match[1] : null;
+}
+
+function originAllowed(req, config, hostHeader) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  const allowed = new Set();
+  if (config.publicOrigin) allowed.add(config.publicOrigin);
+  if (hostHeader) {
+    allowed.add(`https://${hostHeader}`);
+    allowed.add(`http://${hostHeader}`);
+  }
+  return allowed.has(String(origin).replace(/\/+$/, ''));
+}
+
+// ---------------------------------------------------------------------------
+// Gateway
+// ---------------------------------------------------------------------------
+
+function createGateway(options = {}) {
+  const env = options.env || process.env;
+  const config = options.config || new OidcConfig(env);
+  const now = options.now || Date.now;
+
+  const provider =
+    options.provider ||
+    new OidcProvider({
+      config,
+      jwks: options.jwks,
+      fetchImpl: options.fetchImpl,
+      now,
+      randomBytes: options.randomBytes,
+    });
+
+  const sessions =
+    options.sessions ||
+    new SessionStore({ ttlMs: config.sessionTtlSeconds * 1000, now });
+  const codes =
+    options.codes ||
+    new OneTimeCodeStore({ ttlMs: config.exchangeCodeTtlSeconds * 1000, now });
+
+  const mcp =
+    options.mcp ||
+    new McpBackend({
+      client: options.mcpClient,
+      factory:
+        options.mcpFactory ||
+        (() =>
+          new HomeGuardianMcpClient({
+            baseUrl: env.HG_MCP_URL || 'http://127.0.0.1:8790/mcp',
+            token: env.HG_MCP_TOKEN || '',
+          })),
+      timeoutMs: options.mcpTimeoutMs || Number(env.HG_MCP_TIMEOUT_MS || 6000),
+    });
+
+  const portalPath = options.portalPath || env.HG_PORTAL_PATH || DEFAULT_PORTAL_PATH;
+  let portal = null;
+  let portalError = null;
+  try {
+    portal = loadPortal(portalPath);
+  } catch (err) {
+    portalError = err.message; // reported honestly at request time
+  }
+
+  const log = options.logger || {
+    info: (msg) => console.log(`[gateway] ${msg}`),
+    warn: (msg) => console.warn(`[gateway] ${msg}`),
+  };
+
+  function unavailable(res, extra = {}) {
+    sendJson(res, 503, {
+      ok: false,
+      status: 'unavailable',
+      availability: 'unavailable',
+      error: 'backend_unavailable',
+      backend: 'mcp',
+      role: ROLE_VIEWER,
+      scope: 'read_only',
+      message: 'The HomeGuardian backend is unavailable; no data is being reported.',
+      ...extra,
+    });
+  }
+
+  async function handleProxy(res, route, session) {
+    let data;
+    try {
+      data = await mcp.callTool(route.tool, {});
+    } catch (err) {
+      log.warn(`MCP read '${route.tool}' unavailable: ${redactDetail(err.message)}`);
+      unavailable(res, { tool: route.tool, detail: redactDetail(err.message) });
+      return;
+    }
+
+    if (route.shape === 'alerts') {
+      const count = data.alert_count;
+      if (typeof count !== 'number' || !Number.isFinite(count)) {
+        unavailable(res, { tool: route.tool, detail: 'alert_count missing from MCP payload' });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        role: session.principal.role,
+        scope: 'read_only',
+        backend: 'mcp',
+        source: 'mcp',
+        total: count,
+        alert_count: count,
+        highest_severity: data.highest_severity ?? null,
+        alert_ids: Array.isArray(data.alert_ids) ? data.alert_ids : [],
+        alerts: [],
+        read_only: true,
+        note: 'viewer_scope: aggregate alert summary only; alert payloads and media are not exposed',
+      });
+      return;
+    }
+
+    // status
+    sendJson(res, 200, {
+      ok: true,
+      role: session.principal.role,
+      scope: 'read_only',
+      backend: 'mcp',
+      source: 'mcp',
+      status: { ok: true, ...data },
+      data: { ok: true, ...data },
+      read_only: true,
+    });
+  }
+
+  const handler = async (req, res) => {
+    const csp = portal ? portal.csp : "default-src 'none'; frame-ancestors 'none'";
+    securityHeaders(res, csp);
+
+    let url;
+    try {
+      url = new URL(req.url, 'http://localhost');
+    } catch (_) {
+      sendJson(res, 400, { ok: false, error: 'bad_request' });
+      return;
+    }
+    const pathname = url.pathname;
+
+    // No credential may ever ride in a query string.
+    for (const banned of ['token', 'session', 'k', 'access_token', 'id_token', 'code_verifier']) {
+      if (url.searchParams.has(banned)) {
+        sendJson(res, 400, {
+          ok: false,
+          error: 'credentials_in_url_forbidden',
+          message: 'Tokens and session material in URL query strings are forbidden',
+        });
+        return;
+      }
+    }
+
+    if (req.method === 'OPTIONS') {
+      sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+      return;
+    }
+
+    // ---- static: the bridge's portal page ---------------------------------
+    if ((pathname === '/' || pathname === '/index.html') && req.method === 'GET') {
+      if (!portal) {
+        sendJson(res, 503, {
+          ok: false,
+          status: 'unavailable',
+          error: 'portal_unavailable',
+          detail: redactDetail(portalError),
+        });
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Length': Buffer.byteLength(portal.html),
+        'Cache-Control': 'no-store',
+      });
+      res.end(req.method === 'HEAD' ? undefined : portal.html);
+      return;
+    }
+
+    if (pathname === PORTAL_ASSET_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
+      res.writeHead(200, {
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Content-Length': Buffer.byteLength(PORTAL_SESSION_JS),
+        'Cache-Control': 'no-store',
+      });
+      res.end(req.method === 'HEAD' ? undefined : PORTAL_SESSION_JS);
+      return;
+    }
+
+    if (pathname === '/favicon.ico') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    // ---- health (non-sensitive) ------------------------------------------
+    if ((pathname === '/health' || pathname === '/api/health') && req.method === 'GET') {
+      sendJson(res, 200, {
+        status: 'ok',
+        service: 'homeguardian-oidc-gateway',
+        auth: 'oidc_pkce_s256',
+        cookies: false,
+        oidc_configured: config.isConfigured(),
+      });
+      return;
+    }
+
+    // ---- login -----------------------------------------------------------
+    if (pathname === '/login' && req.method === 'GET') {
+      if (!config.isConfigured()) {
+        const missing = config.missingDependencies();
+        log.warn(`login requested but OIDC is unconfigured (missing: ${missing.join(', ')})`);
+        sendJson(res, 503, {
+          ok: false,
+          status: 'unavailable',
+          availability: 'unavailable',
+          error: 'google_client_id_missing',
+          dependency: missing,
+          message:
+            'Google sign-in is not configured on this deployment. The owner must set ' +
+            'HG_GOOGLE_CLIENT_ID and HG_GOOGLE_REDIRECT_URI (or HG_PUBLIC_ORIGIN).',
+          role: ROLE_VIEWER,
+        });
+        return;
+      }
+      try {
+        const request = provider.createLoginRequest();
+        redirect(res, request.url);
+      } catch (err) {
+        const status = err instanceof OidcError ? err.status : 500;
+        log.warn(`login start failed: ${err.code || redactDetail(err.message)}`);
+        sendJson(res, status, { ok: false, error: err.code || 'login_start_failed' });
+      }
+      return;
+    }
+
+    // ---- OAuth callback --------------------------------------------------
+    if (pathname === '/auth/callback' && req.method === 'GET') {
+      if (!config.isConfigured()) {
+        sendJson(res, 503, {
+          ok: false,
+          status: 'unavailable',
+          error: 'google_client_id_missing',
+          dependency: config.missingDependencies(),
+        });
+        return;
+      }
+
+      const oauthError = url.searchParams.get('error');
+      if (oauthError) {
+        log.warn(`callback returned provider error: ${String(oauthError).slice(0, 64)}`);
+        sendJson(res, 400, {
+          ok: false,
+          error: 'authorization_denied',
+          message: 'Google sign-in was not completed.',
+        });
+        return;
+      }
+
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+      if (!code || !state) {
+        sendJson(res, 400, { ok: false, error: 'missing_code_or_state' });
+        return;
+      }
+
+      let completed;
+      try {
+        completed = await provider.completeLogin({ code, state });
+      } catch (err) {
+        const status = err instanceof OidcError ? err.status : 400;
+        const errorCode = err instanceof OidcError ? err.code : 'login_failed';
+        log.warn(`callback rejected: ${errorCode}`);
+        sendJson(res, status, {
+          ok: false,
+          error: errorCode,
+          message: 'Sign-in could not be verified.',
+        });
+        return;
+      }
+
+      const { token, session } = sessions.create(completed.principal);
+      const handoff = codes.issue({ token, sub: completed.principal.sub });
+      log.info(`viewer session established for sub=${completed.principal.sub}`);
+      // Fragment only: never sent to a server, never logged, single use.
+      redirect(res, `/#session=${handoff}`);
+      return;
+    }
+
+    // ---- session exchange ------------------------------------------------
+    if (pathname === '/api/session/exchange' && req.method === 'POST') {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch (err) {
+        sendJson(res, err.status || 400, { ok: false, error: err.code || 'malformed_json' });
+        return;
+      }
+      if (typeof body.code !== 'string' || body.code.length === 0) {
+        sendJson(res, 400, { ok: false, error: 'missing_code' });
+        return;
+      }
+      const payload = codes.take(body.code);
+      if (!payload) {
+        sendJson(res, 400, { ok: false, error: 'invalid_or_used_code' });
+        return;
+      }
+      const session = sessions.get(payload.token);
+      if (!session) {
+        sendJson(res, 401, { ok: false, error: 'session_expired' });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        token: payload.token,
+        token_type: 'Bearer',
+        expires_in: Math.max(0, Math.floor((session.expiresAt - now()) / 1000)),
+        role: session.principal.role,
+        scope: 'read_only',
+        cookie_set: false,
+      });
+      return;
+    }
+
+    // ---- everything below requires a live Bearer session ------------------
+    const token = bearerToken(req);
+    const session = token ? sessions.get(token) : null;
+    const needsAuth =
+      pathname === '/api/me' ||
+      pathname === '/api/logout' ||
+      pathname.startsWith('/api/') ||
+      pathname === '/logout';
+
+    if (needsAuth && !session) {
+      sendJson(
+        res,
+        401,
+        {
+          ok: false,
+          error: 'unauthenticated',
+          message: 'A Bearer session from Google sign-in is required.',
+        },
+        { 'WWW-Authenticate': 'Bearer realm="homeguardian", error="invalid_token"' }
+      );
+      return;
+    }
+
+    if (pathname === '/api/me' && req.method === 'GET') {
+      sendJson(res, 200, {
+        ok: true,
+        ...publicPrincipal(session.principal, session, now()),
+        config: {
+          oidc_configured: config.isConfigured(),
+          session_ttl_seconds: config.sessionTtlSeconds,
+          cookie_based: false,
+        },
+      });
+      return;
+    }
+
+    if ((pathname === '/api/logout' || pathname === '/logout') && req.method === 'POST') {
+      sessions.revoke(token);
+      sendJson(res, 200, { ok: true, logged_out: true, role: session.principal.role });
+      return;
+    }
+
+    // ---- mutations are denied wholesale for VIEWER -----------------------
+    // Checked before the private-route map so a mutation is always reported as
+    // a mutation; allowlisted read paths fall through to their 405 below.
+    if (
+      ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) &&
+      !Object.prototype.hasOwnProperty.call(VIEWER_READ_ROUTES, pathname)
+    ) {
+      sendJson(res, 403, {
+        ok: false,
+        error: 'forbidden_mutation',
+        role: session.principal.role,
+        message: 'VIEWER is a read-only role; state changes are not permitted.',
+      });
+      return;
+    }
+
+    // ---- explicit private surfaces: default-deny before any backend work ---
+    if (Object.prototype.hasOwnProperty.call(PRIVATE_ROUTE_REASONS, pathname)) {
+      sendJson(res, 403, {
+        ok: false,
+        error: 'forbidden_private_data',
+        reason: PRIVATE_ROUTE_REASONS[pathname],
+        role: session.principal.role,
+        message: 'The VIEWER role cannot access private HomeGuardian data.',
+      });
+      return;
+    }
+
+    // ---- allowlisted read-only MCP proxy ---------------------------------
+    if (Object.prototype.hasOwnProperty.call(VIEWER_READ_ROUTES, pathname)) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        sendJson(res, 405, {
+          ok: false,
+          error: 'method_not_allowed_read_only',
+          role: session.principal.role,
+        });
+        return;
+      }
+      if (!originAllowed(req, config, req.headers.host)) {
+        sendJson(res, 403, { ok: false, error: 'forbidden_origin' });
+        return;
+      }
+      await handleProxy(res, VIEWER_READ_ROUTES[pathname], session);
+      return;
+    }
+
+    // ---- default deny ----------------------------------------------------
+    if (pathname.startsWith('/api/')) {
+      sendJson(res, 403, {
+        ok: false,
+        error: 'not_allowlisted',
+        role: session.principal.role,
+        message: 'This route is not on the VIEWER read-only allowlist.',
+      });
+      return;
+    }
+
+    sendJson(res, 404, { ok: false, error: 'not_found' });
+  };
+
+  const server = http.createServer((req, res) => {
+    handler(req, res).catch((err) => {
+      log.warn(`unhandled request error: ${redactDetail(err.message)}`);
+      if (!res.headersSent) {
+        sendJson(res, 500, { ok: false, error: 'internal_error' });
+      } else {
+        try {
+          res.end();
+        } catch (_) {}
+      }
+    });
+  });
+
+  return {
+    server,
+    config,
+    provider,
+    sessions,
+    codes,
+    mcp,
+    portal,
+    csp: portal ? portal.csp : null,
+    listen(port = 0, host = '127.0.0.1') {
+      return new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, host, () => {
+          server.removeListener('error', reject);
+          resolve(server.address());
+        });
+      });
+    },
+    close() {
+      return new Promise((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Entrypoint
+// ---------------------------------------------------------------------------
+
+function startGateway(options = {}) {
+  const env = options.env || process.env;
+  const host = env.HG_GATEWAY_BIND || '127.0.0.1';
+  const port = Number.parseInt(env.HG_GATEWAY_PORT || '8810', 10);
+
+  const gateway = createGateway({ ...options, env });
+  const { config } = gateway;
+
+  if (!/^127\.|^::1$|^localhost$/.test(host)) {
+    console.warn(
+      `[gateway] WARNING: binding ${host} — the documented deployment is loopback ` +
+        'behind a Cloudflare tunnel. TLS must terminate in front of this process.'
+    );
+  }
+  if (!config.isConfigured()) {
+    console.warn(
+      `[gateway] Google OIDC is not configured; /login will report: ${config.missingDependencies().join(', ')}`
+    );
+  }
+  if (config.publicOrigin && !/^https:\/\//.test(config.publicOrigin) && !/^http:\/\/(127\.0\.0\.1|localhost)(:|$)/.test(config.publicOrigin)) {
+    console.warn(
+      '[gateway] WARNING: HG_PUBLIC_ORIGIN is not https. In the documented deployment TLS ' +
+        'terminates at the Cloudflare tunnel; a plaintext public origin would leak the OAuth code.'
+    );
+  }
+  if (!env.HG_GOOGLE_CLIENT_SECRET) {
+    console.warn(
+      '[gateway] HG_GOOGLE_CLIENT_SECRET is unset; PKCE is still enforced, but a Google ' +
+        '"Web application" client normally requires the secret at the token endpoint.'
+    );
+  }
+  if (!env.HG_MCP_TOKEN) {
+    console.warn('[gateway] HG_MCP_TOKEN is unset; the MCP backend will reject reads (reported as unavailable).');
+  }
+
+  return gateway.listen(port, host).then((address) => {
+    console.log(
+      `[gateway] listening on http://${address.address}:${address.port} ` +
+        `(cookieless OIDC, role VIEWER, MCP read-only allowlist)`
+    );
+    return { ...gateway, address };
+  });
+}
+
+module.exports = {
+  createGateway,
+  startGateway,
+  SessionStore,
+  OneTimeCodeStore,
+  McpBackend,
+  buildCsp,
+  computeInlineHashes,
+  loadPortal,
+  PORTAL_SESSION_JS,
+  VIEWER_READ_ROUTES,
+  PRIVATE_ROUTE_REASONS,
+};
+
+if (require.main === module) {
+  startGateway().catch((err) => {
+    console.error(`[gateway] failed to start: ${err.message}`);
+    process.exitCode = 1;
+  });
+}
