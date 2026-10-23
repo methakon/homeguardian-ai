@@ -22,6 +22,8 @@
 #include <cstdlib>
 #include <fstream>
 #include <memory>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -449,6 +451,63 @@ TEST_CASE("reliability: mixed synthetic and real provenance is never upgraded",
     REQUIRE(delivered.size() == 2);
     REQUIRE(delivered[0].provenance != delivered[1].provenance);
     REQUIRE(delivered[0].device_id != delivered[1].device_id);
+}
+
+TEST_CASE("contract: native Android provenance passes the real wire decoder without granting trust",
+          "[producer][contract][provenance][native-emitter]") {
+    // Source-derived vocabulary: changing the JNI default must change this parser input too.
+    // This is a static producer-source + host receiver proof, not an Android JNI execution.
+    const char* root = std::getenv("HG_SOURCE_DIR");
+    REQUIRE(root != nullptr);
+    std::ifstream in(std::string(root) + "/apk/jni/hg_harness_jni.cpp");
+    REQUIRE(in.good());
+    std::ostringstream source;
+    source << in.rdbuf();
+    const std::string emitter = source.str();
+    const std::regex default_claim(R"re(std::string\s+provenance\s*=\s*"([^"]+)"\s*;)re");
+    std::smatch match;
+    REQUIRE(std::regex_search(emitter, match, default_claim));
+    const std::string native_claim = match[1].str();
+    INFO("JNI Observation default forwarded as provenance_claim: " << native_claim);
+
+    Hub hub;
+    ObservationProducer producer(producer_config(hub), clock_ms);
+    DeviceMessage message;
+    std::string detail;
+    REQUIRE(producer.next(&message, &detail));
+    auto payload = encode(message);
+    payload["acquisition_mode"] = "live";
+    payload["provenance_claim"] = native_claim;
+    RejectReason reason = RejectReason::none;
+    const auto decoded = decode(payload, &reason, &detail);
+    INFO("receiver detail: " << detail);
+    REQUIRE(decoded.has_value());
+    REQUIRE(reason == RejectReason::none);
+    REQUIRE(decoded->provenance_claim == "real");
+    REQUIRE(derive_provenance(hub.peer(), *decoded).real);
+
+    // A canonical claim is still only a claim: every authentication/authorization gate stays closed.
+    for (int gate = 0; gate < 4; ++gate) {
+        auto peer = hub.peer();
+        if (gate == 0) peer.peer_authenticated = false;
+        if (gate == 1) peer.device_paired = false;
+        if (gate == 2) peer.device_consent_granted = false;
+        if (gate == 3) peer.capture_enabled = false;
+        const auto decision = derive_provenance(peer, *decoded);
+        REQUIRE_FALSE(decision.real);
+        REQUIRE(decision.claim_unsubstantiated);
+    }
+    payload["provenance_claim"] = "synthetic";
+    payload["acquisition_mode"] = "synthetic";
+    const auto synthetic = decode(payload, &reason, &detail);
+    REQUIRE(synthetic.has_value());
+    REQUIRE_FALSE(derive_provenance(hub.peer(), *synthetic).real);
+
+    // Keep the old originating defect as a negative case, never widen the receiver vocabulary.
+    payload["provenance_claim"] = "real_device";
+    REQUIRE_FALSE(decode(payload, &reason, &detail).has_value());
+    REQUIRE(reason == RejectReason::bad_json);
+    REQUIRE(detail == "unknown provenance_claim");
 }
 
 TEST_CASE("contract: the shipped schema matches what the encoder actually emits",

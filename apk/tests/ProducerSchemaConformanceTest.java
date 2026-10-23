@@ -254,6 +254,22 @@ public final class ProducerSchemaConformanceTest {
                 "off contract: " + offenders);
         System.out.println("        emitted pairs: " + emitted);
 
+        // Follow the originating native default, not a hand-written canonical fixture. Java
+        // forwards this token unchanged; the hub's closed vocabulary has no real_device alias.
+        final Matcher provenanceDefault = Pattern.compile(
+                "std::string\\s+provenance\\s*=\\s*\"([^\"]+)\"\\s*;").matcher(emitter);
+        final boolean foundProvenance = provenanceDefault.find();
+        check("drift native emitter declares its provenance default", foundProvenance,
+                "could not locate Observation.provenance in " + EMITTER);
+        if (foundProvenance) {
+            final String nativeClaim = provenanceDefault.group(1);
+            final String nativeLine = CANONICAL.replace("\"provenance\":\"synthetic\"",
+                    "\"provenance\":\"" + nativeClaim + "\"");
+            check("drift native live provenance uses canonical real token",
+                    "real".equals(ObservationWire.stringField(nativeLine, "provenance")),
+                    "native default forwarded to receiver: " + nativeClaim);
+        }
+
         // The reconciliation bug specifically: the producer must not default provenance to a claim
         // of physical origin. Canonical §6.2 names `real_device` here a producer-side defect.
         final String nodeSession = repoFile("apk/src/org/homeguardian/harness/NodeSession.java");

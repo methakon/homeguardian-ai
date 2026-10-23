@@ -112,17 +112,22 @@ Fresh phone evidence distinguishes the fault: its read-only native self-probe
 reports `Running`, `read_only=true`, `capture_enabled=false`; installed APK bytes
 match the previously accepted artifact. The VPN handshake is fresh and the
 coordinator's edge TCP connection comes from the phone peer. However private
-initialize/status requests now return HTTP 200 with only `{}`, not valid JSON-RPC.
+Initialize/status requests then returned HTTP 200 with only `{}`, not valid JSON-RPC.
 HTTP/auth/session admission therefore MUST NOT be called a successful native
-initialize or tool result. Probe sessions were torn down. The empty bridge reply
-remains unresolved; the working local core is not evidence that relay data works.
+initialize or tool result. Probe sessions were torn down. **SUPERSEDED 2026-10-23
+21:43 IST** — the root cause was the installed bridge retaining a stale native
+session; after reconnecting only that bridge, valid JSON-RPC initialize/tool results
+were obtained (see [live path verification](ALEXA_LIVE_PATH_VERIFICATION.md)). The
+permanent bridge-side recovery fix is still open.
 No phone reinstall/restart, capture, VPN, firewall, mail or public-listener change
 was made. Application-private access was denied as expected and not bypassed.
 
-The initial mailbox worker has 11 local fixture tests, including strict tool and
+The initial mailbox worker had 11 local fixture tests, including strict tool and
 destination allowlists, stale/replayed request refusal, aggregate-only replies,
-authenticated MCP session cleanup and HTTP-200-empty-object rejection. It is
-source-tested only, not deployed or accepted end to end.
+authenticated MCP session cleanup and HTTP-200-empty-object rejection. It was
+source-tested only at that point. **SUPERSEDED** — the worker is deployed, active and
+boot-enabled, and real correlated request/reply round trips have since passed
+([live path verification](ALEXA_LIVE_PATH_VERIFICATION.md)).
 
 The Alexa-side mailbox client and explicit backend transport selector are now
 implemented with matching producer/consumer contract tests. The combined Python
@@ -135,12 +140,14 @@ accepted only as an actual validated tool result, never as an unavailable defaul
 Managed hosting can use a gitignored, non-secret `mailbox_config.json` with exactly
 four deployment settings instead of requiring Lambda environment-edit permissions.
 It contains only region, queue URLs and the publisher role ARN, never credentials.
-The default deployment stays on the existing loopback/unavailable path until
-mailbox mode is explicitly configured. No mailbox Code deployment, running VPS
-worker, dedicated worker credential or hosted role trust is claimed. The queues'
-configuration is verified, but no genuine Alexa -> SQS -> native C++ -> Alexa
-round trip is accepted. The missing exact execution-role ARN and the empty private
-bridge reply remain concrete blockers; do not replace those gaps with fixtures.
+The default deployment stayed on the existing loopback/unavailable path until
+mailbox mode was explicitly configured. No mailbox Code deployment, running VPS
+worker, dedicated worker credential or hosted role trust was claimed at that point.
+**SUPERSEDED** — mailbox Code deployment was performed by the owner, the dedicated
+worker credential and VPS service exist, and genuine mailbox round trips pass; the
+execution-role ARN was supplied and the empty bridge reply was a stale-session
+effect. Owner-attested Alexa replies: status `Running`/capture disabled, alerts
+none recorded. See [live path verification](ALEXA_LIVE_PATH_VERIFICATION.md).
 
 ### Execution-role received; configuration moved to the existing .env
 
@@ -166,6 +173,91 @@ deployment was created; the empty private bridge replies remain unresolved.
 The dotenv revision passes **72 Python tests** under both tested SDK combinations,
 plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
 untracked; only code/tests/sanitized documentation are published.
+
+### RESOLVED — Alexa → mailbox → native C++ path re-verified (2026-10-23 21:43 IST)
+
+The earlier checkpoints below that describe an empty `{}` bridge reply and "no
+accepted mailbox round trip" are **SUPERSEDED**. Both are now proven against the
+deployed components, with no redeployment, restart, reinstall or configuration
+change and with capture still disabled:
+
+- **Native JSON-RPC, not HTTP-200/`{}`:** through the deployed private endpoint,
+  `initialize` returned `jsonrpc 2.0`, id 1, `protocolVersion 2025-11-25`,
+  `serverInfo {homeguardian-mcp 1.0.0}` and a session id; `tools/list` returned
+  exactly `get_alert_summary` and `get_homeguardian_status`; both `tools/call`s
+  returned genuine read-only payloads (`Running`, `capture_enabled=false`;
+  `alert_count=0`, empty severity); `DELETE` closed the session.
+- **Real mailbox request/reply:** operator-origin IAM (not root, not the hosted
+  role) obtained validated correlated replies from the deployed worker —
+  2.634 s for status and 1.190 s for alerts, 2 of 2 correlated.
+- **Deployed code and permissions:** worker, unit and `service.js` SHAs match
+  `main`; the deployed `coordinator.js` (content digest `216f9d37…`) **predates**
+  the committed coordinator hardening (commit `8458cd8`, digest `214e9cee…`), so
+  that fix remains source-tested and
+  undeployed. Worker identity keeps one Active key, no groups, no managed policies
+  and only the two TLS-required, queue-scoped statements.
+
+Full commands, vantage points and limits: [live path verification](ALEXA_LIVE_PATH_VERIFICATION.md).
+Still open: Alexa-Lambda-origin re-run (hosted Code unchanged since deployment),
+sustained reliability after the earlier unavailable launch, permanent bridge
+stale-session recovery, reboot/network recovery, deployed coordinator hardening,
+and any physical sensor-to-alert acceptance.
+
+### Production detector wiring corrective batch — 2026-10-23
+
+Implemented on `main`, **SOURCE + SYNTHETIC-mTLS TESTED / NOT DEPLOYED**. The TLS
+ingress now feeds `IngestDetectors` only after an observation's delivery has
+completed and only when it was not an idempotent repeat: refused, replayed,
+identity-mismatched, consent/capture-blocked and sink-failed observations never
+train a detector or refresh liveness. Derived detector output still reaches the
+single existing pipeline. A bounded maintenance worker (250 ms, dedicated condition
+variable) evaluates quiet devices without waiting for an inbound frame, and
+re-authorizes each idle delivery against the credential bound to that device's
+accepted evidence plus pairing/revocation/consent/capture. Offline transitions no
+longer claim `Provenance::real` or invent a `security_monitor` consent. The
+optional ingress also links now: `src/core/ActivityEpisode.cpp` was missing from
+`HG_INGEST_CORE_SOURCES`.
+
+Verified (re-run on the reviewed tree): real mutual-TLS regression
+`python3 tests/net/run_production_ingress.py` **392 assertions in 6 cases passed**;
+`ctest -R production_ingress_tls` **1/1 passed**; shipped-binary synthetic-CA smoke
+**accepted=3 rejected=0**, clean SIGTERM exit 0; full native suite from `hg_build`
+with `HG_SOURCE_DIR` set **76,095 assertions in 777 cases, all passed**; canonical
+gate `bash scripts/verify_judge_release.sh` **PASS, 29 checks, 0 failed**, including
+the new `NATIVE_DETECTOR_WIRING` gate that executes this suite. Implementation-time RED (no derived
+output, no idle sweep, idle delivery after rotation, a queued connection starved by
+the maintenance wait) was observed before each fix; the GREEN runs above were
+re-executed independently. See [detector wiring](DETECTOR_WIRING_FIX.md).
+
+Review follow-up fixed two things: `request_stop()` used to flush durable replay
+state while a worker could still be writing it (a data race), now flushed only after
+every worker is joined; and shutdown is now regressed with **no inbound frame** plus
+stop-racing-revocation cases. These ingress cases are tagged `[.]` and run through
+that ctest/runner rather than the default binary run — but they are part of the
+canonical gate above, and a missing TLS prerequisite yields `SKIP`, never `PASS`.
+These are synthetic-certificate, synthetic-observation host tests, not hardware.
+Limits: fixed 250 ms availability cadence, idle delivery re-checks
+registry state and the bound credential rather than the live socket, and default
+fusion policy keeps detector evidence advisory. Nothing was deployed to the phone,
+VPS, Docker service or cloud; no physical observation or alert is claimed.
+
+### Producer provenance corrective batch — 2026-10-23
+
+Implemented on `main`, **SOURCE/Java-COMPILE/HOST-PARSER TESTED / NOT INSTALLED**.
+The native acquired-observation default now emits canonical `real` instead of
+`real_device`; Java absent-field fallback stays `synthetic`. The receiver vocabulary
+and authenticated provenance derivation were not weakened. Source-derived tests
+consume the actual native default through the Java field extractor and real C++
+wire decoder, including all authorization gates and legacy-token rejection.
+
+Observed RED: JVM schema 42 passed/1 failed; native parser rejected the producer
+default with `unknown provenance_claim`. Parent GREEN: production Java compilation
+against android-34 succeeded; isolated JVM lifecycle **45 passed**, schema **43
+passed**, no failures; rebuilt main native regression **24 assertions / 1 case
+passed**. These are source/JVM/host proofs, not JNI execution or APK/device evidence.
+See [provenance wire fix](PROVENANCE_WIRE_FIX.md). Detector wiring is next; its real
+TLS ingress build currently exposes a missing ActivityEpisode link dependency,
+which will be addressed with that batch. No live runtime changed.
 
 ### Coordinator security corrective batch — 2026-10-23
 
@@ -220,6 +312,10 @@ follow-up. Long-outage, reboot and changed-network recovery remain unverified.
 
 ### Historical checkpoint: real mailbox/native path recovered; Code deployment pending
 
+**Superseded 2026-10-23 21:43 IST** by [live path verification](ALEXA_LIVE_PATH_VERIFICATION.md):
+Code deployment happened, and native + mailbox round trips are re-verified. Retained
+for the recovery history below.
+
 Inspection of the accepted installed APK's actual DEX confirms its bridge sets
 the required Accept header. A memory-only trace of the already established phone
 control connection confirms the phone itself sent `body={}`/status 200; raw frames
@@ -252,7 +348,8 @@ alerts returned `alert_count=0`, empty highest severity, `read_only=true` in
 **1.659 s**. Correlation, tool schema, expiry and session cleanup were validated.
 These are genuine native results, not cached evidence or local fixture outputs.
 
-**At this historical checkpoint, Alexa-Lambda origin / simulator-to-native was NOT VERIFIED.** The Code package
+**At this historical checkpoint, Alexa-Lambda origin / simulator-to-native was NOT VERIFIED** (later owner-reported
+simulator replies and the re-verified native/mailbox path supersede the deployment gate). The Code package
 has not been updated from this session. The browser reaches Amazon Sign-In, no
 saved login is available, and secure login prompting is unavailable in this CLI.
 The worker's publisher-role trust is data access, not hosted-Code administration.

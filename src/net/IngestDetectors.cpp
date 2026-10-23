@@ -138,6 +138,9 @@ IngestDetectors::Outcome IngestDetectors::observe(const SecurityObservation& obs
         outcome.reason = "per-device detector state is at capacity";
         return outcome;
     }
+    state->provenance = observation.provenance;
+    state->consent_subject = observation.consent_subject;
+    state->consent_purpose = observation.consent_purpose;
 
     // Repeat accounting, applied AFTER the feed decision and never as a gate.
     SensorDeduplicator::Key key;
@@ -201,16 +204,18 @@ std::vector<SecurityObservation> IngestDetectors::sweep_availability() {
     const int64_t now_ms = clock_();
     std::vector<SecurityObservation> out;
     for (const DeviceAvailabilityTracker::Transition& t : availability_.sweep(from_ms(now_ms))) {
+        const auto state = devices_.find(t.device_id);
+        if (state == devices_.end()) continue;
         SecurityObservation o;
         o.device_id = t.device_id;
         o.source = "node";
         o.source_type = SecuritySourceType::device_availability;
         o.acquired_at = t.at;
         o.ingested_at = t.at;
-        o.provenance = Provenance::real;
+        o.provenance = state->second->provenance;
         o.state = "offline";
-        o.consent_subject = t.device_id;
-        o.consent_purpose = "security_monitor";
+        o.consent_subject = state->second->consent_subject;
+        o.consent_purpose = state->second->consent_purpose;
         o.authorized = true;
         o.features = nlohmann::json::object();
         o.features["entity_id"] = t.device_id;

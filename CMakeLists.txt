@@ -215,6 +215,7 @@ if(OpenSSL_FOUND)
     set(HG_INGEST_CORE_SOURCES
         src/core/Observation.cpp
         src/core/SecurityObservation.cpp
+        src/core/ActivityEpisode.cpp
         src/core/BoundedFeatures.cpp
         src/core/ActivityDetectors.cpp
         src/core/EnvironmentalCorrelation.cpp
@@ -717,6 +718,15 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         sqlite3_static
     )
 
+    if(OpenSSL_FOUND)
+        target_sources(homeguardian_tests PRIVATE
+            tests/net/test_production_ingress.cpp
+            src/net/TlsTransport.cpp
+            src/net/DeviceIngressServer.cpp
+        )
+        target_link_libraries(homeguardian_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    endif()
+
     include(CTest)
     add_test(NAME homeguardian_tests COMMAND homeguardian_tests)
     # Run from the project root so tests that read repo-relative files
@@ -732,6 +742,13 @@ if(HOMEGUARDIAN_BUILD_TESTS)
     # is skipped rather than failed when no interpreter is present.
     find_program(HG_PYTHON3_EXECUTABLE NAMES python3 python)
     if(HG_PYTHON3_EXECUTABLE)
+        if(OpenSSL_FOUND)
+            add_test(NAME production_ingress_tls
+                     COMMAND ${HG_PYTHON3_EXECUTABLE}
+                             ${CMAKE_SOURCE_DIR}/tests/net/run_production_ingress.py)
+            set_tests_properties(production_ingress_tls PROPERTIES
+                                 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" TIMEOUT 60)
+        endif()
         add_test(NAME evidence_provenance_validator
                  COMMAND ${HG_PYTHON3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/verify_evidence_provenance.py
                          --root ${CMAKE_SOURCE_DIR}

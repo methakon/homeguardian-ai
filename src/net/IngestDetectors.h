@@ -103,6 +103,9 @@ private:
         ActivityChangeDetector motion{ActivityChangeDetector::defaults()};
         ActivityChangeDetector audio{ActivityChangeDetector::defaults()};
         AnomalyMonitor anomaly{AnomalyMonitor::defaults()};
+        Provenance provenance = Provenance::synthetic;
+        std::string consent_subject;
+        std::string consent_purpose;
         explicit DeviceState(ActivityChangeDetector::Config motion_cfg,
                              ActivityChangeDetector::Config audio_cfg,
                              AnomalyMonitor::Config anomaly_cfg)
