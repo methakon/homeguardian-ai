@@ -1,7 +1,7 @@
 # HomeGuardian AI — Devpost Demonstration & Judge Reproduction Guide
 
 > [!NOTE]
-> **HACKATHON RELEASE CANDIDATE (HG-NET-02 / HG-SEC-06D):** This release candidate (`release/hackathon-2026-mcp-candidate`) has completed all security remediation stages (HG-SEC-01 through HG-SEC-06D), out-of-band operator authorization, loopback network ingress hardening, outbound authenticated MCP coordinator bridge verification, and all independent regression test suites (Catch2 C++ tests, UI/device dashboard tests, MCP protocol tests, and E2E Java-C++ bridge tests). Prepared for judge evaluation and independent audit on local workstation loopback with zero external cloud or private VPN dependencies.
+> **Evidence scope:** PR #20 / `release/hackathon-2026-mcp-candidate` is historical, not current HEAD acceptance. Consult [live-path verification](ALEXA_LIVE_PATH_VERIFICATION.md), [Android physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md), and [current status](STATUS.md). The synthetic reproduction is loopback-only; the separate existing ASK lane uses AWS and a private Oracle/Android path. Video/publication and final submission remain unverified.
 
 **Submission Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server with Alexa-Style Demonstration Client** (AmazonAppDev 2026)  
 **Evaluator Target:** Hackathon Judges, Security Auditors & Community Evaluators  
@@ -15,8 +15,9 @@
 > [!IMPORTANT]
 > **Transparency Declaration for Hackathon Judges:**
 > - **Real Native C++ MCP 2025-11-25 Server:** An authoritative, native C++ Model Context Protocol (MCP) server (spec 2025-11-25) is fully implemented, running locally on loopback with Streamable HTTP. It exposes strictly read-only tools (`get_homeguardian_status`, `get_alert_summary`) with CSPRNG 256-bit token credential binding and is not an Amazon-hosted runtime.
-> - **Alexa-Style Demonstration Client:** The web dashboard provides an interactive client-side Alexa-style conversational assistant connected directly to the C++ bridge and native MCP tools over loopback. There is **no live Amazon cloud identity** and no production Echo hardware required.
-> - **Synthetic vs Real Cameras (Fail-Closed Hardware Boundary):** In accordance with the Project Manager's Hardware Authorization policy and safe testing standards, the judge build strictly isolates physical cameras (`camera-001`) in an **offline and unverified** state. Viewing requests for physical cameras are refused with HTTP 400 (`physical_camera_unverified`). All live demonstrations use the hardware-isolated **synthetic test provider** (`camera-syn-001`). No physical camera or microphone is ever activated during evaluation.
+> - **Working classic ASK lane, separate from local client:** A functional **classic ASK hosted skill → AWS SQS → Oracle private worker → Android bridge → native C++ tools** path exists. Voice replies are owner-attested; mailbox/native round trips independently verified in the linked record. This is **not production Alexa+ or certified monitoring**. Self-hosted MCP 2025-11-25 Streamable HTTP is the Alexa+ track route; the browser is a separate local demonstration client.
+> - **Synthetic versus physical media:** Detector/demo/regression inputs and the test-pattern viewer are synthetic. Unverified physical devices fail closed. Explicit operator uploads may store media locally for simulated playback, **not live camera capture or detection**. Optional owner-controlled private-dashboard live feed remains pending verification, not claimed implemented. Never publish private camera streams.
+> - **Privacy boundary:** No raw sensor media over AWS; aggregate read-only status/alerts do cross AWS. Sensor-pipeline metadata retention is separate from explicit local operator-upload storage.
 
 ---
 
@@ -25,14 +26,14 @@
 To automatically verify that the genuine native C++ MCP server, Streamable HTTP coordinator, protocol 2025-11-25 handshake, strictly two read-only tools, and security boundaries build and pass cleanly on local workstation loopback:
 
 ```bash
-# 1. Clone repository or checkout release branch
-git checkout release/hackathon-2026-mcp-candidate
+# 1. Use the intended main submission checkout; record its revision
+git rev-parse HEAD
 
 # 2. Run the automated judge release verification harness
 bash scripts/verify_judge_release.sh
 ```
 
-**Expected Result (Machine-Readable Verdict):**
+**Historical candidate output example (not a current HEAD verdict):**
 ```text
 ================================================================================
 HOMEGUARDIAN AI — JUDGE RELEASE VERIFICATION SUMMARY
@@ -206,35 +207,26 @@ curl -i -X POST http://127.0.0.1:18980/mcp \
 ```
 *Observe:* Returns real pipeline status with `read_only: true` and current capture status.
 
-### 4.3 Claude Desktop / Host Client Integration Configuration
+### 4.3 MCP Host Client Integration
 
-To connect Claude Desktop or an MCP-compliant host client directly to HomeGuardian AI:
-
-Add the following to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "homeguardian": {
-      "command": "/path/to/homeguardian-ai/build/hg_mcp_server",
-      "args": [
-        "/path/to/homeguardian-ai/config/homeguardian.demo.json",
-        "/path/to/homeguardian-ai/config/mcp_creds.json"
-      ],
-      "env": {
-        "HG_MCP_PORT": "18980",
-        "HG_MCP_HOST": "127.0.0.1"
-      }
-    }
-  }
-}
-```
+Use a host client that supports **Streamable HTTP**, pointed at the already
+running `http://127.0.0.1:18980/mcp` endpoint with operator-provisioned bearer
+credentials. `hg_mcp_server` is an HTTP server, not a stdio MCP command;
+command-spawn configuration alone does not connect a host to this transport.
+Host-specific setup is not verified here; the curl sequence above is the
+explicit reproduction path.
 
 ---
 
-## 5. Security & Verification Evidence
+## 5. Historical Candidate Verification Evidence
 
-All security boundaries are continuously asserted by automated test suites:
+The table below preserves earlier candidate results, **not current HEAD totals
+or an all-green submission verdict**. Run the listed commands on the intended
+revision and retain actual output. Current scoped acceptance and limitations are
+in [live-path verification](ALEXA_LIVE_PATH_VERIFICATION.md),
+[Android physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md), and
+[current status](STATUS.md). The deployed coordinator predates source hardening;
+recovery/reliability limitations in the live-path record remain open.
 
 | Suite Name | Execution Command | Test Scope & Invariants Verified | Passed / Total |
 |---|---|---|---|
@@ -258,11 +250,11 @@ All security boundaries are continuously asserted by automated test suites:
 
 Absolute transparency is foundational to our submission. The exact status of hardware and deployment environments is documented below:
 
-- **Xiaomi Mi A3 (Android 11 Node):** Physical handset is recognized over ADB with baseline Edge Service v1.0.0 verified; however, its USB data link remains intermittent and the v1.0.3 update is not yet installed. Android node transport is therefore evaluated cleanly using synthetic test observations and isolated loopback fixtures, holding the unstable physical handset fail-closed (`physical_camera_unverified`) so hardware glitches never interrupt the judge demonstration.
+- **Android node:** The existing private ASK lane reaches native tools via the Android bridge (see acceptance records above). Capture remained disabled; this transport proof is not physical sensor-to-alert acceptance. Permanent stale-session and reboot/changed-network recovery remain limitations.
 - **Panasonic Eluga (CCTV Handset):** A separate legacy Android 8.1 / API 28 device attached in lab staging for auxiliary camera tests; strictly distinct from the Mi A3, unprovisioned with judge credentials, and isolated from the evaluation runtime.
-- **V380 Wi-Fi IP Camera:** RTSP ingestion pipeline designed for local LAN; intentionally held offline in the judge distribution pending user-authorized pairing.
-- **Alexa Echo Hardware:** No production Alexa Echo physical hardware or Amazon cloud skill store publication is claimed; the project provides a local-first Alexa-style demonstration client and ASK v2-compatible native C++ bridge.
-- **Remote Access Readiness:** Public remote access is not deployed; services bind strictly to loopback (`127.0.0.1`). Public WAN/VPS exposure is unsupported in this candidate and deferred to future work.
+- **LAN camera sources:** Native HTTP and bubble-protocol adapters are present. Private-dashboard live playback remains pending the camera worker's verification; offline protocol tests are not live-view acceptance. No public camera stream is part of judge reproduction.
+- **Alexa hardware/publication:** Classic ASK hosted-skill replies are owner-attested. Production Echo hardware acceptance, production Alexa+, and skill-store publication are not claimed.
+- **Private versus public access:** The existing Oracle worker uses a private path; no public MCP port or public camera stream is claimed. The synthetic judge demo remains loopback-only without cloud dependencies.
 
 ---
 
@@ -272,9 +264,9 @@ Before submitting to Devpost, verify each item:
 
 - [x] **Repository Public & Accessible:** https://github.com/methakon/homeguardian-ai
 - [x] **Open-Source License:** Apache License 2.0 with [NOTICE](../NOTICE) file attributing third-party dependencies.
-- [x] **Truthful System Description:** Positioned truthfully as a Real Native C++ MCP 2025-11-25 Server with an Alexa-Style Demonstration Client; no claims of live Amazon identity or cloud integrations.
+- [x] **Truthful System Description:** Self-hosted native MCP plus a separate functional classic ASK/AWS/private-worker/Android lane, with owner-attested voice and independent mailbox/native evidence; no production Alexa+ or certified monitoring claim.
 - [x] **Hardware Privacy Compliance:** Documented that physical cameras are withheld in the judge build (fail-closed hardware boundary) and test feeds are synthetic.
-- [x] **Clean Release Package:** Verifiable archive generated with `scripts/package_release.sh` containing clean source and SHA-256 checksums.
-- [x] **Tested Out-of-Source Build:** Verified offline build using CMake 3.28+ and C++20.
+- [ ] **Current Release Package:** Generate and verify the intended submission archive and checksums; historical packaging is not current HEAD acceptance.
+- [ ] **Current Out-of-Source Build:** Verify the intended submission revision and retain actual output.
 - [x] **Working WebRTC Live View:** Verified WebRTC signaling and simulated canvas test pattern.
 - [x] **Working Native MCP Tools:** Verified `get_homeguardian_status` and `get_alert_summary`.

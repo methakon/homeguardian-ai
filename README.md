@@ -3,16 +3,16 @@
 Whole-home intelligence for safety, wellbeing, and convenience — privacy-first,
 consent-gated, and local-first.
 
-> **Hackathon demo note.** This repository is a submission for the *Build, Ship,
-> Shape: Amazon Developer Hackathon*, **Alexa+ track**, taking the officially
-> permitted **simulated Alexa+ web experience** route. The conversational web
-> demo is a **project-built simulation** — it is **not** a real Alexa+ device
-> integration and there is **no live Amazon identity**. An **MCP server is
-> implemented** and runs locally on loopback (spec 2025-11-25, Streamable HTTP,
-> two read-only tools — see [docs/MCP_SERVER.md](docs/MCP_SERVER.md)); it is **not**
-> an Alexa+ runtime and is not connected to Amazon in any way. All household
-> observations remain **synthetic**; no physical camera
-> or microphone is ever activated. See [docs/AMAZONAPPDEV2026_FINAL_AUDIT.md](docs/AMAZONAPPDEV2026_FINAL_AUDIT.md).
+> **Hackathon disclosure.** This submission uses the **Alexa+ track's self-hosted
+> MCP route**: native C++ MCP 2025-11-25 over Streamable HTTP, with two read-only
+> tools ([MCP server](docs/MCP_SERVER.md)). A separate functional **classic ASK
+> hosted skill → AWS SQS → Oracle private worker → Android bridge → native C++
+> tools** path exists. Alexa voice replies are **owner-attested**; independent
+> mailbox/native verification and remaining reliability/deployed-code limitations
+> are recorded in [live-path verification](docs/ALEXA_LIVE_PATH_VERIFICATION.md).
+> This is **not production Alexa+ integration or certified monitoring**. Detector
+> demos and regression inputs remain explicitly synthetic. Video recording,
+> publication and final submission are not verified.
 
 ## Vision
 
@@ -74,34 +74,39 @@ processing.
 - **Android Edge Service Candidate** — v1.0.3 package (`apk_service/`), byte-reproducible
   normalization (`scripts/normalize_apk_zip.py`, whole-file SHA-256 `e3116ac18d70...`),
   VPN route validation and socket pinning (`RouteSecurityPolicy.java`), and off-device synthetic
-  platform route test suite (**44/44 PASS**).
+  platform route test suite (**historical candidate: 44/44 PASS**, not a current HEAD verdict).
 
-**Simulated (this is a simulation, not real hardware or real Alexa):**
+**Simulated (detector/demo/regression inputs, not the separate working ASK lane):**
 - The **Alexa+ conversational web experience** (`src/web/` +
   `web_mcp/server.js`) — a project-built simulation for demonstration.
   Acts as an actual MCP client (sending initialize, tools/list, tools/call) and
-  renders simulated sensor test patterns. No Alexa device and no live Amazon identity.
-- All household observations are **synthetic**; no physical sensor is activated.
+  renders simulated sensor test patterns; it is not a production Alexa+ runtime.
+- The reproducible detector demonstration uses **synthetic** observations, not
+  physical sensor-to-alert acceptance. Uploaded-media simulated playback is not
+  live camera capture or detection. An owner-controlled live feed in the private
+  device listing is optional and **pending verification**, not claimed implemented.
 
 **Physical Hardware & Sensor Status (Fail-Closed Boundary):**
 - **V380 Wi-Fi IP Cameras:** Camera 1's unauthenticated RTSP/ONVIF port exposure was
   discovered and closed; Camera 2 has vendor-only proprietary ports and remains unintegrated.
   Hardware capture backend (`V4L2`/PipeWire) is disabled by default (`media_capture_enabled: false`)
   and blocked pending physical authorization.
-- **Xiaomi Mi A3 (Android 11 Node):** Recognized over ADB with existing Edge Service v1.0.0 verified; however, its physical USB link remains intermittent and the v1.0.3 upgrade candidate is not yet installed. Held offline by default so hardware instability never delays or disrupts workstation evaluation.
+- **Android node:** The deployed private ASK path reaches native C++ tools through
+  the Android bridge; permanent stale-session and reboot/network recovery are not
+  verified. Capture remained disabled; see [live-path evidence](docs/ALEXA_LIVE_PATH_VERIFICATION.md).
 - **Panasonic Eluga (CCTV Handset):** Separate legacy Android 8.1 / API 28 device used for auxiliary RTSP/CCTV staging; unprovisioned with judge credentials and isolated from the release runtime.
 - **Workstation-First Evaluation Boundary:** The judge release is 100% self-contained on workstation loopback (`127.0.0.1`) with zero physical Android or cloud dependencies required for evaluation.
 
 **Planned (not implemented):**
 - Real on-device ML inference (OpenCV / ONNX Runtime).
-- Real camera/microphone capture backends (V4L2/ALSA/PipeWire) — **blocked
-  pending explicit approval**.
+- Physical sensor-to-alert acceptance and verified private-dashboard live camera
+  integration — not claimed by this submission.
 - Amazon **Login with Amazon (LWA)** account linking — not built.
 - Fall detection pose inference (H-01) and emergency calling workflow (H-02) —
   **not implemented**.
 - Ring integration — **not implemented**.
-- Remote Oracle VPS peer-to-peer forwarding (GAP-02) — **deferred**; default demo
-  runs 100% locally on workstation loopback with zero external cloud or VPN dependencies.
+- General public remote access — not claimed; the existing Oracle worker uses a
+  private path. The reproducible synthetic demo needs no cloud or VPN connection.
 
 ## Technology Stack
 
@@ -172,7 +177,7 @@ required by `demo.sh`.
 
 ## Testing
 
-Run the full native C++ test suite (527 test cases / 38,929 assertions):
+Run the native C++ test suite (counts depend on the checked-out revision):
 
 ```bash
 cd build
@@ -199,15 +204,15 @@ npm test
 
 MCP server and MCP client verification (requires `hg_mcp_server` to be built and
 `npm install` to have been run from the repository root — see above). These are
-the commands behind the MCP numbers quoted elsewhere in the submission:
+reproduction commands, not a claim that every suite is green at current HEAD:
 
 ```bash
 bash scripts/verify_judge_release.sh    # Automated judge smoke test: Native C++, MCP 2025-11-25, Coordinator, Security
-bash scripts/verify_mcp.sh              # native protocol suite: 73 checks, 0 failures
-node web_mcp/test_client.js             # MCP client suite: 26 checks, 0 failures
-node web_mcp/test_devices_dashboard.js   # dashboard/WebRTC/secrets: 161 checks, 0 failures
-node tests/test_java_ws_bridge_cxx_e2e.js # Java bridge <-> Coordinator <-> C++ engine: 21 checks, 0 failures
-node tests/test_outbound_mcp_bridge.js  # Authenticated outbound MCP bridge: 46 checks, 0 failures
+bash scripts/verify_mcp.sh              # native protocol suite
+node web_mcp/test_client.js             # MCP client suite
+node web_mcp/test_devices_dashboard.js   # dashboard/WebRTC/secrets
+node tests/test_java_ws_bridge_cxx_e2e.js # Java bridge <-> Coordinator <-> C++ engine
+node tests/test_outbound_mcp_bridge.js  # authenticated outbound MCP bridge
 ```
 
 `scripts/verify_mcp.sh` provisions its own 0600 credential file in a temporary
@@ -250,10 +255,11 @@ workflow is tested. The simulated Alexa+ web experience drives that same
 backend, so the demo shows real event processing, detection, alerts, and
 durable persistence.
 
-**No real camera or microphone capture is implemented or authorized.** Capture
-is disabled by default (`media_capture_enabled: false`) and every frame/sample
-must pass the consent delivery boundary before processing. Physical-hardware
-capture remains blocked pending explicit approval. See
+**Physical sensor-to-alert acceptance is not claimed.** Capture is disabled by
+default (`media_capture_enabled: false`); authorized capture must pass the consent
+delivery boundary. The requested private owner-controlled live feed remains
+pending verification. The working ASK lane and its limitations are documented in
+[live-path verification](docs/ALEXA_LIVE_PATH_VERIFICATION.md). See
 [docs/INDEX.md](docs/INDEX.md) for the master component index and architecture guide,
 [docs/ROADMAP.md](docs/ROADMAP.md) for per-layer verification status,
 [docs/STATUS.md](docs/STATUS.md) for the latest status, and
@@ -266,12 +272,14 @@ and reproduction commands).
 HomeGuardian AI is designed with privacy as a core principle:
 
 - **Explicit consent** for all monitoring activities.
-- **Local-first processing** — data stays on the local machine.
+- **Local-first processing** — no raw sensor media over AWS; aggregate read-only
+  status/alerts do cross AWS in the ASK mailbox path.
 - **Configurable retention** — automatic alert-metadata expiration.
 - **No covert monitoring** — all sensing is user-configurable and auditable.
 - **Synthetic fixtures** for development — no real household data.
-- **No raw media persisted** — only alert metadata (id, severity, rule,
-  timestamp) is stored.
+- **Sensor-pipeline retention** — alert metadata, not raw sensor media. Separate
+  explicit operator uploads may store media locally for simulated playback;
+  playback is neither live camera capture nor detection.
 
 ## License
 

@@ -1,7 +1,7 @@
 # HomeGuardian AI — Official Devpost Submission Entry
 
 > [!NOTE]
-> **HACKATHON RELEASE CANDIDATE (HG-NET-02 / HG-SEC-06D):** This submission release candidate (`release/hackathon-2026-mcp-candidate` @ [PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has completed all security remediation stages (HG-SEC-01 through HG-SEC-06D), loopback ingress hardening, outbound MCP coordinator bridge verification, clean-clone validation, and independent regression test suites (527 C++ tests / 38,929 assertions, 161 UI/dashboard tests, 73 MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, 44 route policy tests). Prepared for judge evaluation and independent audit on local workstation loopback.
+> **Current evidence, not a blanket release verdict:** PR #20 is a historical candidate, not current HEAD acceptance. See [live ASK/mailbox/native verification](ALEXA_LIVE_PATH_VERIFICATION.md), [Android physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md), and [current status](STATUS.md). Source-tested fixes are not necessarily deployed; the live-path record lists remaining recovery and deployed-coordinator limitations. Video recording/publication and final Devpost submission remain unverified.
 
 **Project Title:** HomeGuardian AI — Privacy-First Whole-Home Intelligence  
 **Tagline:** Local-first, consent-gated home safety intelligence with native C++ core, Model Context Protocol (spec 2025-11-25) Streamable HTTP server, and Alexa-style demonstration client.  
@@ -26,12 +26,12 @@ HomeGuardian AI is our answer.
 HomeGuardian AI is a local-first, privacy-by-design home intelligence platform designed to observe household wellbeing patterns, detect statistical anomalies, and provide conversational safety status through an agentic interface.
 
 Key features include:
-1. **Consent-Gated Delivery:** All media and sensor processing sits behind a fail-closed cryptographic consent gate. If consent is absent, expired, or withdrawn, sensor acquisition and delivery immediately stop. Zero raw media ever reaches storage or memory pipelines.
+1. **Consent-Gated Delivery:** Sensor delivery sits behind a fail-closed consent gate. Without valid consent and enabled capture, delivery is blocked. Sensor-pipeline persistence retains metadata, not raw sensor media; separately, explicit operator uploads may store media locally for simulated playback, not live camera capture or detection.
 2. **Explainable Anomaly Detection & Fusion:** Sensor observations are evaluated on-device against learned statistical baselines (mean, standard deviation, warm-up intervals). Bounded numerical features from multiple sensor modalities are fused into actionable insights. Raw observations alone never trigger alarms; an alert is generated only when fused, multi-sensor mathematical evidence qualifies.
 3. **Native Model Context Protocol (MCP) Server:** Fully implements the official Model Context Protocol (spec 2025-11-25) in native C++ over Streamable HTTP. Autonomous AI agents can query home status and alert histories through strictly read-only tools (`get_homeguardian_status`, `get_alert_summary`). Sessions are secured by OS-backed CSPRNG 256-bit tokens with strict credential binding.
 4. **Peripheral Device Registry & WebRTC Viewer:** An authoritative C++ device registry manages paired peripherals. A built-in WebRTC streaming engine enables real-time, low-latency browser monitoring. In accordance with safe testing principles, physical cameras default to an unverified state (refusing viewing requests), while synthetic test streams allow comprehensive verification without privacy risk.
-5. **Alexa-Style Conversational Assistant (Simulated Client):** Using a hardened, read-only simulation contract, the dashboard provides a voice- and text-driven demonstration client for Alexa-style interactions. Operators can query household status (*"Is everything okay?"*, *"Are there any alerts?"*) and inspect live consent states.
-6. **Local Persistence & Retention:** All alert metadata (timestamps, rule IDs, mathematical evidence) is stored in a local SQLite database with automated age-based retention and schema migration. Raw sensor media is never persisted.
+5. **Working classic ASK + local MCP client:** A functional hosted classic ASK skill routes through **AWS SQS → Oracle private worker → Android bridge → native C++ tools**. Voice replies are owner-attested; independent mailbox/native round trips are recorded in [live-path verification](ALEXA_LIVE_PATH_VERIFICATION.md). The local dashboard is a separate Alexa-style MCP demonstration client, not production Alexa+.
+6. **Local Persistence & Retention:** Alert metadata (timestamps, rule IDs, mathematical evidence) is stored in local SQLite with age-based retention and migration. This sensor-pipeline policy is distinct from explicit local operator-upload storage.
 
 ---
 
@@ -55,8 +55,8 @@ We engineered HomeGuardian AI as a high-performance, three-tier architecture:
 ---
 
 ### Accomplishments We're Proud Of
-- **Zero Cloud Exfiltration:** Achieved complete home monitoring and anomaly detection without sending a single byte of telemetry or media to external cloud infrastructure.
-- **Extensive Test Coverage & Rigor:** The system is validated by **527 native C++ test cases with 38,929 assertions**, 161 WebRTC and dashboard tests, 26 MCP client tests, 73 native MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, and 44 Android route security tests — 100% passing with zero failures.
+- **No Raw Sensor Media over AWS:** The ASK mailbox carries aggregate read-only status/alerts through AWS, not raw sensor media. Detector demos use disclosed synthetic inputs; certified monitoring is not claimed.
+- **Revision-scoped verification:** Historical candidate test totals are not current HEAD acceptance. Reproduction commands are in [the demonstration guide](DEVPOST_DEMONSTRATION_GUIDE.md); current acceptance evidence and limitations are linked above.
 - **Clean Memory Footprint:** The combined idle footprint of the C++ core and MCP server is under 15 MB RSS, making it fully deployable on edge devices, low-power Raspberry Pis, and low-spec cloud instances.
 - **Open Standards Alignment:** Built against open, royalty-free standards: Apache-2.0 licensing, Model Context Protocol 2025-11-25, WebRTC, and SQLite.
 
@@ -85,30 +85,30 @@ We engineered HomeGuardian AI as a high-performance, three-tier architecture:
 
 In keeping with the rules of the Amazon Developer Hackathon (AmazonAppDev 2026), we declare the following exact project boundaries:
 
-1. **Submission Track & Positioning:** This entry competes in the **Alexa+ Track**, featuring a **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server and C++ Home Safety Engine with an Alexa-Style Demonstration Client**. The conversational interface provides an interactive, client-side Alexa-style experience interacting with the authoritative C++ MCP server and bridge over loopback. There is **no live Amazon cloud identity**, no production Echo device connection, and no AWS backend services utilized.
+1. **Submission Track & Positioning:** This entry uses the **Alexa+ track self-hosted MCP route**: native C++ MCP 2025-11-25 over Streamable HTTP. Separately, the working **classic ASK hosted skill → AWS SQS → Oracle private worker → Android bridge → native C++ tools** lane has owner-attested voice replies and independent mailbox/native verification. This is not production Alexa+ integration, Echo hardware acceptance, or certified monitoring.
 2. **Self-Hosted Native MCP Server:** We have built and verified an authoritative, native C++ Model Context Protocol server (spec 2025-11-25, Streamable HTTP, read-only tools). It runs locally on loopback and is not an Amazon-hosted runtime.
-3. **Synthetic Evaluation Boundary:** All live video streams and sensor inputs in the demonstration are generated by our deterministic **synthetic test provider** (`camera-syn-001`). Physical cameras (`camera-001`) are intentionally held in an unverified state and refuse streaming requests with HTTP 400 (`physical_camera_unverified`). No physical camera or microphone is activated during judging.
+3. **Synthetic Evaluation Boundary:** The reproducible detector/demo/regression inputs and test-pattern viewer are synthetic (`camera-syn-001`). Unverified physical cameras fail closed. Explicit operator-upload playback is locally stored, simulated playback, not live camera capture or detection. An optional owner-controlled private-dashboard live feed is pending verification; it is not claimed implemented or exposed publicly.
 4. **No Ring Integration / No Disaster Forecasting:** Ring integration, automated emergency 911 dispatch, and validated physical disaster predictions are not implemented and are not claimed.
 5. **Open Source Verification:** All original code is licensed under the Apache License, Version 2.0. Clean-clone build and reproduction instructions are provided in `docs/DEVPOST_DEMONSTRATION_GUIDE.md`.
 
-### Physical Sensor Status (Disclosed & Separately Investigated; Not Part of PR #20 Release Runtime)
+### Historical Physical Sensor Investigation (Separate from PR #20 Runtime)
 
 - **Genuine USB UVC motion observed on external experiment branch:** On isolated branch `experiment/hg-v380-09-secure-camera-integration` (commit `b48254121474cb6eee69a63e9c39a73e90c96d35`), an owner-authorized USB UVC camera delivered 600 real frames under explicit operator consent (`--confirm`), where a sustained increase in motion in view was observed (peak motion 0.1252 against 0.0103 still-scene ceiling, confidence 0.849). Bounded numerical scalars only — zero frames stored, transmitted, or streamed.
-- **Clean PR #20 release candidate contains no physical camera integration:** In this judge candidate release, no physical camera or microphone is activated or connected; all runtime observations are generated by the synthetic test provider (`camera-syn-001`).
+- **Historical PR #20 candidate boundary:** That candidate used synthetic runtime observations (`camera-syn-001`), not physical camera integration. This is not a statement that the current ASK transport is simulated.
 - **A real camera → fusion → delivered alert is NOT verified and not claimed:** Replaying the recorded scalars through the real rule and fusion engine is inconclusive (agreement 0.5913 vs 0.60 threshold). No alert from real frames has been observed, and no threshold was changed to manufacture one.
 - **Animal or species recognition is not implemented:** There is no species classifier or animal model runtime, and no document claims one.
-- **V380 camera media remains BLOCKED:** No supported authenticated interface exists; camera 1's unauthenticated ONVIF/RTSP port remains closed.
+- **Camera-source code versus viewing acceptance:** Native HTTP and bubble-protocol camera adapters are now present on main. Offline parser/authentication tests do not prove private-dashboard playback or physical sensor-to-alert acceptance; those remain pending the camera worker's verified handoff.
 - **Disaster prediction is not demonstrated:** Not implemented, and unrepresentable in the fusion framework.
 
 ### Honest Hardware & Deployment Limitations
 
 We believe absolute transparency is the cornerstone of responsible engineering. We state the exact hardware boundaries of physical devices and infrastructure:
 
-- **Xiaomi Mi A3 (Android 11 Node):** Physical handset recognized over ADB with baseline Edge Service v1.0.0 verified; however, due to an intermittent physical USB link and uninstalled v1.0.3 upgrade, Android node transport is evaluated using synthetic test observations and loopback fixtures. Physical hardware streaming is held in an unverified, fail-closed state (`physical_camera_unverified`) so judge evaluation remains deterministic and fully decoupled from physical USB instability.
+- **Android node:** The existing private ASK lane reaches native tools through the Android bridge; see [physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md) and [live-path evidence](ALEXA_LIVE_PATH_VERIFICATION.md). Capture remained disabled, and stale-session/reboot/network recovery limitations remain open. This is transport evidence, not physical sensor-to-alert acceptance.
 - **Panasonic Eluga (CCTV Handset):** A separate legacy Android 8.1 / API 28 device tested for auxiliary edge monitoring in lab staging; not provisioned with judge credentials and completely decoupled from the candidate runtime.
-- **V380 Wi-Fi IP Camera:** RTSP ingestion pipeline designed for local LAN; intentionally held offline in the judge distribution pending user-authorized pairing.
-- **Alexa Echo Hardware:** No production Alexa Echo physical hardware or Amazon cloud skill store publication is claimed; the project provides a local-first Alexa-style demonstration client and ASK v2-compatible native C++ bridge.
-- **Remote Access Readiness:** Public remote access is not deployed; services bind strictly to loopback (`127.0.0.1`). Public WAN/VPS exposure is unsupported in this candidate and deferred to future work.
+- **LAN camera sources:** Native HTTP and bubble-protocol adapters are available; private-dashboard live viewing remains pending verification. The reproducible detector demo does not require a physical camera.
+- **Alexa hardware/publication:** Classic ASK hosted-skill replies are owner-attested; production Echo hardware acceptance, production Alexa+, and skill-store publication are not claimed.
+- **Private versus public access:** The existing Oracle worker uses a private path; no public MCP port or public camera stream is claimed. The synthetic judge demo remains reproducible over loopback without cloud dependencies.
 
 ---
 

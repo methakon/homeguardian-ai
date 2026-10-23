@@ -6,14 +6,15 @@
 **Repository:** https://github.com/methakon/homeguardian-ai (public)
 **License:** Apache License 2.0 (see [LICENSE](../LICENSE) and [NOTICE](../NOTICE))
 
-> **Honesty statement for judges.** This is a *project-built demonstration* of an
-> Alexa-style conversational experience. It is **not** a real Alexa+ device
-> integration and there is **no live Amazon identity**. An **authoritative native C++ MCP server is
-> implemented and delivered** (spec 2025-11-25, Streamable HTTP, two read-only tools) and runs
-> locally on loopback; it is **not** an Amazon cloud runtime and is not connected to
-> Amazon cloud infrastructure. All household observations are **synthetic** — no physical camera
-> or microphone is ever activated. Every number and alert shown in the demo
-> comes from the real C++ backend running locally.
+> **Honesty statement for judges.** The **Alexa+ track self-hosted MCP route**
+> uses native C++ MCP 2025-11-25 over Streamable HTTP with two read-only tools.
+> Separately, a functional **classic ASK hosted skill → AWS SQS → Oracle private
+> worker → Android bridge → native C++ tools** lane exists. Voice replies are
+> owner-attested; [independent mailbox/native verification](ALEXA_LIVE_PATH_VERIFICATION.md)
+> records the proof and remaining reliability/deployed-code limitations.
+> This is not production Alexa+ integration or certified monitoring. Detector,
+> demo and regression inputs are synthetic. Video/publication and final
+> submission remain unverified.
 
 ---
 
@@ -29,7 +30,8 @@ else's servers with no transparency and no real consent.
 
 **What HomeGuardian AI is.** A privacy-first, local-first home intelligence
 platform built around one non-negotiable rule: **nothing is sensed unless the
-user explicitly consents, and nothing raw ever leaves the machine.** The system
+user explicitly consents, and no raw sensor media traverses AWS.** Aggregate
+read-only status/alerts do cross AWS in the ASK lane. The system
 ingests household observations, validates them, correlates them across time,
 and raises explainable alerts — with the consent gate as a hard delivery
 boundary rather than a settings checkbox.
@@ -50,8 +52,9 @@ buffer machinery on the shared code paths:
   Unrelated alerts are never suppressed against each other.
 - **Durable, privacy-safe persistence.** SQLite with schema migration,
   transactional writes, age-based retention, and recovery. Only alert
-  *metadata* is stored (id, severity, rule, timestamp) — never raw audio,
-  video, or biometric data.
+  *metadata* is stored (id, severity, rule, timestamp), not raw sensor media.
+  Separate explicit operator uploads may store media locally for simulated
+  playback; this is not live camera capture or detection.
 - **Bounded everything.** Queues, event history, dedup state, and log volume
   are all bounded; the runtime cannot grow without limit.
 
@@ -65,15 +68,21 @@ see the consent gate refuse to deliver anything once capture is turned off.
 
 | Implemented and tested | Simulated (this demo) | Planned (not built) |
 |---|---|---|
-| Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite persistence + migration/retention/recovery, hardened credential store, read-only integration contract, loopback bridge/HTTP adapter, synthetic detection + fusion stage (activity-energy detector, explainable anomaly detection, confidence-aware fusion — all synthetic), and a **detection-driven alert rule** (an alert is raised only when the fused detector evidence qualifies; raw observations never alert) | The Alexa+ conversational web experience; all observations are synthetic | Real camera/mic capture (V4L2/ALSA/PipeWire), real local ML inference (face/pose/lip/voice), an **Alexa+/Amazon** MCP integration (account linking, live Amazon identity — the local MCP server delivered in HG-MCP-01 is not one), Ring integration |
+| Consent gate, guarded delivery, event pipeline, correlation, alert dedup, SQLite retention, native C++ read-only MCP tools, device registry, and functional classic ASK/SQS/private-worker/Android/native transport (voice owner-attested; mailbox/native independently verified) | Detector/demo/regression inputs, synthetic viewer and local Alexa-style presentation; explicit upload playback is simulated, not live capture/detection | Production Alexa+, LWA linking, real local ML inference, Ring, physical sensor-to-alert acceptance; optional private owner-controlled device-list live feed pending verification |
 
-**Testing.** 527 C++ test cases (38,929 assertions), 161 UI/dashboard tests, 73 MCP protocol tests, 21 Java E2E bridge tests, 46 outbound bridge tests, ASan/UBSan clean, and a reproducible out-of-source build — all green at submission.
+**Testing.** Historical candidate counts are not current HEAD acceptance. See
+[live-path verification](ALEXA_LIVE_PATH_VERIFICATION.md),
+[Android physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md), and
+[current status](STATUS.md) for scoped evidence and known limitations. No new
+runtime test results are asserted by this documentation update.
 
 ---
 
 ## 2. Three-minute demo script
 
-Run `bash demo.sh` first (see [docs/DEMO_WEB.md](DEMO_WEB.md)). Keep the
+For the primary MCP recording run `bash scripts/verify_synthetic_mcp_demo.sh --serve`
+(see [demonstration guide](DEVPOST_DEMONSTRATION_GUIDE.md)). The following is the
+alternative standalone synthetic `bash demo.sh` storyboard. Keep the
 terminal and browser side by side; have `docs/DEMO_WEB.md` open for the
 expected outputs.
 
@@ -85,14 +94,15 @@ expected outputs.
 | **1:00–1:20** | Alert timeline, then ask **"Is everything okay?"** | "The alert is persisted with its id, rule, and severity. And the answer comes from the real backend, not from the web page." |
 | **1:20–1:45** | Ask **"Is capture enabled?"**; click **Run synthetic scenario** again | "Consent-first. If capture or consent is withdrawn, the gate blocks everything and nothing reaches the pipeline — I can demonstrate that with the capture-off config." |
 | **1:45–2:05** | Run the scenario against `config/homeguardian.json` (capture off) — show `events_processed: 0` | "Zero events. The consent gate refused every observation. That fail-closed behaviour is the core privacy guarantee." |
-| **2:05–2:25** | The privacy card; then the terminal running `npm test` / the C++ suite | "Local-first, no cloud, no raw media — only alert metadata is stored. And it is tested: 527 C++ cases (38,929 assertions), full regression suites, sanitizers clean, reproducible build." |
+| **2:05–2:25** | Privacy card and revision-scoped acceptance records | "This detector demo is synthetic. The separate working ASK lane sends read-only aggregate status and alerts through AWS, not raw sensor media. Sensor retention stores metadata; explicit uploaded media is stored locally for simulated playback." |
 | **2:25–2:50** | Back to the UI, ask **"What can you do?"** | "It reports home status, alerts, and consent state, and runs synthetic scenarios — read-only, so it can never enable a sensor or change configuration." |
 | **2:50–3:00** | Close on the repo README | "A simulated Alexa+ experience built on a real, tested, privacy-first backend. Thank you." |
 
-**Do not say:** that this is real Alexa+, that the local MCP server is an Alexa+
-runtime or a deployed Amazon service, that any physical sensor was used, or that
-detection accuracy was measured on real data. (An MCP server does exist and may be
-demonstrated — describe it exactly as it is: local, loopback, read-only.)
+**Do not say:** production Alexa+, certified monitoring, physical sensor-to-alert
+acceptance, or real-world detection accuracy. The self-hosted MCP server is real;
+the classic ASK hosted skill is also real but separate. Distinguish owner-attested
+voice replies from independent mailbox/native evidence. Never show private camera
+streams publicly; the optional private live feed remains pending verification.
 
 ---
 
@@ -173,7 +183,7 @@ desired; the substance reflects real experience.
 - *Would use again:* yes.
 
 **Catch2**
-- *Purpose:* the C++ unit/integration suite (329 cases).
+- *Purpose:* the C++ unit/integration suite (counts vary by revision).
 - *What worked:* tag filters made focused runs easy; SECTIONs kept fixtures
   readable.
 - *What needs improvement:* nothing specific.
@@ -197,13 +207,14 @@ desired; the substance reflects real experience.
 - *What needs improvement:* nothing specific.
 - *Note:* the specification was used for real — a local **MCP server** was built
   against it (spec 2025-11-25, Streamable HTTP, read-only tools; HG-MCP-01). What is
-  **not** implemented is the Amazon side: no Alexa+ runtime, no account linking, no
-  live Amazon identity.
+  **not** claimed is production Alexa+ or LWA account linking. The separate classic
+  ASK hosted skill uses AWS SQS and the existing private worker/native path.
 
-**Not used (stated for honesty):** no AWS services, no Amazon partner-only
-tools (Alexa+ MCP Toolkit, Category SDK, `@alexa-ai/cli`, Alexa+ Web
-Simulator), no Login with Amazon, and no other Amazon APIs were used. The AWS
-Builder and Open Source mini-challenges are therefore **not claimed**.
+**Used:** classic ASK hosted skill/Lambda and AWS SQS for aggregate read-only
+queries, with an Oracle private worker and Android/native tools. **Not used:**
+Amazon partner-only Alexa+ MCP Toolkit, Category SDK, `@alexa-ai/cli`, Alexa+ Web
+Simulator, or Login with Amazon. AWS Builder and Open Source mini-challenges
+remain **not claimed**; using AWS alone is not a mini-challenge acceptance verdict.
 
 ---
 
@@ -221,16 +232,16 @@ Builder and Open Source mini-challenges are therefore **not claimed**.
 | Demo guide (`docs/DEMO_WEB.md`) | ✅ DONE | — |
 | Native low-footprint C++ implementation (1 process; ~6.4 MB idle RSS) | ✅ DONE | — |
 | Consent-first privacy architecture + privacy audit (`enforcement_ok`) | ✅ DONE | — |
-| Release-readiness verified: Release build, C++ suite, CTest, ASan/UBSan, `[nativehttp]` adversarial, loopback-only, persistence/restart, capture-off fail-closed, graceful shutdown | ✅ DONE (evidence in this repo's docs) | — |
-| Primary track: **Alexa+ (Route B — simulated web experience)** | ⬜ **USER** — select on Devpost | user |
+| Current HEAD release-readiness | Review scoped acceptance records and limitations; historical passes are not a current all-green verdict | user |
+| Primary track: **Alexa+ (self-hosted MCP route)** | ⬜ **USER** — select on Devpost | user |
 | Project description (use §1 above) | ⬜ **USER** — paste into Devpost | user |
 | Screenshots | ⬜ **USER** — capture the running dashboard | user |
 | Demo video <3 min, public on YouTube/Vimeo | ⬜ **USER** — record with §2, check with §3 | user |
 | Product feedback (use §4 above) | ⬜ **USER** — paste into Devpost | user |
-| Explain prior work / hackathon-window updates | ⬜ **USER** — 46 commits Oct 9–13 2026, all in-window | user |
+| Explain prior work / hackathon-window updates | ⬜ **USER** — verify dates and scope from repository history before publishing | user |
 | Final Devpost submission + verify the rendered page | ⬜ **USER** — submit and confirm it renders | user |
 
-**Not claimed:** AWS Builder mini-challenge, Open Source mini-challenge, live
-Alexa+ integration, MCP server, Ring integration, physical sensor capture, and
-real-world detection accuracy. The simulated Alexa+ experience is **not**
-equivalent to production Alexa+ integration.
+**Not claimed:** AWS Builder mini-challenge, Open Source mini-challenge,
+production Alexa+, certified monitoring, Ring integration, physical sensor-to-alert
+acceptance, or real-world detection accuracy. The native MCP server and classic
+ASK lane are real; neither establishes production Alexa+ integration.

@@ -1,7 +1,7 @@
 # HomeGuardian AI — Official Hackathon Video Script (2m 45s)
 
 > [!NOTE]
-> **HACKATHON RELEASE CANDIDATE (HG-NET-02 / HG-SEC-06D):** Release candidate `release/hackathon-2026-mcp-candidate` ([PR #20](https://github.com/methakon/homeguardian-ai/pull/20)) has passed all C++ core, MCP protocol, and outbound bridge test suites. Every claim in this script refers to what this build contains.
+> **Recording plan, not proof of publication:** PR #20 is a historical candidate, not current HEAD acceptance. Use [live-path verification](ALEXA_LIVE_PATH_VERIFICATION.md), [Android physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md), and [current status](STATUS.md) for scoped evidence and limitations. Recording, duration, public video URL and final publication remain unverified.
 
 **Submission Track:** Alexa+ Track — **Real Native C++ Model Context Protocol (MCP 2025-11-25) Server with Alexa-Style Demonstration Client**  
 **Target Duration:** Exactly 2 minutes 45 seconds (165 seconds)  
@@ -34,7 +34,7 @@
   >
   > HomeGuardian AI changes this paradigm. We built a local-first, privacy-by-design home intelligence platform that monitors safety and wellbeing through explainable anomaly detection, backed by a cryptographic, fail-closed consent gate.
   >
-  > Data stays on your premises. Raw video is never stored. And consent is never assumed."
+  > Raw sensor media does not traverse AWS. Aggregate status and alerts do. Sensor-pipeline retention stores metadata; explicit operator-upload media may be stored locally for simulated playback, not live capture or detection."
 
 ---
 
@@ -82,11 +82,11 @@
 - **Visual:**
   - Switch to the Alexa-Style Conversational Assistant tab.
   - Type or trigger: *"Is everything okay in the house?"*
-  - Assistant responds with natural voice/text: *"HomeGuardian reports normal activity. All safety rules clear. One synthetic alert logged in living room."*
+  - Show the actual status/alert response; do not script a normal/safe verdict or invent an alert count. Label detector inputs synthetic.
   - Demonstrate instant consent revocation: Open the device card, click "Withdraw Consent" (button updates to "Grant Consent").
   - Instantly observe the camera viewer: the active WebRTC stream tears down, the status pill switches to `Stream: Inactive`, and the viewer reverts to the placeholder (`Select an authorized camera and click "Start Live View"`).
 - **Voiceover (1:55 – 2:25):**
-  > "For the Amazon Developer Hackathon, we present our simulated Alexa-style demonstration client, connected directly to our native C++ bridge and MCP tools. Powered by our read-only simulation contract, you can speak or chat with your home safety engine.
+  > "Our Alexa+ track entry uses self-hosted MCP 2025-11-25 Streamable HTTP. A separate working classic ASK hosted skill routes through AWS SQS, an Oracle private worker and Android bridge to native C++ tools. Voice replies are owner-attested; mailbox/native round trips independently verified. This dashboard uses synthetic demo inputs, not production Alexa+ or certified monitoring.
   >
   > But privacy is not just a policy — it is an active gate. Watch what happens when I withdraw sensor consent:
   >
@@ -96,12 +96,12 @@
 
 ### Act 6: Verification Rigor, Disclosures & Closing (2:25 – 2:45 / 20s)
 - **Visual:**
-  - Fast montage: C++ test suite finishing 527 tests / 38,929 assertions; 15 independent security gates green; GitHub repository and Apache 2.0 license.
+  - Show revision-scoped acceptance records and their limitations, GitHub repository and Apache 2.0 license; do not present historical candidate counts as current results.
   - Final screen displaying:
     - GitHub: https://github.com/methakon/homeguardian-ai
-    - Transparent Disclosure: Real Native C++ MCP 2025-11-25 | Alexa-Style Demonstration Client | Synthetic Evaluation Boundary | Zero Cloud Exfiltration
+    - Disclosure: Self-hosted MCP | Classic ASK lane | Synthetic detector demo | No raw sensor media over AWS; read-only aggregates cross AWS
 - **Voiceover (2:25 – 2:45):**
-  > "HomeGuardian AI is backed by 527 test cases, over 38,900 assertions, and 15 independent security verification gates — all green.
+  > "Our acceptance records distinguish owner-attested voice replies from independent mailbox/native checks and disclose reliability and deployed-code limitations. This is not a blanket all-green verdict.
   >
   > All original code is open source under the Apache 2.0 license.
   >
@@ -113,9 +113,10 @@
 
 1. **Resolution & Audio:** 1080p 60fps or 30fps MP4, clear balanced microphone audio without background noise.
 2. **Side-by-Side Setup:** Browser dashboard on left (1280x720), terminal on right (640x720).
-3. **Execution Command:** Pre-run `bash scripts/verify_synthetic_mcp_demo.sh` to ensure all background processes are up and healthy on `http://127.0.0.1:18880`.
+3. **Execution Command:** Run `bash scripts/verify_synthetic_mcp_demo.sh --serve` for persistent recording service on `http://127.0.0.1:18880`; without `--serve` the harness is a bounded verification run.
 4. **Honesty Checklist:**
-   - [x] State that conversational client is an Alexa-style demonstration interface connected to native C++ backend.
-   - [x] Confirm no real cameras/microphones are turned on during recording.
-   - [x] Highlight the native C++ MCP server and explainable detection engine.
-   - [x] Conclude within 2 minutes 45 seconds.
+   - [ ] Distinguish the working classic ASK lane from production Alexa+ and the local synthetic detector demo.
+   - [ ] Use only synthetic viewer inputs for public recording; do not expose private camera feeds or identifiers. Optional owner-controlled private live feed remains pending verification.
+   - [ ] Label local operator-upload playback as simulated, not live capture or detection.
+   - [ ] Highlight native MCP and scoped acceptance evidence, including limitations.
+   - [ ] Confirm actual duration and public playback URL after recording.
