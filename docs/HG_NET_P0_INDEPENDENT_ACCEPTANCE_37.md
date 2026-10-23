@@ -1,7 +1,7 @@
 # HG-NET-P0-INDEPENDENT-ACCEPTANCE-37 — independent adversarial acceptance, stage 1 (static)
 
-Read-only. Their code was extracted at the SHA into my scratch via the API and read there; **no
-Antigravity/Hermes2/Hermes3 worktree was touched**, no privileged Docker operation, no old scan repeated.
+Read-only. Code was extracted at the SHA into isolated scratch via the API and read there; **no
+implementation worktree was touched**, no privileged Docker operation, no old scan repeated.
 
 `SHA under test: 8f40870a3f30fa66740ec895dca6498fa4cbe05f` (independently confirmed as the live remote
 tip of `dev/production-integration`).
@@ -63,14 +63,14 @@ is an authorisation check, not an authentication one.
 
 ## Honest status: P0 remains OPEN
 
-Rows 5 and 6 are the acceptance the mission actually requires, and I am **not** marking them passed:
+Rows 5 and 6 are required acceptance checks and are **not** marked passed:
 a static read proves the code says what the report says, but it does not prove the denial codes a
 running CLI emits. Per the instruction, a control with no safe executable path is marked **blocked**
 rather than fabricated into a PASS.
 
 Next stage, in this order: (a) run the forged-author CLI case against a **temporary test-only**
 ledger/approval DB and record the exact denial code; (b) run the forged-`comment.author` envelope case;
-(c) once Antigravity posts the fix SHA, re-run both and compare denial codes; (d) add the two controls
+(c) once the fix SHA is available, re-run both and compare denial codes; (d) add the two controls
 (benign fixture admitted; mocked authenticated actor with a correct approval admitted once). Any
 admission path must not reach a real privileged executor.
 
@@ -80,4 +80,4 @@ Not yet checkable, because the fixture does not exist. When it does, each new ho
 ingress/MCP listener will be checked for: binds **`127.0.0.1` only**; **not privileged**; **no RW
 key/PKI mounts**; source-owned listener distinguished from unrelated host sockets, with **fd
 attribution marked UNVERIFIED when the namespace is root-owned**; and ports avoiding **18443/18444/18445**
-which are still held. I will not start, stop or restart another lane's container and will not handle keys.
+which are still held. Other workstreams' containers and keys remain outside this acceptance scope.

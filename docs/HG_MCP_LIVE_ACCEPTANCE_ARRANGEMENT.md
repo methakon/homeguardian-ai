@@ -1,6 +1,6 @@
 # Live MCP network acceptance — arranged, awaiting the announced start
 
-Hermes 3's own owner-run script declares the endpoint; nothing here is guessed.
+The owner-run acceptance script declares the endpoint; nothing here is guessed.
 
 ```
 endpoint   127.0.0.1:8790/mcp          (HTTP / Streamable HTTP per spec 2025-11-25)
@@ -34,8 +34,8 @@ not a private-LAN acceptance. A skipped check is never reported as a pass.
 C and D are deliberately designed to need **no credential**, so authentication enforcement can be
 verified without touching the owner's token. E needs a real Bearer token, which belongs to the owner:
 
-- I will **not** print, copy, log or commit the token, and I will not read the credential file.
-- E is either owner-run with the raw output handed to me, or run by me only if the owner explicitly
+- The token must **not** be printed, copied, logged or committed; the credential file is not read.
+- E is either owner-run with raw output supplied for review, or run only if the owner explicitly
   authorises that specific use.
 - Evidence from E is the HTTP status plus the returned **tool names** — never the credential, never a
   request header dump.
@@ -44,8 +44,8 @@ verified without touching the owner's token. E needs a real Bearer token, which 
 
 Raw output plus `sha256` and the gate exit code via
 `python3 scripts/mtls_fixtures/capture_acceptance_evidence.py --host <lan-ip> --observation-port 8443 --mcp-port 8790`,
-published with honest PASS/FAIL/SKIP counts. Two rules carried over from what this lane got wrong
-once each, and both apply directly here:
+published with honest PASS/FAIL/SKIP counts. Two rules address previously observed acceptance errors
+and apply directly here:
 
 1. **A completed TLS/HTTP connection is not authentication** — C and D assert a *refusal*, not merely
    that a connection failed; the endpoint's own HTTP status is the measurement.
@@ -53,10 +53,10 @@ once each, and both apply directly here:
 
 ## Boundaries
 
-I will not start, stop or restart the endpoint (owner-run), will not read or transmit the credential,
-will not change the container, binding, firewall, Oracle, NSG or router, and will not rescan while
-nothing is listening. If the store is unopenable, I expect the endpoint to report **UNAVAILABLE** —
-and I will treat a "no alerts" answer from an unopenable store as a defect, not as an empty result,
+The endpoint remains owner-run; acceptance does not start, stop or restart it, read or transmit the credential,
+change the container, binding, firewall, Oracle, NSG or router, or rescan while
+nothing is listening. If the store is unopenable, the endpoint must report **UNAVAILABLE** —
+a "no alerts" answer from an unopenable store is a defect, not an empty result,
 because that is the same false-green shape as the ones already found in this project.
 
 ## Current state

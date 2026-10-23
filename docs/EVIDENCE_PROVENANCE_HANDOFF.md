@@ -1,6 +1,6 @@
 # Evidence integrity — validator, manifest, corrections and the alert-path replay
 
-**Workstream:** Hermes Session 3 (physical-sensor evidence), isolated branch
+**Workstream:** physical-sensor evidence, isolated branch
 `experiment/hg-v380-09-secure-camera-integration`.
 **Delivered by:** the commit that introduces this file; the manifest's SHA-256 digests below are the
 content-addressed reference and do not change if history is later rewritten.
@@ -234,7 +234,7 @@ Consequences worth carrying into the submission, the roadmap and any merge decis
 4. **Before any merge**, `DetectionFusionRule.cpp`'s hard-coded `{"provenance", "synthetic"}` alert
    detail must become derived, or a real-camera-driven alert would carry a false provenance field.
 
-## 8. Minimal handoff for Antigravity
+## 8. Minimal integration handoff
 
 1. Release the claim or the artifacts: replace the sentence in `docs/SUBMISSION_VIDEO_SCRIPT.md` §5(a),
    or merge the nine paths the validator names and keep it.

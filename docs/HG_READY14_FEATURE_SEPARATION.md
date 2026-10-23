@@ -81,7 +81,7 @@ All of these, in order. Any one missing means the capture is not a valid physica
 
 1. **Owner authorisation recorded**, for `apk_install` and `sensor_activation` on `edd53dbd04de`. The
    identity lists both as prohibited, and per `HG-ANDROID-SIGNING-RECOVERY-12` task prose cannot lift
-   that — it needs the trusted approval path, which is a P0 owned by Antigravity.
+   that — it needs the trusted approval path, which is a P0 integration dependency.
 2. **The approval guard resolved** so the authorisation is a looked-up record rather than a field
    inside the task (`scripts/propose_approval_guard_fix.py` reproduces both defects).
 3. **Device identifiable and connected**: `edd53dbd04de`, `adb get-state` = `device`.

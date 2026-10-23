@@ -284,9 +284,9 @@ Two distinct behaviours, both measured:
 So a single probe right after a reconnect is a **false negative**. Retries are
 mandatory, and `edge_dev_connect.sh --wait N` exists for that.
 
-### 9.2 A correction I had to make mid-investigation
+### 9.2 Correction during investigation
 
-I first reported that "wireless debugging STOPPED" after the Wi-Fi toggle, and that
+The initial report stated that "wireless debugging STOPPED" after the Wi-Fi toggle, and that
 mDNS was "definitively dead". **Both were wrong**, and for the same reason: the tests
 ran during the dead window and after the state had changed.
 
@@ -440,7 +440,7 @@ demand this — the first pass was confounded):
 Conclusions, stated at the strength the evidence supports:
 
 1. **Multicast mDNS does traverse this LAN** — the phone answered a real query. It is not
-   filtered. My earlier "mDNS is dead" verdict was wrong.
+   filtered. The earlier "mDNS is dead" verdict was wrong.
 2. **It is not reliable enough to be the only mechanism.** It answers intermittently,
    and it did not answer PTR browse queries in the later runs. `init.svc.mdnsd` is
    `running` on the device, so this is responder behaviour, not a daemon failure.
@@ -477,9 +477,8 @@ address is stable in practice without any reservation.
 operator has no credentials. The documented factory defaults (modem.tools: `admin`/`admin`
 for F670LV9.0; Airtel's support site: `admin`/`password`) may be tried **once**, and the
 operator is checking the sticker on the router, which Airtel documents as carrying the
-credentials. Separately, I will not type a password into a login form — that is a hard
-constraint regardless of authorization — so the login is entered by the operator (masked
-prompt) or performed by them directly.
+credentials. Login remains an operator action using a masked prompt or the router's
+login form directly.
 
 **Why no Android static IP was applied.** Per the standing instruction, a static address
 must not be assigned until the DHCP range and collision risk are verified and approved.

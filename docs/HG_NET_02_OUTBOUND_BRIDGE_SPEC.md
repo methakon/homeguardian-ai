@@ -1,12 +1,11 @@
 # HomeGuardian AI — Outbound Authenticated MCP Bridge Frozen Specification (HG-NET-02E)
 
-**To:** Hermes Session 2 (Android Lead), Hermes Session 1 (Infrastructure & Security Lead), Release Team  
-**From:** Antigravity (Integration & Security Engineer)  
+**Scope:** Android bridge, infrastructure, security, and release integration
 **Date:** October 18, 2026  
 **Status:** FROZEN COMMON PROTOCOL (RFC6455 WebSocket + Versioned JSON Messages)  
 **Compatible SHAs:**
-- **Hermes 2 Java Edge Service:** `7e77cbd0d969109d9313af21b30c6f3dfc401af5` (`experiment/mi-a3-edge-service`)
-- **Antigravity WebSocket Coordinator Baseline:** `6f091bff42a2a199798482697e2366f578754352`
+- **Java Edge Service:** `7e77cbd0d969109d9313af21b30c6f3dfc401af5` (`experiment/mi-a3-edge-service`)
+- **WebSocket Coordinator Baseline:** `6f091bff42a2a199798482697e2366f578754352`
 - **Current Integration Branch:** `feature/hg-net-02f-common-mcp-bridge`
 - **Frozen Audited Security Baseline:** `fix/hg-sec-06d-trust-root` (`51f552268b15d16bffd1a0d05fca160884f56c12`, untouched)
 
@@ -14,7 +13,7 @@
 
 ## 1. Executive Summary & Production Topology
 
-Hermes Session 2 confirmed on physical hardware that the native C++ engine on the Xiaomi Mi A3 binds strictly to `127.0.0.1:8790`. Direct inbound access across the WireGuard VPN interface (`tun0`) is blocked on unrooted Android due to loopback namespace isolation, packet filtering, and power-management idle suspension.
+The edge-device workstream reported physical-hardware confirmation that the native C++ engine on the Xiaomi Mi A3 binds strictly to `127.0.0.1:8790`. Direct inbound access across the WireGuard VPN interface (`tun0`) is blocked on unrooted Android due to loopback namespace isolation, packet filtering, and power-management idle suspension.
 
 **The Solution:** The **Outbound Authenticated Control Bridge**.
 The Mi A3 Android foreground service (`EdgeService` / `OutboundMcpBridge.java`) dials **outbound** over the private WireGuard VPN tunnel to the Coordinator (`McpBridgeCoordinator` on the Oracle VPS). Strictly allowlisted, read-only MCP operations are multiplexed across this bidirectional WebSocket connection.
@@ -235,7 +234,7 @@ Measured during sustained end-to-end load against the real C++ engine:
 ================================================================================
 ```
 
-### Suite 2: Hermes 2 Compatibility Runner (`scripts/bridge_ws_compat/run_compat_test.js`)
+### Suite 2: Compatibility Runner (`scripts/bridge_ws_compat/run_compat_test.js`)
 ```
 === protocol compatibility: 9/9 passed ===
   1 Java edge authenticates to the real coordinator    PASS  bridge_auth accepted
@@ -277,7 +276,7 @@ Measured during sustained end-to-end load against the real C++ engine:
   5.3 tools/call latency through bridge is < 200ms (actual: 6.23 ms): PASS
 ```
 
-### Suite 4: Hermes 2 Three-Component Interoperability Runner (`scripts/bridge_ws_compat/run_interop_test.js`)
+### Suite 4: Three-Component Interoperability Runner (`scripts/bridge_ws_compat/run_interop_test.js`)
 ```
 === interoperability (real Java + real coordinator + native C++): 15/15 passed ===
   0 genuine native C++ MCP server started                PASS  pid on 127.0.0.1:8790

@@ -5,16 +5,16 @@ Task HG-NET-MCP-EVIDENCE-HARDEN-27. Every line states **who measured it** and **
 
 | # | evidence | value | measured by | reproduce |
 |---|---|---|---|---|
-| 1 | bind is loopback-only | `127.0.0.1:8790` LISTEN, no `0.0.0.0` | Hermes 1 | `ss -ltn \| grep :8790` |
-| 2 | live local listener exists | pid 272248 `hg_mcp_server` | Hermes 1 | `ps -p 272248 -o pid,comm,args` |
-| 3 | LAN isolation | `192.168.1.9:8790` CLOSED | Hermes 1 | `verify_lan_exposure.py --host 192.168.1.9 --observation-port 8443 --mcp-port 8790` |
-| 4 | gate check 4 (corrected) | **PASS** — the first non-vacuous one: requires a live local listener AND a closed LAN port | Hermes 1 | same as 3 |
-| 5 | no-token refused | `POST /mcp` -> **401** | Hermes 1 | `curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'` |
-| 6 | wrong-token refused | `POST /mcp` -> **401** | Hermes 1 | as 5 with `-H 'Authorization: Bearer not-a-real-token'` |
-| 7 | bad-Origin refused | `POST /mcp` -> **403** | Hermes 1 | as 5 with `-H 'Origin: http://evil.example'` |
-| 8 | authenticated protocol | `initialize` + `get_alert_summary` OK | **worker-reported** (Hermes 3, #25 6335206612) | owner-run; not independently reproduced — needs a real token |
-| 9 | cross-process MCP store | **14/14** | **worker-reported** (Hermes 3) | owner-run; not independently reproduced |
-| 10 | raw capture + digest | sha256 `07a3fef0ad7980aea3e9f073b9036d690d1f5b3d5750d028795ccffaa1d72571`, gate exit 1 | Hermes 1 | `capture_acceptance_evidence.py --host 192.168.1.9 --observation-port 8443 --mcp-port 8790` |
+| 1 | bind is loopback-only | `127.0.0.1:8790` LISTEN, no `0.0.0.0` | network verification | `ss -ltn \| grep :8790` |
+| 2 | live local listener exists | pid 272248 `hg_mcp_server` | network verification | `ps -p 272248 -o pid,comm,args` |
+| 3 | LAN isolation | `192.168.1.9:8790` CLOSED | network verification | `verify_lan_exposure.py --host 192.168.1.9 --observation-port 8443 --mcp-port 8790` |
+| 4 | gate check 4 (corrected) | **PASS** — the first non-vacuous one: requires a live local listener AND a closed LAN port | network verification | same as 3 |
+| 5 | no-token refused | `POST /mcp` -> **401** | network verification | `curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'` |
+| 6 | wrong-token refused | `POST /mcp` -> **401** | network verification | as 5 with `-H 'Authorization: Bearer not-a-real-token'` |
+| 7 | bad-Origin refused | `POST /mcp` -> **403** | network verification | as 5 with `-H 'Origin: http://evil.example'` |
+| 8 | authenticated protocol | `initialize` + `get_alert_summary` OK | **separately reported** (#25 6335206612) | owner-run; not independently reproduced — needs a real token |
+| 9 | cross-process MCP store | **14/14** | **separately reported** (receiver verification) | owner-run; not independently reproduced |
+| 10 | raw capture + digest | sha256 `07a3fef0ad7980aea3e9f073b9036d690d1f5b3d5750d028795ccffaa1d72571`, gate exit 1 | network verification | `capture_acceptance_evidence.py --host 192.168.1.9 --observation-port 8443 --mcp-port 8790` |
 
 **Reading the verdict:** loopback-only MCP acceptance **PASS** on isolation and authentication
 enforcement. Gate exit 1 is correct here — check 1 (receiver LAN-reachable) FAILs and checks 2-3 are
@@ -27,12 +27,12 @@ re-derived (the capture tool now reads the gate's own NOTE line).
 
 ## Two material findings from the bounded static config review
 
-Neither is mine to fix; both are reported to the owning lanes.
+Both are outside this review's implementation scope and are reported to the responsible workstreams.
 
 **F1 — a container runs with `network_mode: host`.** `hg_e2e_ingress` has
 `HostConfig.NetworkMode=host`, so it shares the host's network namespace: any listener it opens is on
 the **host's interfaces**, including the LAN, and it bypasses Docker port publishing entirely — so
-`ports={}` is not reassuring for this container. Precisely: as of this review I observed **no
+`ports={}` is not reassuring for this container. Precisely: this review observed **no
 unexpected LAN listener** (only nginx `0.0.0.0:80`), so this is a **latent structural risk, not an
 observed leak**. The exposure would appear the moment that container binds anything.
 

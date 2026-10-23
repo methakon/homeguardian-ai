@@ -1,4 +1,4 @@
-# G05 / G08 — Handoff to Antigravity
+# G05 / G08 — Integration handoff
 
 **Audited revision:** `experiment/mi-a3-edge-service` @ `c8a8a78d4025e6795bad8d136d56bd2c0f9fa052`
 **Audit branch (immutable evidence):** `experiment/mi-a3-edge-service-audit`
@@ -60,7 +60,7 @@ Documents in this audit branch:
 - Byte-for-byte rebuild reproducibility was **not** re-verified in this audit (the content-digest tool
   was run successfully; a rebuild was not performed).
 
-## 4. Actions requested of Antigravity
+## 4. Requested integration actions
 
 1. **Do not hand-edit `SHA256SUMS`.** Regenerate `deploy/linux_arm64/SHA256SUMS` from the committed bytes
    at the tip (`566c7f65…` for `supervisor.sh`) and add a CI check that recomputes every entry, so a

@@ -126,7 +126,7 @@ production service was not touched.
 2. **Rotate/re-address** following the `65248a1` disclosure; sanitise
    `docs/ORACLE_RELAY_H04_PLAN.md`, `scripts/oracle_preflight_readonly.sh` and
    `experiment/hg-cam-08d-evidence` (separate authorship, not edited here).
-3. **Reconcile the coordinator destination with Hermes 1 and Antigravity** — the Oracle host has no
+3. **Reconcile the coordinator destination with infrastructure and coordinator integration** — the Oracle host has no
    running HomeGuardian coordinator listener, so P2/P3 cannot be tested against reality and Phase 3
    has nothing to dial.
 4. **Installation approval** — still withheld.

@@ -1,12 +1,11 @@
-# Hermes 2 Integration Handoff — HomeGuardian Remote MCP Coordinator
+# Integration Handoff — HomeGuardian Remote MCP Coordinator
 
-**To:** Hermes Session 2 (Android Lead / Mi A3 Owner)  
-**From:** Antigravity (Integration & Security Engineer)  
+**Scope:** Android / Mi A3 bridge integration and coordinator security
 **Date:** October 18, 2026  
 **Status:** READY FOR REAL HARDWARE TESTING  
 **Compatible Baselines:**
-- **Hermes 2 Android Bridge:** `8d98644893c5339af7f07c452da51723b6281b9c` (`experiment/mi-a3-edge-service`)
-- **Antigravity Coordinator Integration:** `feature/hg-net-02f-common-mcp-bridge`
+- **Android Bridge:** `8d98644893c5339af7f07c452da51723b6281b9c` (`experiment/mi-a3-edge-service`)
+- **Coordinator Integration:** `feature/hg-net-02f-common-mcp-bridge`
 - **Frozen Audited Security Baseline:** `fix/hg-sec-06d-trust-root` (`51f552268b15d16bffd1a0d05fca160884f56c12`, untouched)
 
 ---
@@ -17,8 +16,8 @@ The Outbound Authenticated MCP Bridge has been completely unified on the frozen 
 
 Cross-language interoperability between:
 1. The **genuine native C++ MCP server** (`build/hg_mcp_server` on `127.0.0.1:8790`),
-2. Hermes 2's **real Java edge client** (`OutboundMcpBridge.java`), and
-3. Antigravity's **Node.js Coordinator** (`web_mcp/outbound_bridge/coordinator.js`)
+2. The **real Java edge client** (`OutboundMcpBridge.java`), and
+3. The **Node.js Coordinator** (`web_mcp/outbound_bridge/coordinator.js`)
 
 has been tested and verified across four automated test suites, achieving a **100% PASS rate across all 103 test assertions**.
 
@@ -112,9 +111,9 @@ The system will **never** claim physical hardware verification when the real pho
 | Suite | Scope | Result |
 |---|---|---|
 | **Suite 1: Node Unit & Protocol Suite** (`tests/test_outbound_mcp_bridge.js`) | Mutual auth, relay, allowlists, limits, network confinement | **46 / 46 PASS** |
-| **Suite 2: Hermes 2 Compatibility Runner** (`scripts/bridge_ws_compat/run_compat_test.js`) | Java bridge protocol compliance, bearer auth, session flow | **9 / 9 PASS** |
+| **Suite 2: Compatibility Runner** (`scripts/bridge_ws_compat/run_compat_test.js`) | Java bridge protocol compliance, bearer auth, session flow | **9 / 9 PASS** |
 | **Suite 3: Real Java + Native C++ E2E** (`tests/test_java_ws_bridge_cxx_e2e.js`) | Java `OutboundMcpBridge` <-> Genuine `hg_mcp_server` <-> Coordinator | **21 / 21 PASS** |
-| **Suite 4: Hermes 2 Three-Component Interop** (`scripts/bridge_ws_compat/run_interop_test.js`) | Phase A (protocol), Phase B (reconnect), Phase C (16s revocation) | **15 / 15 PASS** |
+| **Suite 4: Three-Component Interop** (`scripts/bridge_ws_compat/run_interop_test.js`) | Phase A (protocol), Phase B (reconnect), Phase C (16s revocation) | **15 / 15 PASS** |
 | **Suite 5: Deployment Package Self-Test** (`deploy/coordinator/test_package.sh`) | Sandboxed installer, daemon, CLI tools, healthcheck, revocation | **12 / 12 PASS** |
 | **TOTAL** | **Full Protocol, Engine, Bridge, and Deployment Verification** | **103 / 103 PASS** |
 

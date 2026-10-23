@@ -60,7 +60,7 @@ data intact.
 Isolation first: **unplug USB** before the connectivity runs, so nothing is being proven over adb.
 
 ```
-# on the coordinator side (Antigravity's isolated local coordinator, approved lab path)
+# on the coordinator side (isolated local coordinator, approved lab path)
 # verify the bridge authenticates, then drive MCP through it
 ```
 
@@ -104,9 +104,9 @@ and after switching the VPN off. It must not increase. That is the evidence that
 
 | # | Blocker | Owner / dependency |
 |---|---|---|
-| B1 | **No running coordinator listener** on the Oracle host, and no reconciled destination | Hermes 1 + Antigravity |
+| B1 | **No running coordinator listener** on the Oracle host, and no reconciled destination | infrastructure and coordinator integration |
 | B2 | Install authorisation (P1) | owner |
-| B3 | WireGuard tunnel on the device: key import, consent, handshake | owner taps; values from Hermes 1 |
+| B3 | WireGuard tunnel on the device: key import, consent, handshake | owner taps; infrastructure deployment values |
 | B4 | Per-app VPN exclusion is not enumerable from the sandbox — if the VPN is configured to include selected apps only, our traffic bypasses it | owner must confirm the app is included |
 | B5 | Mi A3 USB enumeration is intermittent (observed three times: device drops mid-session, needs a re-plug) | physical |
 

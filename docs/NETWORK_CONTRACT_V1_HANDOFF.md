@@ -2,7 +2,7 @@
 
 **Contract version:** wire protocol `1.0` (`kProtocolVersionMajor` = 1, `kProtocolVersionMinor` = 0).
 **Status:** implemented and audited, not proposed. The transport, registry, ingest, replay and detector
-layers already exist in this repository and are linked into the hub binary. **Nothing in Hermes 2's branch,
+layers already exist in this repository and are linked into the hub binary. **Nothing in the runtime producer's branch,
 worktree or files was touched**, and no merge is proposed: this document is the interface.
 
 The contract has **two layers**, and a producer only has to satisfy the first:
@@ -141,7 +141,7 @@ replay and detector classes — 9 cases, 149 assertions:
 
 No physical Alexa, CCTV, or V380 integration has been performed or measured here, and none is claimed: the
 producer side has been exercised with fixtures and a device client, not with a real third-party device. No
-raw video or audio crosses this contract in either direction. Nothing here changes Hermes 2's work, and the
+raw video or audio crosses this contract in either direction. Nothing here changes the runtime producer implementation, and the
 Mi A3 hub needs **no camera or microphone driver of its own** under this architecture — which is the point
 of the contract.
 

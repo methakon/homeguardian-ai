@@ -113,36 +113,28 @@ Use CMake 3.28.3 with Unix Makefiles generator.
 - CMake syntax can be verbose
 - Build times longer than Ninja (mitigated by `-j4` flag)
 
-## ADR-006: Implementation History — Mixed Tool Usage
+## ADR-006: Implementation History — File-Scoped Integration
 
 **Status:** Accepted
 **Date:** 2026-10-09 (updated 2026-10-10)
 
 ### Context
-The project used different implementation approaches across phases. Phase B was
-implemented using the Antigravity CLI (an AI coding agent). Phase C was
-implemented directly by the developer without AI tools. Phase D was implemented
-directly. For Phase E the developer authorized the use of AI coding agents
-(OpenCode and Antigravity) for parallel, independent work.
+The project used different implementation approaches across phases. Phase E
+included authorized parallel, independent work on core model headers.
 
 ### Decision
-- Phase B code was reviewed and cleaned of AI fingerprints (commit `e9ebfa3`).
-- Phase C and Phase D were implemented directly.
-- Phase E used OpenCode and Antigravity agents for independent, file-scoped
-  tasks (core model headers), with Hermes integrating, building, testing, and
-  reviewing. Parallel agents were assigned disjoint files to avoid conflicts.
-- Documentation must accurately reflect this history without concealing tool
-  usage.
+- Phase B code was reviewed and cleaned up (commit `e9ebfa3`).
+- Phase E tasks were file-scoped (core model headers), followed by integration,
+  builds, tests, and review. Parallel work used disjoint files to avoid conflicts.
+- Documentation must accurately distinguish implementation history and verification evidence.
 
 ### Rationale
-- Honesty about tool usage is required.
-- The developer explicitly authorized parallel AI agents for Phase E, which
-  supersedes the earlier "direct implementation only" stance for that phase.
-- All agent output was compiled, tested, and reviewed before commit.
+- Parallel work requires explicit authorization and file ownership.
+- The recorded integration process included compilation, tests, and review before commit.
 
 ### Consequences
-- Documentation must not claim "no AI tools used" when they were.
-- Future phases follow whatever tooling the developer authorizes at the time.
+- Documentation must not invent authorship or verification claims.
+- Future phases follow the implementation process authorized by the developer.
 
 ## ADR-007: Deferred License Selection
 

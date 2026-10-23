@@ -47,8 +47,8 @@ enabled, `1000129427.png` firmware information). Reported values:
 | Firmware | `<redacted-cam1-firmware>` | owner screenshot (NOT independently verified) |
 
 No firmware update, factory reset or device modification was performed — by the owner
-or by this workstream. **I did not access the Drive folder; these two lines are recorded
-as owner-supplied evidence, not as something this session observed.**
+or by this workstream. **The Drive folder was not accessed during verification; these two lines are recorded
+as owner-supplied evidence, not as independently observed results.**
 
 The evidence that ONVIF was *actually* enabled is the interface change in §2, which is
 independent of the screenshots.
@@ -163,7 +163,7 @@ Every call below was made with **no credentials and no auth header**:
 `GetAudioOutputs` → `400 Action Not Implemented` (see §5).
 
 **On privileged control:** the PTZ service answers read-only calls anonymously, and the
-profile/PTZ configuration is fully readable. **I did NOT issue any PTZ motion command** —
+profile/PTZ configuration is fully readable. **No PTZ motion command was issued** —
 not even a zero-velocity one — because the milestone's STOP condition had already
 triggered on anonymous media (§3.2). Whether an unauthenticated `ContinuousMove` would be
 *accepted* is therefore **UNTESTED and must not be reported either way**. The exposure
@@ -248,8 +248,8 @@ The milestone asks for that distinction explicitly, and it matters:
    user/password set in the app — rather than relying on the toggle alone. Note that on
    this firmware the toggle alone produced an *entirely* unauthenticated surface.
 3. **Keep the camera off any port-forwarded path.** Please confirm no forwarding rule
-   exists for 554 / 8899 / 8800 / 9800 (the router admin needs your password; I did not
-   access it). External reachability is the one property I could not test.
+   exists for 554 / 8899 / 8800 / 9800 (router administration requires owner credentials and was not
+   accessed). External reachability was not tested.
 4. **Do not treat the supplied firmware screenshots as sufficient for the security
    decision** — the numbers in §1 are yours, not independently verified here.
 

@@ -213,7 +213,7 @@ English, screen-recorded, no household media.
 | 7 | Transport policy negatives | PASS | 37/37, five topologies plus DNS and arithmetic |
 | 8 | Bridge ↔ coordinator interop | PASS (off-device) | 15/15 vs the real coordinator + native engine |
 | 9 | Bridge on physical Mi A3 | BLOCKED | no APK install; production EdgeService untouched |
-| 10 | VPN handshake | BLOCKED | needs phone key + Hermes 1's deployment values + owner consent |
+| 10 | VPN handshake | BLOCKED | needs phone key + infrastructure deployment values + owner consent |
 | 11 | Remote MCP over VPN | BLOCKED | depends on 9 and 10 |
 
 Not claimed: hardware install, VPN connectivity, 24/7 reliability, any camera or microphone path.

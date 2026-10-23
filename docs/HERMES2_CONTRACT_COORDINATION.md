@@ -1,6 +1,6 @@
 # Contract coordination with the Ubuntu ARM64 runtime
 
-**Status:** an interface note. **Nothing was changed in Hermes 2's branch, worktree or files**, no PR was
+**Status:** an interface note. **Nothing was changed in the runtime producer's branch, worktree or files**, no PR was
 opened, and no merge is proposed. This document is the whole of the coordination: it states what a
 producer on the Ubuntu runtime must emit for this branch's consumer to accept it as evidence, and what it
 can consume if it wants the Linux adapters.
@@ -76,5 +76,5 @@ normalized observations they hand the engine.
 
 No V380 media integration (still blocked), no Android camera API in core, no media in the control plane, no
 authentication claims (the consumer authenticates nothing: it validates), and no species or disaster claim
-of any kind. Nothing in this document changes Hermes 2's work, and no coordination is assumed to have
-happened until they say so.
+of any kind. Nothing in this document changes the runtime producer implementation, and no coordination is assumed to have
+happened until confirmed.

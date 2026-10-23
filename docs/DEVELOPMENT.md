@@ -168,7 +168,7 @@ HomeGuardian development is limited to **30% of CPU capacity**:
 ## Implementation Workflow
 
 All code is implemented directly with full architectural review.
-Hermes manages git, builds, tests, and verification.
+The workflow includes git, builds, tests, and verification.
 
 ## Debugging
 

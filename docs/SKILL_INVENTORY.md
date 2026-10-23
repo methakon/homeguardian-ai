@@ -1,6 +1,6 @@
 # HomeGuardian AI — Local Skill Inventory
 
-Skills discovered in the local Hermes installation at `~/.hermes/skills/`.
+Local engineering reference inventory rooted at `~/.hermes/skills/`.
 Only skills relevant to HomeGuardian are listed. Each entry includes the
 actual file path, key guidance, intended use, and limitations.
 
@@ -63,7 +63,7 @@ actual file path, key guidance, intended use, and limitations.
 ### `requesting-code-review`
 - **Path:** `~/.hermes/skills/software-development/requesting-code-review/SKILL.md`
 - **Guidance:** Pre-commit review: security scan, quality gates, auto-fix.
-- **Use:** Hermes code review before every commit.
+- **Use:** Code review before every commit.
 - **Limitations:** Review checklist only; no automated enforcement.
 
 ### `verification-code-integrity`

@@ -40,7 +40,7 @@ The guide already states this in its own words:
 | **Physical phone used in any test** | **NO** | no device in any run; loopback only |
 | **Physical camera or microphone activated** | **NO** | never; every frame is synthetic |
 | **Raw video media stream from Android** | **NO** | Android side sends **observations only** — numeric features + state, no media |
-| **End-to-end Android → alert → MCP in one demo** | **NOT CLAIMED BY THIS LANE** | my runs stop at the committed alert; the MCP read-back is Hermes 3's `4bc964d` proof (see §4) |
+| **End-to-end Android → alert → MCP in one demo** | **NOT CLAIMED BY THIS WORKSTREAM** | these runs stop at the committed alert; the MCP read-back is separate `4bc964d` evidence (see §4) |
 | **On-device APK evidence** | **NONE** | nothing installed; the harness APK is a pre-existing lab artefact |
 
 ## 3. The honest one-liner
@@ -54,9 +54,9 @@ The guide already states this in its own words:
 - **No physical camera or voice integration proof.** No sensor was activated in any run.
 - **No raw video media.** Android emits observations (features + state), never media; the demo's
   synthetic video test pattern comes from the simulator (`camera-syn-001`), not from Android.
-- **No Android → MCP round trip demonstrated by this lane.** I verify up to the committed alert in the
-  hub's store. The independent read-only MCP read-back was demonstrated separately by Hermes 3 at
-  `4bc964d` with the same alert shape; I am not claiming it as my own evidence.
+- **No Android → MCP round trip demonstrated by this workstream.** Verification stops at the committed alert in the
+  hub's store. The independent read-only MCP read-back was demonstrated separately at
+  `4bc964d` with the same alert shape; it is separate evidence, not a reproduction in this workstream.
 - **No on-device execution.** All Android-side results are JVM + real-socket, not on-handset.
 
 ## 5. Evidence links

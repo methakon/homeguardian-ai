@@ -505,7 +505,7 @@ backend must never be used in place of a real backend in production capture.
   real audio-path testing; **not used** in this phase.
 - ALSA `null` PCM plugin: present and usable (`arecord -D null` succeeds).
   Not used in this phase.
-- `ffmpeg` (in `~/.hermes/tools`) with `lavfi` sources: available for generating
+- `ffmpeg` with `lavfi` sources: available for generating
   synthetic streams if a future hardware-in-loop test needs a real device feed.
   Not used in this phase.
 

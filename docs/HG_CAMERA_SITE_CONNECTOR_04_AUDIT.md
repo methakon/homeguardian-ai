@@ -1,6 +1,6 @@
 # HG-CAMERA-SITE-CONNECTOR-04 — camera integration readiness audit
 
-**Worker:** Hermes Session 3 (camera integration readiness). **Scope:** audit, isolated tests, documentation and
+**Workstream:** camera integration readiness. **Scope:** audit, isolated tests, documentation and
 bounded corrective patches only — no camera settings changed, no capture, no bypass, nothing merged.
 
 ## Deliverables

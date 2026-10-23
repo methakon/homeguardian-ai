@@ -1,6 +1,6 @@
 # Submission inputs — physical sensor (camera) path
 
-**Supplied to:** the submission lead (Antigravity) for the README, project description and demo.
+**Supplied for:** submission integration into the README, project description and demo.
 **Source commit:** `9d252c46f6fca2008e5e0285107002470d451df4`
 **Branch:** `experiment/hg-v380-09-secure-camera-integration` — **experimental and isolated; not merged.**
 **Status:** factual inputs only. No further capture, no microphone, no threshold change, no merge.
@@ -145,5 +145,5 @@ Tests at this commit: `[camera]` 22 cases / 217 assertions, `[camera][analysis]`
 
 ---
 
-Standing by for Antigravity's integration requests. No further capture, no microphone activation, no
+Further integration is separately authorized. No further capture, no microphone activation, no
 threshold change and no merge will be performed without a new authorised reason.

@@ -1,6 +1,6 @@
 # Alert interface for the R2 authorized action adapter
 
-**For:** the R2 action-orchestration work (Antigravity). **Nothing in their worktree was touched and no
+**For:** the R2 action-orchestration work. **Nothing in its worktree was touched and no
 action-orchestration change is made here** — this is the interface, from the alert producer's side.
 
 ## The exact fields an alert carries

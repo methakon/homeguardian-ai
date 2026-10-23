@@ -91,8 +91,8 @@ show it working. Both are achievable.
 
 ### AWS Builder: **DOES NOT CURRENTLY QUALIFY**
 No AWS service, SDK, or qualifying development tool is used anywhere in the code, dependencies, or
-documented workflow. Kiro Crew is not used (no `.kiro`/`.amazonq` config; development was done with
-Hermes + Antigravity, neither of which is a qualifying AWS tool).
+documented workflow. Kiro Crew is not used (no `.kiro`/`.amazonq` config); the documented
+development workflow does not establish use of a qualifying AWS tool.
 **Recommendation: do not chase this.** Adding AWS services purely to claim $5,000 introduces cost,
 risk, and deadline pressure without improving the product. If a genuinely useful, free-tier-safe
 integration appears during Route B work (none is needed), revisit. **Do not request AWS credits** —
@@ -216,7 +216,7 @@ requesting AWS credits (closed), making any repo public, or building production 
 
 ---
 
-## 9. User-only tasks (cannot be done by the agent)
+## 9. Owner-only tasks
 1. **Devpost submission**: select the Alexa+ track, enter description, repo URL, video URL, and product feedback.
 2. **Record and upload the demo video** (<3 min) to YouTube or Vimeo.
 3. **Approve the LICENSE choice** (MIT recommended) — required before P0-2.

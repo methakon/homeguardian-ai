@@ -1,6 +1,6 @@
 # HG-NET-02C — Android CCTV VPN Connectivity and Always-On Site Connectors
 
-**Issue:** #16 (`HG-NET-02C — Hermes 3: connect authorized cameras via Android peers or site connectors`)
+**Issue:** #16 (HG-NET-02C — connect authorized cameras via Android peers or site connectors)
 **Date:** 2026-10-17
 **Repository:** `methakon/homeguardian-ai`
 **Branch:** `experiment/hg-v380-09-secure-camera-integration`
@@ -11,9 +11,9 @@ logical identity, authorization and synthetic-provenance rules)
 
 ## 0. Scope, and what is honestly NOT done
 
-This is the Hermes 3 slice of HG-NET-02. It does **not** touch Oracle, WireGuard, mail, DNS, the
-Mi A3 VPN peer or MCP ingress — those are issues #14 (Hermes 1), #15 (Hermes 2) and #17
-(Antigravity). No camera setting, router, extender or firewall was changed.
+This is the site-connector portion of HG-NET-02. It does **not** touch Oracle, WireGuard, mail, DNS, the
+Mi A3 VPN peer or MCP ingress — those are issues #14, #15 and #17,
+respectively. No camera setting, router, extender or firewall was changed.
 
 Delivered here: the **site-connector pilot** — its reach isolation, its control/media split, and its
 session-termination semantics — implemented and tested, plus the onboarding matrix and the unmet
@@ -110,9 +110,9 @@ peer-side transport from the other workstreams.
 
 | Consumer | What it needs from here |
 |---|---|
-| **#14 (Oracle hub, Hermes 1)** | The hub may carry exactly the kinds in `ControlChannel`: register, heartbeat, authorization, consent, revocation, ICE candidate, stream control, session terminated, telemetry. The client side now refuses anything else, including frame-sized payloads — so "measure VPS bytes to prove no media" has a client-side counterpart that makes media an encoding failure, not a bandwidth surprise |
-| **#15 (Mi A3, Hermes 2)** | If the Mi A3 is permanently co-located with the cameras it becomes the natural connector host; otherwise a separate always-on host is required per site. Its peer identity must be a device identity, never a LAN address |
-| **#17 (MCP ingress, Antigravity)** | Camera *control* over the hub is separate from MCP application authorization. VPN peer authentication does not authenticate an MCP caller, and nothing here weakens that |
+| **#14 (Oracle hub)** | The hub may carry exactly the kinds in `ControlChannel`: register, heartbeat, authorization, consent, revocation, ICE candidate, stream control, session terminated, telemetry. The client side now refuses anything else, including frame-sized payloads — so "measure VPS bytes to prove no media" has a client-side counterpart that makes media an encoding failure, not a bandwidth surprise |
+| **#15 (Mi A3)** | If the Mi A3 is permanently co-located with the cameras it becomes the natural connector host; otherwise a separate always-on host is required per site. Its peer identity must be a device identity, never a LAN address |
+| **#17 (MCP ingress)** | Camera *control* over the hub is separate from MCP application authorization. VPN peer authentication does not authenticate an MCP caller, and nothing here weakens that |
 
 ## 7. Standing constraints, honoured
 

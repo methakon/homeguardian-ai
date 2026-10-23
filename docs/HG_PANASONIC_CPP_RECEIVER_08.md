@@ -1,6 +1,6 @@
 # HG-PANASONIC-CPP-RECEIVER-08 — isolated C++ receiver for authenticated node observations
 
-**Worker:** Hermes Session 3. Isolated branch, no merge, no Android file touched, no Oracle change, no camera
+**Workstream:** C++ observation receiver. Isolated branch, no merge, no Android file touched, no Oracle change, no camera
 configured, nothing installed on either handset.
 
 ## Deliverables
@@ -26,7 +26,7 @@ configured, nothing installed on either handset.
 
 Two correct halves existed with **no adapter between them**, which is the whole gap this mission closes:
 
-- **Producer** (Android, `dev/production-integration`, Hermes 2's lane — read only, never edited):
+- **Producer** (Android, `dev/production-integration` — read only, never edited):
   `NodeSession.pump()` parses NDJSON lines and hands them to `ObservationTransport`. Fields it reads:
   `source_type`, `observation_type`, `value`, `unit`, `state`, `confidence`, `acquired_at_ms`, `provenance`.
 - **Consumer** (this tree): `ObservationIngest::accept(PeerContext, DeviceMessage, Sink)` — the authenticated
@@ -117,7 +117,7 @@ constructed in the file, no socket, no certificate, no device.
   Whether the producer *should* be able to mark its own output synthetic is a contract decision, not something
   to settle by making the adapter overrule the hub.
 
-## 5. Mi A3 / JNI integration requirements (Phase A hand-off to Hermes 2, not an edit)
+## 5. Mi A3 / JNI integration requirements (Phase A Android hand-off, not an edit)
 
 1. **Per-node credential binding**: the session credential must match the device's registered credential — a
    node presenting another node's credential is refused (asserted). The Android side must therefore present

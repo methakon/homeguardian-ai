@@ -1,10 +1,10 @@
 # PR #20 documentation accuracy review — claims matrix, redlines, camera-evidence segment
 
-**Reviewer:** Hermes Session 3 (physical-sensor workstream)
+**Review scope:** physical-sensor workstream
 **Artifact under review:** PR #20 `release/hackathon-2026-mcp-candidate` → `main`
 **PR head reviewed:** `2be31239a8600936b6218b8a1b6148831f5c1b86`
 **Method:** clean clone of the PR head, built locally, every count in this document **re-executed**.
-Where a document's number differs from mine, the measured value below is what the command printed.
+Where a document's number differs from this review's result, the measured value below is what the command printed.
 **Scope of edits:** none. This branch is isolated; nothing here touches the release branch.
 
 ---

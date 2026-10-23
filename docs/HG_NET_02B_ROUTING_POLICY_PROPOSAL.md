@@ -132,7 +132,7 @@ deployment address, endpoint or key is committed**, and the real-config harness
    `experiment/hg-cam-08d-evidence`, which carry the endpoint and were not authored by this work.
 4. **Confirmation of the real coordinator destination.** The Oracle host currently has **no running
    HomeGuardian coordinator listener**, so there is no endpoint to point the bridge at and no way to
-   test P2/P3 against reality. Needs reconciliation with Hermes 1 and Antigravity.
+   test P2/P3 against reality. Needs reconciliation with the overlay and MCP integration workstreams.
 5. **Installation approval**, still withheld: no APK install, no app-data change, no VPN activation.
 
 ---

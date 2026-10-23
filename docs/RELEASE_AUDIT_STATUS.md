@@ -9,11 +9,11 @@
 
 | Candidate SHA | Auditor | Scope | Result | Notes / Deficiencies |
 |---|---|---|---|---|
-| `d19d230d10baf135c6c22ccadbd988ec5a055598` | Hermes Session 1 | HG-SEC-03 / HG-SEC-04 | **FAIL** | WebRTC keepalive CSRF method mismatch, unhandled device exception crashes. |
-| `11ad94548f65bfe22a0db4297a6e92218448d1f4` | Hermes Session 1 | HG-SEC-05 | **FAIL** | Localhost port mismatch CORS vulnerability, simulator forgery, unauthenticated physical device defaults. |
-| `52d3d1436e115fe9061127a35f33b35d10c8dd73` | Hermes Session 1 | HG-SEC-05 / HG-SEC-06 | **FAIL (P0-3)** | **P0-1 PASS** (Browser origin exact-port enforcement)<br>**P0-2 PASS** (Simulator identity restricted to authoritative provider)<br>**P0-3 FAIL** (Physical device heartbeat authentication secrets hardcoded in publicly reviewable source, unauthenticated re-pairing, sequence replay vulnerability).<br>*Status: Frozen for audit records.* |
-| `05e130395b1d3244bb38202c929902b6e1d93f28` | Hermes Session 1 | HG-SEC-06 Independent Audit | **Gate 0 PASS / HG-SEC-06B REVIEW** | Passed provenance and environment gate. Review identified operator recovery caller JSON boolean bypass. Candidate frozen under audit. |
-| Current (on `fix/hg-sec-06b-recovery-auth`) | Antigravity / Independent | HG-SEC-06B Operator Recovery Authorization Review | **READY FOR AUDIT** | Complete remediation: caller JSON boolean rejection, trusted operator secret authentication, reconciliation of 5 historical denylist literals, fail-closed CSPRNG entropy. |
+| `d19d230d10baf135c6c22ccadbd988ec5a055598` | Security audit workstream | HG-SEC-03 / HG-SEC-04 | **FAIL** | WebRTC keepalive CSRF method mismatch, unhandled device exception crashes. |
+| `11ad94548f65bfe22a0db4297a6e92218448d1f4` | Security audit workstream | HG-SEC-05 | **FAIL** | Localhost port mismatch CORS vulnerability, simulator forgery, unauthenticated physical device defaults. |
+| `52d3d1436e115fe9061127a35f33b35d10c8dd73` | Security audit workstream | HG-SEC-05 / HG-SEC-06 | **FAIL (P0-3)** | **P0-1 PASS** (Browser origin exact-port enforcement)<br>**P0-2 PASS** (Simulator identity restricted to authoritative provider)<br>**P0-3 FAIL** (Physical device heartbeat authentication secrets hardcoded in publicly reviewable source, unauthenticated re-pairing, sequence replay vulnerability).<br>*Status: Frozen for audit records.* |
+| `05e130395b1d3244bb38202c929902b6e1d93f28` | Security audit workstream | HG-SEC-06 Independent Audit | **Gate 0 PASS / HG-SEC-06B REVIEW** | Passed provenance and environment gate. Review identified operator recovery caller JSON boolean bypass. Candidate frozen under audit. |
+| Current (on `fix/hg-sec-06b-recovery-auth`) | Integration / Independent review | HG-SEC-06B Operator Recovery Authorization Review | **READY FOR AUDIT** | Complete remediation: caller JSON boolean rejection, trusted operator secret authentication, reconciliation of 5 historical denylist literals, fail-closed CSPRNG entropy. |
 
 ---
 

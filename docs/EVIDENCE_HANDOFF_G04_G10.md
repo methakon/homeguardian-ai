@@ -1,6 +1,6 @@
 # Physical-camera evidence audit and release-compatible handoff (G04 / G10)
 
-**Option B handoff to Antigravity.** This document audits the physical-camera evidence on the experimental
+**Option B integration handoff.** This document audits the physical-camera evidence on the experimental
 branch, states what is really demonstrated, and delimits it from the hackathon release. It is the whole
 handoff: nothing here asks the release to import experimental code.
 
@@ -31,7 +31,7 @@ implementation and evidence were added; the *classification* of each artifact di
 
 **Is:** an audited, reproducible record of a bounded experiment with one authorized physical USB UVC camera,
 plus the tests that show the sensor spine it fed. Usable by judges as optional experimental work, and by
-Antigravity as an explanation of why the experimental camera system is not in the release.
+release integration as an explanation of why the experimental camera system is not in the release.
 
 **Is not:** part of PR #20. The physical camera driver (`V4l2CameraDevice`) and the V380 bridge
 (`V380SourceAdapter`) are **not** referenced by the release and are **not** required to build or run it. The

@@ -1,11 +1,11 @@
 # Producer observation schema — producer-side implementation notes
 
-**Owner:** Hermes 2 (Panasonic Android service / producer)
+**Component:** Panasonic Android service / producer
 **Status:** SUBSIDIARY to the canonical contract. Read that first.
 
 > ## The line shape is NOT defined here
 >
-> **Canonical contract: `docs/NODE_OBSERVATION_SCHEMA_V1.md` (Hermes 3).** It declares itself *"the
+> **Canonical contract: `docs/NODE_OBSERVATION_SCHEMA_V1.md`.** It declares itself *"the
 > single source of truth for the line shape"*, and it is. The field table, the closed vocabularies,
 > the provenance rules, the refusal vocabulary and the versioning policy all live there.
 >

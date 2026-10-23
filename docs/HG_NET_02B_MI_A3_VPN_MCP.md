@@ -3,7 +3,7 @@
 **Device:** Xiaomi Mi A3, `laurel_sprout`, Android 11 / API 30, arm64-v8a
 **Branch:** `experiment/mi-a3-edge-service` (base `cca7716`)
 **Transport:** wireless ADB, USB absent
-**Issue:** methakon/homeguardian-ai#15 · dependency: #14 (Hermes 1, Oracle WireGuard hub)
+**Issue:** methakon/homeguardian-ai#15 · dependency: #14 (Oracle WireGuard hub)
 
 ## 1. Headline
 
@@ -13,7 +13,7 @@ assumed** — which is the single most important result here, because it determi
 
 | milestone | status |
 |---|---|
-| 1. Oracle WireGuard service running | **NOT MINE** — Issue #14 (Hermes 1), still open |
+| 1. Oracle WireGuard service running | **SEPARATE WORKSTREAM** — Issue #14, still open |
 | 2. Mi A3 VPN handshake established | **BLOCKED** on #14 |
 | 3. Authenticated remote MCP request works | **BLOCKED** — needs #14 *and* a token decision (§5) |
 | 5. Screen-off / reboot / network-recovery acceptance | **PARTIAL** — see §6 |
@@ -117,7 +117,7 @@ than claiming capture.
 
     battery 100%, AC powered, health GOOD, 33.9 C
 
-## 5. Blocker: the remote peer needs a credential I must not extract
+## 5. Blocker: the remote peer needs a credential that must not be extracted
 
 Milestone 3 requires an *independent VPN peer* to make authenticated MCP calls. That peer needs the
 bearer token, and the token is:
@@ -127,7 +127,7 @@ bearer token, and the token is:
 - unreadable via `adb shell` in the production build — confirmed first-hand: `run-as` reports
   `package not debuggable`.
 
-Three routes exist, and all three need a decision that is not mine to make unilaterally:
+Three routes exist, and all three need an owner decision:
 
 1. **The `HG_EDGE_DEBUGGABLE=1` test build.** Documented as the sanctioned path for full host-side
    authenticated testing, and it "must never be the deployed artifact". It does not exist yet — the
@@ -137,15 +137,15 @@ Three routes exist, and all three need a decision that is not mine to make unila
 3. **The app gains an operator-visible provisioning step** — a deliberate design change to the
    security model, not a testing convenience.
 
-I stopped here rather than taking route 1 unilaterally. The brief permits stopping for "an unsafe
+Work stopped here rather than taking route 1 without approval. The brief permits stopping for "an unsafe
 production change [or] unresolved secrets", and installing a debuggable variant over the production
-build on the always-on host is both. **This is the one owner interaction I am requesting.**
+build on the always-on host is both. **An owner decision is required.**
 
 ## 6. Screen-off / reboot / recovery — partial, and what is missing
 
 - **Screen-off: previously PASSED** for service lifetime and MCP staying loopback-only
   (`docs/EDGE_WIRELESS_DEVELOPMENT_MI_A3.md` §9), and the 11h54m continuous uptime above
-  corroborates it. I did **not** re-run a screen-off test in this pass.
+  corroborates it. A screen-off test was **not** re-run in this pass.
 - **Reboot recovery: NOT TESTED.** The `BootReceiver` for `BOOT_COMPLETED` is configured, but
   configuration is not evidence. Testing it means rebooting the always-on host, which interrupts the
   service the owner is relying on; it should be scheduled, not done casually.
@@ -159,7 +159,7 @@ build on the always-on host is both. **This is the one owner interaction I am re
 
 1. **Owner decision on §5** — debug build, token provisioning, or neither. Nothing in milestone 3
    can proceed without it.
-2. **Issue #14 lands the hub** (Hermes 1). Until then there is no peer to dial.
+2. **Issue #14 lands the hub**. Until then there is no peer to dial.
 3. **Implement the outbound bridge** inside `EdgeService` per §3, with: outbound-only socket, hard
    frame cap before allocation, bounded queue, per-request authentication, no payload logging, and
    independent arming from the camera/microphone.

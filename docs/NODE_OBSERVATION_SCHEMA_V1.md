@@ -2,8 +2,8 @@
 
 **Version:** 1.0.0
 **Status:** ACTIVE — the version both sides must implement
-**Owners:** producer side (Panasonic Android service, Hermes 2) · consumer side (`PanasonicNodeReceiver` +
-`ObservationIngest`, Hermes 3)
+**Components:** producer side (Panasonic Android service) · consumer side (`PanasonicNodeReceiver` +
+`ObservationIngest`)
 **Change policy:** additive by default; any incompatible change bumps the major version and is listed here
 before either side ships it. This file is the single source of truth for the line shape — a change made only in
 code is a defect, and a change made only here is a wish.

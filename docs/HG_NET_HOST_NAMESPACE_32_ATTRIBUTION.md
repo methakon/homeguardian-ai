@@ -28,7 +28,7 @@ Docker publish to review, which is why the boundary check keeps them at WARN rat
 loopback-declared binds.
 
 **Still UNVERIFIED, and stated as such:** the *runtime* socket attribution. The config says what the
-process intends; I cannot prove from the process's own fds that no listener was opened elsewhere. The
+process intends; this review cannot prove from the process's own fds that no listener was opened elsewhere. The
 evidence above is config-declared intent plus the host listener table, and it is not dressed up as
 socket-level proof.
 
@@ -36,8 +36,8 @@ socket-level proof.
 
 1. **Remove the idle stale test containers** — `hgvec27`, `hg_e2e_ingress_s2`, `hg_e2e_ingress`. All
    three are e2e/vector test containers with scratch or `/tmp` state, and each is host-networked. This
-   is a change to **their owners' lanes**, so it is a request, not an action: I will not stop or remove
-   another lane's container.
+   is a change to **separate workstreams**, so it is a request, not an action: no container outside
+   this review's scope was stopped or removed.
 2. **If any must stay host-networked**, keep its config `bind_address` at `127.0.0.1` and treat a change
    to `0.0.0.0` as a review gate — with host networking there is no `ports=` mapping to catch it.
 3. **No privileged escalation is required for any of this**, and none was used.

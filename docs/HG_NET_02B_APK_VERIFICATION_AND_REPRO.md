@@ -6,20 +6,20 @@ Contains no endpoint address, peer key or overlay subnet.
 
 ## 1. The discrepancy, and its cause
 
-Antigravity reported v1.0.3 / versionCode 4 with SHA-256
+The integration report recorded v1.0.3 / versionCode 4 with SHA-256
 `fb5ffd71ededde2fd6fcc61d90bb89b325a037570be3ee01db61c3768d15ecdc`.
-My recorded v1.0.3 build was `87fbacb56f1a30c7ae5f1999376951c35b6c2250ddafababa5814868716549d4`.
+The local recorded v1.0.3 build was `87fbacb56f1a30c7ae5f1999376951c35b6c2250ddafababa5814868716549d4`.
 **They differ, and neither is wrong.**
 
 Two clean builds from the identical tree (HEAD `2221783`, working tree clean) gave two more different
 hashes. Five hashes now exist for one source:
 
 ```
-87fbacb56f1a30c7ae5f1999376951c35b6c2250ddafababa5814868716549d4   my first reported build
-8573a434fc5bdf2cb3b8395c48ebe9e75f464e8bc0d9a48cd838006d581f6c4c   my rebuild, same source
+87fbacb56f1a30c7ae5f1999376951c35b6c2250ddafababa5814868716549d4   first locally reported build
+8573a434fc5bdf2cb3b8395c48ebe9e75f464e8bc0d9a48cd838006d581f6c4c   local rebuild, same source
 6b9beff205c913d63bac9d450ba48edf346beceee2b1deafa1d8e1310ab9f5c6   reproducibility test, build A
 8c883c8c6ff27f2c21b3ddd568be756ee1fbec07b70d9b69b05da46209600016   reproducibility test, build B
-fb5ffd71ededde2fd6fcc61d90bb89b325a037570be3ee01db61c3768d15ecdc   Antigravity's build
+fb5ffd71ededde2fd6fcc61d90bb89b325a037570be3ee01db61c3768d15ecdc   integration-reported build
 ```
 
 **The APK build is not byte-reproducible.** The zip entries `classes.dex` and the two `.so` files
@@ -38,9 +38,9 @@ So the artifact has a stable identity, just not the one being quoted.
 
 ### Consequence — read this before gating anything on a hash
 
-* **The APK SHA-256 must not be used as the artifact identity.** Comparing it across agents or builds
+* **The APK SHA-256 must not be used as the artifact identity.** Comparing it across build environments or builds
   tests zip metadata, not code. Two correct builds of identical source will "fail" a hash match.
-* Antigravity's hash is **consistent with the same source** and cannot be confirmed or refuted by
+* The integration-reported hash is **consistent with the same source** and cannot be confirmed or refuted by
   hash comparison alone. Confirming it needs the content digest, or a rebuild to the same content
   digest, from a named commit.
 * What genuinely identifies a candidate: **package name, versionCode, signer certificate, and the
@@ -108,7 +108,7 @@ break in-place updates for every installed copy. That remains an owner decision,
 
 ## 5. Data-preserving in-place update plan
 
-**Correction to an earlier assumption of mine:** `run-as` does **not** work on this app. It is
+**Correction to an earlier assumption:** `run-as` does **not** work on this app. It is
 non-debuggable, so `run-as org.homeguardian.edgeservice` fails regardless of build type. Any plan
 that inspects `/data/data/.../files` that way is wrong. Data preservation must be shown another way.
 
@@ -153,7 +153,7 @@ is a guess.
 
 ## 6. Local ADB reverse test — sequenced after the physical gate
 
-Antigravity's local coordinator can be reached from the device over `adb reverse` without any VPN,
+The integration environment's local coordinator can be reached from the device over `adb reverse` without any VPN,
 which makes it a useful *bridge* test but **not** a routing test: `adb reverse` bypasses the network
 stack entirely, so it exercises nothing about VPN confinement. It must therefore run **after** the
 validated physical-install gate and must not be reported as evidence for route security.
@@ -167,5 +167,5 @@ only if a real tunnel exists, run the confinement checks from
 
 ## 7. Not claimed
 
-No installation, no VPN activation, no Oracle change, no hardware PASS. Antigravity's APK was not
+No installation, no VPN activation, no Oracle change, no hardware PASS. The integration-reported APK was not
 and cannot be confirmed or refuted by hash; the method for confirming it is given in section 1.

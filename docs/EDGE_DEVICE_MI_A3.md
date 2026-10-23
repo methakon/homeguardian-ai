@@ -1,6 +1,6 @@
 # HomeGuardian AI — Mi A3 Edge Device Report
 
-**Session:** HERMES SESSION 2 — `HG-EDGE-01` (edge hardware / ARM64 implementation)
+**Workstream:** `HG-EDGE-01` (edge hardware / ARM64 implementation)
 **Target device:** Xiaomi Mi A3 (`laurel_sprout`), serial `edd53dbd04de`
 **Date:** 2026-10-17
 **Branch / worktree:** `experiment/mi-a3-edge` @ `~/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge`
@@ -163,8 +163,8 @@ the comparison to be empirical rather than argued:
 > `com.termux`, or `adb install` of the official F-Droid APK). Then
 > `pkg install clang cmake git nlohmann-json spdlog` inside Termux and rebuild
 > `hg_mcp_server`; for PRoot, additionally `pkg install proot-distro` and
-> `proot-distro install debian`. Tell me when it is installed and I will run the
-> same benchmark suite against all three and replace this table's last row with
+> `proot-distro install debian`. After installation, the same benchmark suite
+> must be run against all three before replacing this table's last row with
 > measurements.
 
 ---
@@ -520,7 +520,7 @@ and `logs/`.
    row for an edge/ARM64 device server, and the `my-job-agent` control plane has no
    matching row either (checked read-only with `npm run gate:status --find ...` for
    "HomeGuardian", "edge device", "Mi A3", "ARM64" — no match). Per the standing rule
-   I did **not** invent a row. **This workstream needs a roadmap row, and that is an
+   No row was invented. **This workstream needs a roadmap row, and that is an
    operator decision.** Flagged, not silently absorbed.
 5. Nothing frozen was modified: the security-audit worktrees and the release
    candidate were read-only throughout.
@@ -809,7 +809,7 @@ and it **qualifies** what section 10.6 says about test 5.
 0 `PROBE_FAIL`**, probe latency 17–69 ms (median 29 ms), and the engine's own
 lifecycle log shows no `ENGINE_STOP` and no recovery event after `BOOT_RECEIVED`.
 
-**What I have to correct.** The overnight probe cadence is **not** 20 s. It contains
+**Cadence correction.** The overnight probe cadence is **not** 20 s. It contains
 **45 gaps longer than 30 s**, the largest 680 s. The cause is not a fault in the
 service: `Handler.postDelayed` is based on `SystemClock.uptimeMillis`, which **does
 not advance while the device is suspended**. Measured on the device:

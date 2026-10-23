@@ -39,7 +39,7 @@ The gate distinguishes `PORT_CLOSED` from `HOST_UNREACHABLE`, which is why check
 not a network fault: the link is fine, the service is absent. Required checks 2 and 3 are skipped, and
 a skipped check is never a pass.
 
-## 3. The secure path to Hermes 3's C++ receiver (prepared, not applied)
+## 3. The secure path to the C++ receiver (prepared, not applied)
 
 **Bind contract (from the reviewed topology):** the observation receiver binds the **private-LAN
 interface** on its own port; the **MCP server continues to bind `127.0.0.1` only**. One process
@@ -54,7 +54,7 @@ receiver must return an **application-level ACK**. Refusals use the vocabulary o
 **Dependency checklist (owner in brackets):**
 - [network] attach the ingress container to a network and publish the port, **or** run the receiver on the host bound to the LAN interface — nothing can be validated until an endpoint exists
 - [network] identify and justify `0.0.0.0:80`; it must not be an unauthenticated LAN service
-- [Hermes 3 / C++ receiver] bind the LAN interface on the observation port; keep MCP on loopback; emit the canonical tokens
+- [C++ receiver] bind the LAN interface on the observation port; keep MCP on loopback; emit the canonical tokens
 - [Android] present the client certificate; surface consent refusals
 - [owner] decide LAN vs Wi-Fi Direct; physical activation is separately gated
 

@@ -1,6 +1,6 @@
 # HG-CAM-10 — Onboarding an additional home-network camera
 
-**Issue:** #19 (`HG-CAM-10 — Hermes 3: onboard additional authorized home-network webcam from screenshots`)
+**Issue:** #19 (HG-CAM-10 — onboard additional authorized home-network webcam from screenshots)
 **Date:** 2026-10-18
 **Repository:** `methakon/homeguardian-ai`
 **Branch:** `experiment/hg-v380-09-secure-camera-integration`
@@ -196,7 +196,7 @@ No always-on host exists inside the camera site. The development workstation is 
 itself on a DHCP lease, and Ubuntu Docker is explicitly not a production component. The site
 connector design does not depend on either. Candidate options are unchanged from HG-NET-02C: a small
 always-on box wired into the camera LAN, or the Mi A3 **only** if it is genuinely co-located and
-without interfering with its MCP service (Session 2's workstream). This is a procurement/placement
+without interfering with its MCP service (the Android runtime workstream). This is a procurement/placement
 decision for the owner, not a coding task.
 
 ## 8. Behaviour tests (issue step 8) — PASS (in-process, against the real registry)
@@ -293,7 +293,7 @@ it would then have to traverse.
 | Chassis | SMBIOS chassis type 3 (desktop), product `X99-TI D4 PLUS`; no battery device present | It *could* physically stay on — this is not about hardware capability |
 | Link | No wired carrier (Ethernet down); Wi-Fi only | A single Wi-Fi path for a production connector host, and Wi-Fi-only is what this project already measured as fragile |
 | Uptime at measurement | 2 h 22 m | Not a 24/7 profile. Its address had also changed between sessions, and an address it previously held is now held by a different device |
-| Role | The owner's interactive workstation (heavy builds, other agent workstreams) | Per the owner's architecture, the development host must not be a required production component |
+| Role | The owner's interactive workstation (heavy builds, other development workstreams) | Per the owner's architecture, the development host must not be a required production component |
 
 So the honest position is: **no host exists today**, and the workstation is disqualified by evidence
 rather than by assumption.
@@ -301,8 +301,8 @@ rather than by assumption.
 **The Mi A3 is a technically plausible candidate and a coordination dependency, not a plan.** At
 measurement it was present on the LAN, answering, and attached over adb — i.e. it is on the same
 network as the cameras. But its priority is the native Android C++/MCP service and authenticated
-remote operation (Hermes 2), and the standing instruction is that no new camera scanning or streaming
-goes onto it without Session 2 coordination plus resource and Doze evidence. It would also have to be
+remote operation, and the standing instruction is that no new camera scanning or streaming
+goes onto it without Android runtime coordination plus resource and Doze evidence. It would also have to be
 permanently co-located with the cameras to serve as the connector host.
 
 **Remaining option:** a small dedicated always-on host in the LAN. That is a procurement and
@@ -314,8 +314,8 @@ placement decision for the owner, not a coding task.
 |---|---|---|
 | No authorized media interface on the third camera (vendor-protocol only) | video, microphone, two-way audio | **Owner** — a decision about the proprietary protocol; forbidden by standing instruction, so it stays closed until changed |
 | No always-on LAN host | any connector deployment; remote readiness | **Owner** — procurement/placement |
-| Mi A3 as connector host | would consume Hermes 2's device | **Hermes 2 (Session 2)** — priority and resource/Doze assessment |
-| Connector credential issuance + control-plane enrolment | site enrolment | **Hermes 1 (#14)** for the overlay, **Antigravity (#17)** for MCP ingress; the credential binding itself is local |
+| Mi A3 as connector host | would consume the Android runtime device | **Android runtime workstream** — priority and resource/Doze assessment |
+| Connector credential issuance + control-plane enrolment | site enrolment | **Overlay workstream (#14)** for the overlay, **MCP ingress workstream (#17)** for MCP ingress; the credential binding itself is local |
 | Retail model number and specification table | documentation only — nothing depends on it | **Owner** — the QR screen or the retail box |
 
 Nothing above blocks the C++/MCP demonstration, the security review or submission preparation.

@@ -24,9 +24,9 @@ device certificate **fingerprint**, never CN. Refusals use the vocabulary observ
 `consent_missing`, `consent_withdrawn`. **No invented response codes.**
 
 Dependency checklist (owner / not-owner):
-- **Android (Hermes 2):** present the client certificate; surface `consent_missing`/`consent_withdrawn`; keep MCP loopback-only.
-- **C++ receiver (Hermes 3):** enforce device identity on ingress; emit the same tokens.
-- **Network (Hermes 1):** the hub's receiver port must be reachable on the LAN while the MCP listener stays bound to loopback — proven by `verify_lan_exposure.py` (4/4).
+- **Android:** present the client certificate; surface `consent_missing`/`consent_withdrawn`; keep MCP loopback-only.
+- **C++ receiver:** enforce device identity on ingress; emit the same tokens.
+- **Network:** the hub's receiver port must be reachable on the LAN while the MCP listener stays bound to loopback — proven by `verify_lan_exposure.py` (4/4).
 - **Not owned by network:** the consent UI and any physical activation.
 - **Gap:** the harness cannot currently *refuse* with `consent_missing`/`consent_withdrawn` — reported as a GAP, not a pass.
 
