@@ -55,6 +55,12 @@ The `utils.py` S3 helper is unused by the canonical handlers and needs no added
 S3 permissions. Alexa-cloud-to-private-C++ connectivity is still not established;
 unavailable voice responses are intentional, never fabricated household data.
 
+Workspace decision: owner explicitly approved temporarily retaining the existing
+`main` checkout beneath `.worktrees/alexa-main`, leaving the canonical root's
+unrelated branch and uncommitted work untouched. Create no further project
+folders/checkouts. Console/AWS reauthentication and the selected regional ARN
+were not supplied at this checkpoint, so deployment remains blocked.
+
 ## On-phone analyzer candidate — not yet deployed
 
 The approved in-place update is being prepared on the isolated Android branch.
