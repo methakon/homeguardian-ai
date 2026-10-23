@@ -38,6 +38,8 @@
 #include "core/DemoScenarios.h"
 #include "core/DemoScenarioRunner.h"
 #include "bridge/NativeHttp.h"
+#include "bridge/PortalUploads.h"
+#include "bridge/LiveCameraFeed.h"
 #include "hg_web_assets.h"
 
 #include <chrono>
@@ -636,10 +638,28 @@ static json integrations_payload() {
     return out;
 }
 
+// Where uploaded media is stored. Deliberately OUTSIDE the repository and outside any web root: the
+// dashboard HTML is embedded in this binary, so nothing is served from disk except an individual
+// id-resolved upload, and an operator's uploads never land in a source tree.
+static std::string default_uploads_dir() {
+    const char* xdg = std::getenv("XDG_STATE_HOME");
+    if (xdg != nullptr && *xdg != '\0')
+        return std::string(xdg) + "/homeguardian/portal-uploads";
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && *home != '\0')
+        return std::string(home) + "/.local/state/homeguardian/portal-uploads";
+    return "/tmp/homeguardian-portal-uploads";
+}
+
 int run_http_mode(Application& app, PersistenceAudit* audit,
                   IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider,
                   const std::string& token, uint16_t port, int retention_days,
-                  const std::string& secret = "") {
+                  const std::string& secret = "",
+                  const std::string& uploads_dir = std::string(),
+                  const std::string& camera_host = std::string(),
+                  uint16_t camera_port = 80,
+                  const std::string& camera_user = std::string("admin"),
+                  const std::string& camera_password = std::string()) {
     // Bounded retention for the BRIDGE's own durable alert store. The config the
     // bridge is handed declares alert_retention_days (30 by default) and the
     // demo server writes to its own audit DB, so honour the retention window
@@ -656,6 +676,35 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                       << retention_days << " day(s)\n";
         }
     }
+    // The uploaded-media store for this run, captured by the handler below. A missing or
+    // uncreatable directory is reported but does not fail the read-only routes: the feed then
+    // answers empty rather than the whole portal refusing to start.
+    const auto live_now_ms = [] {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    };
+    // The live physical camera. Constructed only when the operator named a host on the command
+    // line, so an unconfigured portal has no camera object at all. The credential arrives from a
+    // FILE (see --camera-password-file); it is never read from argv and never logged.
+    std::shared_ptr<homeguardian::portal::LiveCameraFeed> live_camera;
+    if (!camera_host.empty()) {
+        homeguardian::portal::CameraConfig cam;
+        cam.host = camera_host;
+        cam.port = camera_port;
+        cam.user = camera_user;
+        cam.password = camera_password;
+        cam.allow_plaintext = true;          // explicit: the camera serves http on the site LAN
+        cam.display_name = "Outside Main Gate";
+        live_camera = std::make_shared<homeguardian::portal::LiveCameraFeed>(cam);
+        std::cerr << "portal: live camera configured for \"" << cam.display_name
+                  << "\" (credential supplied: " << (cam.password.empty() ? "no" : "yes") << ")\n";
+    }
+    hg_portal::UploadStore uploads(uploads_dir.empty() ? default_uploads_dir() : uploads_dir);
+    if (!uploads.load())
+        std::cerr << "portal: upload store unavailable; feed will be empty\n";
+    std::cerr << "portal: uploads dir " << uploads.root() << "\n";
+
     auto handler = [&](const hg_native_http::HandlerRequest& req,
                        int& status_out) -> std::string {
         const bool prof = [] {
@@ -711,6 +760,73 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
         } else if (req.op == "integrations") {
             out = integrations_payload();
             lap("scenarios");
+        } else if (req.op == "camera_status") {
+            // LIVE PHYSICAL CAMERA status. Reports the true state and its own delivery mechanism.
+            // It reports NOTHING when no camera is configured, rather than inventing a device.
+            status_out = 200;
+            if (!live_camera) {
+                out["ok"] = true;
+                out["configured"] = false;
+                out["reason"] = "no_camera_configured";
+                out["provenance"] = "none";
+            } else {
+                out["ok"] = true;
+                out["configured"] = true;
+                out["source_class"] = "live_physical_camera";
+                out["note"] = "physical observation; distinct from synthetic demo and uploaded replay";
+                out["camera"] = json::parse(live_camera->status_json(live_now_ms()));
+            }
+        } else if (req.op == "feed") {
+            // Uploaded media, always labelled simulated. Never a live camera, never a claim that a device
+            // or Alexa supplied it.
+            out = json::parse(hg_portal::feed_json(uploads));
+            lap("feed");
+        } else if (req.op == "upload") {
+            // The transport already enforced the 25 MiB cap, the media content-type allowlist and an
+            // authorized single-use CSRF session. Here the BYTES are validated: signature, agreement with
+            // the declared type, size and video duration. No client filename is used -- over HTTP there is
+            // none, so the extension comes from the verified signature.
+            std::string uerr;
+            const auto rec = uploads.add(req.body, req.content_type, "", &uerr);
+            if (!rec) {
+                status_out = (uerr == "too_large" || uerr == "too_long") ? 413
+                             : (uerr == "unsupported_format" || uerr == "format_mismatch") ? 415
+                                                                                          : 400;
+                out["ok"] = false;
+                out["error"] = uerr.empty() ? "rejected" : uerr;
+            } else {
+                out["ok"] = true;
+                out["id"] = rec->id;
+                out["kind"] = rec->is_video ? "video" : "image";
+                out["bytes"] = rec->bytes;
+                out["duration_ms"] = rec->duration_ms;
+                out["label"] = hg_portal::kSimulatedFeedLabel;
+                out["simulated"] = true;
+            }
+            lap("upload");
+        } else if (req.op == "delete") {
+            // Body is a small JSON object: {"id":"u_YYYYMMDD_HHMMSS_xxxxxxxx"}. The id is only ever used
+            // through the store's own resolver, which rejects any shape it did not mint.
+            std::string id;
+            try {
+                const json j = json::parse(std::string(req.body));
+                if (j.contains("id") && j["id"].is_string()) id = j["id"].get<std::string>();
+            } catch (const std::exception&) {
+                id.clear();
+            }
+            if (id.empty() || !hg_portal::UploadStore::valid_id(id)) {
+                status_out = 400;
+                out["ok"] = false;
+                out["error"] = "invalid_id";
+            } else if (!uploads.remove(id)) {
+                status_out = 404;
+                out["ok"] = false;
+                out["error"] = "not_found";
+            } else {
+                out["ok"] = true;
+                out["deleted"] = id;
+            }
+            lap("delete");
         } else {
             // Unreachable through the HTTP router (op is transport-assigned);
             // kept as a fail-closed guard for direct handler use.
@@ -726,7 +842,51 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
     // atomic flag is async-signal-safe.
     std::signal(SIGINT, [](int) { hg_native_http::request_shutdown(); });
     std::signal(SIGTERM, [](int) { hg_native_http::request_shutdown(); });
-    const int rc = hg_native_http::serve(port, homeguardian::kDashboardHtml, handler, secret);
+    // Media bytes are a different response kind (bytes + a media type), so they are served by a
+    // dedicated callback rather than the JSON handler. The id is resolved through the store's index;
+    // the store refuses any id it did not mint, so no path is ever assembled from caller input. The
+    // media type comes from the verified record, never from the request.
+    auto media_handler = [&uploads](const std::string& id, int& status_out,
+                                    std::string& mime_out) -> std::string {
+        const auto rec = uploads.find(id);
+        if (!rec) {
+            status_out = 404;
+            mime_out = "application/json";
+            return std::string(R"({"ok":false,"error":"not_found"})");
+        }
+        const auto bytes = uploads.read(id);
+        if (!bytes) {
+            status_out = 404;
+            mime_out = "application/json";
+            return std::string(R"({"ok":false,"error":"not_found"})");
+        }
+        status_out = 200;
+        mime_out = rec->mime;
+        return *bytes;
+    };
+
+    // The LIVE camera handler. Fetching happens HERE, on the request, not in a background thread:
+    // one request, one bounded snapshot, no unbounded polling loop and no queue to grow. When the
+    // camera is not configured the handler is left empty, so the route 404s instead of serving
+    // something else in its place.
+    hg_native_http::CameraHandler camera_handler;
+    if (live_camera) {
+        camera_handler = [&live_camera, &live_now_ms](int& cam_status, std::string& mime_out) -> std::string {
+            const auto frame = live_camera->fetch_frame(live_now_ms());
+            if (!frame.ok) {
+                // Fail honestly: a status code and a reason, never a stale frame dressed as live.
+                cam_status = 503;
+                mime_out = "application/json";
+                return std::string(R"({"ok":false,"error":"camera_unavailable"})");
+            }
+            cam_status = 200;
+            mime_out = "image/jpeg";
+            return std::string(frame.jpeg.begin(), frame.jpeg.end());
+        };
+    }
+
+    const int rc = hg_native_http::serve(port, homeguardian::kDashboardHtml, handler, secret,
+                                         media_handler, camera_handler);
     return rc == 4 ? 0 : rc;  // 4 = clean shutdown requested
 }
 
@@ -740,6 +900,14 @@ int main(int argc, char* argv[]) {
     //                    [--port N] [--token-file PATH]
     //       Native loopback HTTP demo (serves the embedded dashboard + JSON API).
     bool http_mode = false;
+    std::string uploads_dir;  // --uploads-dir: where the portal stores uploaded media
+    // --camera-host names the authorized physical camera. When absent, NOTHING is assumed: the
+    // camera routes 404 rather than reporting an invented device.
+    std::string camera_host;
+    uint16_t camera_port = 80;
+    std::string camera_user = "admin";
+    std::string camera_password;          // loaded from a 0600 file, NEVER from argv
+    std::string camera_password_file;
     int base = 1;
     if (argc >= 2 && std::string(argv[1]) == "--http") {
         http_mode = true;
@@ -747,7 +915,8 @@ int main(int argc, char* argv[]) {
     }
     if (argc < base + 2) {
         std::cerr << "usage: hg_alexa_bridge [--http] <config.json> <credentials.json>"
-                     " [--port N] [--token-file PATH] [--secret-file PATH]\n"
+                     " [--port N] [--token-file PATH] [--secret-file PATH]"
+                     " [--uploads-dir PATH]\n"
                      "  (environment variables HG_HTTP_TOKEN, HG_HTTP_SECRET, HG_SECRET_FILE also supported)\n";
         return 2;
     }
@@ -781,6 +950,17 @@ int main(int argc, char* argv[]) {
         } else if (a == "--token" && i + 1 < argc) {
             std::cerr << "SECURITY WARNING: passing --token on command line exposes credential in /proc and ps. Use --token-file or HG_HTTP_TOKEN instead.\n";
             http_token = argv[++i];
+        } else if (a == "--camera-host" && i + 1 < argc) {
+            camera_host = argv[++i];
+        } else if (a == "--camera-port" && i + 1 < argc) {
+            camera_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        } else if (a == "--camera-user" && i + 1 < argc) {
+            camera_user = argv[++i];
+        } else if (a == "--camera-password-file" && i + 1 < argc) {
+            // A FILE, never the command line: argv is visible to ps and lands in shell history.
+            camera_password_file = argv[++i];
+                } else if (a == "--uploads-dir" && i + 1 < argc) {
+            uploads_dir = argv[++i];
         } else if (a == "--token-file" && i + 1 < argc) {
             std::ifstream tf(argv[++i]);
             if (tf.is_open()) {
@@ -884,7 +1064,8 @@ int main(int argc, char* argv[]) {
     // when shutdown is requested. Otherwise fall through to the NDJSON loop.
     if (http_mode) {
         return run_http_mode(app, audit, *verifier, provider, http_token, http_port,
-                             alert_retention_days, http_secret);
+                             alert_retention_days, http_secret, uploads_dir,
+                             camera_host, camera_port, camera_user, camera_password);
     }
 
     std::ios::sync_with_stdio(false);

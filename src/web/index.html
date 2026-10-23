@@ -97,6 +97,12 @@
   .labels .g { font-variant: small-caps; }
   footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
   a { color: var(--accent); }
+    .feed { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+    .mediacard { margin: 0; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .mediacard img, .mediacard video { width: 100%; max-height: 160px; object-fit: cover; display: block; background: #000; }
+    .mediacard figcaption { padding: 8px 10px; font-size: 11px; color: var(--muted); }
+    .delbtn { float: right; background: transparent; color: var(--danger); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+
 </style>
 </head>
 <body>
@@ -179,7 +185,47 @@
   </div>
 
   <div class="grid" style="margin-top:16px;">
+    <!-- LIVE PHYSICAL CAMERA. A separate card from Uploaded media on purpose: this is real
+         observation from an authorized physical device, which is a different provenance class
+         from an operator upload or a synthetic scenario. They must never be visually merged. -->
+    <div class="card" id="liveCameraCard">
+      <h2>Outside Main Gate <span class="tag live" id="camBadge">CONNECTING</span></h2>
+      <div class="banner" id="camBanner"><b>Live physical camera.</b> Real frames from the
+      authorized exterior camera outside the main gate. This is <b>refreshing snapshot</b> delivery,
+      <b>not continuous video</b> — the panel says so because the source says so, and it will not
+      relabel a stale frame as live.</div>
+      <div style="position:relative; background:#000; border-radius:6px; overflow:hidden; min-height:180px; display:flex; align-items:center; justify-content:center;">
+        <img id="camFrame" alt="Live view — Outside Main Gate"
+             style="max-width:100%; max-height:360px; display:block;">
+        <div id="camOverlay" class="empty"
+             style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.55);">
+          Connecting to camera…
+        </div>
+      </div>
+      <div class="metrics" id="camMetrics" style="margin-top:10px;"></div>
+      <div class="row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+        <button class="primary" id="camReconnect">⟳ Reconnect</button>
+        <button id="camFullscreen">⛶ Full screen</button>
+        <span style="font-size:11px; color:var(--muted);">Source: authorized exterior camera ·
+          physical observation · distinct from synthetic and uploaded sources</span>
+      </div>
+    </div>
+
     <!-- Privacy / how it works -->
+    <div class="card" id="mediaCard">
+      <h2>Uploaded media — simulated camera feed</h2>
+      <div class="banner"><b>Not live CCTV.</b> These are files uploaded by an operator to show a camera-style
+      feed. No camera, device or voice assistant supplied them, and nothing here is a live stream.</div>
+      <div class="row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+        <input type="file" id="uploadFile" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"
+               style="font-size:12px; color:var(--muted);">
+        <button class="primary" id="uploadBtn">⬆ Upload</button>
+        <span style="font-size:11px; color:var(--muted);">PNG/JPEG/WebP ≤ 8 MiB · MP4/WebM ≤ 25 MiB and ≤ 30 s</span>
+      </div>
+      <div id="uploadMsg" style="font-size:11px; color:var(--muted); margin-bottom:10px;"></div>
+      <div id="feed" class="feed"><div class="empty">No uploaded media yet.</div></div>
+    </div>
+
     <div class="card">
       <h2>How this works &amp; your privacy</h2>
       <div style="font-size:13px; color:var(--muted);">
@@ -768,6 +814,180 @@ loadScenarios().then(refresh);
       })
       .catch(function () {});
   });
+// ---- Uploaded media feed (simulated camera feed; never live CCTV) ------------------
+// Follows the existing panel idiom: plain fetch, no framework, and the same CSRF flow the
+// scenario runner uses -- a single-use token minted from the operator secret held in memory.
+async function refreshFeed() {
+  const box = document.getElementById('feed');
+  if (!box) return;
+  try {
+    const r = await fetch('/api/feed');
+    const d = await r.json();
+    const entries = (d && d.entries) || [];
+    if (!entries.length) {
+      box.innerHTML = '<div class="empty">No uploaded media yet. Upload an image or a short video to see it here.</div>';
+      return;
+    }
+    box.innerHTML = entries.map(function (e) {
+      const when = new Date(e.uploaded_at_ms).toLocaleString();
+      const media = e.kind === 'video'
+        ? '<video controls preload="metadata" src="' + e.url + '"></video>'
+        : '<img alt="uploaded media" src="' + e.url + '">';
+      const dur = (e.kind === 'video' && e.duration_ms) ? ' · ' + (e.duration_ms / 1000).toFixed(1) + 's' : '';
+      return '<figure class="mediacard">' + media +
+        '<figcaption><b>Uploaded</b> ' + when + ' · ' + e.kind + dur + ' · ' +
+        Math.round(e.bytes / 1024) + ' KiB ' +
+        '<button class="delbtn" data-del="' + e.id + '">Delete</button></figcaption></figure>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('button[data-del]'), function (b) {
+      b.addEventListener('click', function () { deleteUpload(b.getAttribute('data-del')); });
+    });
+  } catch (e) {
+    box.innerHTML = '<div class="empty">Feed unavailable — the backend is not reachable.</div>';
+  }
+}
+
+async function uploadMedia() {
+  const input = document.getElementById('uploadFile');
+  const m = document.getElementById('uploadMsg');
+  if (!input || !input.files || !input.files.length) { if (m) m.textContent = 'Choose a file first.'; return; }
+  const f = input.files[0];
+  if (m) m.textContent = 'Uploading ' + f.name + ' …';
+  try {
+    const csrf = await window.__hgCsrf();
+    const r = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': f.type || 'application/octet-stream', 'x-hg-csrf': csrf },
+      body: f
+    });
+    const d = await r.json().catch(function () { return {}; });
+    if (m) m.textContent = r.ok
+      ? 'Uploaded ' + f.name + ' as ' + d.kind + '.'
+      : 'Rejected (' + r.status + '): ' + (d.error || 'unknown');
+    if (r.ok) { input.value = ''; refreshFeed(); }
+  } catch (e) {
+    if (m) m.textContent = (e && e.message === 'credential_required')
+      ? 'Authorize with the operator secret first (System status panel).'
+      : 'Upload failed — the backend is not reachable.';
+  }
+}
+
+async function deleteUpload(id) {
+  try {
+    const csrf = await window.__hgCsrf();
+    await fetch('/api/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-hg-csrf': csrf },
+      body: JSON.stringify({ id: id })
+    });
+    refreshFeed();
+  } catch (e) { /* leave the list as it is */ }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  const b = document.getElementById('uploadBtn');
+  if (b) b.addEventListener('click', uploadMedia);
+  refreshFeed();
+  setInterval(refreshFeed, 10000);
+});
+
+// ---- LIVE PHYSICAL CAMERA ---------------------------------------------------
+// Real frames from the authorized exterior camera. Two deliberate rules:
+//   1. The LIVE/STALE badge comes from the SERVER's freshness measurement, never from whether
+//      the image request succeeded. A cached frame that loads fine is still STALE if the server
+//      says so, and the overlay says so too.
+//   2. Failure is shown as failure. The previous frame is never re-labelled live, and no
+//      placeholder image is drawn in its place.
+let camStatusTimer = null;
+let camFrameTimer = null;
+
+function camSetBadge(state) {
+  const el = document.getElementById('camBadge');
+  if (!el) return;
+  el.textContent = state;
+  el.className = 'tag ' + (state === 'LIVE' ? 'live' : 'synth');
+}
+
+function camSetOverlay(text) {
+  const ov = document.getElementById('camOverlay');
+  if (!ov) return;
+  if (text) { ov.style.display = 'flex'; ov.textContent = text; }
+  else { ov.style.display = 'none'; ov.textContent = ''; }
+}
+
+function camRenderStatus(d) {
+  const box = document.getElementById('camMetrics');
+  if (!box) return;
+  if (!d || !d.configured) {
+    camSetBadge('NOT CONFIGURED');
+    camSetOverlay('No camera configured on this portal.');
+    box.innerHTML = '';
+    return;
+  }
+  const c = d.camera || {};
+  camSetBadge(c.state || 'UNKNOWN');
+  // STALE and DISCONNECTED are shown honestly over the media area.
+  if (c.state === 'STALE') camSetOverlay('Frame is stale — ' + Math.round((c.frame_age_ms || 0) / 1000) + 's old. Reconnecting…');
+  else if (c.state === 'DISCONNECTED') camSetOverlay('Camera disconnected.');
+  else if (c.state === 'LIVE') camSetOverlay('');
+
+  const age = (c.frame_age_ms == null || c.frame_age_ms < 0) ? '—' : (c.frame_age_ms / 1000).toFixed(1) + 's';
+  const res = c.width ? (c.width + '×' + c.height) : '—';
+  box.innerHTML =
+    '<span>state <b>' + (c.state || '—') + '</b></span>' +
+    '<span>source <b>' + (c.provenance || '—') + '</b></span>' +
+    '<span>delivery <b>' + (c.delivery || '—') + '</b></span>' +
+    '<span>continuous video <b>' + (c.is_continuous_video ? 'yes' : 'no') + '</b></span>' +
+    '<span>resolution <b>' + res + '</b></span>' +
+    '<span>frame age <b>' + age + '</b></span>' +
+    '<span>last frame <b>' + (c.last_frame_bytes || 0) + ' B</b></span>' +
+    '<span>frames <b>' + (c.frames_served || 0) + '</b></span>' +
+    (c.fetch_failures ? '<span>failures <b>' + c.fetch_failures + '</b></span>' : '');
+}
+
+async function camRefreshStatus() {
+  try {
+    const r = await fetch('/api/camera/status');
+    camRenderStatus(await r.json());
+  } catch (e) {
+    camSetBadge('DISCONNECTED');
+    camSetOverlay('Portal unreachable.');
+  }
+}
+
+function camTickFrame() {
+  const img = document.getElementById('camFrame');
+  if (!img) return;
+  // Cache-busted so the browser cannot serve a cached frame as though it were new.
+  img.src = '/api/camera/frame?t=' + Date.now();
+}
+
+function camStart() {
+  camRefreshStatus();
+  camTickFrame();
+  if (camStatusTimer) clearInterval(camStatusTimer);
+  if (camFrameTimer) clearInterval(camFrameTimer);
+  camStatusTimer = setInterval(camRefreshStatus, 2000);
+  camFrameTimer = setInterval(camTickFrame, 2000);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  const rc = document.getElementById('camReconnect');
+  if (rc) rc.addEventListener('click', function () { camSetOverlay('Reconnecting…'); camStart(); });
+  const fs = document.getElementById('camFullscreen');
+  if (fs) fs.addEventListener('click', function () {
+    const img = document.getElementById('camFrame');
+    if (img && img.requestFullscreen) img.requestFullscreen();
+  });
+  const img = document.getElementById('camFrame');
+  if (img) img.addEventListener('error', function () {
+    // An image load failure is shown as a failure; nothing is substituted for it.
+    camSetBadge('ERROR');
+    camSetOverlay('No frame available.');
+  });
+  camStart();
+});
+
 })();
 </script>
 </body>

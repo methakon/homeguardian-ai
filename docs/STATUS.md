@@ -49,6 +49,69 @@ Camera source/relay/gateway suites passed all 87 tests with fake media sources.
 Live-camera tests and the Docker-based Java-to-C++ runner were not run; no physical
 capture or deployment acceptance is claimed. No APK, VPN, VPS, AWS configuration,
 or currently deployed Alexa service was changed.
+## HG-PORTAL backup portal — acceptance on `backup-plan` (2026-10-23)
+
+A backup operator portal built on the **existing** native demo rather than a parallel stack: no Node, no
+framework, no new service. `hg_alexa_bridge --http` gains an uploaded-media store and four routes
+(feed/upload/delete on the JSON handler, media bytes via a dedicated callback), plus `--uploads-dir`
+defaulting outside the repository. The dashboard is the existing `src/web/index.html`, still embedded into
+the binary at build time.
+
+**Branch and SHA:** `backup-plan`, HEAD `7bc6e4a` (origin matches). Seven commits; `main` untouched, no
+new worktree, nothing deployed or exposed, Alexa lane untouched. Alexa skill files were not modified.
+
+**Exact commands and results:**
+
+```
+python3 scripts/portal_smoke.py                      38 passed, 0 failed
+./build/homeguardian_tests "[portal],[alexa],[mcp]"  33585 assertions in 55 cases, all passed
+cmake --build build -j4                              exit 0, 0 errors
+```
+
+**Verified live on loopback** (not merely compiled): the served dashboard carries the required label
+verbatim, "Uploaded media — simulated camera feed", plus an explicit not-live-CCTV banner; a valid PNG
+upload returns its own bytes on `/media/<id>`; a valid 5 s MP4 reports `duration_ms=5000` read from the
+container; a script renamed `.png`, a non-allowlisted content type, path traversal, an unissued id and a
+malformed delete id are all refused; upload and delete without CSRF are `403`; session minting is `401`
+without the operator secret; and a portal whose upload store is unusable still serves an empty, labelled
+feed instead of erroring or inventing content.
+
+**Size sweep after the fix:** 999,967 · 7-digit length · 1 MiB · 4 MiB · 7 MiB → all accepted;
+9 MiB → `413 too_large` from the store's 8 MiB ceiling.
+
+**Measured resources:** RSS 6,648 → 7,520 KiB over 120 uploads of 256 KiB (delta 872 KiB) at ~1.8 ms of
+CPU per upload.
+
+**Defect fixed in this work (HG-PORTAL #30).** An upload above roughly 200 KiB returned `400 malformed`
+where `413` was expected. The cause was the transport's `Content-Length` parser refusing any declared
+length wider than **6 digits** (`value.size() > 6`) — correct while the only bodies were `"{}"`, wrong
+once a route could accept 25 MiB. The guard is now 8 digits and the authoritative `body_cap` check is
+unchanged. Two further transport defects were found and fixed earlier by running the component: the serve
+loop stopped reading at the header terminator (bodies written in a second segment were truncated,
+producing intermittent `400`s), and the generic framing check applied the 512-byte JSON cap to the upload
+route before the route was known.
+
+**Blockers / not verified:**
+
+* The transport's `Origin` check requires an exact same-origin request from this loopback host and port,
+  so a reverse proxy or tunnel presenting a different scheme/host **will be refused**. HTTPS exposure
+  needs that check deliberately widened; not done, not tested. Everything is verified on loopback only.
+* No per-user accounts — the operator-secret panel only.
+* The app-degraded path (as opposed to an unusable upload store, now covered by the smoke) is verified by
+  reading the dashboard's JavaScript, not exercised.
+* **Not deployed:** no tunnel, no DNS record, no systemd unit installed, no external request ever
+  received. Rollback is `kill <pid>`; the portal holds no external state.
+
+**Rollback:** `kill <pid>` (or `systemctl stop <unit>` if supervised). The portal holds no external
+state — uploads live in the directory passed as `--uploads-dir`, whose `index.jsonl` is rebuilt on load,
+so deleting that directory discards uploads and leaving it keeps them. Nothing else is touched: no
+firewall rule, no DNS record, no mail or SSH configuration, no container.
+
+**Next owner:** Hermes 3 / `hg-hermes-cpp` for the portal itself. Exposing it beyond this machine is
+**not** authorised by this task and must not be attempted before the `Origin`-policy decision above is
+made deliberately by the coordinator, with a separate scoped change.
+
+The portal's own runbook is `docs/PORTAL_DEPLOYMENT.md`; its reusable test is `scripts/portal_smoke.py`.
 
 ## Alexa Python recovery and supplied-source diagnosis — 2026-10-23
 
