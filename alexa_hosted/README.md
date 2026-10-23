@@ -75,6 +75,19 @@ The one genuinely missing piece for a live end-to-end demo is **(7)**: the Lambd
 reach `127.0.0.1`. Until the gateway has an HTTPS origin, the hosted skill can only be tested with a local
 harness.
 
+### What this status is, and is not (HG-ALEXA-53)
+
+| stage | state |
+|---|---|
+| 1. source implementation | **COMPLETE** — `7318c23` |
+| 2. local unit + bridge tests | **PASS, worker-reported** — 13 tests against the real bridge |
+| 3. Amazon Skill ID association | **NOT VERIFIED** — no `.ask/` state, no skill id recorded anywhere in this repo |
+| 4. Alexa-hosted deployment | **NOT VERIFIED** — nothing deployed; `ask` is not even installed here |
+| 5. Amazon simulator acceptance | **NOT VERIFIED** — only the owner can run it |
+| 6. live C++ backend connection | **NOT VERIFIED** — no HTTPS origin exists, and an AWS Lambda cannot reach 127.0.0.1 |
+
+Nothing on this page should be read as "operational" until stage 5 has actually been run in the console.
+
 ## Amazon Developer Console — exact steps
 
 1. Console → **Alexa Skills** → your skill **HomeGuardian AI(dhar)**.
@@ -99,12 +112,17 @@ harness.
   installed; every tested utterance is in the suite.
 * **Architecture**: Alexa → (hosted Python adapter) → HTTPS → HomeGuardian C++ gateway (analysis, alerts,
   SQLite) → read-only MCP projection. The C++ side performs all analysis.
-* **Integration evidence**: `python3 -m unittest discover -s alexa_hosted/test -v` — 14 tests, one recorded
-  expected failure (the `/api/status` read gap). The API cases run against the real C++ bridge binary.
+* **Integration evidence**: `python3 -m unittest discover -s alexa_hosted/test -v` — **13 tests, OK** (no
+  expected failures). The API cases start the real `build/hg_alexa_bridge` on loopback. This is
+  **worker-reported** evidence: the Amazon simulator and the hosted deployment (HG-ALEXA-53 stages 3-5) have
+  not been exercised, and only the owner can do that.`
 * **Needed from the owner**: the HTTPS gateway origin for a live run; a simulator screenshot; the skill ID for
   the deployment record.
 * **Known limitations**: no camera media by design (no authenticated camera interface exists — see
-  `docs/HG_V380_09_FEASIBILITY_AND_ALEXA_READINESS.md`); capture state unreadable over HTTP until the read
-  route accepts a credential; ASK CLI not installed; no public endpoint yet; no disaster prediction, ever.
+  `docs/HG_V380_09_FEASIBILITY_AND_ALEXA_READINESS.md`); ASK CLI not installed (the console paste path avoids
+  it); **no HTTPS gateway origin exists**, so in AWS the Lambda cannot reach a loopback bridge and the live
+  leg cannot run yet — the gateway must be published through Cloudflare Tunnel or the owner's VPN, never as a
+  public unauthenticated listener; the camera/routine/detected-activity intents answer honestly that the
+  gateway does not report those fields over this interface; no disaster prediction, ever.
 * **Not claimed**: certification, publication, a deployed endpoint, or any capability this file does not
   demonstrate.
