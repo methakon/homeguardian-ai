@@ -71,8 +71,11 @@ Still missing or unproven:
   (loopback-bound native bridge behind a Cloudflare tunnel). That publishes a page and
   its read-only APIs; it does not deploy the camera analysis, configure a source, or
   change the classic ASK/SQS/phone lane. No camera frame has been fetched.
-- **Proactive Alexa delivery.** The established path is request/response. An
-  `alerts_delivered` counter or a spoken summary is not unsolicited notification.
+- **Alexa delivery model — request/response, by design and accepted.** The skill
+  answers an intent and speaks the hub's own summary; nothing is pushed to an Echo.
+  This is the agreed operating model, not a defect. Read the counter names
+  accordingly: `alerts_delivered` means the policy released an alert for the
+  request/response path, not that a device received or spoke it.
 - **Continuous video.** Snapshot polling only; the H.264 path still needs a streaming
   client and muxer.
 - **Categories without an implementation** (audio, speech, visitors/deliveries, falls,
@@ -99,11 +102,12 @@ Additional unresolved gates:
 ## Alexa delivery boundary
 
 The established classic ASK/SQS lane performs **request/response**: a requested
-summary is read from native MCP and spoken by the skill. Neither an internal
-`alerts_delivered` counter nor a successful summary proves unsolicited delivery
-to an Echo. This merge adds no proactive-event sender, delivery outbox, supported
-notification permission or consumer receipt. Those are separate requirements,
-not a reason to replace the established working lane.
+summary is read from native MCP and spoken by the skill. That is the accepted
+operating model for this system. An internal `alerts_delivered` counter or a
+successful summary therefore describes policy release and a correct spoken answer,
+not unsolicited delivery to a device — and no unsolicited delivery is claimed or
+required. A proactive-notification design (event sender, permission, durable
+outbox, receipts) would be a separate capability, not a fix to this lane.
 
 ## Executed local acceptance
 

@@ -26,6 +26,11 @@ observations feed this instance, `capture_enabled=false`, and the phone's privat
 path is unchanged. The integration panel therefore reports 0 devices, "None live" and
 0 fusion runs, which is accurate rather than a failure.
 
+Alexa is **request/response by design** (owner-accepted): an intent is asked, the
+skill reads the hub's own summary and speaks it. Nothing is pushed to a device, and
+the `alerts_delivered` counter therefore means "released for that path", not
+"spoken by an Echo".
+
 ## Real camera analysis wiring (motion + statistical change)
 
 Owner-approved scope: wire the existing detectors through the real acquisition path,
