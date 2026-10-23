@@ -242,12 +242,19 @@ function claimsFor(nonce, overrides = {}) {
   };
 }
 
+const browserProofs = new Map();
+const handoffProofs = new Map();
 async function startLogin() {
-  const res = await request('GET', '/login');
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const started = await request('POST', '/api/login/start', {
+    headers: { Origin: 'https://portal.example.test' }, body: { challenge } });
+  const res = await request('GET', started.json?.login_url || '/login');
   const location = res.headers.location ? new URL(res.headers.location) : null;
   const state = location ? location.searchParams.get('state') : null;
   const nonce = location ? location.searchParams.get('nonce') : null;
   if (location) {
+    browserProofs.set(state, verifier);
     stub.pending = { nonce, challenge: location.searchParams.get('code_challenge') };
   }
   return { res, location, state, nonce };
@@ -260,20 +267,23 @@ function queueToken(nonce, overrides = {}, signing = {}) {
 }
 
 async function callback(state, code) {
-  return request(
+  const res = await request(
     'GET',
     `/auth/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
   );
+  const handoff = handoffCode(res);
+  if (handoff) handoffProofs.set(handoff, browserProofs.get(state));
+  return res;
 }
 
 function handoffCode(callbackResponse) {
   const location = callbackResponse.headers.location || '';
-  const match = /^\/#session=([A-Za-z0-9_-]+)$/.exec(location);
+  const match = /^\/auth\/complete#session=([A-Za-z0-9_-]+)$/.exec(location);
   return match ? match[1] : null;
 }
 
 async function exchange(code) {
-  return request('POST', '/api/session/exchange', { body: { code } });
+  return request('POST', '/api/session/exchange', { body: { code, verifier: handoffProofs.get(code) } });
 }
 
 /** Full happy-path login for a given subject. Returns the Bearer token. */
@@ -289,6 +299,113 @@ async function loginAs(sub, extraClaims = {}) {
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
+
+// Execute the actual served external script against a small synthetic DOM.
+// No browser dependencies or persistent storage APIs are available in this realm.
+async function testSessionUi(source) {
+  const vm = require('node:vm');
+  function boot(hash = '') {
+    const nodes = new Map();
+    function element(tag) {
+      return { tagName: tag, children: [], attributes: {}, textContent: '', hidden: false,
+        setAttribute(k, v) { this.attributes[k] = v; },
+        appendChild(n) { this.children.push(n); if (n.id) nodes.set(n.id, n); return n; },
+        addEventListener(k, fn) { this['on' + k] = fn; },
+      };
+    }
+    const document = { documentElement: element('html'), head: element('head'),
+      body: element('body'), readyState: 'loading', createElement: element,
+      getElementById(id) { return nodes.get(id) || null; },
+      addEventListener(k, fn) { this['on' + k] = fn; },
+    };
+    const calls = [];
+    let status = 403;
+    const location = { origin: 'https://portal.example.test', href: 'https://portal.example.test/' + hash,
+      pathname: '/', search: '', hash, assign(url) { calls.push({ navigation: url }); } };
+    const popup = {};
+    const window = { dispatchEvent() {}, addEventListener(k, fn) { this['on' + k] = fn; },
+      open() { return popup; }, fetch: async (url, init) => {
+      calls.push({ url, init });
+      if (url === '/api/login/start') return { ok: true, status: 200,
+        json: async () => ({ login_url: '/login?request=' + 'z'.repeat(43) }) };
+      if (url === '/api/session/exchange') return { ok: true, status: 200,
+        json: async () => ({ token: 'a'.repeat(64), role: 'VIEWER', expires_in: 3600 }) };
+      if (url === '/api/logout') return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      return { ok: status === 200, status, json: async () => ({ error: 'household_authorization_required' }) };
+    } };
+    vm.runInNewContext(source, { window, document, location, history: { replaceState() { location.hash = ''; } },
+      URL, Headers, Date, Promise, crypto: crypto.webcrypto, TextEncoder, Uint8Array,
+      btoa: s => Buffer.from(s, 'binary').toString('base64'), CustomEvent: function () {} });
+    document.readyState = 'complete';
+    if (document.onDOMContentLoaded) document.onDOMContentLoaded();
+    return { window, document, nodes, calls, location, popup, setStatus(s) { status = s; } };
+  }
+  async function signIn(realm) {
+    await realm.nodes.get('hg-sign-in').onclick({ preventDefault() {} });
+    realm.window.onmessage({ origin: realm.location.origin, source: realm.popup,
+      data: { type: 'hg:oauth', code: 'x'.repeat(43) } });
+    return realm;
+  }
+  const anon = boot();
+  ok(anon.nodes.has('hg-session-gate'), 'external script creates the sign-in UI');
+  ok(anon.nodes.get('hg-sign-in')?.href === '/login', 'sign-in button links to /login');
+  ok(anon.document.head.children.some(n => n.textContent.includes('.wrap') && n.textContent.includes('display:none')),
+    'dashboard visibility is fail-closed before original scripts run');
+  const signed = await signIn(boot());
+  // An original inline script starts polling immediately, before exchange resolves.
+  const denied = await signed.window.fetch('/api/status').then(() => false, () => true);
+  ok(denied, '403 rejects the original poll instead of allowing its false zero fallback');
+  ok(signed.calls.find(c => c.url === '/api/status')?.init.headers.get('Authorization') === 'Bearer ' + 'a'.repeat(64),
+    'first inline poll waits for exchange and carries the bearer token');
+  ok(signed.nodes.get('hg-session-message')?.textContent.includes('VIEWER') &&
+    signed.nodes.get('hg-session-message')?.textContent.includes('not granted'),
+    'signed-in UI truthfully states VIEWER and household access not granted');
+  ok(signed.document.documentElement.attributes['data-hg-household'] !== 'granted',
+    'denied household dashboard remains hidden');
+  await signed.window.fetch('/api/camera/status').catch(() => {});
+  ok(signed.nodes.get('hg-session-message')?.textContent.includes('not granted'),
+    'background private-feature polls preserve the household denial state');
+  signed.setStatus(503);
+  await signed.window.fetch('/api/status').catch(() => {});
+  ok(signed.nodes.get('hg-session-message')?.textContent.includes('unavailable'), 'outage shows an explicit unavailable banner');
+  signed.setStatus(200);
+  await signed.window.fetch('/api/status');
+  ok(signed.document.documentElement.attributes['data-hg-household'] === 'granted', 'authorized household status unlocks original dashboard');
+  signed.setStatus(401);
+  await signed.window.fetch('/api/status').catch(() => {});
+  ok(!signed.window.__hg.authenticated(), '401 clears expired/revoked session and returns to sign-in');
+  const switched = await signIn(boot());
+  await switched.window.__hg.ready;
+  await switched.nodes.get('hg-switch-account')?.onclick();
+  const logoutIndex = switched.calls.findIndex(c => c.url === '/api/logout');
+  const loginIndex = switched.calls.findIndex((c, i) => i > logoutIndex && c.url === '/api/login/start');
+  ok(logoutIndex >= 0 && loginIndex > logoutIndex && !switched.window.__hg.authenticated(),
+    'switch-account revokes session before starting a new browser-bound /login');
+  const refreshed = boot();
+  ok(!refreshed.window.__hg.authenticated(), 'refresh without hand-off loses token and requires login again');
+  const sharedUrl = boot('#session=' + 'x'.repeat(43));
+  await sharedUrl.window.__hg.ready;
+  ok(!sharedUrl.window.__hg.authenticated() && !sharedUrl.calls.some(c => c.url === '/api/session/exchange'),
+    'shared hand-off URLs never sign in a different browser/tab');
+  const pending = boot();
+  await pending.nodes.get('hg-sign-in').onclick({ preventDefault() {} });
+  pending.setStatus(401);
+  await pending.window.fetch('/api/camera/status').catch(() => {});
+  for (const [origin, source] of [['https://attacker.example.test', pending.popup], [pending.location.origin, {}]]) {
+    pending.window.onmessage({ origin, source, data: { type: 'hg:oauth', code: 'x'.repeat(43) } });
+  }
+  ok(!pending.calls.some(c => c.url === '/api/session/exchange'), 'popup hand-off checks both exact origin and exact source window');
+  pending.window.onmessage({ origin: pending.location.origin, source: pending.popup,
+    data: { type: 'hg:oauth', code: 'x'.repeat(43) } });
+  await pending.window.__hg.ready;
+  ok(pending.calls.some(c => c.url === '/api/session/exchange'),
+    'anonymous background 401 polling cannot destroy the pending browser login proof');
+  const startBody = JSON.parse(pending.calls.find(c => c.url === '/api/login/start').init.body);
+  const exchangeBody = JSON.parse(pending.calls.find(c => c.url === '/api/session/exchange').init.body);
+  ok(crypto.createHash('sha256').update(exchangeBody.verifier).digest('base64url') === startBody.challenge,
+    'browser-memory verifier proves the challenge supplied before Google login');
+  ok(!pending.popup.location.includes(exchangeBody.verifier), 'browser verifier never appears in popup URL');
+}
 
 async function run() {
   console.log('=========================================================');
@@ -396,7 +513,7 @@ async function run() {
   const goodCb = await callback(first.state, goodCode);
   ok(goodCb.status === 302, 'callback 302 after full validation');
   const handoff = handoffCode(goodCb);
-  ok(Boolean(handoff) && handoff.length >= 32, 'callback redirects to /#session=<one-time code>');
+  ok(Boolean(handoff) && handoff.length >= 32, 'callback redirects to popup completion with a one-time fragment code');
   ok((goodCb.headers.location || '').includes('#session='), 'session hand-off uses a URL fragment only');
 
   const exchanged = await exchange(handoff);
@@ -411,6 +528,24 @@ async function run() {
   const replayExchange = await exchange(handoff);
   ok(replayExchange.status === 400 && replayExchange.json.error === 'invalid_or_used_code',
     'one-time hand-off code cannot be replayed');
+
+  for (const verifier of [undefined, 'q'.repeat(43)]) {
+    const start = await startLogin();
+    const cb = await callback(start.state, queueToken(start.nonce));
+    const code = handoffCode(cb);
+    const denied = await request('POST', '/api/session/exchange', { body: { code, verifier } });
+    ok(denied.status === 400 && denied.json.error === 'browser_proof_invalid' && !denied.json.token,
+      `handoff rejects ${verifier ? 'wrong' : 'missing'} browser proof`);
+    const retry = await exchange(code);
+    ok(retry.status === 400 && retry.json.error === 'invalid_or_used_code', 'invalid proof consumes the handoff exactly once');
+  }
+  const directLogin = await request('GET', '/login');
+  ok(directLogin.status === 400 && directLogin.json.error === 'browser_login_required', 'direct/shared login URL cannot start an unbound login');
+  for (const origin of [undefined, 'https://attacker.example.test']) {
+    const denied = await request('POST', '/api/login/start', { headers: origin ? { Origin: origin } : {},
+      body: { challenge: 'a'.repeat(43) } });
+    ok(denied.status === 403, 'login start rejects missing/cross-site Origin');
+  }
 
   ok(stub.pkceVerified === true, 'token exchange sent a code_verifier matching the S256 challenge');
   ok(stub.tokenRequests[0].get('grant_type') === 'authorization_code', 'token exchange uses grant_type=authorization_code');
@@ -438,6 +573,29 @@ async function run() {
   ok(adminMe.json.email === null, 'unverified email is not trusted');
   await request('POST', '/api/logout', { token: adminish.token });
 
+  // Authentication alone never authorizes a private household.
+  const callsBeforeDefaultDeny = mcp.calls.length;
+  for (const route of ['/api/status', '/api/alerts']) {
+    const denied = await request('GET', route, { token: aliceToken });
+    ok(denied.status === 403 && denied.json.error === 'household_authorization_required',
+      `${route} default denies a signed-in VIEWER without a household grant`);
+    ok(!denied.raw.includes('alert-1') && !denied.raw.includes('RUNNING'),
+      `${route} denial exposes no private household data`);
+  }
+  ok(mcp.calls.length === callsBeforeDefaultDeny, 'default household denials make zero backend calls');
+
+  // Explicit server-side seam in this synthetic fixture only; no production grant.
+  await gateway.close();
+  const authorizedGateway = createGateway({
+    config, sessions: gateway.sessions, provider: gateway.provider, codes: gateway.codes,
+    fetchImpl: (url, init) => stub.fetchImpl(url, init), mcpClient: mcp, now,
+    authorizeHousehold: async (sub) => sub === 'google-sub-alice',
+    logger: { info: () => {}, warn: () => {} },
+  });
+  const authorizedAddress = await authorizedGateway.listen(0, '127.0.0.1');
+  BASE = `http://127.0.0.1:${authorizedAddress.port}`;
+
+
   // ------------------------------------------- MCP reads via VIEWER session --
   section('4. Case 10a — authorized read-only MCP proxy');
   const statusRes = await request('GET', '/api/status', { token: aliceToken });
@@ -451,8 +609,8 @@ async function run() {
   const alertsRes = await request('GET', '/api/alerts', { token: aliceToken });
   ok(alertsRes.status === 200 && alertsRes.json.total === 3, '/api/alerts proxies the aggregate alert count');
   ok(alertsRes.json.highest_severity === 'high', '/api/alerts reports the highest severity');
-  ok(Array.isArray(alertsRes.json.alert_ids) && alertsRes.json.alert_ids.length === 3,
-    '/api/alerts exposes only capped, non-sensitive alert ids');
+  ok(!('alert_ids' in alertsRes.json) && !alertsRes.raw.includes('alert-1'),
+    '/api/alerts never exposes household alert identifiers');
   ok(alertsRes.json.alerts.length === 0, '/api/alerts does not fabricate alert payloads');
   ok(!("message" in (alertsRes.json.alerts[0] || {})), 'no alert message bodies are exposed to VIEWER');
   ok(alertsRes.json.read_only === true, '/api/alerts is read-only');
@@ -505,6 +663,14 @@ async function run() {
   const bob = await loginAs('google-sub-bob', { email: 'bob@example.test', name: 'Bob Synthetic' });
   const bobMe = await request('GET', '/api/me', { token: bob.token });
   ok(bobMe.status === 200 && bobMe.json.sub === 'google-sub-bob', 'a second identity gets its own stable sub');
+  const beforeBob = mcp.calls.length;
+  for (const route of ['/api/status', '/api/alerts']) {
+    const denied = await request('GET', route, { token: bob.token,
+      headers: { 'x-hg-sub': 'google-sub-alice', 'x-hg-role': 'ADMIN' } });
+    ok(denied.status === 403 && denied.json.error === 'household_authorization_required',
+      `${route} rejects ungranted subject even with authorized-subject spoof headers`);
+  }
+  ok(mcp.calls.length === beforeBob, 'ungranted second subject makes zero backend calls');
   const aliceAgain = await request('GET', '/api/me', { token: aliceToken });
   ok(aliceAgain.json.sub === 'google-sub-alice', 'sessions are isolated per subject');
   const spoofed = await request('GET', '/api/me', {
@@ -679,6 +845,11 @@ async function run() {
   ok(page.headers['referrer-policy'] === 'no-referrer', 'referrer policy is no-referrer');
   ok(page.headers['set-cookie'] === undefined, 'portal response sets no cookie');
 
+  const shimTag = page.raw.match(/<script src="\/assets\/portal-session.js"[^>]*><\/script>/);
+  ok(shimTag && !/defer|async/.test(shimTag[0]) &&
+    page.raw.indexOf(shimTag[0]) < page.raw.indexOf('<script>'),
+    'session bootstrap is parser-blocking before every original inline script');
+
   const shim = await request('GET', '/assets/portal-session.js');
   ok(shim.status === 200 && (shim.headers['content-type'] || '').includes('javascript'),
     'the session shim is served as JavaScript');
@@ -688,6 +859,21 @@ async function run() {
     'shim requests are cookieless by construction');
   ok(shim.raw.includes('/api/session/exchange'), 'the shim exchanges the one-time fragment code');
 
+  await testSessionUi(shim.raw);
+  const completion = await request('GET', '/assets/oauth-complete.js');
+  const messages = [];
+  const callbackRealm = {
+    location: { origin: 'https://portal.example.test', pathname: '/auth/complete', hash: '#session=' + 'x'.repeat(43) },
+    history: { replaceState() {} },
+    window: { opener: { postMessage(...args) { messages.push(args); } }, close() {} },
+  };
+  require('node:vm').runInNewContext(completion.raw, callbackRealm);
+  ok(messages.length === 1 && messages[0][1] === 'https://portal.example.test',
+    'callback popup posts handoff only to exact same-origin opener');
+  callbackRealm.window.opener = null;
+  require('node:vm').runInNewContext(completion.raw, callbackRealm);
+  ok(messages.length === 1, 'standalone callback performs no session exchange and has no sign-in target');
+
   // ------------------------------------------------------------ accounting --
   section('15. Global invariants');
   ok(cookieViolations.length === 0, `no response in the whole suite set a cookie (${cookieViolations.length} found)`);
@@ -695,7 +881,7 @@ async function run() {
   ok(gateway.sessions.size >= 0, 'session store is inspectable for audit');
   ok(typeof gateway.csp === 'string' && gateway.csp.length > 0, 'gateway exposes its CSP for audit');
 
-  await gateway.close();
+  await authorizedGateway.close();
 
   console.log('\n=========================================================');
   console.log(`Assertions: ${passed + failed}   passed: ${passed}   failed: ${failed}`);

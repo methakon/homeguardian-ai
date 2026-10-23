@@ -10,7 +10,8 @@
 //     ignored. The browser keeps its session token in a JS closure only.
 //   * Every authenticated principal is VIEWER. Private data (camera, frames,
 //     feed, uploads, device identities, raw media, consent, mutations) is denied
-//     by default; only /api/status and /api/alerts reach the MCP backend.
+//     by default; /api/status and /api/alerts additionally require a separate
+//     server-side household grant. Production supplies none.
 //   * The MCP bearer token never leaves this process. Responses are shaped
 //     server-side and error details are redacted.
 //   * An unreachable/failing backend is reported as `unavailable` (HTTP 503),
@@ -40,6 +41,16 @@ const DEFAULT_PORTAL_PATH = path.join(__dirname, '..', 'src', 'web', 'index.html
 const PORTAL_ASSET_PATH = '/assets/portal-session.js';
 const MAX_BODY_BYTES = 64 * 1024;
 const SESSION_TOKEN_RE = /^[0-9a-f]{64}$/;
+const BROWSER_PROOF_RE = /^[A-Za-z0-9_-]{43}$/;
+const POPUP_COMPLETE_JS = `(function () {
+  'use strict';
+  var match = /^#session=([A-Za-z0-9_-]{43})$/.exec(location.hash);
+  history.replaceState(null, '', location.pathname);
+  if (match && window.opener) {
+    window.opener.postMessage({type:'hg:oauth', code:match[1]}, location.origin);
+    window.close();
+  }
+})();`;
 
 // ---------------------------------------------------------------------------
 // Session store (hashed tokens, TTL, explicit revocation)
@@ -237,7 +248,8 @@ class McpBackend {
   }
 }
 
-// VIEWER read allowlist. Everything else — including /api/devices — is denied.
+// Household read candidates, NOT grants. A separate subject authorizer must
+// explicitly permit access before either route touches MCP.
 const VIEWER_READ_ROUTES = Object.freeze({
   '/api/status': { tool: 'get_homeguardian_status', shape: 'status' },
   '/api/alerts': { tool: 'get_alert_summary', shape: 'alerts' },
@@ -286,10 +298,56 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
     if (parsed.origin !== location.origin) return false;
     return parsed.pathname.indexOf('/api/') === 0;
   }
+  // Installed in <head> before the dashboard exists. Fail closed even while
+  // exchange is pending; no flash of the original private dashboard.
+  var style = document.createElement('style');
+  style.textContent = 'html:not([data-hg-household="granted"]) .wrap{display:none!important}' +
+    '#hg-session-gate{max-width:1000px;margin:24px auto;padding:24px;background:#161b22;color:#e6edf3;border:1px solid #2a3441;border-radius:14px}' +
+    '#hg-session-gate a,#hg-session-gate button{margin:8px;padding:10px;display:inline-block}' +
+    '#hg-session-gate [hidden]{display:none!important}';
+  document.head.appendChild(style);
+  var message = 'Sign in with Google to verify your identity. Private household access requires a separate owner grant.';
+  var generation = 0;
+  function render() {
+    if (!document.body) return;
+    var gate = document.getElementById('hg-session-gate');
+    if (!gate) {
+      gate = document.createElement('section'); gate.id = 'hg-session-gate';
+      gate.setAttribute('aria-label', 'HomeGuardian sign-in');
+      var title = document.createElement('h1'); title.textContent = 'HomeGuardian AI'; gate.appendChild(title);
+      var text = document.createElement('p'); text.id = 'hg-session-message';
+      text.setAttribute('role', 'status'); text.setAttribute('aria-live', 'polite'); gate.appendChild(text);
+      var signin = document.createElement('a'); signin.id = 'hg-sign-in';
+      signin.href = '/login'; signin.textContent = 'Sign in with Google'; gate.appendChild(signin);
+      signin.addEventListener('click', function (event) { event.preventDefault(); return startBrowserLogin(); });
+      var out = document.createElement('button'); out.id = 'hg-log-out'; out.textContent = 'Log out';
+      out.addEventListener('click', function () { return logout(); }); gate.appendChild(out);
+      var change = document.createElement('button'); change.id = 'hg-switch-account'; change.textContent = 'Switch account';
+      change.addEventListener('click', function () {
+        var next = window.open('about:blank', '_blank');
+        return logout().then(function () { return startBrowserLogin(next); });
+      });
+      gate.appendChild(change);
+      document.body.appendChild(gate);
+    }
+    document.getElementById('hg-session-message').textContent = (state.token ? 'VIEWER — ' : '') + message;
+    document.getElementById('hg-sign-in').hidden = !!state.token;
+    document.getElementById('hg-log-out').hidden = !state.token;
+    document.getElementById('hg-switch-account').hidden = !state.token;
+  }
+  function block(text) {
+    document.documentElement.setAttribute('data-hg-household', 'denied');
+    message = text; render();
+  }
   function clear() {
+    generation += 1;
+    loginProof = null; loginPopup = null;
     state.token = null; state.role = null; state.expiresAt = 0;
     document.documentElement.setAttribute('data-hg-auth', 'anonymous');
+    block('Sign in again. This tab keeps no cookies or stored session; refreshing requires a new login.');
   }
+  document.addEventListener('DOMContentLoaded', render);
+  render();
   function announce() {
     document.documentElement.setAttribute('data-hg-auth', state.role ? 'viewer' : 'anonymous');
     try {
@@ -301,34 +359,70 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
 
   window.fetch = function (input, init) {
     var url = typeof input === 'string' ? input : (input && input.url) || '';
-    var opts = {};
-    if (init) {
-      for (var key in init) {
-        if (Object.prototype.hasOwnProperty.call(init, key)) opts[key] = init[key];
+    var api = isSameOriginApi(url);
+    // Original inline polls may start before the one-time exchange resolves.
+    return Promise.resolve(window.__hg.ready).then(function () {
+      var opts = {};
+      if (init) {
+        for (var key in init) {
+          if (Object.prototype.hasOwnProperty.call(init, key)) opts[key] = init[key];
+        }
       }
-    }
-    if (state.token && isSameOriginApi(url)) {
-      var headers = new Headers(opts.headers || {});
-      if (!headers.has('Authorization')) headers.set('Authorization', 'Bearer ' + state.token);
-      opts.headers = headers;
-    }
-    opts.credentials = 'omit'; // cookieless by construction
-    return nativeFetch(input, opts);
+      if (api) {
+        var headers = new Headers(opts.headers || (input && input.headers) || {});
+        if (state.token) headers.set('Authorization', 'Bearer ' + state.token);
+        opts.headers = headers;
+      }
+      opts.credentials = 'omit';
+      var requestGeneration = generation;
+      var requestToken = state.token;
+      return nativeFetch(input, opts).then(function (res) {
+        if (!api) return res;
+        if (requestGeneration !== generation) throw new Error('session_changed');
+        var household = ['/api/status', '/api/alerts'].indexOf(absolute(url).pathname) !== -1;
+        if (!res.ok) {
+          if (res.status === 401) {
+            // Anonymous legacy polls run while the Google popup is open. They
+            // must not discard its memory proof or a newer completed exchange.
+            if (requestToken && requestToken === state.token) clear();
+          }
+          else if (res.status === 403) {
+            if (household) block('Private household access not granted. Google sign-in verifies identity only.');
+            else { render(); }
+          } else block('HomeGuardian data unavailable. No household readings or zero counts are being reported.');
+          // The old page does not check response.ok: never let its JSON fallbacks
+          // convert a denial/outage into empty alerts or zero connected devices.
+          throw new Error('gateway_access_denied_or_unavailable');
+        }
+        if (household && state.token) {
+          document.documentElement.setAttribute('data-hg-household', 'granted');
+          message = 'Private household read access granted by the server. Camera, media and mutations remain denied.';
+          render();
+        }
+        return res;
+      }, function (err) {
+        if (api && requestGeneration === generation) block('HomeGuardian data unavailable. No readings are being reported.');
+        throw err;
+      });
+    });
   };
 
-  function exchange(code) {
+  function exchange(code, verifier) {
+    var exchangeGeneration = generation;
     return nativeFetch('/api/session/exchange', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code }),
+      body: JSON.stringify({ code: code, verifier: verifier }),
       credentials: 'omit',
       cache: 'no-store'
     }).then(function (res) {
       return res.json().then(function (body) {
         if (!res.ok || !body || !body.token) throw new Error((body && body.error) || 'exchange_failed');
+        if (exchangeGeneration !== generation) return null;
         state.token = body.token;
         state.role = body.role;
         state.expiresAt = Date.now() + (Number(body.expires_in) || 0) * 1000;
+        block('Private household access not granted. Google sign-in verifies identity only.');
         announce();
         return body;
       });
@@ -341,12 +435,11 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
   function logout() {
     var headers = { 'Content-Type': 'application/json' };
     if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    clear();
+    announce();
     return nativeFetch('/api/logout', {
       method: 'POST', headers: headers, body: '{}', credentials: 'omit', cache: 'no-store'
-    }).catch(function () {}).then(function () {
-      clear();
-      announce();
-    });
+    }).catch(function () {});
   }
 
   window.__hg = {
@@ -357,14 +450,50 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
     ready: null
   };
 
-  var match = /(?:^#|&)session=([A-Za-z0-9_-]{16,128})/.exec(location.hash || '');
-  if (match) {
-    var code = match[1];
-    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
-    window.__hg.ready = exchange(code);
-  } else {
-    clear();
+  var loginProof = null;
+  var loginPopup = null;
+  function base64url(bytes) {
+    var binary = ''; bytes.forEach(function (b) { binary += String.fromCharCode(b); });
+    return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
   }
+  function startBrowserLogin(popup) {
+    loginPopup = popup || window.open('about:blank', '_blank');
+    if (!loginPopup) { block('Sign-in unavailable: allow the sign-in popup and try again.'); return Promise.resolve(); }
+    var bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
+    loginProof = base64url(bytes);
+    var proof = loginProof;
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(proof)).then(function (digest) {
+      return nativeFetch('/api/login/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challenge: base64url(new Uint8Array(digest)) }),
+        credentials: 'omit', cache: 'no-store'
+      });
+    }).then(function (res) {
+      if (!res.ok) throw new Error('login_unavailable');
+      return res.json();
+    }).then(function (body) {
+      if (loginProof !== proof || !/^\\/login\\?request=[A-Za-z0-9_-]{43}$/.test(body.login_url)) throw new Error('login_invalid');
+      loginPopup.location = body.login_url;
+    }).catch(function () { loginProof = null; block('Google sign-in unavailable. Please try again.'); });
+  }
+  window.addEventListener('message', function (event) {
+    if (event.origin !== location.origin || event.source !== loginPopup || !loginProof ||
+        !event.data || event.data.type !== 'hg:oauth' || !/^[A-Za-z0-9_-]{43}$/.test(event.data.code)) return;
+    var proof = loginProof; loginProof = null; loginPopup = null;
+    window.__hg.ready = exchange(event.data.code, proof);
+    // The old initial polls may have already failed while signed out.
+    window.__hg.ready.then(function () {
+      if (state.token) {
+        if (typeof window.refresh === 'function') window.refresh().catch(function () {});
+        else window.fetch('/api/status').catch(function () {});
+      }
+    });
+  });
+  // Never accept a hand-off URL in this tab. Only the matching popup can deliver
+  // a code, and only this tab holds the independent browser-memory verifier.
+  if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+  window.__hg.ready = Promise.resolve(null);
+  clear();
 })();
 `;
 
@@ -415,7 +544,7 @@ function securityHeaders(res, csp) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -424,8 +553,9 @@ function securityHeaders(res, csp) {
 function loadPortal(portalPath) {
   const html = fs.readFileSync(portalPath, 'utf8');
   const inline = computeInlineHashes(html);
-  const shimTag = `<script src="${PORTAL_ASSET_PATH}" defer></script>`;
-  const served = html.includes('</body>') ? html.replace('</body>', `  ${shimTag}\n</body>`) : html + shimTag;
+  const shimTag = `<script src="${PORTAL_ASSET_PATH}"></script>`;
+  // Parser blocking: install fetch and fail-closed visibility before bridge code.
+  const served = html.replace(/<head\b[^>]*>/i, (head) => head + '\n' + shimTag);
   return { html: served, inline, csp: buildCsp(inline), sourcePath: portalPath };
 }
 
@@ -539,6 +669,8 @@ function createGateway(options = {}) {
   const codes =
     options.codes ||
     new OneTimeCodeStore({ ttlMs: config.exchangeCodeTtlSeconds * 1000, now });
+  const loginStarts = new OneTimeCodeStore({ ttlMs: 60000, now });
+  const browserBindings = new Map(); // state -> public challenge, bounded + TTL
 
   const mcp =
     options.mcp ||
@@ -583,6 +715,20 @@ function createGateway(options = {}) {
   }
 
   async function handleProxy(res, route, session) {
+    // Separate server-side authorization, never derived from Google claims, email,
+    // headers or VIEWER role. The executable entrypoint supplies no authorizer.
+    let authorized = false;
+    if (typeof options.authorizeHousehold === 'function') {
+      try { authorized = (await options.authorizeHousehold(session.principal.sub)) === true; }
+      catch (_) { /* fail closed, including authorizer outages */ }
+    }
+    if (!authorized) {
+      sendJson(res, 403, {
+        ok: false, error: 'household_authorization_required', role: ROLE_VIEWER,
+        message: 'Private household access has not been granted. Google sign-in verifies identity only.',
+      });
+      return;
+    }
     let data;
     try {
       data = await mcp.callTool(route.tool, {});
@@ -607,7 +753,7 @@ function createGateway(options = {}) {
         total: count,
         alert_count: count,
         highest_severity: data.highest_severity ?? null,
-        alert_ids: Array.isArray(data.alert_ids) ? data.alert_ids : [],
+
         alerts: [],
         read_only: true,
         note: 'viewer_scope: aggregate alert summary only; alert payloads and media are not exposed',
@@ -706,6 +852,27 @@ function createGateway(options = {}) {
       return;
     }
 
+    if (pathname === '/auth/complete' && req.method === 'GET') {
+      sendText(res, 200, '<!doctype html><title>HomeGuardian sign-in</title><p>Return to the original HomeGuardian tab. Standalone callbacks cannot sign you in.</p><script src="/assets/oauth-complete.js"></script>', 'text/html; charset=utf-8');
+      return;
+    }
+    if (pathname === '/assets/oauth-complete.js' && req.method === 'GET') {
+      sendText(res, 200, POPUP_COMPLETE_JS, 'application/javascript; charset=utf-8');
+      return;
+    }
+    if (pathname === '/api/login/start' && req.method === 'POST') {
+      if (!config.publicOrigin || req.headers.origin !== config.publicOrigin) {
+        sendJson(res, 403, { ok: false, error: 'forbidden_origin' }); return;
+      }
+      const body = await readJsonBody(req);
+      if (typeof body.challenge !== 'string' || !BROWSER_PROOF_RE.test(body.challenge)) {
+        sendJson(res, 400, { ok: false, error: 'browser_challenge_required' }); return;
+      }
+      const ticket = loginStarts.issue({ challenge: body.challenge });
+      sendJson(res, 200, { ok: true, login_url: '/login?request=' + ticket });
+      return;
+    }
+
     // ---- login -----------------------------------------------------------
     if (pathname === '/login' && req.method === 'GET') {
       if (!config.isConfigured()) {
@@ -724,8 +891,16 @@ function createGateway(options = {}) {
         });
         return;
       }
+      const browserStart = loginStarts.take(url.searchParams.get('request'));
+      if (!browserStart) {
+        sendJson(res, 400, { ok: false, error: 'browser_login_required' }); return;
+      }
       try {
         const request = provider.createLoginRequest();
+        for (const [key, value] of browserBindings) if (value.expiresAt < now()) browserBindings.delete(key);
+        if (browserBindings.size >= 256) browserBindings.delete(browserBindings.keys().next().value);
+        const state = new URL(request.url).searchParams.get('state');
+        browserBindings.set(state, { challenge: browserStart.challenge, expiresAt: now() + 600000 });
         redirect(res, request.url);
       } catch (err) {
         const status = err instanceof OidcError ? err.status : 500;
@@ -766,6 +941,11 @@ function createGateway(options = {}) {
       }
 
       let completed;
+      const binding = browserBindings.get(state);
+      browserBindings.delete(state);
+      if (!binding || binding.expiresAt < now()) {
+        sendJson(res, 400, { ok: false, error: 'invalid_state' }); return;
+      }
       try {
         completed = await provider.completeLogin({ code, state });
       } catch (err) {
@@ -781,10 +961,10 @@ function createGateway(options = {}) {
       }
 
       const { token, session } = sessions.create(completed.principal);
-      const handoff = codes.issue({ token, sub: completed.principal.sub });
+      const handoff = codes.issue({ token, sub: completed.principal.sub, challenge: binding.challenge });
       log.info(`viewer session established for sub=${completed.principal.sub}`);
       // Fragment only: never sent to a server, never logged, single use.
-      redirect(res, `/#session=${handoff}`);
+      redirect(res, `/auth/complete#session=${handoff}`);
       return;
     }
 
@@ -807,6 +987,12 @@ function createGateway(options = {}) {
         return;
       }
       const session = sessions.get(payload.token);
+      const proof = typeof body.verifier === 'string' && BROWSER_PROOF_RE.test(body.verifier)
+        ? crypto.createHash('sha256').update(body.verifier).digest('base64url') : '';
+      if (!proof || proof !== payload.challenge) {
+        sessions.revoke(payload.token);
+        sendJson(res, 400, { ok: false, error: 'browser_proof_invalid' }); return;
+      }
       if (!session) {
         sendJson(res, 401, { ok: false, error: 'session_expired' });
         return;

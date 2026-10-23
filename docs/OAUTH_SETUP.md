@@ -1,84 +1,82 @@
-# Google sign-in: the one owner step
+# Google sign-in deployment and acceptance
 
-The portal's OIDC gateway is implemented, deployed on the host and verified. The
-remaining action is creating the OAuth client, which Google only exposes through the
-Cloud Console — there is no public API and `gcloud` has no command for it.
+Task: HG-WEB-PORTAL-GOOGLE-LOGIN-51 (tracked in issue #25 comments).
 
-Evidence that the API path does not exist (run against the project, with an owner role):
+## Published deployment
 
-```
-gcloud services enable clientauthconfig.googleapis.com   -> AUTH_PERMISSION_DENIED
-gcloud alpha iap oauth-brands list                        -> SERVICE_DISABLED
-clientauthconfig v1/brands                                -> 400 INVALID_ARGUMENT (all forms)
-clientauthconfig v1/projects/{id}/clients                 -> 404
-oauth2 v1/projects/{id}/clients                           -> 404
-```
+https://homeguardian.berhampore.in/ now serves the cookieless OIDC gateway on the
+existing approved HTTPS tunnel. The previous dashboard is retained in
+`src/web/index.html`, served through the gateway, and hidden behind authentication
+and household authorization. No second dashboard or public MCP port was added.
 
-Do not create the client by any unsupported route, and do not reuse another
-application's client: a Web client accepts only its exact registered redirect URIs, so
-reuse fails with `redirect_uri_mismatch` and would tie this portal to another app.
+The dedicated owner-created Web client belongs to project
+`homeguardian-ai-web-portal`. Its registered origin is
+`https://homeguardian.berhampore.in`; its registered callback is
+`https://homeguardian.berhampore.in/auth/callback`. The existing Tantra client and
+its redirects were not modified. Do not create a duplicate client.
 
-## Create the dedicated client
+Client ID and secret are installed only in
+`/opt/homeguardian/gateway/gateway.env` (0600). The secret is used for server-side
+code exchange, not browser code. No credential JSON or environment file is tracked.
 
-Console: <https://console.cloud.google.com/apis/credentials?project=tantra-acharya-auth>
+Gateway environment contract:
 
-1. Confirm no client named `HomeGuardian AI Web Portal` exists; if it does, use it.
-2. **Create credentials → OAuth client ID → Web application**.
-3. Name: `HomeGuardian AI Web Portal`.
-4. Authorized JavaScript origins: `https://homeguardian.berhampore.in`
-5. Authorized redirect URIs: `https://homeguardian.berhampore.in/auth/callback`
-6. Create, then copy the Client ID and Client secret.
+- HG_GOOGLE_CLIENT_ID and HG_GOOGLE_CLIENT_SECRET: dedicated client credentials.
+- HG_PUBLIC_ORIGIN=https://homeguardian.berhampore.in
+- HG_GOOGLE_REDIRECT_URI=https://homeguardian.berhampore.in/auth/callback
+- HG_GATEWAY_BIND=127.0.0.1; HG_GATEWAY_PORT=8810
+- HG_MCP_URL: existing loopback native read-only MCP endpoint.
+- HG_MCP_TOKEN: server-only backend credential.
+- HG_PORTAL_PATH: deployed copy of the existing src/web/index.html.
 
-The client secret is shown once. Put the values straight into the server's protected
-environment; do not paste them into chat, a browser console, an issue or a commit.
+The tunnel's HomeGuardian route now targets http://127.0.0.1:8810 instead of the
+old bridge on 8091. Other tunnel routes, mail, WireGuard and Alexa are unchanged.
 
-## Install the credentials
+## Login and refresh behavior
 
-```
-sudo -n tee -a /opt/homeguardian/gateway/gateway.env >/dev/null <<'ENV'
-HG_GOOGLE_CLIENT_ID=<value>
-HG_GOOGLE_CLIENT_SECRET=<value>
-HG_GOOGLE_REDIRECT_URI=https://homeguardian.berhampore.in/auth/callback
-ENV
-sudo chmod 600 /opt/homeguardian/gateway/gateway.env
-sudo systemctl restart hg-gateway.service
-```
+1. Open the published page and click Sign in with Google. Allow its popup.
+2. The original tab generates a memory-only browser verifier. A same-origin POST
+   starts login and binds its challenge to server-held state, nonce and PKCE.
+3. Google redirects the popup to the callback. The server exchanges the code and
+   validates the ID-token signature, issuer, audience, azp, time claims and nonce.
+4. A single-use handoff code returns via exact-origin popup messaging. Only the
+   initiating tab's verifier can exchange it for the short-lived session token.
+5. The browser holds its token only in memory; no authentication cookies,
+   localStorage or sessionStorage. Reloading requires a new sign-in.
+6. Logout revokes the server session and clears memory. Switch account revokes the
+   current session before starting another Google account-selection flow.
 
-`gateway.env` is `root:www-data` 0600. The client secret is used only for the
-server-side token exchange; it never reaches the browser, is never logged, and is not
-in the repository (`.env` is gitignored at `.gitignore:161`).
+Every identity receives VIEWER. Google identity is not a household grant.
+Production currently has no household authorizer: status and alert summaries
+return 403 household_authorization_required without querying MCP, even after
+Google login. Devices, camera/media, consent, administrator actions and mutations
+are also denied. This intentionally prevents accidental household disclosure.
+A separately approved household authorization model is still required for real
+private-data access; there is no email-based or administrator bypass.
 
-## Verify without a human
+## Verified evidence
 
-```
-# the redirect is now accepted: expect a consent/302, not redirect_uri_mismatch
-curl -sS -o /dev/null -D - -H 'Host: homeguardian.berhampore.in' \
-  'http://127.0.0.1:8810/login' | grep -i '^location:'
+Focused offline suites (synthetic RSA/JWKS and token endpoint fixtures):
 
-# anonymous access stays closed
-curl -sS -o /dev/null -w '%{http_code}\n' -H 'Host: homeguardian.berhampore.in' \
-  'http://127.0.0.1:8810/api/status'    # 401
-```
+- node web_mcp/test_oauth.js: 175 assertions passed, 0 failed.
+- node web_mcp/test_client.js: 26 passed, 0 failed.
+- node web_mcp/test_devices_dashboard.js: 161 passed, 0 failed.
 
-A real sign-in cannot be automated: it needs a person in a browser with a Google
-account. That step also proves server-side validation, the VIEWER role and logout.
+Coverage includes token validation and expiry, state/nonce/replay, browser-bound
+handoff, default-deny household isolation, explicit authorized-subject test seam,
+MCP unavailable responses, logout/expiry, and cookieless security headers.
+The explicit household-authorizer seam is supplied only by tests, not the
+production executable. Backend failures are unavailable, never fabricated zeros.
 
-## After a successful sign-in
+Public HTTPS probes after tunnel readback:
 
-Repoint the Cloudflare tunnel from the bridge (8091) to the gateway (8810) and verify
-through the public name:
+- /: 200, parser-blocking /assets/portal-session.js bootstrap present.
+- /health: 200, oidc_configured=true, cookies=false.
+- /api/status, /api/alerts, /api/devices, /api/camera/frame: anonymous 401.
+- Browser: visible Sign in with Google page; an actual click opens Google's
+  account sign-in prompt without redirect_uri_mismatch.
 
-```
-/                      200   page
-/login                 302   -> accounts.google.com (or 200 signed-in state)
-/api/status            401   anonymous
-/api/alerts            401   anonymous
-/api/camera/status     403   camera_state   (authenticated VIEWER)
-/api/devices           403   device_identities
-```
-
-Until the client exists the gateway reports the dependency honestly:
-
-```
-/login -> 503 {"error":"google_client_id_missing","dependency":["HG_GOOGLE_CLIENT_ID"]}
-```
+These checks do not prove real account login. Google credential entry/consent,
+real ID-token validation and VIEWER/logout acceptance remain pending owner
+interaction. The task is not DONE; private-data acceptance is also blocked on the
+separate household grant model. Do not close the tracking issue on fixture results.
