@@ -25,6 +25,10 @@ public:
         bool allow_status = false;
         bool allow_alert_summary = false;
         std::chrono::system_clock::time_point expires_at{};
+        // Appended LAST on purpose: the fixtures below initialize Entry positionally, so a field
+        // inserted earlier would silently rebind their values. Absent => false, which is the
+        // default-deny that keeps device visibility off every pre-existing token.
+        bool allow_devices = false;
     };
 
     void add(Entry e) { entries_.push_back(std::move(e)); }
@@ -39,6 +43,7 @@ public:
                     ctx.principal = e.principal;
                     ctx.allow_status = e.allow_status;
                     ctx.allow_alert_summary = e.allow_alert_summary;
+                    ctx.allow_devices = e.allow_devices;
                 }
                 return ctx;  // known token: authorized only if not expired
             }
@@ -62,6 +67,8 @@ FakeVerifier make_verifier(std::chrono::system_clock::time_point base) {
     auto far_future = base + std::chrono::hours(24 * 365);
     // Full-access token.
     v.add({"tok-full", "alexa-user", true, true, far_future});
+    // Device-visibility token: permitted for the devices operation ONLY.
+    v.add({"tok-devices", "portal-viewer", false, false, far_future, true});
     // Status-only token.
     v.add({"tok-status", "alexa-user", true, false, far_future});
     // No-permission token (authenticated but forbidden everywhere).
@@ -391,4 +398,137 @@ TEST_CASE("Alexa: credential value never appears in the response",
     std::string msg = AlexaContract::error_message(r.error);
     REQUIRE(msg.find("tok-full") == std::string::npos);
     REQUIRE(r.state.find("tok-full") == std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// devices operation: privacy-safe visibility, default-deny, and isolation.
+// The owner's visibility model is not settled, so the behaviour that matters most
+// is that NOTHING is visible without an explicit grant, and that a caller permitted
+// for other operations cannot infer device visibility at all.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Alexa: devices is forbidden for a token that lacks the device permission",
+          "[alexa][contract][devices]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    p.snap.state = "Running";
+    p.snap.visible_device_labels = {"site-a-camera", "site-a-motion"};  // approved, and yet...
+
+    // tok-full holds status + alert_summary. It must NOT reach device visibility: permission is
+    // per operation, so this is forbidden even though devices ARE approved. That is default-deny.
+    auto parsed = AlexaContract::parse(valid_body("devices", "tok-full"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE_FALSE(resp.ok);
+    REQUIRE(resp.error == AlexaError::forbidden);
+    REQUIRE(resp.device_labels.empty());
+    REQUIRE(resp.device_count == 0);
+}
+
+TEST_CASE("Alexa: devices with the permission but no approved visibility reports zero",
+          "[alexa][contract][devices]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    p.snap.state = "Running";
+    // Default state: the provider has approved nothing.
+
+    auto parsed = AlexaContract::parse(valid_body("devices", "tok-devices"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE(resp.ok);
+    REQUIRE(resp.device_count == 0);
+    REQUIRE(resp.device_labels.empty());
+    // The marker distinguishes "nothing is approved as visible" from "there are no devices".
+    REQUIRE(resp.device_visibility == "owner-approved-only");
+}
+
+TEST_CASE("Alexa: devices returns approved labels and caps the list",
+          "[alexa][contract][devices]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    p.snap.state = "Running";
+    p.snap.visible_device_labels = {"site-a-camera", "site-b-motion"};
+
+    auto parsed = AlexaContract::parse(valid_body("devices", "tok-devices"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE(resp.ok);
+    REQUIRE(resp.device_count == 2);
+    REQUIRE(resp.device_labels.size() == 2);
+
+    // More approved labels than the cap: the returned list is capped while the count still
+    // reports the true total, so a viewer can tell "truncated" from "that is all of them".
+    p.snap.visible_device_labels.clear();
+    for (size_t i = 0; i < ALEXA_MAX_DEVICES_RETURNED + 3; ++i) {
+        p.snap.visible_device_labels.push_back("label-" + std::to_string(i));
+    }
+    auto parsed2 = AlexaContract::parse(valid_body("devices", "tok-devices"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed2));
+    AlexaResponse resp2 = AlexaContract::handle(std::get<AlexaRequest>(parsed2), v, p, now);
+    REQUIRE(resp2.ok);
+    REQUIRE(resp2.device_labels.size() == ALEXA_MAX_DEVICES_RETURNED);
+    REQUIRE(resp2.device_count == ALEXA_MAX_DEVICES_RETURNED + 3);
+}
+
+TEST_CASE("Alexa: other operations never carry device visibility",
+          "[alexa][contract][devices]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    p.snap.state = "Running";
+    p.snap.alert_count = 1;
+    p.snap.highest_severity = "warning";
+    p.snap.alert_ids = {"alert-1"};
+    p.snap.visible_device_labels = {"site-a-camera", "site-a-motion"};
+
+    // Two devices are visible and this token may read status -- but the status response must not
+    // disclose even the count, or device visibility would leak through the side door.
+    auto parsed = AlexaContract::parse(valid_body("status", "tok-full"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE(resp.ok);
+    REQUIRE(resp.device_count == 0);
+    REQUIRE(resp.device_labels.empty());
+    REQUIRE(resp.device_visibility.empty());
+
+    auto parsed2 = AlexaContract::parse(valid_body("alert_summary", "tok-full"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed2));
+    AlexaResponse resp2 = AlexaContract::handle(std::get<AlexaRequest>(parsed2), v, p, now);
+    REQUIRE(resp2.ok);
+    REQUIRE(resp2.device_count == 0);
+    REQUIRE(resp2.device_labels.empty());
+}
+
+TEST_CASE("Alexa: the device permission does not grant anything else",
+          "[alexa][contract][devices]") {
+    Logger::initialize("error");
+    auto now = std::chrono::system_clock::now();
+    FakeVerifier v = make_verifier(now);
+    FakeProvider p;
+    p.snap.available = true;
+    p.snap.state = "Running";
+
+    // The mirror of the first case: a device-permitted principal cannot read status.
+    auto parsed = AlexaContract::parse(valid_body("status", "tok-devices"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed));
+    AlexaResponse resp = AlexaContract::handle(std::get<AlexaRequest>(parsed), v, p, now);
+    REQUIRE_FALSE(resp.ok);
+    REQUIRE(resp.error == AlexaError::forbidden);
+
+    auto parsed2 = AlexaContract::parse(valid_body("alert_summary", "tok-devices"));
+    REQUIRE(std::holds_alternative<AlexaRequest>(parsed2));
+    AlexaResponse resp2 = AlexaContract::handle(std::get<AlexaRequest>(parsed2), v, p, now);
+    REQUIRE_FALSE(resp2.ok);
+    REQUIRE(resp2.error == AlexaError::forbidden);
 }

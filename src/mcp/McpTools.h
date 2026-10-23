@@ -22,6 +22,7 @@ namespace homeguardian::mcp {
 
 inline constexpr const char* kToolStatus = "get_homeguardian_status";
 inline constexpr const char* kToolAlertSummary = "get_alert_summary";
+inline constexpr const char* kToolDevices = "get_homeguardian_devices";
 
 // Build the registry. Both dependencies are injected and must outlive the registry — the
 // same pattern the bridge uses, so tests can inject deterministic fakes.

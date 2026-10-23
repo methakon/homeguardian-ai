@@ -31,7 +31,7 @@ activated by this milestone.
     tools/call ──► McpTools ──► AlexaContract ──► IAlexaCredentialVerifier (AlexaCredentialStore)
       (JSON-RPC)                 (existing)   └─► IAlexaStatusProvider   (Application + PersistenceAudit)
 
-The two tools are translated into the same kind of request the existing NDJSON bridge sends,
+The tools are translated into the same kind of request the existing NDJSON bridge sends,
 carrying the caller's bearer token as the credential. Authorization, response shaping and the
 fail-closed rules therefore live in **one** place — `AlexaContract` — rather than in a second,
 divergent copy inside the MCP layer.
@@ -39,7 +39,7 @@ divergent copy inside the MCP layer.
 | New file | Role |
 |---|---|
 | `src/mcp/McpProtocol.{h,cpp}` | JSON-RPC 2.0 framing, version negotiation, method dispatch, error taxonomy, batching. No sockets — the pure rules, so they are testable directly. |
-| `src/mcp/McpTools.{h,cpp}` | The two read-only tools, over `AlexaContract`. |
+| `src/mcp/McpTools.{h,cpp}` | The read-only tools, over `AlexaContract`. |
 | `src/mcp/McpHttpServer.{h,cpp}` | Streamable HTTP transport: sessions, Origin validation, auth, bounds, timeouts, bounded concurrency, clean shutdown. |
 | `src/main_mcp_server.cpp` | Wiring: the same `Application`, `PersistenceAudit` and `AlexaCredentialStore` the bridge builds. |
 | `tests/mcp/test_mcp_protocol.cpp` | `[mcp]` protocol/tool/security tests. |
@@ -54,10 +54,38 @@ target and the test sources, additively.
 |---|---|---|
 | `get_homeguardian_status` | none | `{"state": "...", "capture_enabled": bool, "read_only": true}` |
 | `get_alert_summary` | none | `{"alert_count": N, "highest_severity": "...", "alert_ids": [...], "read_only": true}` |
+| `get_homeguardian_devices` | none | `{"device_count": N, "device_labels": [...], "visibility": "owner-approved-only", "read_only": true}` |
 
 Both are reads. There is no operation in the contract that can enable capture, grant consent,
 change configuration or activate a sensor, so no such tool can exist — asserted by a test that
 tries to call a plausible-sounding mutating tool and gets `-32602`.
+
+### `get_homeguardian_devices` — privacy-safe visibility, default-deny
+
+Added for the read-only web portal, which needs a device list that the native application owns. There is
+**no** device-listing tool in the original two, and this one deliberately exposes no device identity.
+
+* **Permission is per operation.** A credential needs `"allow_devices": true`. Absent means false. A token
+  holding `allow_status` and/or `allow_alert_summary` is refused with `forbidden` for this operation, and
+  conversely a device-permitted token cannot read `status` or `alert_summary`.
+* **Visibility is owner-approved and empty by default.** The provider supplies labels via
+  `AlexaStatusSnapshot::visible_device_labels`, which starts empty and is populated by the MCP server with
+  nothing until the owner approves a visibility model. A zero count therefore means *"nothing is approved as
+  visible"*, not *"there are no devices"* — the response carries `"visibility": "owner-approved-only"` so the
+  two cannot be confused.
+* **Only the devices operation carries device fields.** The count and labels are filled exclusively when the
+  requested operation is `devices`, so a caller permitted for `status` cannot infer even how many devices are
+  visible.
+* **No identity, no history.** Labels are opaque owner-chosen strings. The response never contains names,
+  serials, network addresses, media, telemetry or per-device history, and the tool cannot change state.
+* **Capped.** At most `ALEXA_MAX_DEVICES_RETURNED` (20) labels are returned while `device_count` reports the
+  true total, so a viewer can tell a truncated list from a complete one.
+* **Contract version unchanged.** The operation is additive: `ALEXA_CONTRACT_VERSION` stays 1, so existing
+  callers are unaffected.
+
+Evidence: `tests/core/test_alexa_contract.cpp` — 5 cases (33 assertions) covering the refusal without the
+permission, the empty-approved state, the cap, the no-leak-into-other-operations property, and the reverse of
+the first. The full `[alexa]` suite is 25 cases / 135 assertions, all passing.
 
 ## 4. Transport behaviour
 

@@ -70,6 +70,19 @@ ToolOutcome alert_summary_tool(const std::string& /*args*/,
 
 }  // namespace
 
+ToolOutcome devices_tool(const std::string& /*args*/,
+                         const std::string& credential,
+                         const IAlexaCredentialVerifier& verifier,
+                         const IAlexaStatusProvider& provider) {
+    const ContractOutcome r = run_contract("devices", credential, verifier, provider);
+    if (!r.ok) return ToolOutcome{false, kGenericFailure};
+    json out{{"device_count", r.response.device_count},
+             {"device_labels", r.response.device_labels},
+             {"visibility", r.response.device_visibility},
+             {"read_only", true}};
+    return ToolOutcome{true, out.dump()};
+}
+
 ToolRegistry make_homeguardian_tools(const IAlexaCredentialVerifier& verifier,
                                      const IAlexaStatusProvider& provider) {
     ToolRegistry registry;
@@ -83,6 +96,7 @@ ToolRegistry make_homeguardian_tools(const IAlexaCredentialVerifier& verifier,
             return status_tool(args, cred, verifier, provider);
         }});
 
+
     registry.add(Tool{
         kToolAlertSummary,
         "Read-only aggregate alert summary: total alert count, highest severity, and a "
@@ -91,6 +105,18 @@ ToolRegistry make_homeguardian_tools(const IAlexaCredentialVerifier& verifier,
         R"({"type":"object","properties":{},"additionalProperties":false})",
         [&verifier, &provider](const std::string& args, const std::string& cred) {
             return alert_summary_tool(args, cred, verifier, provider);
+        }});
+    registry.add(Tool{
+        kToolDevices,
+        "Read-only device visibility: how many devices the owner has approved as visible to an "
+        "authenticated read-only viewer, and their opaque labels. Takes no arguments. Never "
+        "returns device names, serials, network addresses, media, telemetry or per-device "
+        "history, and cannot change state. Visibility is default-deny: labels are empty until "
+        "the owner approves them, so a zero count means nothing is approved, not that no "
+        "devices exist.",
+        R"({"type":"object","properties":{},"additionalProperties":false})",
+        [&verifier, &provider](const std::string& args, const std::string& cred) {
+            return devices_tool(args, cred, verifier, provider);
         }});
 
     return registry;

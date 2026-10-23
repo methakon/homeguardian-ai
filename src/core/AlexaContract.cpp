@@ -77,6 +77,8 @@ std::variant<AlexaRequest, AlexaError> AlexaContract::parse(const std::string& b
         operation = AlexaOperation::status;
     } else if (op == "alert_summary") {
         operation = AlexaOperation::alert_summary;
+    } else if (op == "devices") {
+        operation = AlexaOperation::devices;
     } else {
         // Unknown operation => malformed (not an auth failure; the request
         // itself is invalid).
@@ -134,7 +136,8 @@ AlexaResponse AlexaContract::handle(const AlexaRequest& request,
     //    the principal must be permitted for THIS operation.
     bool permitted = (request.operation == AlexaOperation::status && auth.allow_status) ||
                      (request.operation == AlexaOperation::alert_summary &&
-                      auth.allow_alert_summary);
+                      auth.allow_alert_summary) ||
+                     (request.operation == AlexaOperation::devices && auth.allow_devices);
     if (!permitted) {
         resp.error = AlexaError::forbidden;
         return resp;
@@ -160,6 +163,21 @@ AlexaResponse AlexaContract::handle(const AlexaRequest& request,
                    ? snap.alert_ids.size()
                    : ALEXA_MAX_ALERTS_RETURNED;
     resp.alert_ids.assign(snap.alert_ids.begin(), snap.alert_ids.begin() + n);
+
+    // Device visibility is filled ONLY on the devices operation. A caller permitted for
+    // status or alert_summary therefore cannot infer even how many devices are visible.
+    // The provider's list is owner-approved and empty by default; a zero count with an
+    // explicit visibility marker means "nothing is approved as visible", which is not the
+    // same statement as "there are no devices".
+    if (request.operation == AlexaOperation::devices) {
+        resp.device_visibility = "owner-approved-only";
+        resp.device_count = snap.visible_device_labels.size();
+        size_t d = snap.visible_device_labels.size() < ALEXA_MAX_DEVICES_RETURNED
+                       ? snap.visible_device_labels.size()
+                       : ALEXA_MAX_DEVICES_RETURNED;
+        resp.device_labels.assign(snap.visible_device_labels.begin(),
+                                  snap.visible_device_labels.begin() + d);
+    }
     return resp;
 }
 
