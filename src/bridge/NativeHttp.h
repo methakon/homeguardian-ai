@@ -397,7 +397,13 @@ inline std::string dispatch(std::string_view request, std::string_view html,
     const size_t actual_body = request.size() - (header_end + 4);
     // A declared length over the cap is refused as too-large BEFORE it is compared with what
     // arrived: the cap is a property of the declaration, not of the bytes we happened to receive.
-    if (cl_seen && content_length > kMaxBodyBytes) return json_error(413, "too_large");
+    // The route is not yet classified at this point, but the upload path must be recognised here:
+    // this generic framing check runs BEFORE the route dispatch, so applying the JSON cap to
+    // /api/upload rejected every upload above 512 bytes regardless of the route's own ceiling.
+    // The smoke test caught exactly this, as a 512-byte cliff (132 bytes passed, 532 failed).
+    const bool is_upload_path = (path == "/api/upload");
+    if (cl_seen && content_length > (is_upload_path ? kMaxUploadBytes : kMaxBodyBytes))
+        return json_error(413, "too_large");
     if (cl_seen && actual_body != content_length) return json_error(400, "malformed");
     if (method == "GET" && (actual_body > 0 || cl_seen)) return json_error(400, "malformed");
 
@@ -689,6 +695,62 @@ inline int serve(uint16_t port, std::string_view html, const Handler& handler,
                 break;
             }
             input.append(buffer, static_cast<size_t>(n));
+        }
+        // The header terminator ends the HEADER phase, not the request. A client may write the body in a
+        // separate segment -- python's http.client does, and a browser may -- so reading must continue until
+        // the declared length has actually ARRIVED. Without this, dispatch()'s size comparison sees a short
+        // request and answers 400 malformed, intermittently, as a function of the client's write pattern
+        // rather than of the request itself. Found by driving the portal from two clients: curl (one write)
+        // always passed while python (two writes) alternated 200/400 on identical requests.
+        if (!too_large) {
+            const size_t hdr_end = input.find("\r\n\r\n");
+            if (hdr_end != std::string::npos) {
+                std::string head = input.substr(0, hdr_end);
+                std::string lower;
+                lower.reserve(head.size());
+                for (char c : head)
+                    lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                const std::string key = "\r\ncontent-length:";
+                size_t declared = 0;
+                bool declared_seen = false;
+                const size_t pos = lower.find(key);
+                if (pos != std::string::npos) {
+                    size_t v = pos + key.size();
+                    while (v < head.size() && (head[v] == ' ' || head[v] == '\t')) ++v;
+                    size_t e = v;
+                    while (e < head.size() && head[e] >= '0' && head[e] <= '9') ++e;
+                    if (e > v) {
+                        declared = std::stoul(head.substr(v, e - v));
+                        declared_seen = true;
+                    }
+                }
+                const size_t want = hdr_end + 4 + declared;
+                // Diagnostic, off unless HG_DEBUG_BODY is set: without it a short read is
+                // indistinguishable from a malformed request (both end as 400), so the only way to
+                // tell WHY a body did not complete is to say what arrived, what was expected, and
+                // whether the socket gave up. Prints sizes only, never content.
+                const bool dbg_body = [] {
+                    const char* d = std::getenv("HG_DEBUG_BODY");
+                    return d != nullptr && *d != '\0' && *d != '0';
+                }();
+                // Bound what may be buffered regardless of what was declared, so an oversized or dishonest
+                // Content-Length cannot grow the process past the upload ceiling.
+                const size_t buffer_cap = hdr_end + 4 + kMaxUploadBytes;
+                while (declared_seen && input.size() < want && !too_large) {
+                    const ssize_t n = ::recv(client, buffer, sizeof(buffer), 0);
+                    if (n <= 0) break;
+                    if (input.size() + static_cast<size_t>(n) > buffer_cap) {
+                        too_large = true;
+                        break;
+                    }
+                    input.append(buffer, static_cast<size_t>(n));
+                }
+                if (dbg_body)
+                    std::cerr << "hg_body: hdr_end=" << hdr_end << " declared=" << declared
+                              << " (seen=" << declared_seen << ") want=" << want
+                              << " got=" << input.size() << " too_large=" << too_large
+                              << " cap=" << buffer_cap << "\n";
+            }
         }
         const auto output = too_large
             ? json_error(413, "too_large")
