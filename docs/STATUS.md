@@ -533,3 +533,15 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 - Hermes 3 report: main HEAD `503a9a6`; native MCP investigation found a missing/unavailable alert-store path explains a generic tool refusal in one fixture; a present store returned read-only status and zero alerts. Portal device listing remains unsupported by current two-tool MCP contract and would require a new authorized read-only tool. Google sign-in remains blocked pending owner-created OAuth Web client ID. Treat all as worker-reported evidence unless independently rechecked.
 
 These notes preserve the distinction between owner-console observations, worker-reported results, and independently verified repository facts.
+
+## Workspace consolidation and handover discipline — 23 Oct 2026
+
+**Coordinator directive:** workers must use the existing canonical HomeGuardian AI repository/project root as their only working directory. Do not create extra project copies, sibling clones, worktrees, scratch project roots, or new top-level/subfolders. Keep temporary artifacts outside the project root and remove them after use. Work only in the existing, architecturally correct source/test/documentation paths; a genuinely necessary new source directory requires coordinator approval first.
+
+**Branch discipline:** continue on the single task branch already assigned to the issue/PR. Do not create experimental branches or split one task across multiple branches; ask before branching if no task branch is assigned. Keep changes scoped, commit/push the branch, and report branch, exact SHA, PR, tests/evidence, blockers, and next action. Security-sensitive work stays unmerged and privileged dispatch stays disabled until independent acceptance.
+
+**Single living handover:** update this existing `docs/STATUS.md` after each meaningful milestone and before handoff. Record only verified state, distinguish worker-reported evidence from independently reproduced results, and include changed files, exact commit SHA, test commands/results, blockers, owner, and next action. Do not create duplicate handover files.
+
+**Google Docs limitation:** as of this update, the Google Drive connector is disabled by administrator in this ChatGPT session, so I cannot truthfully claim to have edited or verified the Google Drive handover. Until Drive access is restored, this repository file is the interim canonical handover. Once access is restored, maintain the existing Google Doc (do not create a replacement) and keep this repository status synchronized.
+
+**Worker instructions posted:** 23 Oct 2026, coordinator comments added to issues #23 (comment ID 6360358111), #24 (6360358687), and #25 (6360359414). These comments communicate workspace/branch/handover discipline and task-specific guardrails. Posting instructions does not prove that a worker has started or completed work.
