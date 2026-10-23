@@ -41,12 +41,14 @@ inline constexpr int ALEXA_CONTRACT_VERSION = 1;
 inline constexpr size_t ALEXA_MAX_REQUEST_BYTES = 4096;
 inline constexpr size_t ALEXA_MAX_TOKEN_CHARS = 512;
 inline constexpr size_t ALEXA_MAX_ALERTS_RETURNED = 5;
+inline constexpr size_t ALEXA_MAX_DEVICES_RETURNED = 20;
 
 // The only operations this contract exposes. All are reads. There is
 // deliberately no operation that mutates capture, consent, config, or sensors.
 enum class AlexaOperation {
     status,         // read-only lifecycle status
     alert_summary,  // read-only aggregate alert summary
+    devices,        // read-only, privacy-safe visibility of owner-approved devices only
 };
 
 // A parsed, validated request. Constructed only via AlexaContract::parse().
@@ -81,6 +83,13 @@ struct AlexaResponse {
     size_t alert_count = 0;
     std::string highest_severity;  // "" when none
     std::vector<std::string> alert_ids;  // capped, non-sensitive ids
+
+    // devices operation (aggregate only; never a device identity).
+    // Deliberately populated ONLY for the devices operation, so a caller permitted
+    // for status or alert_summary cannot learn even the count of visible devices.
+    size_t device_count = 0;
+    std::vector<std::string> device_labels;  // capped, opaque, owner-approved labels
+    std::string device_visibility;           // e.g. "owner-approved-only"
 };
 
 // Authorization context produced by a successful credential check. Carries
@@ -91,6 +100,10 @@ struct AlexaAuthContext {
     std::string principal;      // opaque identifier of the caller
     bool allow_status = false;
     bool allow_alert_summary = false;
+    // Default false: a verified principal is NOT permitted to enumerate devices
+    // until a credential grants it explicitly. This is the default-deny that keeps
+    // device visibility out of reach while the owner's visibility model is unsettled.
+    bool allow_devices = false;
 };
 
 // Credential verifier interface. The production implementation would validate a
@@ -117,6 +130,12 @@ struct AlexaStatusSnapshot {
     size_t alert_count = 0;
     std::string highest_severity;
     std::vector<std::string> alert_ids;
+    // Devices the owner has approved as visible to an authenticated read-only viewer.
+    // EMPTY BY DEFAULT, and empty is the safe state: the contract reports zero visible
+    // devices rather than exposing anything not explicitly approved. Populating this is
+    // a provider decision and carries no private identity (labels only, never names,
+    // serials, addresses, media or per-device history).
+    std::vector<std::string> visible_device_labels;
 };
 
 class IAlexaStatusProvider {

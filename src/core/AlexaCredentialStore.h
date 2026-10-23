@@ -54,6 +54,8 @@ struct AlexaCredential {
     std::string principal;
     bool allow_status = false;
     bool allow_alert_summary = false;
+    // Absent from a credential entry means false: device visibility is opt-in per token.
+    bool allow_devices = false;
     std::chrono::system_clock::time_point expires_at{};  // max() = never
     bool revoked = false;
 };

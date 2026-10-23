@@ -60,6 +60,7 @@ AlexaCredentialStoreLoadResult AlexaCredentialStore::load(const std::string& pat
 
     // Schema: { "token": { "principal": str, "allow_status": bool,
     //                       "allow_alert_summary": bool,
+    //                       "allow_devices": bool,      (absent => false)
     //                       "expires_at_ms": int (0 = never),
     //                       "revoked": bool } , ... }
     for (auto it = j.begin(); it != j.end(); ++it) {
@@ -85,6 +86,9 @@ AlexaCredentialStoreLoadResult AlexaCredentialStore::load(const std::string& pat
         }
         if (val.contains("allow_alert_summary") && val["allow_alert_summary"].is_boolean()) {
             e.cred.allow_alert_summary = val["allow_alert_summary"].get<bool>();
+        }
+        if (val.contains("allow_devices") && val["allow_devices"].is_boolean()) {
+            e.cred.allow_devices = val["allow_devices"].get<bool>();
         }
         if (val.contains("revoked") && val["revoked"].is_boolean()) {
             e.cred.revoked = val["revoked"].get<bool>();
@@ -129,6 +133,7 @@ AlexaAuthContext AlexaCredentialStore::verify(const std::string& credential,
     ctx.principal = match->cred.principal;
     ctx.allow_status = match->cred.allow_status;
     ctx.allow_alert_summary = match->cred.allow_alert_summary;
+    ctx.allow_devices = match->cred.allow_devices;
     return ctx;
 }
 

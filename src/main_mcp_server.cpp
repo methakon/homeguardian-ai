@@ -100,6 +100,12 @@ public:
 
     homeguardian::AlexaStatusSnapshot snapshot() const override {
         homeguardian::AlexaStatusSnapshot s;
+        // Device visibility is DEFAULT-DENY. Nothing is populated here: no owner-approved
+        // visibility model exists yet, so the devices operation truthfully reports zero
+        // visible devices rather than exposing anything. Wiring an approved list into
+        // visible_device_labels is a deliberate, owner-authorized change, and it must carry
+        // opaque labels only -- never names, serials, addresses, media or history.
+        s.visible_device_labels.clear();
         s.state = "Running";
         s.capture_enabled = capture_enabled_;
         s.available = (audit_ != nullptr) && audit_->healthy();
