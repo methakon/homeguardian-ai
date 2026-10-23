@@ -167,7 +167,34 @@ The dotenv revision passes **72 Python tests** under both tested SDK combination
 plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
 untracked; only code/tests/sanitized documentation are published.
 
-### Real mailbox/native path recovered and verified; Code deployment pending
+### Current Alexa acceptance — 2026-10-23
+
+**Owner-reported deployed Custom Skill functional acceptance:** the owner reported
+successful Code deployment, then received `The hub state is Running. Capture is
+disabled.` and, using the full invocation `ask home guardian what are my recent
+alerts`, `There are no alerts recorded for your home.` Both read-only voice
+functions have returned the expected native readings. This is owner-attested
+simulator evidence; deployed source bytes and Skill I/O were not independently
+retrieved. It is not Smart Home, camera, Alexa+ or production certification.
+
+A subsequent independent **operator-origin mailbox smoke passed 4/4** real
+requests (two status, two alerts), with genuine read-only results and no capture.
+The worker health check showed active/running with zero restarts. This smoke is
+not a Lambda-origin latency reproduction and does not resolve intermittent failures.
+
+**Reliability remains OPEN:** the owner also observed an unavailable launch before
+a successful status response. The worker journal contains a `ReadTimeoutError`,
+but it is not correlated to that failed invocation; the cause remains unproven.
+Bare follow-up alert phrases were silent, whereas the full invocation succeeded.
+The status handler supplies no reprompt; session/routing is consistent with that
+behavior, but Skill I/O is needed to establish exactly which requests reached it.
+Keep using full invocations for isolated acceptance tests. Do not infer zero alerts
+from silence, replace unavailable results with cached readings, or change timeouts
+without reproducing the failure. No additional skill deployment, phone/VPS restart,
+capture enablement, VPN change or queue/IAM configuration change was performed for this
+follow-up. Long-outage, reboot and changed-network recovery remain unverified.
+
+### Historical checkpoint: real mailbox/native path recovered; Code deployment pending
 
 Inspection of the accepted installed APK's actual DEX confirms its bridge sets
 the required Accept header. A memory-only trace of the already established phone
@@ -201,7 +228,7 @@ alerts returned `alert_count=0`, empty highest severity, `read_only=true` in
 **1.659 s**. Correlation, tool schema, expiry and session cleanup were validated.
 These are genuine native results, not cached evidence or local fixture outputs.
 
-**Alexa-Lambda origin / simulator-to-native: STILL NOT VERIFIED.** The Code package
+**At this historical checkpoint, Alexa-Lambda origin / simulator-to-native was NOT VERIFIED.** The Code package
 has not been updated from this session. The browser reaches Amazon Sign-In, no
 saved login is available, and secure login prompting is unavailable in this CLI.
 The worker's publisher-role trust is data access, not hosted-Code administration.

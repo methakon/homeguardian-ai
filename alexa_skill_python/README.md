@@ -180,10 +180,19 @@ This is not proven recovery after a long worker outage or a changed phone networ
 Real operator-origin AWS -> VPS -> phone C++ -> AWS mailbox reads returned status
 and alerts in 2.085 and 1.659 seconds. This verifies genuine mailbox data, not the
 hosted skill's AssumeRole/deployment. No operator credentials left the workstation.
-The remaining gate is deployment of the updated Python modules, dependencies and
-selected `.env` settings into the existing Alexa Code package, followed by a real
-simulator/native round trip. Console access still requires an authorized login;
-the publisher role does not grant Code-editor or hosted-Lambda administration.
+The owner subsequently reported successful Code deployment and simulator replies
+for both native status (`Running`, capture disabled) and alerts (none recorded).
+An independent follow-up operator-origin smoke passed four real mailbox reads.
+This is functional acceptance, not a reliability sign-off: an intermittent
+unavailable launch remains unresolved, and a worker `ReadTimeoutError` is not yet
+correlated to the failed invocation. Deployed bytes and Skill I/O were not
+independently retrieved. Console administration still requires an authorized
+login; the publisher role does not grant Code-editor or hosted-Lambda administration.
+
+For isolated simulator checks, use full invocations such as `ask home guardian
+what are my recent alerts`. The status and alerts intent responses do not include
+a reprompt, so bare follow-ups may occur outside an active skill conversation.
+Silence is not an alert count; inspect Skill I/O if a full invocation is silent.
 
 A private Code-editor source bundle contains exactly `lambda_function.py`,
 `backend.py`, `mailbox_backend.py`, `requirements.txt` and a selected-settings `.env`.
