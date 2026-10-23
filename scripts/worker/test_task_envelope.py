@@ -25,7 +25,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from task_envelope import EnvelopeRefused, admit, extract_envelope   # noqa: E402
-from task_guard import Ledger, Refused                               # noqa: E402
+from task_guard import Ledger, Refused
+
+# ISOLATION: admit() reaches for the module-default approvals DB, which is a shared on-disk file. On a
+# fresh DB the one-use fixture grants are consumed and the suite passes; on a SECOND consecutive run the
+# same grants replay and a privileged case fails - so the suite was not idempotent. Redirect the default
+# to a per-run temp DB so every run starts from freshly seeded grants.
+import task_guard as _tg                                                    # noqa: E402
+_tmp_approvals = os.path.join(tempfile.mkdtemp(prefix="hg-env-approvals-"), "approvals.db")
+_tg.ApprovalStore.__init__.__defaults__ = (_tmp_approvals,)                               # noqa: E402
 
 POLICY = json.load(open(os.path.join(HERE, "watcher-policy.json")))
 IDENTITY = json.load(open(os.path.join(HERE, "identity.json")))
