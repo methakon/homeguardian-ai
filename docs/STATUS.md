@@ -2,6 +2,23 @@
 
 **Last updated:** 2026-10-23
 
+## Pre-final verification — 23:48 IST
+
+Audited main `86f90db9a7fa5c9cb9fb8a73ad08c795e4455dce`: all **19 local verification
+groups exited 0**. Results and limits: [Pre-final verification](PREFINAL_VERIFICATION.md).
+Native: **76,419 assertions / 789 cases**; judge gate: **29 checks / 0 failures**;
+ASK: **73 tests in each of two SDK environments**; offline camera adapters: **113
+tests**; web client **26**, dashboard/security **161**, portal smoke **38**, and
+Java/native bridge **21** checks passed. Android and worker/security suites also
+passed as detailed in the report. Test listeners were torn down; deployed services
+and physical sensors were untouched.
+
+**Important:** private live-camera browser playback is not accepted on this
+revision. Camera adapters are not yet connected to the web viewer; dashboard
+signaling/security passes do not establish delivery of physical frames. Alert
+durability, deployment/recovery, physical acceptance, historical packaging, and
+final video/Devpost delivery remain explicitly open in the report.
+
 ## Submission positioning and camera-source follow-up
 
 The submission uses the self-hosted native MCP 2025-11-25 Streamable HTTP route,
