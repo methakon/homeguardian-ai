@@ -176,6 +176,17 @@ class HelpIntentHandler(AbstractRequestHandler):
         )
 
 
+class RoutineStatusIntentHandler(AbstractRequestHandler):
+    def can_handle(self, handler_input: HandlerInput) -> bool:
+        return ask_utils.is_intent_name("GetRoutineStatusIntent")(handler_input)
+
+    def handle(self, handler_input: HandlerInput) -> Response:
+        return handler_input.response_builder.speak(
+            "Household routine status is not available through this read-only interface. "
+            "I have not verified any routines, and nothing has been changed."
+        ).response
+
+
 class CancelOrStopIntentHandler(AbstractRequestHandler):
     def can_handle(self, handler_input: HandlerInput) -> bool:
         return (
@@ -184,7 +195,7 @@ class CancelOrStopIntentHandler(AbstractRequestHandler):
         )
 
     def handle(self, handler_input: HandlerInput) -> Response:
-        return handler_input.response_builder.speak("Goodbye.").response
+        return handler_input.response_builder.speak("Goodbye.").set_should_end_session(True).response
 
 
 class SessionEndedRequestHandler(AbstractRequestHandler):
@@ -211,13 +222,43 @@ class CatchAllExceptionHandler(AbstractExceptionHandler):
         return handler_input.response_builder.speak(UNAVAILABLE_SPEECH).response
 
 
+class UnhandledRequestHandler(AbstractRequestHandler):
+    def can_handle(self, handler_input: HandlerInput) -> bool:
+        return True
+
+    def handle(self, handler_input: HandlerInput) -> Response:
+        return handler_input.response_builder.speak(
+            "I can help with home status or recent alerts. Please ask for help or try again."
+        ).ask("What would you like to know?").response
+
+
 sb = SkillBuilder()
 sb.add_request_handler(LaunchRequestHandler())
 sb.add_request_handler(HomeStatusIntentHandler())
 sb.add_request_handler(RecentAlertsIntentHandler())
 sb.add_request_handler(HelpIntentHandler())
+sb.add_request_handler(RoutineStatusIntentHandler())
 sb.add_request_handler(CancelOrStopIntentHandler())
 sb.add_request_handler(SessionEndedRequestHandler())
+sb.add_request_handler(UnhandledRequestHandler())
 sb.add_exception_handler(CatchAllExceptionHandler())
 
-lambda_handler = sb.lambda_handler()
+_sdk_lambda_handler = sb.lambda_handler()
+
+
+def lambda_handler(event, context):
+    """Contain deserialization failures outside the SDK's exception-handler chain."""
+    request = event.get("request") if isinstance(event, dict) else None
+    valid = isinstance(request, dict) and isinstance(request.get("type"), str)
+    if isinstance(request, dict) and request.get("type") == "IntentRequest":
+        intent = request.get("intent")
+        valid = isinstance(intent, dict) and isinstance(intent.get("name"), str) and bool(intent["name"])
+    if valid:
+        try:
+            return _sdk_lambda_handler(event, context)
+        except Exception as exc:
+            logger.error("skill envelope failure: %s", exc.__class__.__name__)
+    return {"version": "1.0", "response": {
+        "outputSpeech": {"type": "PlainText", "text": "Sorry, I could not read that request. Please ask HomeGuardian for help."},
+        "shouldEndSession": True,
+    }}

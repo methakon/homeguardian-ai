@@ -46,8 +46,10 @@ integration on main, not evidence that Python code was deleted from main.
 `interactionModels/custom/en-US.json`: English (US), invocation `home guardian`.
 `test/`: local tests using the actual ASK SDK, not permissive response doubles.
 
-Handlers cover Launch, HomeStatus, RecentAlerts/GetAlertSummary, Help, Stop/Cancel
-and SessionEnded. Unreachable or unauthenticated backends must never become
+Handlers cover Launch, HomeStatus, RecentAlerts/GetAlertSummary, Help, Stop/Cancel,
+SessionEnded, unknown/fallback requests and GetRoutineStatus. Routine status is
+explicitly unsupported by the two-tool interface, not invented. The model preserves
+all original Node-prototype intent names. Unreachable or unauthenticated backends must never become
 invented status, zero alerts, routines or camera analysis.
 
 ## Local checks
@@ -57,10 +59,11 @@ invented status, zero alerts, routines or camera analysis.
     .venv/bin/python -m unittest discover -s alexa_skill_python/test -v
     .venv/bin/python -m pip check
 
-The recovered baseline passed 26 tests with the actual SDK. This recovery
-milestone is not a declaration that the legacy MCP transport is ready for live
-integration; further request-envelope, backend/session and failure tests are
-required before deployment.
+The recovered baseline passed 26 tests with the actual SDK. Exported-Lambda
+contracts add malformed envelopes, full SDK serialization for every model intent,
+explicit Stop/Cancel session closure and fallback/routine behavior (33 tests total
+at this milestone). This is not a declaration that the legacy MCP transport is
+ready for live integration; backend/session and failure checks are still required.
 
 ## Backend boundary
 
