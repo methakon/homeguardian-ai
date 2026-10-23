@@ -336,6 +336,22 @@ inline std::string dispatch(std::string_view request, std::string_view html,
     bool secret_seen = false;
     size_t at = first_end + 2;
     while (at < header_end) {
+        // Diagnostic (HG_DEBUG_BODY=1): the NAME of each header as it is parsed, never its value.
+        // The loop refuses unrecognised headers, so the last name printed before a 400 identifies the
+        // offender -- which is otherwise invisible, as the refusal carries no detail to the client.
+        if ([] { const char* d = std::getenv("HG_DEBUG_BODY"); return d != nullptr && *d != '\0' && *d != '0'; }()) {
+            const auto nx = request.find("\r\n", at);
+            // Name only, computed WITHIN this header line (a global ':' search runs past the line and
+            // mislabels it, which is exactly how this diagnostic first misled me).
+            const std::string_view line = (nx == std::string_view::npos)
+                                              ? request.substr(at)
+                                              : request.substr(at, nx - at);
+            const auto ce = line.find(':');
+            std::cerr << "hg_hdr: at=" << at << " next=" << nx << " hdr_end=" << header_end
+                      << " name=" << (ce == std::string_view::npos ? std::string("?")
+                                                                   : std::string(line.substr(0, ce)))
+                      << "\n";
+        }
         const auto next = request.find("\r\n", at);
         if (next == std::string_view::npos || next > header_end)
             return json_error(400, "malformed");
@@ -362,7 +378,12 @@ inline std::string dispatch(std::string_view request, std::string_view html,
             // Exact same-origin (scheme + loopback host + this listener's port).
             if (!is_same_local_origin(value, server_port)) origin_ok = false;
         } else if (key == "content-length") {
-            if (cl_seen || value.empty() || value.size() > 6)
+            // A cheap digit-count guard that keeps the accumulation below from overflowing. It was
+            // 6 digits (a 999,999-byte maximum), which was correct while the only bodies were "{}"
+            // and became the actual defect once a route could accept 25 MiB: a 7-digit length was
+            // refused as malformed before the real ceiling was ever consulted. 8 digits covers
+            // 99,999,999 bytes and the authoritative bound is still body_cap, checked below.
+            if (cl_seen || value.empty() || value.size() > 8)
                 return json_error(400, "malformed");
             cl_seen = true;
             for (char ch : value) {
@@ -395,6 +416,15 @@ inline std::string dispatch(std::string_view request, std::string_view html,
     //   a GET carries no body and may not declare a length               -> refuse;
     //   a POST that sends a body must declare its length (411 is the POST branch's answer).
     const size_t actual_body = request.size() - (header_end + 4);
+    // Diagnostic (HG_DEBUG_BODY=1), sizes and framing only: names the values each refusal below is
+    // decided from, because a 400 here is otherwise indistinguishable between several causes.
+    if ([] { const char* d = std::getenv("HG_DEBUG_BODY"); return d != nullptr && *d != '\0' && *d != '0'; }()) {
+        std::cerr << "hg_req: path=" << path << " method=" << method
+                  << " size=" << request.size() << " header_end=" << header_end
+                  << " cl_seen=" << cl_seen << " content_length=" << content_length
+                  << " actual_body=" << actual_body << " content_type=" << content_type
+                  << " origin_seen=" << origin_seen << " host_seen=" << host_seen << "\n";
+    }
     // A declared length over the cap is refused as too-large BEFORE it is compared with what
     // arrived: the cap is a property of the declaration, not of the bytes we happened to receive.
     // The route is not yet classified at this point, but the upload path must be recognised here:

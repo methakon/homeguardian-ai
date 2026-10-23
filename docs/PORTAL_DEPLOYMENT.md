@@ -65,9 +65,30 @@ the ceiling (413); path traversal and an unissued id (404); a malformed delete i
 (200) and the media then gone (404); and a portal whose upload store is unusable still serving an empty,
 labelled feed instead of erroring or inventing content.
 
-**Known failure it will report:** an image above roughly 200 KiB returns `400 malformed` where `413` is
-expected. The body is provably received in full (see `HG_DEBUG_BODY=1`), so the refusal happens after a
-complete read. This is documented, reproducible, and not yet fixed.
+**The oversized-upload defect is fixed.** Until recently an image above roughly 200 KiB was refused with
+`400 malformed` where `413` was expected. The cause was in the transport, not the portal: its
+`Content-Length` parser capped the value at **6 digits** (`value.size() > 6`), i.e. a maximum declared
+length of 999,999 bytes. That guard was written when the only bodies anyone sent were `{}`, and it was
+correct then; a route allowed to accept 25 MiB made a 7-digit length legal and the parser refused it
+before the route's own ceiling was ever consulted. The bound is now 8 digits (99,999,999 bytes) and the
+authoritative limit is still `body_cap`, so an image over 8 MiB now returns `413 too_large` as designed.
+The smoke test's oversized-format check passes, and the size sweep is: 999,967 · 7-digit · 1 MiB · 4 MiB ·
+7 MiB → all accepted; 9 MiB → `413` from the store's ceiling.
+
+## 3a. Measured resource use
+
+Taken on this workstation with the portal serving loopback traffic (120 uploads of 256 KiB, plus feed and
+status polls interleaved):
+
+| measure | value |
+|---|---|
+| RSS before / after the run | 6,648 KiB → 7,520 KiB (delta 872 KiB, bounded) |
+| CPU per upload | ~1.8 ms (0.21 s of CPU for 120 uploads) |
+| uploads accepted | 120/120 |
+
+The wall time for that run is dominated by the transport's CSRF issuance limit (5 sessions per 10-second
+window), because each upload needs a fresh single-use token — so the CPU figure is the meaningful one, and
+the rate limit is a property of the transport rather than of the portal.
 
 ## 4. Logs
 
