@@ -604,3 +604,24 @@ These notes preserve the distinction between owner-console observations, worker-
 **Google Docs limitation:** as of this update, the Google Drive connector is disabled by administrator in this ChatGPT session, so I cannot truthfully claim to have edited or verified the Google Drive handover. Until Drive access is restored, this repository file is the interim canonical handover. Once access is restored, maintain the existing Google Doc (do not create a replacement) and keep this repository status synchronized.
 
 **Worker instructions posted:** 23 Oct 2026, coordinator comments added to issues #23 (comment ID 6360358111), #24 (6360358687), and #25 (6360359414). These comments communicate workspace/branch/handover discipline and task-specific guardrails. Posting instructions does not prove that a worker has started or completed work.
+
+
+## Alexa implementation handover — coordinator checkpoint, 23 Oct 2026 14:21 IST
+
+### Remote repository evidence
+
+- Verified via GitHub API that commit `fb41c9ca718d96cc57f88abb34820a2cbe02161a` exists on the repository history; its change records the approved temporary `.worktrees/alexa-main` checkout and the still-blocked console/AWS endpoint verification. This commit is the reported current `origin/main` SHA from the worker; confirm the branch head again before any subsequent write.
+- Canonical Alexa source remains `alexa_skill_python/`; `alexa_skill/` is the separate Node.js mock prototype. The Python entry point is `lambda_function.lambda_handler`. The model locale is `en-US`, invocation name `home guardian`.
+- Worker reports two supplied-source defects were reproduced with real SDK objects: (1) not invoking the Lambda handler factory; (2) serializing `outputSpeech` as a string instead of an Alexa speech object. These are source-level findings, not proof that either version is the one deployed in the console.
+- Worker reports Python 39/39 passing under two dependency combinations, Node regression 77/77 passing using existing root native binaries, plus syntax and dependency checks. These test totals are worker-reported in this checkpoint and have not been rerun independently here. The commit and file hashes can be inspected through GitHub, but GitHub metadata alone does not verify local test execution.
+- The worker reports authenticated MCP session initialization before the two allowlisted read-only tools, safe response rendering/SSML escaping, malformed-envelope handling and bounded transport behavior. Actual remote Alexa-to-C++ connectivity is explicitly **not established**.
+
+### Deployment gate remains open
+
+- Owner/worker still need authorized access to the existing Alexa Developer Console and AWS target to verify the Skill ID, selected regional Lambda ARN, actual function/runtime/handler, deployed bytes and matching CloudWatch log group.
+- No duplicate skill is to be created. Do not change endpoint/hosting mode or add permissions until the current target is identified. Do not claim simulator acceptance or live backend connectivity without direct evidence.
+- The temporary checkout under `.worktrees/alexa-main` is recorded as owner-approved for preserving unrelated root work. It is an existing exception, not permission to create any more project folders, copies or worktrees. Use the canonical project/repository root and existing paths for subsequent work.
+
+### Next action / owner
+
+- **Alexa worker + owner:** provide the selected regional Lambda ARN and confirm the Skill ID from the existing console; inspect the exact target and its logs. Keep the skill private until the endpoint, simulator behavior and approved backend route are verified.
