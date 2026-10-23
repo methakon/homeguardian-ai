@@ -10,8 +10,8 @@
 //     ignored. The browser keeps its session token in a JS closure only.
 //   * Every authenticated principal is VIEWER. Private data (camera, frames,
 //     feed, uploads, device identities, raw media, consent, mutations) is denied
-//     by default; /api/status and /api/alerts additionally require a separate
-//     server-side household grant. Production supplies none.
+//     by default. Household status, summaries, device visibility and camera reads
+//     require a fresh protected-file subject grant on every request.
 //   * The MCP bearer token never leaves this process. Responses are shaped
 //     server-side and error details are redacted.
 //   * An unreachable/failing backend is reported as `unavailable` (HTTP 503),
@@ -29,6 +29,7 @@ const http = require('node:http');
 const path = require('node:path');
 
 const { HomeGuardianMcpClient } = require('./mcp_adapter');
+const { householdAuthorized, bridgeRead } = require('./household_read');
 const {
   OidcConfig,
   OidcProvider,
@@ -256,18 +257,18 @@ class McpBackend {
 const VIEWER_READ_ROUTES = Object.freeze({
   '/api/status': { tool: 'get_homeguardian_status', shape: 'status' },
   '/api/alerts': { tool: 'get_alert_summary', shape: 'alerts' },
+  '/api/devices': { tool: 'get_homeguardian_devices', shape: 'devices' },
+  '/api/camera/status': { shape: 'bridge' },
+  '/api/camera/frame': { shape: 'bridge' },
 });
 
 // Explicitly named private surfaces, denied with a specific reason for auditability.
 const PRIVATE_ROUTE_REASONS = Object.freeze({
-  '/api/devices': 'device_identities',
   '/api/device': 'device_identities',
   '/api/feed': 'media_feed',
   '/api/upload': 'uploads',
   '/api/uploads': 'uploads',
   '/api/delete': 'mutations',
-  '/api/camera/frame': 'camera_frames',
-  '/api/camera/status': 'camera_state',
   '/api/camera': 'camera',
   '/api/consent': 'consent',
   '/api/integrations': 'integration_identities',
@@ -315,7 +316,9 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
   function restrictDashboard() {
     if (!state.token || !document.querySelectorAll) return;
     document.querySelectorAll('.wrap button,.wrap input,.wrap select').forEach(function (node) {
-      node.disabled = true; node.title = 'VIEWER read-only — household access not granted';
+      var read = ['refreshBtn', 'camReconnect', 'camFullscreen'].indexOf(node.id) !== -1;
+      node.disabled = !(read && householdGranted());
+      node.title = node.disabled ? 'VIEWER read-only — control not permitted' : 'Read-only household view';
     });
     if (document.documentElement.getAttribute('data-hg-household') === 'granted') return;
     ['status','metrics','integrations','labelLegend','chat','chips','result','alerts','alertCount',
@@ -332,6 +335,9 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
       gate = document.createElement('section'); gate.id = 'hg-session-gate';
       gate.setAttribute('aria-label', 'HomeGuardian sign-in');
       var title = document.createElement('h1'); title.textContent = 'HomeGuardian AI'; gate.appendChild(title);
+      var welcome = document.createElement('p'); welcome.id = 'hg-sign-in-info';
+      welcome.textContent = 'Anyone can sign in with their Gmail or Google account. Private cameras and household data remain accessible only to authorized accounts.';
+      gate.appendChild(welcome);
       var text = document.createElement('p'); text.id = 'hg-session-message';
       text.setAttribute('role', 'status'); text.setAttribute('aria-live', 'polite'); gate.appendChild(text);
       var signin = document.createElement('a'); signin.id = 'hg-sign-in';
@@ -355,6 +361,7 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
   }
   function block(text) {
     document.documentElement.setAttribute('data-hg-household', 'denied');
+    clearFrame();
     message = text; render();
   }
   function clear() {
@@ -403,7 +410,7 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
       return nativeFetch(input, opts).then(function (res) {
         if (!api) return res;
         if (requestGeneration !== generation) throw new Error('session_changed');
-        var household = ['/api/status', '/api/alerts'].indexOf(absolute(url).pathname) !== -1;
+        var household = ['/api/status', '/api/alerts', '/api/devices', '/api/camera/status', '/api/camera/frame'].indexOf(absolute(url).pathname) !== -1;
         if (!res.ok) {
           if (res.status === 401) {
             // Anonymous legacy polls run while the Google popup is open. They
@@ -413,15 +420,10 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
           else if (res.status === 403) {
             if (household) block('Private household access not granted. Google sign-in verifies identity only.');
             else { render(); }
-          } else block('HomeGuardian data unavailable. No household readings or zero counts are being reported.');
+          } else { message = 'HomeGuardian data unavailable. No household readings or zero counts are being reported.'; render(); }
           // The old page does not check response.ok: never let its JSON fallbacks
           // convert a denial/outage into empty alerts or zero connected devices.
           throw new Error('gateway_access_denied_or_unavailable');
-        }
-        if (household && state.token) {
-          document.documentElement.setAttribute('data-hg-household', 'granted');
-          message = 'Private household read access granted by the server. Camera, media and mutations remain denied.';
-          render();
         }
         return res;
       }, function (err) {
@@ -447,8 +449,7 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
             headers: { Authorization: 'Bearer ' + body.token, 'Content-Type': 'application/json' },
             body: '{}', credentials: 'omit', cache: 'no-store' }).then(function () { return null; });
         }
-        acceptSession(body);
-        return body;
+        return acceptSession(body).then(function () { return body; });
       });
     }).catch(function () {
       return null;
@@ -464,6 +465,7 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
     loginTimer = null; loginDeadlineTimer = null;
     announce();
     block('Private household access not granted. Google sign-in verifies identity only.');
+    return checkHousehold();
   }
   function refreshAfterLogin() {
     if (state.token) {
@@ -471,6 +473,80 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
       else window.fetch('/api/status').catch(function () {});
     }
   }
+
+  function householdGranted() {
+    return !!state.token && document.documentElement.getAttribute('data-hg-household') === 'granted';
+  }
+  function checkHousehold() {
+    var token = state.token, g = generation;
+    // Bypass the wrapper: login completion itself is window.__hg.ready.
+    return nativeFetch('/api/me', { headers: { Authorization: 'Bearer ' + token },
+      credentials: 'omit', cache: 'no-store' }).then(function (res) {
+      if (!res.ok) throw new Error('identity_unavailable');
+      return res.json();
+    }).then(function (me) {
+      if (g !== generation || token !== state.token) return;
+      if (me.household_authorized !== true) return block('Private household access not granted. Google sign-in verifies identity only.');
+      document.documentElement.setAttribute('data-hg-household', 'granted');
+      message = 'Owner-approved household read access. Mutations, consent, uploads and administration remain denied.';
+      render();
+      if (typeof window.camRefreshStatus === 'function') window.camRefreshStatus();
+      if (typeof window.camTickFrame === 'function') window.camTickFrame();
+    }).catch(function () { if (g === generation) block('Household authorization unavailable.'); });
+  }
+  function text(id, value) {
+    var node = document.getElementById(id); if (node) node.textContent = value;
+  }
+  var frameUrl = null, frameBusy = false;
+  function clearFrame() {
+    var img = document.getElementById('camFrame');
+    if (img && img.removeAttribute) img.removeAttribute('src');
+    if (frameUrl) URL.revokeObjectURL(frameUrl);
+    frameUrl = null;
+  }
+  // Adapt the legacy dashboard in memory, leaving its HTML source untouched.
+  // MCP has aggregates, NOT timeline records or scenario/consent flags. Do not
+  // let the old renderers turn absent fields into fabricated disabled/zero data.
+  document.addEventListener('DOMContentLoaded', function () {
+    var originalCameraStatus = window.camRenderStatus;
+    if (typeof originalCameraStatus === 'function') window.camRenderStatus = function (d) {
+      originalCameraStatus(d);
+      text('camBanner', !d.configured ? 'No camera configured on this portal.' :
+        d.source_class === 'synthetic_camera_fixture' ? 'Synthetic camera fixture — not a physical observation.' :
+        d.source_class === 'live_physical_camera' ? 'Physical camera observation — read-only snapshot view.' :
+        'Camera source provenance unavailable or unverified — read-only snapshot view.');
+    };
+    window.renderStatus = function (s) {
+      text('status', s ? 'State: ' + s.state + ' · capture ' + (s.capture_enabled ? 'enabled' : 'disabled') : 'Status unavailable');
+      text('metrics', 'Read-only native MCP status; scenario metrics are not provided.');
+    };
+    window.refreshIntegrations = function () {
+      return window.fetch('/api/devices').then(function (r) { return r.json(); }).then(function (d) {
+        text('integrations', 'Device count: ' + d.device_count + ' · visibility: ' + d.visibility +
+          (d.device_labels.length ? ' · ' + d.device_labels.join(', ') : ''));
+        text('labelLegend', 'Device visibility supplied by native MCP. Other integration details are not provided.');
+      }).catch(function () { text('integrations', 'Device visibility unavailable'); });
+    };
+    window.refreshAlerts = function () {
+      return window.fetch('/api/alerts').then(function (r) { return r.json(); }).then(function (d) {
+        text('alertCount', String(d.total));
+        text('alerts', 'Aggregate alert summary: ' + d.total + ' · highest severity: ' + (d.highest_severity || 'none') +
+          '. Individual alert details are not supplied by this read-only tool.');
+      }).catch(function () { text('alertCount', 'Unavailable'); text('alerts', 'Alert summary unavailable'); });
+    };
+    window.camTickFrame = function () {
+      if (!householdGranted() || frameBusy) return Promise.resolve();
+      frameBusy = true; var g = generation;
+      return window.fetch('/api/camera/frame', { cache: 'no-store' }).then(function (r) { return r.blob(); }).then(function (blob) {
+        if (!householdGranted() || g !== generation) return;
+        var img = document.getElementById('camFrame'); if (!img) return;
+        clearFrame(); frameUrl = URL.createObjectURL(blob); img.src = frameUrl;
+      }).catch(function () {
+        clearFrame();
+        text('camOverlay', 'No fresh frame available. Camera may be unconfigured or unavailable.');
+      }).then(function () { frameBusy = false; });
+    };
+  });
 
   function logout() {
     var headers = { 'Content-Type': 'application/json' };
@@ -523,7 +599,7 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
               headers: { Authorization: 'Bearer ' + body.token, 'Content-Type': 'application/json' },
               body: '{}', credentials: 'omit', cache: 'no-store' });
           }
-          acceptSession(body); refreshAfterLogin();
+          return acceptSession(body).then(refreshAfterLogin);
         } else if (res.status === 400 && loginProof === proof) {
           loginProof = null; loginPopup = null;
           if (loginDeadlineTimer) clearTimeout(loginDeadlineTimer);
@@ -826,33 +902,52 @@ function createGateway(options = {}) {
     });
   }
 
-  async function handleProxy(res, route, session) {
-    // Separate server-side authorization, never derived from Google claims, email,
-    // headers or VIEWER role. The executable entrypoint supplies no authorizer.
-    let authorized = false;
-    if (typeof options.authorizeHousehold === 'function') {
-      try { authorized = (await options.authorizeHousehold(session.principal.sub)) === true; }
-      catch (_) { /* fail closed, including authorizer outages */ }
-    }
-    if (!authorized) {
+  async function authorized(session) {
+    try {
+      return typeof options.authorizeHousehold === 'function'
+        ? (await options.authorizeHousehold(session.principal.sub)) === true
+        : householdAuthorized(env.HG_HOUSEHOLD_SUBJECTS_FILE, session.principal.sub) === true;
+    } catch (_) { return false; }
+  }
+
+  async function handleProxy(res, route, session, pathname) {
+    if (!(await authorized(session))) {
       sendJson(res, 403, {
         ok: false, error: 'household_authorization_required', role: ROLE_VIEWER,
         message: 'Private household access has not been granted. Google sign-in verifies identity only.',
       });
       return;
     }
+    if (route.shape === 'bridge') {
+      try {
+        const data = await bridgeRead(env, pathname);
+        if (Buffer.isBuffer(data)) sendText(res, 200, data, 'image/jpeg');
+        else sendJson(res, 200, data);
+      } catch (_) { unavailable(res, { backend: 'private_bridge' }); }
+      return;
+    }
     let data;
     try {
       data = await mcp.callTool(route.tool, {});
     } catch (err) {
-      log.warn(`MCP read '${route.tool}' unavailable: ${redactDetail(err.message)}`);
-      unavailable(res, { tool: route.tool, detail: redactDetail(err.message) });
+      log.warn(`MCP read '${route.tool}' unavailable`);
+      unavailable(res, { tool: route.tool });
       return;
     }
 
+    if (route.shape === 'devices') {
+      if (!Number.isSafeInteger(data.device_count) || data.device_count < 0 ||
+          !Array.isArray(data.device_labels) || !data.device_labels.every(v => typeof v === 'string') ||
+          typeof data.visibility !== 'string') {
+        unavailable(res, { tool: route.tool }); return;
+      }
+      sendJson(res, 200, { ok: true, backend: 'mcp', read_only: true,
+        device_count: data.device_count, device_labels: data.device_labels, visibility: data.visibility });
+      return;
+    }
     if (route.shape === 'alerts') {
       const count = data.alert_count;
-      if (typeof count !== 'number' || !Number.isFinite(count)) {
+      if (!Number.isSafeInteger(count) || count < 0) {
         unavailable(res, { tool: route.tool, detail: 'alert_count missing from MCP payload' });
         return;
       }
@@ -873,7 +968,11 @@ function createGateway(options = {}) {
       return;
     }
 
-    // status
+    // Native MCP supplies state and capture_enabled, not scenario metrics.
+    if (typeof data.state !== 'string' || typeof data.capture_enabled !== 'boolean') {
+      unavailable(res, { tool: route.tool }); return;
+    }
+    data = { state: data.state, capture_enabled: data.capture_enabled, read_only: true };
     sendJson(res, 200, {
       ok: true,
       role: session.principal.role,
@@ -1114,7 +1213,7 @@ function createGateway(options = {}) {
       result.token = token;
       result.expiresAt = now() + config.exchangeCodeTtlSeconds * 1000;
       const handoff = codes.issue(result);
-      log.info(`viewer session established for sub=${completed.principal.sub}`);
+      log.info('viewer session established');
       // Fragment only: never sent to a server, never logged, single use.
       redirect(res, `/auth/complete#session=${handoff}`);
       return;
@@ -1174,6 +1273,7 @@ function createGateway(options = {}) {
       sendJson(res, 200, {
         ok: true,
         ...publicPrincipal(session.principal, session, now()),
+        household_authorized: await authorized(session),
         config: {
           oidc_configured: config.isConfigured(),
           session_ttl_seconds: config.sessionTtlSeconds,
@@ -1219,7 +1319,7 @@ function createGateway(options = {}) {
 
     // ---- allowlisted read-only MCP proxy ---------------------------------
     if (Object.prototype.hasOwnProperty.call(VIEWER_READ_ROUTES, pathname)) {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
+      if (req.method !== 'GET' && (req.method !== 'HEAD' || VIEWER_READ_ROUTES[pathname].shape === 'bridge')) {
         sendJson(res, 405, {
           ok: false,
           error: 'method_not_allowed_read_only',
@@ -1231,7 +1331,11 @@ function createGateway(options = {}) {
         sendJson(res, 403, { ok: false, error: 'forbidden_origin' });
         return;
       }
-      await handleProxy(res, VIEWER_READ_ROUTES[pathname], session);
+      if (VIEWER_READ_ROUTES[pathname].shape === 'bridge' &&
+          [...url.searchParams.keys()].some(k => k !== 't' || pathname !== '/api/camera/frame')) {
+        sendJson(res, 400, { ok: false, error: 'invalid_camera_query' }); return;
+      }
+      await handleProxy(res, VIEWER_READ_ROUTES[pathname], session, pathname);
       return;
     }
 

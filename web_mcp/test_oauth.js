@@ -304,12 +304,13 @@ async function loginAs(sub, extraClaims = {}) {
 // No browser dependencies or persistent storage APIs are available in this realm.
 async function testSessionUi(source) {
   const vm = require('node:vm');
-  function boot(hash = '', live = false) {
+  function boot(hash = '', live = false, granted = false) {
     const nodes = new Map();
     function element(tag) {
       return { tagName: tag, children: [], attributes: {}, textContent: '', hidden: false,
         setAttribute(k, v) { this.attributes[k] = v; },
         getAttribute(k) { return this.attributes[k]; },
+        removeAttribute(k) { delete this[k]; delete this.attributes[k]; },
         appendChild(n) { this.children.push(n); if (n.id) nodes.set(n.id, n); return n; },
         addEventListener(k, fn) { this['on' + k] = fn; },
       };
@@ -317,10 +318,10 @@ async function testSessionUi(source) {
     const document = { documentElement: element('html'), head: element('head'),
       body: element('body'), readyState: 'loading', createElement: element,
       getElementById(id) { return nodes.get(id) || null; },
-      querySelectorAll() { return [nodes.get('runBtn'), nodes.get('uploadBtn')].filter(Boolean); },
-      addEventListener(k, fn) { this['on' + k] = fn; },
+      querySelectorAll() { return ['runBtn','uploadBtn','refreshBtn','camReconnect','camFullscreen'].map(id => nodes.get(id)).filter(Boolean); },
+      addEventListener(k, fn) { var previous = this['on' + k]; this['on' + k] = function () { if (previous) previous(); fn(); }; },
     };
-    for (const id of ['status','metrics','alertCount','alerts','runBtn','uploadBtn']) {
+    for (const id of ['status','metrics','integrations','alertCount','alerts','runBtn','uploadBtn','refreshBtn','camReconnect','camFullscreen','camFrame']) {
       const node = element('div'); node.id = id; node.textContent = '0'; document.body.appendChild(node);
     }
     const calls = [];
@@ -343,6 +344,15 @@ async function testSessionUi(source) {
       if (url === '/api/session/exchange') return { ok: true, status: 200,
         json: async () => ({ token: 'a'.repeat(64), role: 'VIEWER', expires_in: 3600 }) };
       if (url === '/api/logout') return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      if (url === '/api/me') return { ok: true, status: 200, json: async () => ({ household_authorized: granted }) };
+      if (granted && url === '/api/status') return { ok: true, status: 200,
+        json: async () => ({ status: { state: 'Running', capture_enabled: true } }) };
+      if (granted && url === '/api/camera/frame') return { ok: true, status: 200,
+        blob: async () => new Blob([Buffer.from([255,216,255,217])], { type: 'image/jpeg' }) };
+      if (granted && url === '/api/devices') return { ok: true, status: 200,
+        json: async () => ({ device_count: 2, device_labels: ['Gate'], visibility: 'owner-approved-only' }) };
+      if (granted && url === '/api/alerts') return { ok: true, status: 200,
+        json: async () => ({ total: 3, highest_severity: 'high' }) };
       return { ok: status === 200, status, json: async () => ({ error: 'household_authorization_required' }) };
     } };
     vm.runInNewContext(source, { window, document, location, history: { replaceState() { location.hash = ''; } },
@@ -393,7 +403,24 @@ async function testSessionUi(source) {
   ok(signed.nodes.get('hg-session-message')?.textContent.includes('unavailable'), 'outage shows an explicit unavailable banner');
   signed.setStatus(200);
   await signed.window.fetch('/api/status');
-  ok(signed.document.documentElement.attributes['data-hg-household'] === 'granted', 'authorized household status unlocks original dashboard');
+  ok(signed.document.documentElement.attributes['data-hg-household'] !== 'granted', 'status success alone does not override /api/me household denial');
+  const granted = await signIn(boot('', false, true));
+  await granted.window.__hg.ready;
+  ok(granted.document.documentElement.attributes['data-hg-household'] === 'granted' &&
+    !granted.nodes.get('refreshBtn').disabled && !granted.nodes.get('camFullscreen').disabled &&
+    granted.nodes.get('runBtn').disabled && granted.nodes.get('uploadBtn').disabled,
+    '/api/me owner grant unlocks read controls only after popup OAuth');
+  await granted.window.camTickFrame();
+  await granted.window.refreshIntegrations();
+  await granted.window.refreshAlerts();
+  granted.window.renderStatus({ state: 'Running', capture_enabled: true });
+  ok(granted.nodes.get('camFrame').src?.startsWith('blob:') &&
+    granted.nodes.get('integrations').textContent.includes('Device count: 2') &&
+    granted.nodes.get('alerts').textContent.includes('Aggregate alert summary: 3') &&
+    granted.nodes.get('status').textContent.includes('Running'),
+    'granted dashboard renders actual MCP contract and fetches camera blob without operator secret');
+  await granted.window.__hg.logout();
+  ok(!granted.nodes.get('camFrame').src, 'logout removes household camera blob from dashboard');
   signed.setStatus(401);
   await signed.window.fetch('/api/status').catch(() => {});
   ok(!signed.window.__hg.authenticated(), '401 clears expired/revoked session and returns to sign-in');
@@ -757,10 +784,7 @@ async function run() {
   // ---------------------------- case 9: private data + household isolation ---
   section('6. Case 9 — private data default-deny and household isolation');
   const privateRoutes = [
-    ['/api/devices', 'device_identities'],
     ['/api/feed', 'media_feed'],
-    ['/api/camera/frame', 'camera_frames'],
-    ['/api/camera/status', 'camera_state'],
     ['/api/consent', 'consent'],
     ['/api/scenarios', 'scenario_control'],
   ];
@@ -1008,6 +1032,7 @@ async function run() {
   ok(typeof gateway.csp === 'string' && gateway.csp.length > 0, 'gateway exposes its CSP for audit');
 
   await authorizedGateway.close();
+  await testProductionHousehold(config, gateway.provider, now);
 
   console.log('\n=========================================================');
   console.log(`Assertions: ${passed + failed}   passed: ${passed}   failed: ${failed}`);
@@ -1017,6 +1042,128 @@ async function run() {
   }
   console.log('=========================================================');
   process.exit(failed === 0 ? 0 : 1);
+}
+
+async function testProductionHousehold(config, provider, now) {
+  section('16. Production protected-file household grants and private bridge');
+  const fs = require('node:fs');
+  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || process.cwd(), 'hg-grant-test-'));
+  const grantPath = path.join(dir, 'subjects.json'), secretPath = path.join(dir, 'bridge.secret');
+  const subject = '123456789012345678901'; // Synthetic, never a real identity.
+  const grant = { household_id: 'home', subjects: [subject], read_only: true };
+  function writeGrant(value = grant, mode = 0o600) {
+    fs.rmSync(grantPath, { force: true });
+    fs.writeFileSync(grantPath, typeof value === 'string' ? value : JSON.stringify(value), { mode });
+  }
+  writeGrant();
+  const secret = 'synthetic-private-bridge-secret';
+  fs.writeFileSync(secretPath, secret + '\n', { mode: 0o600 });
+  let bridgeMode = 'normal', configured = true;
+  const received = [];
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const bridge = http.createServer((req, res) => {
+    received.push({ url: req.url, headers: req.headers });
+    if (req.headers['x-hg-secret'] !== secret) { res.writeHead(401); res.end(); return; }
+    res.setHeader('Set-Cookie', 'private=never-forward');
+    res.setHeader('X-Backend-Token', secret);
+    if (bridgeMode === 'error') { res.writeHead(500); res.end(secret); return; }
+    if (bridgeMode === 'redirect') { res.writeHead(302, { Location: 'http://example.invalid/' }); res.end(); return; }
+    if (req.url === '/api/camera/status') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ configured, camera: { state: 'LIVE', width: 640, height: 480,
+        locator: 'rtsp://user:password@private/', secret }, secret }));
+    } else {
+      res.setHeader('Content-Type', bridgeMode === 'wrongtype' ? 'text/html' : 'image/jpeg');
+      res.end(bridgeMode === 'oversized' ? Buffer.alloc(512 * 1024 + 1) : jpeg);
+    }
+  });
+  await new Promise(resolve => bridge.listen(0, '127.0.0.1', resolve));
+  const env = { HG_HOUSEHOLD_SUBJECTS_FILE: grantPath,
+    HG_PRIVATE_BRIDGE_URL: `http://127.0.0.1:${bridge.address().port}`,
+    HG_PRIVATE_BRIDGE_SECRET_FILE: secretPath };
+  const calls = [];
+  const g = createGateway({ config, provider, now, env, mcp: { async callTool(name) {
+    calls.push(name);
+    if (name === 'get_homeguardian_devices') return { device_count: 2, device_labels: ['Gate', 'Hall'], visibility: 'visible' };
+    return name === 'get_alert_summary' ? { alert_count: 3, highest_severity: 'high' }
+      : { state: 'RUNNING', capture_enabled: true };
+  } }, logger: { info() {}, warn() {} } });
+  const address = await g.listen(); BASE = `http://127.0.0.1:${address.port}`;
+  const signedIn = await loginAs(subject);
+  const token = signedIn.token;
+  ok(signedIn.exchanged.status === 200 && signedIn.exchanged.json.role === 'VIEWER',
+    'full verified OAuth login reaches production protected-file authorizer');
+  const other = g.sessions.create({ sub: subject + '0', role: 'VIEWER', email: 'owner@example.test', email_verified: true }).token;
+  try {
+    const me = await request('GET', '/api/me', { token });
+    ok(me.json.household_authorized === true && me.json.role === 'VIEWER' && !me.raw.includes(grantPath),
+      'production exact numeric subject grants household read without role elevation or file disclosure');
+    ok((await request('GET', '/api/me', { token: other })).json.household_authorized === false,
+      'subject prefix and email never match the exact grant');
+    for (const route of ['/api/status','/api/alerts','/api/devices','/api/camera/status','/api/camera/frame']) {
+      ok((await request('GET', route, { token })).status === 200, `protected production grant permits ${route}`);
+      ok((await request('GET', route, { token: other })).status === 403, `different Google subject denied ${route}`);
+      ok((await request('GET', route)).status === 401, `anonymous denied ${route}`);
+    }
+    const devices = await request('GET', '/api/devices', { token });
+    ok(devices.json.device_count === 2 && devices.json.device_labels[0] === 'Gate' && calls.includes('get_homeguardian_devices'),
+      'device visibility is sourced from the native MCP tool contract');
+    const camera = await request('GET', '/api/camera/status', { token,
+      headers: { Cookie: 'browser=private', 'X-HG-Secret': 'attacker', Authorization: 'Bearer ' + token } });
+    ok(camera.json.camera.width === 640 && !camera.raw.includes(secret) && !camera.raw.includes('rtsp:') &&
+      !camera.headers['set-cookie'] && !camera.headers['x-backend-token'], 'camera status is shaped JSON only, no secrets or upstream cookies');
+    ok(received.every(r => r.headers['x-hg-secret'] === secret && !r.headers.authorization && !r.headers.cookie),
+      'bridge secret stays server-side; browser cookies and bearer never reach bridge');
+    await request('GET', '/api/camera/frame?t=123', { token });
+    ok(received.at(-1).url === '/api/camera/frame', 'frame cache-buster not forwarded upstream');
+    configured = false;
+    const absent = await request('GET', '/api/camera/status', { token });
+    ok(absent.status === 200 && absent.json.configured === false && !absent.json.camera, 'no camera configured remains honest');
+    configured = true;
+    for (const mode of ['error','redirect','wrongtype','oversized']) {
+      bridgeMode = mode;
+      const result = await request('GET', '/api/camera/frame', { token });
+      ok(result.status === 503 && result.json.status === 'unavailable' && !result.raw.includes(secret), `camera ${mode} fails unavailable without leaking backend data`);
+    }
+    bridgeMode = 'normal';
+    const before = received.length;
+    ok((await request('GET', '/api/camera/status?url=http://example.invalid', { token })).status === 400 && received.length === before,
+      'caller cannot choose a bridge URL or path');
+    for (const route of ['/api/feed','/api/consent','/api/scenarios','/api/upload','/api/admin','/api/integrations']) {
+      ok((await request('GET', route, { token })).status === 403, `household grant does not authorize ${route}`);
+    }
+    ok((await request('POST', '/api/camera/status', { token, body: {} })).status === 405, 'camera bridge is GET-only');
+    for (const invalid of [
+      {}, { ...grant, read_only: false }, { ...grant, household_id: 'other' },
+      { ...grant, subjects: ['owner@example.test'] }, { ...grant, subjects: [123] },
+      { ...grant, subjects: [' ' + subject] }, { ...grant, subjects: ['1'.repeat(256)] },
+      { ...grant, subjects: [subject], allow_all: true }, '{broken', ' '.repeat(16385),
+    ]) {
+      writeGrant(invalid);
+      ok((await request('GET', '/api/status', { token })).status === 403, 'malformed/unsafe production grant fails closed');
+    }
+    for (const mode of [0o644,0o400,0o660,0o700]) {
+      writeGrant(grant, mode);
+      ok((await request('GET', '/api/me', { token })).json.household_authorized === false, `grant mode ${mode.toString(8)} rejected`);
+    }
+    writeGrant(); fs.renameSync(grantPath, grantPath + '.real'); fs.symlinkSync(grantPath + '.real', grantPath);
+    ok((await request('GET', '/api/status', { token })).status === 403, 'symlink grant rejected');
+    writeGrant();
+    ok((await request('GET', '/api/status', { token })).status === 200, 'valid fresh grant restores existing session read');
+    writeGrant({ ...grant, subjects: [] });
+    const backendBefore = calls.length + received.length;
+    for (const route of ['/api/status','/api/alerts','/api/devices','/api/camera/status','/api/camera/frame']) {
+      ok((await request('GET', route, { token })).status === 403, `live revocation denies ${route} without re-login`);
+    }
+    ok(calls.length + received.length === backendBefore, 'revoked requests never touch MCP or bridge');
+    fs.rmSync(grantPath);
+    ok((await request('GET', '/api/me', { token })).json.household_authorized === false, 'missing grant revokes /api/me');
+    writeGrant(); fs.chmodSync(secretPath, 0o644);
+    ok((await request('GET', '/api/camera/status', { token })).status === 503, 'unsafe bridge secret file fails closed');
+  } finally {
+    await g.close(); await new Promise(resolve => bridge.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 run().catch((err) => {
