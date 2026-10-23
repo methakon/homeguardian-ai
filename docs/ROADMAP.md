@@ -4,9 +4,11 @@
 
 Sequential corrective batches on `main`: coordinator security is source-tested
 (13 security regression tests plus 46 existing real-native bridge checks passed;
-not deployed), followed by producer provenance and detector wiring. These repairs
-do not themselves close physical acceptance. See
-[coordinator security fixes](COORDINATOR_SECURITY_FIXES.md).
+not deployed). Producer provenance is source/Java-compile/host-parser tested
+(45 JVM lifecycle checks, 43 schema checks, 24 native regression assertions passed;
+not installed). Detector wiring is next. These repairs do not themselves close
+physical acceptance. See [coordinator security fixes](COORDINATOR_SECURITY_FIXES.md)
+and [provenance wire fix](PROVENANCE_WIRE_FIX.md).
 
 | Item | Status | Evidence and required closure |
 |---|---|---|

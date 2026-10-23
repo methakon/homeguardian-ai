@@ -26,7 +26,8 @@ cover: **how the emitter actually behaves, and the constraints that imposes on a
 
 ## 1. What the producer emits
 
-Taken from the emitting code, not from intent:
+Example of a valid synthetic observation (the native authorized camera/audio
+callbacks use the canonical `real` claim):
 
 ```json
 {"schema_version":1,"source_type":"motion","observation_type":"motion-changed-fraction",
@@ -41,6 +42,13 @@ Taken from the emitting code, not from intent:
   `presence` / `audio-zero-crossing-rate`.
 - The `provenance` default for an absent value is **`synthetic`**, never `real_device`. The canonical
   contract §6.2 names the old default a producer-side defect; it is fixed.
+- That absent-field Java fallback is separate from the native acquired-observation
+  default. Native acquired observations now emit **`real`**, which Java forwards as
+  `provenance_claim`; `real_device` remains rejected by the wire decoder. A claim
+  never substitutes for authenticated identity, pairing, consent or capture gates.
+  Source-derived JVM and real host-decoder regressions are recorded in
+  [the provenance checkpoint](PROVENANCE_WIRE_FIX.md). No updated APK installation
+  or physical-delivery acceptance is implied.
 - One line per observation. A drain may carry **zero or more** lines; zero is normal and means the
   node had nothing to report this tick.
 

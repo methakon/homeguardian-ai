@@ -167,6 +167,24 @@ The dotenv revision passes **72 Python tests** under both tested SDK combination
 plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
 untracked; only code/tests/sanitized documentation are published.
 
+### Producer provenance corrective batch — 2026-10-23
+
+Implemented on `main`, **SOURCE/Java-COMPILE/HOST-PARSER TESTED / NOT INSTALLED**.
+The native acquired-observation default now emits canonical `real` instead of
+`real_device`; Java absent-field fallback stays `synthetic`. The receiver vocabulary
+and authenticated provenance derivation were not weakened. Source-derived tests
+consume the actual native default through the Java field extractor and real C++
+wire decoder, including all authorization gates and legacy-token rejection.
+
+Observed RED: JVM schema 42 passed/1 failed; native parser rejected the producer
+default with `unknown provenance_claim`. Parent GREEN: production Java compilation
+against android-34 succeeded; isolated JVM lifecycle **45 passed**, schema **43
+passed**, no failures; rebuilt main native regression **24 assertions / 1 case
+passed**. These are source/JVM/host proofs, not JNI execution or APK/device evidence.
+See [provenance wire fix](PROVENANCE_WIRE_FIX.md). Detector wiring is next; its real
+TLS ingress build currently exposes a missing ActivityEpisode link dependency,
+which will be addressed with that batch. No live runtime changed.
+
 ### Coordinator security corrective batch — 2026-10-23
 
 Implemented on `main`, **SOURCE-TESTED / NOT DEPLOYED**. Malformed HTTP targets,
