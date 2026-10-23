@@ -92,6 +92,38 @@ References: [About Alexa-hosted Skills](https://developer.amazon.com/en-US/docs/
 and [Create and Manage Alexa-hosted Skills: CloudWatch logs](https://developer.amazon.com/en-US/docs/alexa/hosted-skills/alexa-hosted-skills-create.html).
 Deployment and simulator acceptance remain **NOT VERIFIED**.
 
+### Owner simulator acceptance and approved outbound mailbox follow-up
+
+The owner subsequently reported successful deployment to the existing skill and
+working Launch, Help, unavailable-alert and Stop responses. These are
+**owner-reported simulator checks**, not independent deployed-source readback or
+live C++ connectivity. Stop spoke Goodbye when tested inside an active session.
+
+The owner approved an outbound-only AWS request/reply mailbox with narrowly scoped
+queue/IAM resources and a bounded VPS worker, and read-only Mi A3 diagnostics.
+Two dedicated queues (`homeguardian-alexa-requests`, `homeguardian-alexa-replies`)
+were created in the owner's account in `us-east-1`; readback verified managed
+encryption, TLS-required policies, 60-second retention and 16-KiB message caps.
+No hosted-role grant, AWS access key or running worker was created at this stage.
+The exact skill Lambda execution-role ARN is still required for narrow publisher
+trust; the logs-viewing SSO role is not an acceptable substitute.
+
+Fresh phone evidence distinguishes the fault: its read-only native self-probe
+reports `Running`, `read_only=true`, `capture_enabled=false`; installed APK bytes
+match the previously accepted artifact. The VPN handshake is fresh and the
+coordinator's edge TCP connection comes from the phone peer. However private
+initialize/status requests now return HTTP 200 with only `{}`, not valid JSON-RPC.
+HTTP/auth/session admission therefore MUST NOT be called a successful native
+initialize or tool result. Probe sessions were torn down. The empty bridge reply
+remains unresolved; the working local core is not evidence that relay data works.
+No phone reinstall/restart, capture, VPN, firewall, mail or public-listener change
+was made. Application-private access was denied as expected and not bypassed.
+
+The initial mailbox worker has 11 local fixture tests, including strict tool and
+destination allowlists, stale/replayed request refusal, aggregate-only replies,
+authenticated MCP session cleanup and HTTP-200-empty-object rejection. It is
+source-tested only, not deployed or accepted end to end.
+
 ## On-phone analyzer candidate — not yet deployed
 
 The approved in-place update is being prepared on the isolated Android branch.
