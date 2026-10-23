@@ -1,0 +1,27 @@
+==> source    : /home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-sec02
+==> NDK       : /home/swarna-sekhar-dhar/Android/Sdk/ndk/android-ndk-r26d
+==> build dir : /home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-sec02/build_mi_a3_edge_arm64 (isolated from the host build trees)
+==> configuring: OK (see logs/cmake_configure_arm64.log)
+==> OpenSSL-gated targets (hg_device_ingress/client/probe) are SKIPPED by design:
+      D-03: OpenSSL development headers not found -> hg_device_ingress and
+      hg_device_client are NOT built.  The protocol, registry, ingest and
+      detector layers are still built and tested.  Install libssl-dev (or run the
+    hg_mcp_server is NOT inside that guard and contains no TLS code.
+==> built: 3 warnings (all pre-existing -Wunused warnings in DemoScenarioRunner/hg_alexa_bridge)
+==> staged in /home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-sec02/deploy/mi_a3_edge:
+total 5824
+-rwxrwxr-x 1 swarna-sekhar-dhar swarna-sekhar-dhar 2144408 Oct 17 03:04 hg_alexa_bridge
+-rw-rw-r-- 1 swarna-sekhar-dhar swarna-sekhar-dhar     455 Oct 17 03:04 hg_config.json
+-rw-rw-r-- 1 swarna-sekhar-dhar swarna-sekhar-dhar     454 Oct 17 03:04 hg_engine_config.json
+-rwxrwxr-x 1 swarna-sekhar-dhar swarna-sekhar-dhar 1984800 Oct 17 03:04 hg_mcp_server
+-rwxr-xr-x 1 swarna-sekhar-dhar swarna-sekhar-dhar 1822720 Oct 17 03:04 libc++_shared.so
+==> artifact:
+/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-sec02/deploy/mi_a3_edge/hg_mcp_server: ELF 64-bit LS
+/home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-sec02/deploy/mi_a3_edge/hg_alexa_bridge: ELF 64-bit 
+    /home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-sec02/deploy/mi_a3_edge/hg_alexa_bridge 2.05 MB
+    /home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-sec02/deploy/mi_a3_edge/hg_mcp_server 1.89 MB
+
+Next: scripts/mi_a3_edge_deploy.sh    (push + provision credentials + start)
+      scripts/mi_a3_edge_verify.sh    (functional MCP tests)
+      scripts/mi_a3_edge_measure.py   (CPU/RAM/latency/thermal)
+      scripts/mi_a3_edge_scenario.sh  (synthetic scenario + joined MCP read)

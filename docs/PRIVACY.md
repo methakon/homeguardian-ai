@@ -264,9 +264,9 @@ prove real hardware enforcement.
   Available since **API level 26** (newer AAudio calls 28–32 are avoided).
 - Both are within the confirmed API 27 floor.
 
-### Confirmed device (live, via ADB)
+### Lab test device audit (historical, via ADB)
 
-A physical device is attached and verified. The model string is **not trusted**
+A test device was audited via ADB. The model string is **not trusted**
 and was **not** corroborated:
 
 - `ro.product.model=S25_Ultra` is cosmetic. Corroborating properties disagree:
@@ -613,11 +613,11 @@ observability without any new capture or retention surface:
   pending — needs Amazon credentials); the adapter verifies local bearer tokens
   only.
 
-## Simulated Alexa+ web demo — privacy notes (added 2026-10-12)
+## Standalone simulated Alexa+ bridge demo (`demo.sh`) — privacy notes (added 2026-10-12)
 
-- **It is a simulation, clearly labelled.** The UI states in a banner and in the
-  footer that this is a project-built simulated Alexa+ experience, not a real
-  Alexa+ device integration, with no MCP server and no live Amazon identity.
+- **It is a simulation, clearly labelled.** The `demo.sh` UI states in a banner and in the
+  footer that this is a project-built simulated Alexa+ bridge experience (distinct from the native C++ MCP server `hg_mcp_server`), not a real
+  Alexa+ device integration, with no live Amazon identity.
 - **No physical sensor.** Every observation is synthetic and produced in-process
   by the deterministic sensor simulator. No camera, microphone, or speaker is
   ever opened.

@@ -24,11 +24,15 @@ const os = require('node:os');
 const path = require('node:path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const BRIDGE = path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge');
+const BRIDGE = process.env.HG_BRIDGE_PATH ||
+  (fs.existsSync(path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge'))
+    ? path.join(REPO_ROOT, 'hg_build', 'hg_alexa_bridge')
+    : path.join(REPO_ROOT, 'build', 'hg_alexa_bridge'));
 const DEMO_SERVER = path.join(REPO_ROOT, 'src', 'bridge', 'hg_demo_server.js');
 const CONFIG_ON = path.join(REPO_ROOT, 'config', 'homeguardian.demo.json');
 const CONFIG_OFF = path.join(REPO_ROOT, 'config', 'homeguardian.json');
 const TOKEN = 'demo-token';
+const OPERATOR_SECRET = 'demo-operator-secret-2026';
 
 let tmpDir;
 let credsPath;
@@ -49,8 +53,16 @@ function teardown() {
 function startDemo(configPath) {
   return new Promise((resolve, reject) => {
     const child = spawn('node', [DEMO_SERVER, '--bridge', BRIDGE, '--config', configPath,
-      '--creds', credsPath, '--port', '0', '--token', TOKEN], {
-      cwd: tmpDir, stdio: ['ignore', 'pipe', 'pipe'],
+      '--creds', credsPath, '--port', '0'], {
+      cwd: tmpDir,
+      env: {
+        ...process.env,
+        HG_HTTP_TOKEN: TOKEN,
+        HG_HTTP_SECRET: OPERATOR_SECRET,
+        HG_DEMO_TOKEN: TOKEN,
+        HG_DEMO_SECRET: OPERATOR_SECRET,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     let buf = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('demo start timeout')); }, 20000);
@@ -81,14 +93,47 @@ function get(port, urlPath) {
   });
 }
 
+function post(port, urlPath, headers = {}, body = '') {
+  return new Promise((resolve, reject) => {
+    const payload = typeof body === 'string' ? body : JSON.stringify(body);
+    const reqHeaders = {
+      'host': '127.0.0.1',
+      ...headers,
+    };
+    if (payload && !reqHeaders['content-type'] && !reqHeaders['Content-Type']) {
+      reqHeaders['content-type'] = 'application/json';
+    }
+    if (payload && !reqHeaders['content-length'] && !reqHeaders['Content-Length']) {
+      reqHeaders['content-length'] = Buffer.byteLength(payload);
+    }
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: urlPath, headers: reqHeaders }, (res) => {
+      let data = '';
+      res.on('data', (d) => { data += d.toString(); });
+      res.on('end', () => {
+        let j = null;
+        try { j = JSON.parse(data); } catch { j = { __raw: data }; }
+        resolve({ status: res.statusCode, body: j });
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(new Error('timeout')); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
 // --- tests ---
 
-test('web demo: scenario runs against the real backend and produces a real alert', async () => {
+test('web demo: scenario runs against the real backend and produces a real alert (authenticated)', async () => {
   setup();
   let h;
   try {
     h = await startDemo(CONFIG_ON);
-    const r = await get(h.port, '/api/run-scenario?cycles=5');
+    const sessionRes = await post(h.port, '/api/session', { 'x-hg-secret': OPERATOR_SECRET });
+    assert.equal(sessionRes.status, 200);
+    assert.ok(sessionRes.body.csrf, 'csrf token generated');
+
+    const r = await post(h.port, '/api/run-scenario?cycles=5', { 'x-hg-csrf': sessionRes.body.csrf });
     assert.equal(r.status, 200);
     assert.equal(r.body.scenario.ok, true);
     // Real backend counters, not fabricated.
@@ -100,6 +145,45 @@ test('web demo: scenario runs against the real backend and produces a real alert
     assert.equal(r.body.summary.ok, true);
     assert.ok(r.body.summary.alert_count >= 1, 'persisted alert visible');
     assert.ok(r.body.summary.alert_ids.length >= 1);
+  } finally { h && h.child.kill('SIGKILL'); teardown(); }
+});
+
+test('web demo: security gates enforce POST, secret auth, single-use CSRF, and no URL credentials', async () => {
+  setup();
+  let h;
+  try {
+    h = await startDemo(CONFIG_ON);
+
+    // 1. GET /api/run-scenario rejected with 405 Method Not Allowed
+    const getScen = await get(h.port, '/api/run-scenario');
+    assert.equal(getScen.status, 405);
+
+    // 2. POST /api/session without valid secret rejected with 401
+    const unauthSession = await post(h.port, '/api/session', { 'x-hg-secret': 'wrong-secret' });
+    assert.equal(unauthSession.status, 401);
+
+    // 3. POST /api/run-scenario without CSRF rejected with 403
+    const noCsrf = await post(h.port, '/api/run-scenario');
+    assert.equal(noCsrf.status, 403);
+
+    // 4. Legitimate session obtains CSRF
+    const sessionRes = await post(h.port, '/api/session', { 'x-hg-secret': OPERATOR_SECRET });
+    assert.equal(sessionRes.status, 200);
+    const csrf = sessionRes.body.csrf;
+    assert.ok(csrf);
+
+    // 5. POST /api/run-scenario with CSRF succeeds
+    const okRun = await post(h.port, '/api/run-scenario?cycles=1', { 'x-hg-csrf': csrf });
+    assert.equal(okRun.status, 200);
+
+    // 6. Token replay is rejected with 403 (single-use invariant)
+    const replayed = await post(h.port, '/api/run-scenario?cycles=1', { 'x-hg-csrf': csrf });
+    assert.equal(replayed.status, 403);
+
+    // 7. Credentials in URL query parameters rejected with 400
+    const queryCred = await get(h.port, '/api/status?secret=' + OPERATOR_SECRET);
+    assert.equal(queryCred.status, 400);
+    assert.equal(queryCred.body.error, 'credentials_in_url_forbidden');
   } finally { h && h.child.kill('SIGKILL'); teardown(); }
 });
 
@@ -121,7 +205,10 @@ test('web demo: capture-disabled config fails closed (no observations)', async (
   let h;
   try {
     h = await startDemo(CONFIG_OFF);
-    const r = await get(h.port, '/api/run-scenario?cycles=5');
+    const sessionRes = await post(h.port, '/api/session', { 'x-hg-secret': OPERATOR_SECRET });
+    assert.equal(sessionRes.status, 200);
+
+    const r = await post(h.port, '/api/run-scenario?cycles=5', { 'x-hg-csrf': sessionRes.body.csrf });
     assert.equal(r.status, 200);
     // Scenario ran but the gate blocked everything.
     assert.equal(r.body.scenario.ok, true);

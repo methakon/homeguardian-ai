@@ -64,7 +64,7 @@ TEST_CASE("Config loading and saving", "[config]") {
     {
         json j;
         j["log_level"] = "debug";
-        j["server_host"] = "192.168.1.100";
+        j["server_host"] = "10.20.30.100";
         j["server_port"] = 9090;
         j["data_dir"] = "/tmp/data";
         j["max_event_history"] = 500;

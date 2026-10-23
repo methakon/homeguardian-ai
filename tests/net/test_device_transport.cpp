@@ -1360,7 +1360,7 @@ TEST_CASE("durable replay protection is mandatory for a live ingress (D-03.2 sec
         input.bind_address = "0.0.0.0";
         REQUIRE_FALSE(validate_replay_configuration(input, &why));
         REQUIRE(why.find("non-loopback") != std::string::npos);
-        input.bind_address = "192.168.1.10";
+        input.bind_address = "10.20.30.10";
         REQUIRE_FALSE(validate_replay_configuration(input, &why));
     }
     SECTION("the isolated-test opt-out is allowed only on loopback") {

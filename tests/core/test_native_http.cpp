@@ -56,6 +56,55 @@ std::string req(const std::string& request_line, const std::string& headers = "H
     return request_line + "\r\n" + headers + "\r\n";
 }
 bool starts_with(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
+
+// ---- HG-SEC-01 harness -------------------------------------------------------------------
+// One store for the file, a fixed clock and a fixed port, so assertions stay deterministic.
+// This is NOT a compatibility overload of the production API: the store still requires the
+// operator secret and a real CSRF exchange, so nothing here bypasses authorization.
+constexpr uint16_t kTestPort = 18700;
+const char* const kTestSecret = "test-operator-secret";
+hg_native_http::SessionStore& test_sessions() {
+    static hg_native_http::SessionStore store;
+    store.operator_secret = kTestSecret;
+    return store;
+}
+// Advances per call so the issuance window rolls between requests: a fixed clock made the
+// rate limiter fire across unrelated assertions, which is a fixture bug, not a policy change.
+int64_t test_now_ms() { static int64_t t = 1700000000000; t += 20000; return t; }
+
+std::string dispatch(std::string_view r, std::string_view html, const Handler& h) {
+    return hg_native_http::dispatch(r, html, h, test_sessions(), test_now_ms(), kTestPort);
+}
+
+// A fresh, session-bound, single-use CSRF token (the flow the dashboard performs).
+std::string test_csrf() {
+    const std::string body = "{}";
+    const std::string session_req = "POST /api/session HTTP/1.1\r\nHost: 127.0.0.1:" +
+        std::to_string(kTestPort) + "\r\nOrigin: http://127.0.0.1:" + std::to_string(kTestPort) +
+        "\r\nContent-Type: application/json\r\nX-HG-Secret: " + kTestSecret +
+        "\r\nContent-Length: 2\r\n\r\n" + body;
+    Handler noop = [](const hg_native_http::HandlerRequest&, int& status) {
+        status = 200;
+        return std::string("{}");
+    };
+    const std::string resp = dispatch(session_req, "<html>", noop);
+    const std::string key = "\"csrf\":\"";
+    const auto at = resp.find(key);
+    if (at == std::string::npos) return {};
+    const auto start = at + key.size();
+    return resp.substr(start, resp.find('"', start) - start);
+}
+
+// An authorized POST to the state route. `origin` defaults to this listener's own origin.
+std::string auth_post(const std::string& query, const std::string& origin = std::string()) {
+    const std::string o = origin.empty() ? "http://127.0.0.1:" + std::to_string(kTestPort) : origin;
+    return "POST /api/run-scenario" + query + " HTTP/1.1\r\n" +
+           "Host: 127.0.0.1:" + std::to_string(kTestPort) + "\r\n" +
+           "Origin: " + o + "\r\n" +
+           "Content-Type: application/json\r\n" +
+           "X-HG-CSRF: " + test_csrf() + "\r\n" +
+           "Content-Length: 2\r\n\r\n{}";
+}
 }  // namespace
 
 TEST_CASE("NativeHttp: valid /api/health returns 200 JSON", "[nativehttp][h04]") {
@@ -74,7 +123,7 @@ TEST_CASE("NativeHttp: /api/status and scenario invoke the real handler", "[nati
     REQUIRE(h.calls == 1);
     REQUIRE(h.last_op == "status");
 
-    auto d = dispatch(req("GET /api/run-scenario?cycles=7 HTTP/1.1"), "<html>", handler);
+    auto d = dispatch(auth_post("?cycles=7"), "<html>", handler);
     REQUIRE(starts_with(d, "HTTP/1.1 200 OK"));
     REQUIRE(h.calls == 2);
     REQUIRE(h.last_op == "scenario");
@@ -83,7 +132,7 @@ TEST_CASE("NativeHttp: /api/status and scenario invoke the real handler", "[nati
 
 TEST_CASE("NativeHttp: default cycles is 5", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
-    (void)dispatch(req("GET /api/run-scenario HTTP/1.1"), "<html>", handler);
+    (void)dispatch(auth_post(""), "<html>", handler);
     REQUIRE(h.last_cycles == 5);
 }
 
@@ -120,7 +169,7 @@ TEST_CASE("NativeHttp: missing or duplicate Host is rejected", "[nativehttp][h04
 
 TEST_CASE("NativeHttp: non-loopback Host is forbidden (DNS-rebinding defence)", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
-    for (const char* bad : {"evil.example", "127.0.0.1.evil.com", "192.168.1.10", "[::1]:80", "0.0.0.0", "169.254.1.1"}) {
+    for (const char* bad : {"evil.example", "127.0.0.1.evil.com", "10.20.30.10", "[::1]:80", "0.0.0.0", "169.254.1.1"}) {
         auto out = dispatch(req("GET /api/status HTTP/1.1", std::string("Host: ") + bad + "\r\n"), "<html>", handler);
         REQUIRE(starts_with(out, "HTTP/1.1 403"));
     }
@@ -137,15 +186,12 @@ TEST_CASE("NativeHttp: loopback Host variants are accepted", "[nativehttp][h04]"
 
 TEST_CASE("NativeHttp: cross-site Origin is forbidden on the scenario route", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
-    auto bad = dispatch(req("GET /api/run-scenario HTTP/1.1",
-                            "Host: 127.0.0.1\r\nOrigin: http://evil.example\r\n"), "<html>", handler);
+    auto bad = dispatch(auth_post("", "http://evil.example"), "<html>", handler);
     REQUIRE(starts_with(bad, "HTTP/1.1 403"));
-    auto nul = dispatch(req("GET /api/run-scenario HTTP/1.1",
-                            "Host: 127.0.0.1\r\nOrigin: null\r\n"), "<html>", handler);
+    auto nul = dispatch(auth_post("", "null"), "<html>", handler);
     REQUIRE(starts_with(nul, "HTTP/1.1 403"));
     REQUIRE(h.calls == 0);
-    auto ok = dispatch(req("GET /api/run-scenario HTTP/1.1",
-                           "Host: 127.0.0.1\r\nOrigin: http://127.0.0.1:8000\r\n"), "<html>", handler);
+    auto ok = dispatch(auth_post("", "http://127.0.0.1:" + std::to_string(kTestPort)), "<html>", handler);
     REQUIRE(starts_with(ok, "HTTP/1.1 200 OK"));
     REQUIRE(h.calls == 1);
 }
@@ -210,15 +256,15 @@ TEST_CASE("NativeHttp: oversized path and unknown routes are rejected", "[native
 
 TEST_CASE("NativeHttp: cycles validation is exact", "[nativehttp][h04]") {
     Rec h; auto handler = recording_handler(h);
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles= HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=5a HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=-1 HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=999 HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=1234 HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=5&x=1 HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles="), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles=5a"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles=-1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles=999"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles=1234"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles=5&x=1"), "<html>", handler), "HTTP/1.1 400"));
     // Boundaries accepted.
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=0 HTTP/1.1"), "<html>", handler), "HTTP/1.1 200"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=100 HTTP/1.1"), "<html>", handler), "HTTP/1.1 200"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles=0"), "<html>", handler), "HTTP/1.1 200"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles=100"), "<html>", handler), "HTTP/1.1 200"));
     REQUIRE(h.calls == 2);  // exactly the two accepted ones
 }
 
@@ -252,20 +298,20 @@ TEST_CASE("NativeHttp: scenario selection is parsed and passed to the handler",
           "[nativehttp][h04][scenario]") {
     Rec h; auto handler = recording_handler(h);
 
-    auto d = dispatch(req("GET /api/run-scenario?scenario=unusual HTTP/1.1"), "<html>", handler);
+    auto d = dispatch(auth_post("?scenario=unusual"), "<html>", handler);
     REQUIRE(starts_with(d, "HTTP/1.1 200 OK"));
     REQUIRE(h.calls == 1);
     REQUIRE(h.last_op == "scenario");
     REQUIRE(h.last_scenario == "unusual");
     REQUIRE_FALSE(h.last_cycles_set);   // cycles not given -> spec default applies
 
-    auto b = dispatch(req("GET /api/run-scenario?scenario=normal&cycles=3 HTTP/1.1"), "<html>", handler);
+    auto b = dispatch(auth_post("?scenario=normal&cycles=3"), "<html>", handler);
     REQUIRE(starts_with(b, "HTTP/1.1 200 OK"));
     REQUIRE(h.last_scenario == "normal");
     REQUIRE(h.last_cycles == 3);
     REQUIRE(h.last_cycles_set);
 
-    auto c = dispatch(req("GET /api/run-scenario?cycles=7&scenario=consent-denied HTTP/1.1"), "<html>", handler);
+    auto c = dispatch(auth_post("?cycles=7&scenario=consent-denied"), "<html>", handler);
     REQUIRE(starts_with(c, "HTTP/1.1 200 OK"));
     REQUIRE(h.last_scenario == "consent-denied");
     REQUIRE(h.last_cycles == 7);
@@ -281,7 +327,10 @@ TEST_CASE("NativeHttp: malformed scenario identifiers are rejected 400",
              "/api/run-scenario?scenario=a.b",
              "/api/run-scenario?scenario=a/b",
              "/api/run-scenario?scenario=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}) {
-        auto out = dispatch(req(std::string("GET ") + p + " HTTP/1.1"), "<html>", handler);
+        // POST-only route: drive the same queries through the authorized path, so this still
+        // asserts the SCENARIO TOKEN validator rather than the method rule.
+        auto out = dispatch(auth_post(std::string(p).substr(std::string("/api/run-scenario").size())),
+                            "<html>", handler);
         REQUIRE(starts_with(out, "HTTP/1.1 400"));
     }
     REQUIRE(h.calls == 0);  // never reached the handler
@@ -290,11 +339,11 @@ TEST_CASE("NativeHttp: malformed scenario identifiers are rejected 400",
 TEST_CASE("NativeHttp: duplicate and unknown query keys are rejected 400",
           "[nativehttp][h04][scenario]") {
     Rec h; auto handler = recording_handler(h);
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?scenario=a&scenario=b HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?cycles=1&cycles=2 HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?foo=1 HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario?scenario HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
-    REQUIRE(starts_with(dispatch(req("GET /api/run-scenario? HTTP/1.1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?scenario=a&scenario=b"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?cycles=1&cycles=2"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?foo=1"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?scenario"), "<html>", handler), "HTTP/1.1 400"));
+    REQUIRE(starts_with(dispatch(auth_post("?"), "<html>", handler), "HTTP/1.1 400"));
     REQUIRE(h.calls == 0);
 }
 
@@ -319,7 +368,7 @@ TEST_CASE("NativeHttp: read-only demo routes reach the handler",
 TEST_CASE("NativeHttp: a handler-decided 400 is returned as 400 Bad Request",
           "[nativehttp][h04][v21]") {
     Rec h; auto handler = rejecting_handler(h);
-    auto out = dispatch(req("GET /api/run-scenario?scenario=nope HTTP/1.1"), "<html>", handler);
+    auto out = dispatch(auth_post("?scenario=nope"), "<html>", handler);
     REQUIRE(starts_with(out, "HTTP/1.1 400 Bad Request"));
     REQUIRE(out.find("\"ok\":false") != std::string::npos);
     REQUIRE(out.find("\"error\":\"unknown_scenario\"") != std::string::npos);
@@ -332,7 +381,7 @@ TEST_CASE("NativeHttp: a handler-decided 400 is returned as 400 Bad Request",
 TEST_CASE("NativeHttp: a supported scenario keeps the 200 status",
           "[nativehttp][h04][v21]") {
     Rec h; auto handler = rejecting_handler(h);
-    auto out = dispatch(req("GET /api/run-scenario?scenario=default HTTP/1.1"), "<html>", handler);
+    auto out = dispatch(auth_post("?scenario=default"), "<html>", handler);
     REQUIRE(starts_with(out, "HTTP/1.1 200 OK"));
     REQUIRE(h.calls == 1);
 }
@@ -342,7 +391,7 @@ TEST_CASE("NativeHttp: a handler status never overrides transport validation",
     // Malformed query / bad Host are rejected by the transport BEFORE the
     // handler runs, so a handler cannot be used to bypass input validation.
     Rec h; auto handler = rejecting_handler(h);
-    auto bad_query = dispatch(req("GET /api/run-scenario?bogus=1 HTTP/1.1"), "<html>", handler);
+    auto bad_query = dispatch(auth_post("?bogus=1"), "<html>", handler);
     REQUIRE(starts_with(bad_query, "HTTP/1.1 400 Bad Request"));
     REQUIRE(bad_query.find("invalid_query") != std::string::npos);
     REQUIRE(h.calls == 0);

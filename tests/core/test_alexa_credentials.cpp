@@ -272,3 +272,33 @@ TEST_CASE("Creds: contract + store enforce authn then authz separately",
 
     creds_cleanup(p);
 }
+
+TEST_CASE("Creds: empty principal is rejected and omitted principal defaults to cred:<id>",
+          "[creds][principal][security]") {
+    Logger::initialize("error");
+    // Explicit empty principal string must be rejected (fail closed)
+    std::string p1 = creds_tmp("empty_principal");
+    write_creds(p1, "{\"tok-empty-p\":{\"principal\":\"\",\"allow_status\":true}}", 0600);
+    AlexaCredentialStore store1;
+    REQUIRE_FALSE(store1.load(p1).ok);
+    creds_cleanup(p1);
+
+    // Omitted principal must be populated with a non-empty cred:<sha256> identity
+    std::string p2 = creds_tmp("omitted_principal");
+    write_creds(p2, "{\"tokA\":{\"allow_status\":true},\"tokB\":{\"allow_status\":true}}", 0600);
+    AlexaCredentialStore store2;
+    REQUIRE(store2.load(p2).ok);
+    auto now = std::chrono::system_clock::now();
+    auto ctxA = store2.verify("tokA", now);
+    auto ctxB = store2.verify("tokB", now);
+    REQUIRE(ctxA.authenticated);
+    REQUIRE(ctxB.authenticated);
+    REQUIRE_FALSE(ctxA.credential_id.empty());
+    REQUIRE_FALSE(ctxB.credential_id.empty());
+    REQUIRE_FALSE(ctxA.principal.empty());
+    REQUIRE_FALSE(ctxB.principal.empty());
+    REQUIRE(ctxA.credential_id != ctxB.credential_id);
+    REQUIRE(ctxA.principal != ctxB.principal);
+    creds_cleanup(p2);
+}
+

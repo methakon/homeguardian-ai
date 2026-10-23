@@ -1,0 +1,28 @@
+{
+  "n_status_calls": 150,
+  "errors": 0,
+  "status_latency_ms": {
+    "min": 6.184538000070461,
+    "p50": 8.321901499812157,
+    "p95": 11.36380099978851,
+    "p99": 12.426380999841058,
+    "max": 14.348607000101765,
+    "mean": 8.410794593328319
+  },
+  "server_cpu_ms_per_call": 1.8666666666666667,
+  "mixed_requests": 450,
+  "mixed_latency_ms": {
+    "p50": 7.971777499960808,
+    "p95": 10.930807000022469,
+    "max": 16.945171000315895
+  },
+  "server_cpu_ms_per_req_mixed": 1.511111111111111,
+  "rss_kb_before": 5424,
+  "rss_kb_after": 5424,
+  "battery_temp_c_before": 33.2,
+  "battery_temp_c_after": 33.2,
+  "skin_therm_c_before": 36.686,
+  "skin_therm_c_after": 36.895,
+  "hottest_c_before": 45.9,
+  "hottest_c_after": 46.6
+}

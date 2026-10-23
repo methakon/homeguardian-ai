@@ -1,11 +1,27 @@
 # HomeGuardian AI — Implementation Roadmap
 
+## Current acceptance gate — P1 physical integration (2026-10-23)
+
+Sequential corrective batches on `main`: coordinator security is source-tested
+(13 security regression tests plus 46 existing real-native bridge checks passed;
+not deployed), followed by producer provenance and detector wiring. These repairs
+do not themselves close physical acceptance. See
+[coordinator security fixes](COORDINATOR_SECURITY_FIXES.md).
+
+| Item | Status | Evidence and required closure |
+|---|---|---|
+| Android → C++ detection → durable alert → MCP | **IN PROGRESS / NOT ACCEPTED** | Real Mi A3 camera frames and numeric processing observed; no acknowledged physical observation or persisted physical alert yet. USB instability and unfinished Wi-Fi setup remain blockers. Closure requires exact alert-id correlation through MCP and recovery after restart, plus stop/consent controls. See [physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md). |
+
+The historical implementation phases below are not a claim that this physical
+acceptance gate passed. Candidate APK and protocol fixes described in the report
+have not been merged into `main` by publishing this documentation checkpoint.
+
 ## Phase A — Orchestration and Repository Foundation
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
 | A-01 | Initialize project and verify toolchain | — | C++20, CMake, spdlog, nlohmann/json, Catch2 all working | DONE |
-| A-02 | Initialize Git repository | A-01 | Repo exists at `/home/swarna-sekhar-dhar/projects/homeguardian-ai` on `main` branch | DONE |
+| A-02 | Initialize Git repository | A-01 | Repo exists at `homeguardian-ai` on `main` branch | DONE |
 | A-03 | Create initial documentation | A-02 | README, ARCHITECTURE, ROADMAP, DEVELOPMENT, TESTING, ORCHESTRATION, DECISIONS, STATUS all exist and are committed | DONE |
 | A-04 | Review and first commit | A-03 | All docs reviewed, `.gitignore` present, initial commit created | DONE |
 | A-05 | Create skill inventory | A-03 | `docs/SKILL_INVENTORY.md` created with all relevant skills documented | DONE |
@@ -114,11 +130,11 @@ cross-compile; hardware acceptance testing is NOT done (no device attached).
 | F22-12 | Ubuntu (Linux) sensor backend: discovery + interfaces + host tests | — | Non-capture SensorDiscovery (V4L2/PipeWire metadata); consent-enforcement host tests reusing ConsentGuardedDevice | DONE (non-capture, host) |
 | F22-13 | Ubuntu camera/mic/speaker capture adapters | F22-12 | V4L2 camera + ALSA/PipeWire mic + speaker adapters behind IMediaDevice; delivery-gated; bounded buffers | PROPOSED (awaiting approval) |
 | F22-14 | Docker container for C++ core service | — | Documented trade-offs; no privileged container; sensors stay on host; consent gate in delivery path | PROPOSED (not implemented) |
-| F22-15 | Alexa+ integration (custom/Smart Home skill) | — | AVS deprecated for Alexa Built-in; viable route = Alexa skill → authenticated endpoint → C++ service | RESEARCH ONLY (not integrated) |
+| F22-15 | Alexa+ integration (custom/Smart Home skill) | — | Read-only Custom Skill via authenticated outbound SQS mailbox to private phone C++ MCP; owner-reported status/alerts acceptance in docs/STATUS.md; Smart Home/Alexa+ certification not established | PARTIAL (Custom Skill functional; reliability open) |
 | F22-16 | Simulator-first backend + host safety tests | — | Deterministic SimulatedSensorBackend behind IMediaDevice/ConsentGuardedDevice; 12 host tests (lifecycle, consent deny/withdraw/expire, delivery boundary, bounded buffers, error recovery, shutdown) | DONE (host, simulator) |
 | F22-17 | Real Linux capture (V4L2/ALSA/PipeWire) or Docker env if simulator insufficient | F22-16 | Only if a requirement is proven un-simulatable; simulator currently covers all in-scope behaviors | DEFERRED (simulator sufficient) |
 | F22-18 | Alexa custom skill (ASK SDK v2) + handler tests | — | HomeStatusIntent/GetAlertSummaryIntent/GetRoutineStatusIntent/Help/Stop with mock backend behind a documented interface; 13 Node tests pass | DONE (handler + unit tests) |
-| F22-19 | Alexa skill deployment + console-simulator verification | F22-18 | Deploy to Alexa-hosted skill (auto Lambda, $0); build interaction model; run text simulator; record results | OPTIONAL (manual console steps — see alexa_skill/README.md) |
+| F22-19 | Alexa skill deployment + console-simulator verification | F22-18 | Owner reported Python Code deployment and genuine status/alerts replies; separate operator-origin mailbox smoke 4/4; see alexa_skill_python/README.md and docs/STATUS.md | FUNCTIONAL (owner report; intermittent unavailability unresolved) |
 | F22-20 | Realistic Linux sensor simulation (config, signals, speaker) | F22-16 | Config struct: camera dimensions + frame-rate pacing; mic sample_rate/channels + noise/sine/square/silence signals; speaker play/error; configurable ring capacity | DONE (host, simulator) |
 | F22-21 | End-to-end Linux simulator workflow + failure/consent scenarios | F22-20 | camera+mic+speaker → consent-gated delivery → synthetic test processor → pipeline rule/alert → safe speaker response; ordering, bounded memory, cleanup; failure & consent scenarios | DONE (host, simulator) |
 | F22-22 | Product-readiness audit (build reproducibility, docs accuracy, portability) | F22-21 | Reproduced documented build in a fresh dir; fixed stale README + hardcoded CMake paths; hardened .gitignore; full regression + sanitizers green | DONE (audit) |
@@ -175,8 +191,8 @@ armeabi-v7a (32-bit only), ~962 MB RAM, 2 cameras, microphone present.
 
 | ID | Task | Dependencies | Acceptance Criteria | Status |
 |----|------|-------------|---------------------|--------|
-| F-01 | HTTP server | C-03 | REST API for dashboard and alerts | DONE (in scope) — implemented as the native C++ loopback transport `hg_alexa_bridge --http` (GET-only subset, no external dependency). Boost.Beast deliberately NOT adopted (dependency-avoidance). Broader/production REST (auth, TLS, full HTTP) remains absent. |
-| F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | DEFERRED / SUPERSEDED — Route B selected (simulated Alexa+ experience); no MCP server is implemented or claimed. |
+| F-01 | HTTP server | C-03 | REST API for dashboard and alerts | DONE (in scope) — implemented as the native C++ loopback transport `hg_alexa_bridge --http` (loopback read subset, no external dependency; state-changing endpoints require authenticated session & CSRF). Boost.Beast deliberately NOT adopted (dependency-avoidance). Broader/production REST (public TLS, OAuth provider) remains absent. |
+| F-02 | MCP Streamable HTTP server | F-01 | MCP protocol implemented and tested | DONE (implemented and certified in PR #20) — Native C++ Model Context Protocol (spec 2025-11-25) server (`hg_mcp_server`) implemented with Streamable HTTP transport, 2 read-only tools, fail-closed auth, and full test suites. (Originally deferred during F22, fully implemented in PR #20). |
 | F-03 | Alexa+ integration | F-02 | Alexa+ can invoke HomeGuardian tools | DEFERRED — no live Alexa+ identity/device integration. The in-repo simulated Alexa+ web experience is NOT equivalent to production Alexa+ integration. |
 
 ## Phase G — Dashboard and Notifications
@@ -271,7 +287,7 @@ criteria; the structured logger already emits a durable record.
 - **F-01 "HTTP server (Boost.Beast) — REST API for dashboard and alerts":**
   **superseded / satisfied in scope.** A loopback REST-ish API for the dashboard
   and alerts now exists as the **native `hg_alexa_bridge --http`** transport
-  (GET-only subset, no external dependency), rather than Boost.Beast. The
+  (read subset with authenticated state mutations, no external dependency), rather than Boost.Beast. The
   original dependency choice is deliberately NOT adopted (dependency-avoidance
   goal). Not a production HTTP server: no TLS, no real auth, handwritten subset.
 - **G-01 "Web dashboard (HTML/CSS/JS) — shows events and status":**
@@ -279,9 +295,10 @@ criteria; the structured logger already emits a durable record.
   never-built Boost.Beast F-01. The dashboard is vanilla HTML/CSS/JS
   (`src/web/index.html`), embedded into the binary, showing status, alerts, the
   detection stage, and the privacy audit; it drives the real backend.
-- **F-02 (MCP), F-03 (Alexa+ integration), G-02 (notifications), G-03 (Ring
+- **F-03 (Alexa+ live integration), G-02 (notifications), G-03 (Ring
   simulator), H-01 (fall detection):** **NOT implemented / deferred** — unchanged.
-  No MCP, live Alexa, physical sensing, or production HTTP deployment is claimed.
+  Live Alexa, physical sensing, or production HTTP deployment is not claimed.
+  *(Note: F-02 Native C++ MCP server was implemented and certified in PR #20; see docs/DEVPOST_DEMONSTRATION_GUIDE.md).*
 
 ## Phase P — Licensing and release readiness (added 2026-10-13, v16)
 
@@ -567,6 +584,133 @@ ingress runs least-privilege and ACCEPTS this device's certificate over mutual T
 spoofed id refused as `identity_mismatch`, durable watermark advanced). Remaining: the on-device
 Import/Connect/consent/Start taps (phone is locked; owner-only), then camera/mic counters, then
 Wi-Fi delivery, and only then the physical USB unplug.
+
+## HG-MCP-01 - MCP over Streamable HTTP (implemented)
+
+Delivered on `feature/mcp-streamable-http` (worktree `~/worktrees/hg-mcp`), branched from the
+H-03 tip. An MCP server implementing the 2025-11-25 specification over Streamable HTTP, built
+on the existing read-only `AlexaContract` so authorization stays in one place. Two tools:
+`get_homeguardian_status`, `get_alert_summary`. Full protocol surface (initialize + version
+negotiation, notifications/initialized, ping, tools/list, tools/call, batching), session
+management, Origin validation, bearer-auth boundary, request-size/timeout/concurrency bounds
+and clean shutdown. `scripts/verify_mcp.sh` drives the real binary and passes 43/43; the `[mcp]`
+tag adds 19 cases / 89 assertions.
+
+Deliberately NOT claimed: this is not an Alexa+ runtime and not an Amazon integration - no
+account linking, no live Amazon identity, no AWS resource. Observations behind the tools remain
+synthetic. Not deployed, and `main` is untouched.
+
+Next (unimplemented): OAuth 2.1-style authorization for MCP clients, TLS termination (or the
+existing D-03 mutual-TLS ingress) for anything beyond loopback, a server-initiated SSE stream if
+a client needs one, `resources/*` and `prompts/*` capabilities, per-token quotas, and session
+resumability.
+
+## HG-EDGE-01 / HG-EDGE-02 / HG-EDGE-03 / HG-EDGE-04 / HG-EDGE-05 — Mi A3 edge device (EXPERIMENTAL, unmerged)
+
+**Status:** experimental work on `experiment/mi-a3-edge` (HG-EDGE-01),
+`experiment/mi-a3-edge-sec02` (the same work re-validated on the corrected SHA) and
+`experiment/mi-a3-edge-service` (HG-EDGE-02). **None of these is merged into `main`,
+and nothing here is security-certified.** Added on operator instruction; the
+documentation owner should decide whether this becomes a numbered phase.
+
+These branches are the first record of, and the first working deployment on, the
+real **arm64** edge device — the Mi A3 (`laurel_sprout`, `trinket`/SM6125, Android 11
+/ API 30, `arm64-v8a`, 5.47 GiB RAM). Until now the only Android device in the
+documentation was the spoofed MT6580 `S25_Ultra` clone (API 27, `armeabi-v7a`,
+~962 MB), and the two are physically interchangeable on the same USB port, so every
+capability claim must name which device it was measured on.
+
+**HG-EDGE-01 (done, on-device evidence):** the genuine `hg_mcp_server` and the
+genuine engine cross-compile for `arm64-v8a` with the NDK and run under Bionic with
+no Termux and no PRoot. 18/18 MCP functional checks, real SQLite WAL persistence, a
+real `critical` alert from `synthetic-critical-impact` read back through the MCP
+tool, 5.4 MB RSS, 1.55 ms server CPU per tool call, cold start 275–287 ms.
+Validated identically on `01a4d3b` and on the HG-SEC-02 corrected candidate
+`187727a`. Report: `docs/EDGE_DEVICE_MI_A3.md`.
+
+**HG-EDGE-02 (in progress):** the same engine and MCP server packaged as a managed
+Android app (`org.homeguardian.edgeservice`, `apk_service/`) — a foreground service
+with a visible notification, a `BOOT_COMPLETED` receiver, Start/Stop/Restart, a
+bounded crash-recovery budget and a real MCP `initialize` health probe, all bound to
+loopback. It requests only INTERNET, FOREGROUND_SERVICE and RECEIVE_BOOT_COMPLETED —
+no camera and no microphone, because it captures nothing.
+
+**Deliberately NOT claimed:** no LAN or public exposure, no camera/mic ingestion, no
+root, no bootloader unlock, no ROM change, no 24/7 readiness. Continuous unattended
+charging is **not approved**. The mTLS D-03 ingestion boundary is unavailable on
+Android until OpenSSL is cross-compiled (NDK r26d ships none).
+
+**Open items:** the six HG-SEC-02 blockers need independent clearance on the exact
+corrected SHA by the security-audit workstream; the supervised 48–72 h soak is not
+started and will not be proposed until charging safety, service restart and crash
+recovery are demonstrated.
+
+**HG-EDGE-03 (discovery done, specification proposed):** the phone evaluated as an
+environmental-context and sensor-fusion hub. Report:
+`docs/EDGE_DEVICE_SENSORS_MI_A3.md`. The device reports 28 hardware/HAL-backed
+sensors, but of the four environmental metrics the engine already allowlists
+(`temperature | humidity | pressure | illuminance`) it can supply **one** —
+`illuminance`, from the `stk_stk3x3x` ambient-light sensor, which is permission-free
+and on-change. **Ambient temperature, barometric pressure and humidity are absent
+hardware** (0 hits for those types across the full 439-line `dumpsys sensorservice`
+dump), so the edge node is not and cannot be a local weather station. The 60+ thermal
+zones — including `battery` and `bms` — are explicitly recorded as **not**
+atmospheric readings and are never substituted for one. Motion, presence and
+orientation sensing is plentiful and mostly permission-free and belongs to the
+existing `SecurityObservation` path; GNSS is enabled device-wide (not by this work,
+and nothing is collected) and BLE external sensors are the only route to the missing
+metrics but require `ACCESS_FINE_LOCATION` on API 30, because `BLUETOOTH_SCAN` does
+not exist before API 31. No sensor was activated, no permission requested, no
+coordinate printed, no hardware purchased. Thresholds and allowlists unchanged; the
+proposed interface additions are additive (accuracy, confidence, and a staleness
+bound) and **not implemented** — the measurement step in section 9.3 is the
+prerequisite.
+
+**HG-EDGE-04 (toolkit done and proven over USB; wireless pairing PENDING):** removing
+the permanently-attached USB cable via Android 11's native TLS Wireless Debugging. New
+manual `docs/EDGE_WIRELESS_DEVELOPMENT_MI_A3.md` and an isolated `scripts/edge_dev/`
+toolkit (connect, pair, deploy, status, test, logs, disconnect). Every script verifies
+the target against **multiple** identifiers and has no "use the only attached device"
+fallback — necessary because this phone's USB descriptor reports itself as a *Redmi Note
+3*, and a spoofing MT6580 clone shares the same port. 12/12 MCP checks pass over an
+`adb forward` on loopback, with the server's loopback-only binding asserted by the
+absence of an all-interfaces listener; sanitized log collection yields 0 redaction
+leaks. A correction was produced: the handling order in `McpHttpServer.cpp` is size
+(413) → encoding (501) → malformed (400) → **auth (401)** → method (405) / session
+(400), so an unauthenticated request can only ever return 401 for GET/DELETE — the
+`GET → 405` recorded for the earlier SHA does not hold for this one. Two honest limits:
+Wireless Debugging cannot be enabled or disabled from adb (the framework resets the
+global setting), so it needs one phone-screen action; and the production build's bearer
+token is unreadable without root by design, so full host-side authenticated MCP testing
+requires the debuggable test build the brief asks for. Bluetooth was assessed and
+rejected as a substitute (adbd has no Bluetooth transport; PAN is ~30–60× slower and
+would still need the forbidden `adb tcpip`). No root, ROM change, port forwarding,
+tunnelling or LAN exposure; MCP stays loopback-only; no sensitive permission requested.
+
+**HG-EDGE-05 (implemented, tested, not yet wired into the app):** the environmental
+context engine — the Android-to-C++ sensor interface. New
+`src/core/EnvironmentalContext.{h,cpp}`, `tests/core/test_environmental_context.cpp`
+(12 cases / 162 assertions, tag `[envcontext]`) and `tools/envcontext_bench.cpp`; design
+and handoff in `docs/EDGE_ENVIRONMENTAL_CONTEXT.md`. The module encodes the HG-EDGE-03
+inventory finding as structure rather than convention: atmospheric and device-thermal
+are disjoint channel namespaces, so `atmospheric_temperature()` can never return a
+battery reading, and a test proves that a plausible 46.9 °C SoC value still fails to
+satisfy an atmospheric request. Readings carry dual timestamps, the existing
+`Provenance` split, computed freshness against per-channel max ages, quality, and an
+explicit uncertainty that fusion actually propagates (inverse-variance weighted). No
+threshold is invented: daylight and thermal-health banding are injected with a
+`*_source` string naming their provenance, and both return nullopt/unknown otherwise.
+Positional channels are double-gated and off by default, and coarsened to ~1 km on
+ingest so no precise coordinate is retained. Correlation output vocabulary is exactly
+`environmental_correlation` / `insufficient_evidence`, with a test asserting no
+predictive term (forecast, earthquake, seismic, disaster, flood, species, animal) can
+appear — the same unrepresentability discipline DempsterShafer uses for
+`SeismicPrecursor`. Verified: full suite green at 39,088 assertions / 538 cases (exit 0,
+no regressions); 200k ingests at 0.79–0.89 µs/reading and 20k snapshots at 2.6–2.7 µs on
+the host, bounded at 160 retained readings / +100 kB RSS. ARM64 cost is NOT measured
+on-device and is not claimed. No app integration, no JNI, no permission requested, no
+GNSS enabled, MCP still loopback-only.
+
 
 ## Phase CAM — Panasonic ELUGA I7 CCTV node (added 2026-10-17, branch `experiment/hg-cam-eluga-cctv`)
 

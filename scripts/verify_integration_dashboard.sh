@@ -19,14 +19,24 @@
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-BRIDGE="${HG_BRIDGE_PATH:-$REPO/hg_build/hg_alexa_bridge}"
+if [ -z "${HG_BRIDGE_PATH:-}" ]; then
+  if [ -x "$REPO/build/hg_alexa_bridge" ]; then
+    BRIDGE="$REPO/build/hg_alexa_bridge"
+  elif [ -x "$REPO/hg_build/hg_alexa_bridge" ]; then
+    BRIDGE="$REPO/hg_build/hg_alexa_bridge"
+  else
+    BRIDGE="$REPO/build/hg_alexa_bridge"
+  fi
+else
+  BRIDGE="$HG_BRIDGE_PATH"
+fi
 PORT="${1:-$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')}"
 TMP="$(mktemp -d)"
-PASS=0; FAIL=0
+PASS=0; FAIL=0; PID=""
 ok()  { PASS=$((PASS+1)); printf '  %-62s OK\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  %-62s FAIL  %s\n' "$1" "${2:-}"; }
 
-cleanup() { [ -n "${PID:-}" ] && kill -TERM "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; rm -rf "$TMP"; }
+cleanup() { [ -n "${PID:-}" ] && kill -TERM "$PID" 2>/dev/null; [ -n "${PID:-}" ] && wait "$PID" 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
 
 echo "== sensor & integration status surface =="
@@ -40,8 +50,10 @@ cat > "$TMP/creds.json" <<'CREDS'
 CREDS
 chmod 600 "$TMP/creds.json"
 
-"$BRIDGE" --http "$REPO/config/homeguardian.demo.json" "$TMP/creds.json" \
-          --port "$PORT" --token "dashboard-verify-token" > "$TMP/bridge.log" 2>&1 &
+printf '%s' "dashboard-verify-token" > "$TMP/tok.txt"
+chmod 600 "$TMP/tok.txt"
+HG_HTTP_TOKEN="dashboard-verify-token" "$BRIDGE" --http "$REPO/config/homeguardian.demo.json" "$TMP/creds.json" \
+          --port "$PORT" --token-file "$TMP/tok.txt" > "$TMP/bridge.log" 2>&1 &
 PID=$!
 
 for _ in $(seq 1 40); do
@@ -55,8 +67,8 @@ curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || { echo "bridge d
 printf '%s' '{"token":"oops"}' > "$TMP/bad_creds.json"
 chmod 600 "$TMP/bad_creds.json"
 BADPORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
-timeout 20 "$BRIDGE" --http "$REPO/config/homeguardian.demo.json" "$TMP/bad_creds.json" \
-        --port "$BADPORT" --token "dashboard-verify-token" > "$TMP/bad.log" 2>&1
+HG_HTTP_TOKEN="dashboard-verify-token" timeout 20 "$BRIDGE" --http "$REPO/config/homeguardian.demo.json" "$TMP/bad_creds.json" \
+        --port "$BADPORT" --token-file "$TMP/tok.txt" > "$TMP/bad.log" 2>&1
 BADRC=$?
 if [ "$BADRC" -ne 0 ] && [ "$BADRC" -ne 124 ]; then
   ok "malformed credential table exits non-zero ($BADRC) instead of aborting"

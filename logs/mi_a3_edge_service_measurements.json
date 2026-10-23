@@ -1,0 +1,27 @@
+{
+  "window_s": 61.02240610122681,
+  "app_pid": 9266,
+  "app_cpu_ms": 100.0,
+  "app_cpu_pct_one_core": 0.16387423307123508,
+  "mcp_probes": 3,
+  "app_cpu_ms_per_probe": 33.333333333333336,
+  "rss_kb_min": 89756,
+  "rss_kb_max": 91152,
+  "rss_kb_last": 91152,
+  "rss_kb_peak_vmhwm": "91152",
+  "battery_temp_c_before": 34.2,
+  "battery_temp_c_after": 34.0,
+  "battery_level_before": "96",
+  "battery_level_after": "96",
+  "skin_therm_c_before": 38.355,
+  "skin_therm_c_after": 37.879,
+  "hottest_c_before": 47.5,
+  "hottest_c_after": 46.9,
+  "memavailable_kb_before": 3319180,
+  "memavailable_kb_after": 3276392,
+  "probe_latency_ms": {
+    "min": 19,
+    "p50": 29.0,
+    "max": 46
+  }
+}

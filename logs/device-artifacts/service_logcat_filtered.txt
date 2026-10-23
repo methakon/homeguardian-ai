@@ -1,0 +1,67 @@
+10-17 04:29:06.372  1629  1916 I ActivityManager: Start proc 3535:org.homeguardian.edgeservice/u0a226 for null
+10-17 04:29:25.282  1629  4320 I ActivityManager: Killing 3535:org.homeguardian.edgeservice/u0a226 (adj 995): empty #31
+10-17 04:30:05.946  1629  1916 I ActivityManager: Start proc 9266:org.homeguardian.edgeservice/u0a226 for broadcast {org.homeguardian.edgeservice/org.homeguardian.edgeservice.BootReceiver}
+10-17 04:30:06.152  1629  3328 W ActivityManager: Foreground service started from background can not have location/camera/microphone access: service org.homeguardian.edgeservice/.EdgeService
+10-17 04:30:06.165  1629  7845 W ActivityManager: Foreground service started from background can not have location/camera/microphone access: service org.homeguardian.edgeservice/.EdgeService
+10-17 04:30:06.400  1629  1629 D NotificationService: 0|org.homeguardian.edgeservice|4711|null|10226: granting content://settings/system/notification_sound
+10-17 04:30:06.401  1629  1629 D NotificationService: 0|org.homeguardian.edgeservice|4711|null|10226: granting content://settings/system/notification_sound
+10-17 04:30:26.246  9266  9298 I HGEdge  : PROBE PROBE_OK 46ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:30:26.477  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:30:26.484  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:30:46.300  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:31:06.349  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:31:26.396  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:31:46.439  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:31:46.651  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:31:46.652  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:32:06.496  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:32:06.712  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:32:06.713  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:32:26.555  9266  9298 I HGEdge  : PROBE PROBE_OK 29ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:32:26.770  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:32:26.771  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:32:46.614  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:32:46.830  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:32:46.833  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:33:06.675  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:33:06.907  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:33:06.909  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:33:26.751  9266  9298 I HGEdge  : PROBE PROBE_OK 29ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:33:26.967  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:33:26.969  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:33:46.813  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:33:47.031  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:33:47.032  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:34:06.869  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:34:07.086  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:34:07.087  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:34:26.920  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:34:27.133  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:34:27.135  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:34:46.965  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:34:47.179  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:34:47.180  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:35:07.022  9266  9298 I HGEdge  : PROBE PROBE_OK 29ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:35:07.236  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:35:07.237  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:35:27.073  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:35:27.288  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:35:27.290  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:35:47.129  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:35:47.344  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:35:47.345  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:36:07.177  9266  9298 I HGEdge  : PROBE PROBE_OK 28ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:36:07.391  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:36:07.392  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:36:27.225  9266  9298 I HGEdge  : PROBE PROBE_OK 19ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:36:27.437  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:36:27.438  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:36:47.283  9266  9298 I HGEdge  : PROBE PROBE_OK 30ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:36:47.497  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:36:47.499  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:37:07.322  9266  9298 I HGEdge  : PROBE PROBE_OK 31ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:37:07.536  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:37:07.538  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:37:27.379  9266  9298 I HGEdge  : PROBE PROBE_OK 29ms proto=2025-11-25 tools=get_homeguardian_status,get_alert_summary status={"capture_enabled":false,"read_only":true,"state":"Running"}
+10-17 04:37:27.592  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 04:37:27.594  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226

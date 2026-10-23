@@ -125,8 +125,8 @@ hub's own shutdown path is the one verified in v21 (clean exit on SIGTERM).
 
 #### Why nothing is published
 
-The handwritten HTTP server in this project is deliberately loopback-only and
-unauthenticated by design; it is not a hardened network service. Publishing it
+The handwritten HTTP server in this project is deliberately loopback-only
+(reads are unauthenticated by design for local diagnostics; state-changing endpoints require authenticated session and CSRF token); it is not an open network service. Publishing it
 would expose it to the LAN, so D-01 does not. A genuinely network-facing
 boundary is milestone **D-03** (authenticated, encrypted transport with pairing,
 revocation and replay protection) and will be reviewed and measured on its own.
@@ -186,9 +186,10 @@ Everything the dashboard shows comes from the real backend inside the container:
 ```bash
 docker compose exec hub bash -lc 'cat < /dev/null > /dev/tcp/127.0.0.1/8080'   # liveness
 docker compose exec hub /usr/local/bin/hg-healthcheck && echo healthy
-# drive the real pipeline (synthetic simulator in D-01) and persist alerts:
+# query the real pipeline status:
 docker compose exec hub bash -lc 'exec 3<>/dev/tcp/127.0.0.1/8080;
-  printf "GET /api/run-scenario?scenario=synthetic-critical-impact HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3; cat <&3 | tail -1'
+  printf "GET /api/status HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3; cat <&3 | tail -1'
+# Note: /api/run-scenario requires authenticated POST with CSRF (see HG-SEC-01)
 ```
 
 `SIMULATION MODE — synthetic data` is the honest banner for D-01: the container
@@ -595,11 +596,11 @@ HomeGuardian is not to be exposed to the public internet. The deployment publish
 host firewall should restrict it to the LAN or, better, to the specific devices:
 
 ```bash
-# Restrict the ingress to the home subnet (example: 192.168.1.0/24 on enp3s0)
-sudo nft add rule inet filter input tcp dport 8443 ip saddr != 192.168.1.0/24 drop
+# Restrict the ingress to the home subnet (example: 10.20.30.0/24 on enp3s0)
+sudo nft add rule inet filter input tcp dport 8443 ip saddr != 10.20.30.0/24 drop
 
 # Or with ufw: allow only from the LAN.
-sudo ufw allow from 192.168.1.0/24 to any port 8443 proto tcp
+sudo ufw allow from 10.20.30.0/24 to any port 8443 proto tcp
 sudo ufw deny 8443/tcp
 
 # Do NOT forward 8443 from the WAN. There is no public-endpoint mode, no ACME
@@ -866,7 +867,7 @@ What the probe proves, and what it deliberately does not:
 Example output (live, from the healthy container's own health log):
 
     hg_ingress_probe: OK endpoint=127.0.0.1:8443 tls=TLSv1.3 server=CN=homeguardian-hub
-      san=DNS:ingress,DNS:localhost,IP:192.168.1.6 server_cert_verified=yes
+      san=DNS:ingress,DNS:localhost,IP:10.20.30.6 server_cert_verified=yes
       mutual_tls_demanded=yes device_auth=NOT_PERFORMED
       detail=server identity verified; the server demanded a client certificate (tlsv13 alert certificate required)
 

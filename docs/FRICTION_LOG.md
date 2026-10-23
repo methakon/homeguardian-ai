@@ -2,7 +2,7 @@
 
 **Project:** HomeGuardian AI
 **Hackathon:** Amazon Developer Hackathon 2026
-**Last updated:** 2026-10-10
+**Last updated:** 2026-10-17
 
 This log records only verified friction encountered during development.
 Each incident includes the date, steps, expected vs actual result, severity,
@@ -592,11 +592,11 @@ verify the documented build reproduces; fix in-scope issues.
 - **Fixed stale README.md:** it claimed "Phase A — no application code" and a
   nonexistent `src/` layout (`sensors/`, `inference/`, `pipeline/`, `server/`,
   `web/`, `scripts/`, top-level `main.cpp` misplacement), and listed `libcurl`
-  and `MCP` as implemented. Corrected to the real layout, added the
+  and `MCP` as functional. Corrected to the real layout, added the
   network-once dependency note, tag-filter test commands, and an explicit
-  "no real capture" status. Alexa/MCP demoted to optional.
+  "no real capture" status. Simulated Alexa/MCP demoted to optional.
 - **Fixed hardcoded absolute CMake include paths**
-  (`/home/swarna-sekhar-dhar/...`) → `${CMAKE_SOURCE_DIR}` in the test target.
+  (`<DEVELOPER_HOME>/...`) → `${CMAKE_SOURCE_DIR}` in the test target.
   Portable now; verified by the fresh reproduction.
 - **Hardened `.gitignore`:** added `hg_*_build/` and `*.db`, `*.db-wal`,
   `*.db-shm`, `test_*.db` (no tracked `.db` files exist; verified).
@@ -2469,7 +2469,7 @@ capability killer. Check the ORDER of gates, not just their conditions.
 
 ## Incident 35 — A commit hash in the brief that does not exist
 
-**Symptom:** the D-03 brief cited D-02 as `3c8ff46eabff45abc59ff6ded297fea10fc1bb`. That is 39 hex
+**Symptom:** the D-03 brief cited D-02 as `3c8ff46eabff45abc59ff6ded297fea10fc1bb` (invalid typo; does not exist). That is 39 hex
 characters; the real commit is `3c8ff4608eabff45abc59ff6ded297fea10fc1bb`. The abbreviated form does
 not resolve in the object store.
 
@@ -3069,4 +3069,227 @@ Two lessons worth keeping:
    compose edit added the health-check knob as a new `environment:` block, but the ingress service
    already had one (config + data paths). The YAML parse check caught it before the build; the knob
    now sits in the existing block. **Parse the file you edited, and assert the keys you expect.**
+
+---
+
+## Incident 73: Gateway crashes from method signature mismatch and unhandled adapter exceptions (HG-SEC-04)
+
+**Date:** 2026-10-17
+**Task attempted:** Independent security audit verification on release candidate `d19d230`.
+
+**Steps:**
+1. Execute WebRTC touch keepalive (`POST /api/webrtc/touch`).
+2. Query device details (`GET /api/devices/:id`) and view token when the authoritative registry CLI binary is unavailable or returns an error.
+
+**Expected result:** Graceful validation error response (HTTP 401/403/500) without process termination.
+
+**Actual result:**
+1. `server.js:645` called nonexistent `sessionManager.validateCsrfToken()` instead of `verifyCsrf()` in `auth.js`, raising an uncaught `TypeError` that crashed the Node gateway process.
+2. `server.js:458,523` called `getDevice()` without wrapping the call in a `try/catch` block, allowing uncaught exceptions from `device_adapter.js` to terminate the Node process.
+
+**Severity:** Critical (P0) — Gateway denial of service.
+
+**Fix:** Implemented `sessionManager.validateCsrfToken(sessionId, token)` in `auth.js` delegating to `verifyCsrf()`, and wrapped device adapter calls in `try/catch` responding with controlled HTTP 500 (`authoritative_registry_cli_unavailable`) without fabricating hardware state.
+
+**Lesson:** Every external adapter and auth validation call in route handlers must have local error boundaries returning controlled HTTP responses. Never allow an unhandled rejection to bubble up and crash a production gateway.
+
+---
+
+## Incident 74: Positional argument shift in Device Registry CLI and test suite state pollution
+
+**Date:** 2026-10-17
+**Task attempted:** Run automated test suites and CLI list command.
+
+**Actual result:**
+1. In `src/main_device_registry_cli.cpp`, the variable `command` was initialized to `"list"`. When an operator or script explicitly passed `list` on argv, the argument parser mistakenly treated `"list"` as a subcommand parameter and pushed it into `args`, causing positional argument shift and rejecting valid invocations.
+2. In `tests/core/test_logger.cpp`, an early test invoked `chdir(temp_dir)` without restoring the original working directory upon test completion. Subsequent tests attempting to open relative files or initialize default databases failed unpredictably.
+
+**Fix:** Initialized `command` to empty string and set it from the first positional token only; replaced process-global `chdir()` in tests with PID-specific isolated temporary paths via `HG_LOG_PATH`.
+
+**Lesson:** Subcommand CLI parsers must distinguish between default subcommand selection and explicit positional tokens. Unit tests must NEVER mutate process-global state like the current working directory (`chdir`).
+
+---
+
+## Incident 75: Five different things are called "Alexa+" and only one of them is permitted to a hackathon entrant
+
+**Date:** 2026-10-17 (route research 2026-10-10 → 2026-10-17; re-verified 2026-10-17)
+**Task attempted:** Choose the Alexa+ track route for the submission and write a claim that is true.
+
+**Steps:**
+1. Read the official hackathon FAQ and Rules pages (`https://amazonappdev2026.devpost.com/details/faqs`, `https://amazonappdev2026.devpost.com/rules`).
+2. Attempt to reach the Alexa+ Add-on developer tooling: Category SDK, MCP Toolkit, CLI, Web Simulator (`developer.amazon.com/alexaplus/`).
+3. Enumerate the distinct things the repository's own docs, and the ecosystem, call "Alexa+ support".
+4. Implement and test the permitted path end to end at the release candidate.
+
+**Expected result:** Either the gated Alexa+ developer tools are obtainable for the submission, or a clearly documented alternative is permitted.
+
+**Actual result:** **Five unrelated things share the name, and only one is available to a participant:**
+1. **Alexa+ *self-hosted MCP development*** — writing your own MCP server to the open specification. **Permitted and required** by the Rules for this track.
+2. **Alexa+ *partner-only integration tools*** — Category SDK, MCP Toolkit, CLI, Web Simulator, "Alexa+ for Builders". **Not obtainable.**
+3. **Conventional Alexa *Smart Home* camera interfaces** — the classic Smart Home skill/device model. A different API surface, unrelated to the MVP track, and not what the Rules ask for here.
+4. **Alexa Built-in devices** — AVS-based hardware integration; already recorded as deprecated for this project in **Incident 12**, and not an entrant-accessible route either.
+5. **An Alexa-compatible Docker/web simulation** — a front end a team builds itself. **Permitted**, and the FAQ explicitly blesses it.
+
+The FAQ answers the access question outright, and the answer is no:
+
+> **Question:** Will hackathon participants get access to the gated Alexa+ developer tools (Category SDK, MCP Toolkit, CLI, or Web Simulator)?
+> **Answer:** No. Amazon's Alexa+ Add-on developer tools (Category SDK, MCP Toolkit, CLI, and Web Simulator) are in preview and available to select partners only - there is currently no way for hackathon participants to apply for or gain access. This is called out on Amazon's add-on docs home page, though it's sometimes missing from individual setup-guide pages, which has caused some confusion. **You do not need these tools for your submission:** build a self-hosted MCP server (or Agent Skill) per the Official Rules, and demo it via your own web-based simulator or front end.
+
+and it also settles what "a demo" has to be:
+
+> **Question:** For the Alexa+ track, can I demo my self-hosted MCP server through a web page that acts as a real MCP client, instead of a device?
+> **Answer:** Yes. A web page that acts as an actual MCP client (sending initialize, tools-list, and tools-call requests over Streamable HTTP) satisfies the requirement - this is the simulated-experience path the Resources page points to, since there is no way for any participant to connect a self-hosted server to a real Alexa+ device.
+
+The Rules page agrees on the deliverable: *"Alexa+: Build a working Agent Skill or a self-hosted MCP server, implementing MCP spec version (minimum acceptable version is 2025-11-25). Optionally, developers can simulate the Alexa+ experience in a web app using their own agentic tools."*
+
+The practical damage is that the FAQ's own note — *"sometimes missing from individual setup-guide pages, which has caused some confusion"* — is exactly the trap: Amazon's per-tool setup guides read as though the tooling is one click away, while the gate is only stated on two pages. A participant who believes the guides can spend days pursuing an access path that does not exist for them.
+
+**Severity:** Important — not a security defect, but a route-selection and schedule risk, and a claim-integrity risk if the team writes the submission as though the tools were used.
+
+**Workaround:** Take the explicitly permitted route and make the claim narrow enough to be verifiable:
+1. Implement a **self-hosted MCP server** — MCP **2025-11-25**, **Streamable HTTP** — and test it end to end.
+2. Build the **project's own web front end**, label it plainly as a **simulated Alexa-style experience**, and have it act as a **genuine MCP client** (initialize → tools/list → tools/call), which is what the FAQ says satisfies the requirement.
+3. **Never claim** an Echo device, an Alexa+ runtime, Amazon account linking, or any Amazon certification. Say what is real (the MCP server, its protocol compliance, its test results) and what is simulated (the voice-style front end, all household observations).
+4. Record the external limitation in the submission itself so a judge reads it as a known constraint rather than as an omission.
+
+**Actionable suggestion:**
+- *For Amazon:* put the preview/partner-only status of the Add-on tooling on **every** tool's setup page, and publish one table that separates self-hosted MCP, partner-only tooling, Smart Home skills, Alexa Built-in and self-built simulation.
+- *For entrants:* decide the route in the first hour from the FAQ and Rules only — not from individual setup guides — and budget zero days for gated-tool access.
+
+**Evidence:**
+- FAQ and Rules pages retrieved 2026-10-17 with HTTP **200**; quoted verbatim above (`https://amazonappdev2026.devpost.com/details/faqs`, `https://amazonappdev2026.devpost.com/rules`).
+- Implemented MCP server: `src/mcp/McpProtocol.{h,cpp}`, `McpTools.{h,cpp}`, `McpHttpServer.{h,cpp}`, `src/main_mcp_server.cpp`; documented in `docs/MCP_SERVER.md`.
+- **Verified at candidate commit `347551558fc3c4f5deb11b2c566b86ecc6e59db4`**:
+  - `bash scripts/verify_mcp.sh` → **71 passed, 0 failed** (real `hg_mcp_server` binary over loopback: protocol negotiation, session rules, Origin validation, auth, error taxonomy, request bounds, SSE-only client, DELETE teardown, clean SIGTERM shutdown).
+  - `node web_mcp/test_client.js` → **26 passed, 0 failed**.
+  - `node web_mcp/test_devices_dashboard.js` → **154 passed, 0 failed**.
+- Distinct from **Incident 12** (AVS developer tools deprecated for Alexa Built-in — a *different* gate) and from **Incident 28** (the earlier honest-README correction): this entry is about which of five same-named routes is actually permitted.
+
+**Status:** **Resolved for this submission** — permitted route taken, implemented, and tested at the candidate commit; the underlying external restriction (preview and partner-only tooling) stands and is not ours to fix.
+
+---
+
+## Incident 76: One camera's ONVIF toggle served anonymous live video; the other camera has no standard interface at all
+
+**Date:** 2026-10-17
+**Task attempted:** Verify real hardware integration with local budget CCTV cameras (V380/Macro-video).
+
+**Actual result:**
+1. Camera 1's ONVIF toggle opened `tcp/554` and `tcp/8899` without any authentication: anonymous DESCRIBE returned SDP, and PLAY delivered RTP video packets unconditionally. ONVIF disclosed device MAC, IP, admin accounts, and video profiles.
+2. Camera 2 had no standard ONVIF/RTSP interfaces listening; only proprietary vendor ports (`8800`/`9800`) were active, with unverified authentication mechanisms.
+
+**Workaround:** Separate the *security* problem from the *capability* problem:
+1. **Camera 1 exposure was closed by disabling the ONVIF toggle** — `tcp/554` and `tcp/8899` are closed; only vendor ports remain.
+2. **Never expose unauthenticated camera streams to trusted networks.** Route camera media through isolated, security-aware adapters and network-independent site connectors that dial out as the single authorized client (`docs/HG_NET_ARCH_01_NETWORK_INDEPENDENT_CAMERA_INTEGRATION.md`).
+3. **Timestamp integrity:** Camera 1's clock was measured **9,001.5 s behind UTC**; timestamps must always be assigned by the receiving host.
+
+**Evidence:**
+- Interface classification script: `scripts/v380_security_check.sh`, `scripts/v380_probe.sh`.
+- Post-closure verification: `RTSP/554 DISABLED`, `ONVIF/8899 DISABLED`.
+
+**Status:** Camera 1 exposure CLOSED and verified. Hardware integration remains unbuilt; both cameras remain treated as unverified/offline in accordance with judge build hardware protections.
+
+---
+
+## Incident 77: Three documented commands did not produce what the docs then claimed — found by running them at the release candidate
+
+**Date:** 2026-10-17
+**Task attempted:** Independently verify the release candidate's headline claims before a judge reads them.
+
+**Steps:**
+1. Create a clean worktree at the candidate route and configure/build it fresh.
+2. Follow the README's own build command verbatim.
+3. Run the test commands the submission documents quote numbers for.
+4. Check each resulting artifact against the claim made about it.
+
+**Expected result:** The documented commands build the documented artifacts, and the documented test commands reproduce the documented numbers.
+
+**Actual result:** Three mismatches in commands:
+1. **The README's build command omitted the MCP target it advertises.** The README section read `make -j4 homeguardian homeguardian_tests hg_alexa_bridge` — omitting `hg_mcp_server` and `hg_device_registry_cli`.
+2. **No documented step installed the Node dependencies the MCP web gateway needs.** Root `package.json` declares `werift` and `ws`. On a clean checkout, running `node web_mcp/test_client.js` failed with `Cannot find module 'werift'`.
+3. **`docs/MCP_SERVER.md` pointed at a pre-integration branch.**
+
+**Severity:** Important — a judge or independent verifier following the README could not reproduce the advertised MCP capability.
+
+**Fix:** Updated `README.md` build commands to include `hg_mcp_server` and `hg_device_registry_cli`; added one-time `npm install` prerequisite note; documented exact verification commands and counts; updated `docs/MCP_SERVER.md`.
+
+**Evidence:**
+- Clean clone verification on candidate `347551558fc3c4f5deb11b2c566b86ecc6e59db4`:
+  - `bash scripts/verify_mcp.sh` → **71 passed / 0 failed**
+  - `node web_mcp/test_client.js` → **26 passed / 0 failed**
+  - `node web_mcp/test_devices_dashboard.js` → **154 passed / 0 failed**
+
+**Status:** Resolved and verified in candidate `347551558fc3c4f5deb11b2c566b86ecc6e59db4`.
+
+---
+
+## Incident 78: Physical camera credential provisioning gap, recovery authorization bypass, and stale consent retention (HG-SEC-06 / HG-SEC-06B / HG-SEC-06C)
+
+**Date:** 2026-10-17
+**Task attempted:** Complete independent security remediation of physical camera authentication and administrative lifecycle.
+
+**Steps:**
+1. Security audit of `main_device_registry_cli.cpp` revealed that default seeded physical devices (`camera-001`) initially had hardcoded seed secrets, and once removed, were unprovisioned with `auth_secret == ""`.
+2. Any unauthenticated local caller running `hg_device_registry_cli pair '{"device_id": "camera-001"}'` or enrolling a new device ID could claim the identity and receive freshly generated CSPRNG secrets because `is_already_enrolled` evaluated to false.
+3. In recovery mode, caller-controlled JSON containing `"operator_recovery": true` bypassed proof of existing credentials without independent verification of operator authority.
+4. When devices were re-paired or recovered, prior viewing grants and consent were silently retained (`existing->consent_granted`), violating privacy boundaries.
+5. Operator credentials passed on argv (`--operator-secret`) were exposed to system process listings (`ps aux`).
+
+**Expected result:** Initial enrollment requires out-of-band operator authorization; caller JSON booleans cannot authorize recovery; re-pairing wipes stale viewing grants and resets liveness; operator secret files enforce 0600 permissions and process memory is scrubbed.
+
+**Actual result:** Without strict lifecycle gates, unprovisioned cameras could be claimed by local callers, recovery was vulnerable to caller boolean spoofing, and old consent survived device re-pairing.
+
+**Severity:** Critical (P0) — Security boundary failure on peripheral identity management.
+
+**Fix:**
+1. Enforced Gate 3 on `hg_device_registry_cli pair`: initial enrollment or claiming unprovisioned/unpaired devices strictly requires `--operator-auth` and verified operator credentials (`HG_OPERATOR_SECRET` / `--operator-secret-file` / stdin).
+2. Enforced Gate 1 on `pair`: revoked devices can only be recovered via `--operator-recovery` with trusted operator secret.
+3. In `DeviceRegistry.cpp` and `main_device_registry_cli.cpp`, re-pairing and recovery immediately wipe stale consent (`consent_granted = false`, `capture_enabled = false`) and reset online state to offline (`online = false`, `last_heartbeat_ms = 0`).
+4. Enforced POSIX mode `0600` or `0400` on `--operator-secret-file`, scrubbed argv in-place via `std::fill_n`, and supported `--operator-secret-stdin`.
+
+**Evidence:**
+- Validated on candidate commit `347551558fc3c4f5deb11b2c566b86ecc6e59db4`:
+  - `node web_mcp/test_devices_dashboard.js` → **154 passed / 0 failed** (including negative tests for unauthenticated claim rejection, insecure 0644 secret file rejection, consent invalidation verification, and revoked device reclaim rejection).
+  - `homeguardian_tests` → **38,926 assertions across 526 test cases passed**.
+  - `scripts/verify_mcp.sh` → **71 passed / 0 failed**.
+  - `scripts/test_hg_sec_01_independent.sh` → **15 passed / 0 failed**.
+
+**Status:** Resolved in candidate commit `347551558fc3c4f5deb11b2c566b86ecc6e59db4`.
+
+---
+
+## Incident 79: Operator authorization trust root flaw — caller-controlled environment variables, fallback files, and symlink vulnerabilities (HG-SEC-06D)
+
+**Date:** 2026-10-17
+**Task attempted:** Complete independent security remediation of operator authentication trust boundary (GitHub Issue #3).
+
+**Steps:**
+1. Independent source review of `main_device_registry_cli.cpp` revealed that `expected_secret` and `presented_secret` both fell back to reading `std::getenv("HG_OPERATOR_SECRET")` / `std::getenv("HG_OPERATOR_PASSWORD")`.
+2. An untrusted caller executing `hg_device_registry_cli` could set `HG_OPERATOR_SECRET=evil` in the process environment; the CLI simultaneously adopted `evil` as expected secret and presented secret, allowing credentials to self-authenticate.
+3. Fallback file `/tmp/hg_operator_password.secret` in world-writable `/tmp` allowed local unprivileged users to pre-create authority files with their own secrets.
+4. Secret file validation used `::stat` (which follows symlinks) without checking file ownership (`st.st_uid`), regular file status (`S_ISREG`), or symlink prohibited invariants (`!S_ISLNK`).
+
+**Expected result:** Trusted expected credentials are anchored in an authority controlled independently of untrusted callers; environment variables and stdin cannot turn untrusted inputs into authority; secret files reject symlinks, require 0600/0400 permissions, and enforce process user ownership.
+
+**Actual result:** Without strict authority anchoring, untrusted callers could define authority through their own process environment or world-writable `/tmp` files.
+
+**Severity:** Critical (P0) — Security boundary trust root flaw in peripheral identity provisioning.
+
+**Fix:**
+1. Anchored operator authority strictly in an independent secure authority file: `operator.secret` in the registry directory (or explicit `--operator-authority-file`).
+2. Eliminated `expected_secret` derivation from `std::getenv` — caller environment variables can only present credentials (`presented_secret`), never define expected authority.
+3. Eliminated all `/tmp` fallback file paths.
+4. Implemented `read_secure_secret_file()`: uses `::lstat`, strictly rejects symlinks (`S_ISLNK`), enforces regular files (`S_ISREG`), validates file ownership against process effective UID (`st.st_uid == ::geteuid() || st.st_uid == 0`), and enforces mode `0600` or `0400`.
+5. Updated `web_mcp/auth.js` to automatically provision `operator.secret` in `config/` with mode `0600` on startup.
+
+**Evidence:**
+- Validated on branch `fix/hg-sec-06d-trust-root`:
+  - `node web_mcp/test_devices_dashboard.js` → **158 passed / 0 failed** (including 4 new negative tests verifying caller env rejection, missing authority fail-closed, symlink rejection, and `/tmp` pre-created fallback rejection).
+  - `scripts/verify_synthetic_mcp_demo.sh` → **184 passed / 0 failed** (158 dashboard + 26 MCP client).
+  - `node web_mcp/test_client.js` → **26 passed / 0 failed**.
+  - `scripts/verify_mcp.sh` → **71 passed / 0 failed**.
+  - `scripts/test_hg_sec_01_independent.sh` → **15 passed / 0 failed**.
+  - `homeguardian_tests` → **38,926 assertions across 526 test cases passed**.
+
+**Status:** Resolved in branch `fix/hg-sec-06d-trust-root`.
 

@@ -2,7 +2,10 @@
 
 #include <chrono>
 #include <cstdio>
+#include <fcntl.h>
 #include <fstream>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <unordered_set>
 
 #include <nlohmann/json.hpp>
@@ -31,6 +34,26 @@ bool credential_id_shape_ok(const std::string& credential_id) {
     return true;
 }
 
+bool is_allowlisted_device_type(std::string_view type) {
+    return type == "camera" ||
+           type == "microphone" ||
+           type == "speaker" ||
+           type == "sensor" ||
+           type == "node" ||
+           type == "simulator" ||
+           type == "android" ||
+           type == "hub-fixture";
+}
+
+bool constant_time_equals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    unsigned char result = 0;
+    for (size_t i = 0; i < a.size(); ++i) {
+        result |= static_cast<unsigned char>(a[i] ^ b[i]);
+    }
+    return result == 0;
+}
+
 bool device_shape_ok(const DeviceRegistry::Device& device, size_t max_capabilities,
                      std::string* reason) {
     auto fail = [reason](const std::string& why) {
@@ -41,6 +64,16 @@ bool device_shape_ok(const DeviceRegistry::Device& device, size_t max_capabiliti
     if (!bounded(device.device_id, kMaxIdChars)) return fail("device_id too long");
     if (!bounded(device.display_name, kMaxNameChars)) return fail("display_name too long");
     if (!bounded(device.device_type, kMaxTypeChars)) return fail("device_type too long");
+    if (device.device_type.empty() || !is_allowlisted_device_type(device.device_type)) {
+        return fail("unrecognized or invalid device_type");
+    }
+    if (device.device_type == "simulator" && device.device_id != DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId) {
+        return fail("device_type simulator is restricted to authoritative provider " +
+                    std::string(DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId));
+    }
+    if (device.device_id == DeviceRegistry::Device::kAuthoritativeSyntheticDeviceId && device.device_type != "simulator") {
+        return fail("authoritative synthetic device must have device_type simulator");
+    }
     if (!bounded(device.revocation_note, kMaxNoteChars)) return fail("revocation_note too long");
     if (!bounded(device.consent_subject, kMaxIdChars)) return fail("consent_subject too long");
     if (!bounded(device.consent_purpose, kMaxTypeChars)) return fail("consent_purpose too long");
@@ -60,6 +93,7 @@ nlohmann::json to_json(const DeviceRegistry::Device& d) {
     j["display_name"] = d.display_name;
     j["device_type"] = d.device_type;
     j["credential_id"] = d.credential_id;
+    if (!d.auth_secret.empty()) j["auth_secret"] = d.auth_secret;
     j["paired"] = d.paired;
     j["revoked"] = d.revoked;
     if (!d.revocation_note.empty()) j["revocation_note"] = d.revocation_note;
@@ -75,6 +109,7 @@ nlohmann::json to_json(const DeviceRegistry::Device& d) {
     j["consent_purpose"] = d.consent_purpose;
     j["consent_updated_ms"] = d.consent_updated_ms;
     j["capture_enabled"] = d.capture_enabled;
+    j["is_synthetic"] = d.is_synthetic;
     return j;
 }
 
@@ -125,8 +160,9 @@ bool DeviceRegistry::load(const std::string& path, std::string* reason) {
         Device d;
         d.device_id = entry.value("device_id", std::string());
         d.display_name = entry.value("display_name", std::string());
-        d.device_type = entry.value("device_type", std::string());
+        d.device_type = entry.value("device_type", std::string("sensor"));
         d.credential_id = entry.value("credential_id", std::string());
+        d.auth_secret = entry.value("auth_secret", std::string());
         d.paired = entry.value("paired", false);
         d.revoked = entry.value("revoked", false);
         d.revocation_note = entry.value("revocation_note", std::string());
@@ -135,14 +171,14 @@ bool DeviceRegistry::load(const std::string& path, std::string* reason) {
         d.consent_granted = entry.value("consent_granted", false);
         d.consent_subject = entry.value("consent_subject", std::string());
         d.consent_purpose = entry.value("consent_purpose", std::string());
-        // Runtime state is deliberately NOT restored from a file the operator can
-        // edit: a restart must not resurrect a live-looking online flag or a
-        // sequence watermark. Both are reset and re-learned from the wire.
-        d.last_heartbeat_ms = 0;
-        d.last_sequence = 0;
-        d.last_observation_at_ms = 0;
-        d.online = false;
-        d.consent_updated_ms = 0;
+        // Restore persisted runtime metrics and replay sequence watermark
+        d.last_heartbeat_ms = entry.value("last_heartbeat_ms", 0LL);
+        d.last_sequence = entry.value("last_sequence", 0ULL);
+        d.last_observation_at_ms = entry.value("last_observation_at_ms", 0LL);
+        d.consent_updated_ms = entry.value("consent_updated_ms", 0LL);
+        d.is_synthetic = (d.device_id == Device::kAuthoritativeSyntheticDeviceId && d.device_type == "simulator");
+        // A device is online ONLY if persisted online=true, paired, unrevoked, and authenticated
+        d.online = entry.value("online", false) && d.paired && !d.revoked && !d.credential_id.empty();
         // Capture is OFF unless the registry explicitly authorizes it AND the
         // device is paired AND consent is recorded. An absent key, an unpaired
         // device or a consentless device is always false: the fail-closed default
@@ -185,15 +221,31 @@ bool DeviceRegistry::save(const std::string& path, std::string* reason) const {
             std::chrono::system_clock::now().time_since_epoch())
             .count());
 
+    // Ensure parent directory permissions (0700) on POSIX platforms
+    size_t last_slash = path.find_last_of("/\\");
+    if (last_slash != std::string::npos && last_slash > 0) {
+        std::string parent_dir = path.substr(0, last_slash);
+        struct stat st{};
+        if (::stat(parent_dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+            ::chmod(parent_dir.c_str(), S_IRWXU);
+        }
+    }
+
     // Write-then-rename so a crash cannot leave a truncated registry.
     const std::string temp = path + ".tmp";
     {
-        std::ofstream file(temp, std::ios::binary | std::ios::trunc);
-        if (!file) return fail("registry temp file is not writable");
-        file << out.dump(2) << "\n";
-        if (!file.good()) return fail("registry write failed");
+        // Atomically create temp file with 0600 permissions to avoid any window of public readability
+        int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+        if (fd < 0) return fail("registry temp file is not writable");
+        ::chmod(temp.c_str(), S_IRUSR | S_IWUSR);
+        std::string content = out.dump(2) + "\n";
+        ssize_t written = ::write(fd, content.data(), content.size());
+        ::close(fd);
+        if (written != static_cast<ssize_t>(content.size())) return fail("registry write failed");
     }
+    ::chmod(temp.c_str(), S_IRUSR | S_IWUSR);
     if (std::rename(temp.c_str(), path.c_str()) != 0) return fail("registry rename failed");
+    ::chmod(path.c_str(), S_IRUSR | S_IWUSR);
     if (reason != nullptr) reason->clear();
     return true;
 }
@@ -228,15 +280,13 @@ bool DeviceRegistry::pair(const Device& device, std::string* reason) {
     }
     Device* existing = find_mutable(device.device_id);
     if (existing != nullptr) {
-        // Re-pairing keeps the trust facts the operator set explicitly, and
-        // always clears runtime state.
-        const bool consent_granted = existing->consent_granted;
-        const std::string subject = existing->consent_subject;
-        const std::string purpose = existing->consent_purpose;
+        // Re-pairing invalidates stale viewing grants, previous consent, and all runtime liveness
         *existing = device;
-        existing->consent_granted = consent_granted;
-        existing->consent_subject = subject;
-        existing->consent_purpose = purpose;
+        existing->is_synthetic = (existing->device_id == Device::kAuthoritativeSyntheticDeviceId && existing->device_type == "simulator");
+        existing->consent_granted = device.consent_granted;
+        existing->consent_subject = device.consent_subject;
+        existing->consent_purpose = device.consent_purpose;
+        existing->capture_enabled = device.capture_enabled && existing->consent_granted;
         existing->last_sequence = 0;
         existing->last_observation_at_ms = 0;
         existing->last_heartbeat_ms = 0;
@@ -248,7 +298,9 @@ bool DeviceRegistry::pair(const Device& device, std::string* reason) {
         if (reason != nullptr) *reason = "registry is full";
         return false;
     }
-    devices_.push_back(device);
+    Device to_insert = device;
+    to_insert.is_synthetic = (to_insert.device_id == Device::kAuthoritativeSyntheticDeviceId && to_insert.device_type == "simulator");
+    devices_.push_back(to_insert);
     if (reason != nullptr) reason->clear();
     return true;
 }
@@ -257,25 +309,32 @@ bool DeviceRegistry::unpair(const std::string& device_id) {
     Device* d = find_mutable(device_id);
     if (d == nullptr) return false;
     d->paired = false;
+    d->auth_secret.clear();
+    d->credential_id.clear();
     d->consent_granted = false;
     d->capture_enabled = false;
     d->online = false;
     d->last_sequence = 0;
     d->last_observation_at_ms = 0;
+    d->last_heartbeat_ms = 0;
     return true;
 }
 
 bool DeviceRegistry::revoke(const std::string& device_id, const std::string& note) {
     Device* d = find_mutable(device_id);
     if (d == nullptr) return false;
+    if (d->revoked) return false;  // already revoked
     d->revoked = true;
     d->revocation_note = note.size() > kMaxNoteChars ? note.substr(0, kMaxNoteChars) : note;
-    // Revocation is total: it also drops consent, capture and liveness, so no
-    // residual flag can keep a revoked device partially authorized.
+    // Revocation is total: it drops credentials, consent, capture, sequence, and liveness
+    d->auth_secret.clear();
     d->consent_granted = false;
     d->capture_enabled = false;
     d->online = false;
     d->paired = false;
+    d->last_heartbeat_ms = 0;
+    d->last_sequence = 0;
+    d->last_observation_at_ms = 0;
     return true;
 }
 
@@ -401,6 +460,11 @@ DeviceRegistry::RefreshOutcome DeviceRegistry::refresh_authorization(
             note_change(id + ": credential rebound (rotation)");
         }
 
+        const std::string secret = entry.value("auth_secret", std::string());
+        if (!secret.empty()) {
+            device->auth_secret = secret;
+        }
+
         const bool paired = entry.value("paired", false);
         const bool revoked = entry.value("revoked", false);
         const bool consent = entry.value("consent_granted", false) && !revoked;
@@ -459,7 +523,7 @@ DeviceRegistry::AuthResult DeviceRegistry::authenticate(const std::string& devic
     if (d->revoked) return AuthResult::revoked;
     if (!d->paired) return AuthResult::unpaired;
     if (d->credential_id.empty()) return AuthResult::no_credential;
-    if (d->credential_id != credential_id) return AuthResult::credential_mismatch;
+    if (!constant_time_equals(d->credential_id, credential_id)) return AuthResult::credential_mismatch;
     return AuthResult::ok;
 }
 
@@ -520,6 +584,10 @@ void DeviceRegistry::note_heartbeat(const std::string& device_id, int64_t now_ms
                                     const std::vector<std::string>& capabilities) {
     Device* d = find_mutable(device_id);
     if (d == nullptr) return;
+    if (!d->paired || d->revoked || d->credential_id.empty()) {
+        d->online = false;
+        return;
+    }
     d->last_heartbeat_ms = now_ms;
     d->online = true;
     if (!capabilities.empty() && capabilities.size() <= cfg_.max_capabilities) {
@@ -537,9 +605,10 @@ size_t DeviceRegistry::sweep_offline(int64_t now_ms) {
     size_t changed = 0;
     for (Device& d : devices_) {
         if (!d.online) continue;
-        if (now_ms - d.last_heartbeat_ms < cfg_.online_timeout_ms) continue;
-        d.online = false;
-        ++changed;
+        if (d.last_heartbeat_ms > now_ms + 5000 || (now_ms - d.last_heartbeat_ms >= cfg_.online_timeout_ms)) {
+            d.online = false;
+            ++changed;
+        }
     }
     return changed;
 }

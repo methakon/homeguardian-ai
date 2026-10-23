@@ -1,18 +1,368 @@
 # HomeGuardian AI — Status
 
-**Last updated:** 2026-10-12
+**Last updated:** 2026-10-23
+
+## Alexa Python recovery and supplied-source diagnosis — 2026-10-23
+
+The canonical voice adapter is `alexa_skill_python/`, restored on `main` in
+`0b0fde1efbf141cfc8ce9ef592afce42fccc2080`, with exported-Lambda/intent contracts in
+`8371e33de56d37e520ced9f96ae101b29c6c9e38`. Both commits were pushed to `origin/main`
+and their file blob hashes independently verified using the GitHub API. Python
+implementations were recoverable on other branches, not present in the reachable
+history of the inspected main baseline. This is missing integration, not proven
+deletion from main. The Node `alexa_skill/` prototype remains separate and unchanged.
+
+Owner-supplied source was exercised with real `boto3==1.28.78` and
+`ask-sdk-core==1.19.0`, using an explicitly synthetic backend (no AWS/backend
+requests). Both dependencies installed and passed `pip check`. Two deterministic
+source defects were reproduced for Launch, Help and Stop:
+
+- First supplied version exports `build_skill().lambda_handler` instead of
+  calling the factory. Invocation raises
+  `TypeError: SkillBuilder.lambda_handler() takes 1 positional argument but 3 were given`.
+- Second version calls the factory, but both versions' custom `_Response.build()`
+  assign a plain string to `Response.output_speech`. With the real SDK the second
+  version serializes `response.outputSpeech` as a string, not the required
+  `{type: PlainText, text: ...}` or SSML object. That is an invalid Alexa response.
+- The separately recovered historical `.reprompt()`/`.ask()` mismatch is a different
+  source defect; it is NOT present in these supplied versions. Do not attribute
+  the console failure to it without matching deployed source/logs.
+
+The canonical implementation uses the real SDK response builder and callable
+Lambda factory, validates malformed envelopes, escapes backend SSML text and
+rejects invalid counts. MCP transport initializes an authenticated session before
+the two allowlisted read-only tools, attempts authenticated teardown, bounds
+response size/timeouts and refuses redirects/proxies/non-loopback destinations.
+
+Local verification: **39 Python tests passed**, with both the canonical pinned
+SDK model (`1.43.0`) and the owner's dependency combination (which locally resolved
+SDK model `1.82.0`). Syntax compilation and dependency checks pass. Node regression:
+**77 passed, 0 failed**, using existing root `hg_build/hg_alexa_bridge` and
+`hg_build/homeguardian` binaries via `HG_BRIDGE_PATH`/`HG_APP_PATH`, not a fresh
+C++ build. An initial Node attempt failed because binaries were absent from the
+checkout's default build path; the explicit existing-binary run passed completely.
+
+**Initial deployment checkpoint (see endpoint follow-up below): BLOCKED, not accepted.** The existing configured Skill ID
+is available privately in root `.env` (`ALEXA_SKILL_ID`); it is not proof of the
+console display name or endpoint. Amazon console access reaches a sign-in wall;
+the configured AWS STS session is expired. The selected regional ARN, actual
+Lambda runtime/handler, deployed package and matching CloudWatch group remain
+unverified. No hosting, endpoint, permission, VPN or gateway change was made;
+no duplicate skill was created and no Alexa deployment/simulator pass is claimed.
+Use the existing skill only. Reauthenticate authorized console/AWS access to
+inspect its exact target before deploying; do not send secret keys or bearer tokens.
+The `utils.py` S3 helper is unused by the canonical handlers and needs no added
+S3 permissions. Alexa-cloud-to-private-C++ connectivity is still not established;
+unavailable voice responses are intentional, never fabricated household data.
+
+Workspace decision: owner explicitly approved temporarily retaining the existing
+`main` checkout beneath `.worktrees/alexa-main`, leaving the canonical root's
+unrelated branch and uncommitted work untouched. Create no further project
+folders/checkouts. Console/AWS reauthentication and the selected regional ARN
+were not supplied at that initial checkpoint.
+
+### Endpoint follow-up: valid AWS login, cross-account access denied
+
+The owner subsequently supplied the existing Skill ID and all regional Lambda
+ARNs, with default/North America in `us-east-1`, Europe/India in `eu-west-1`, and
+Far East in `us-west-2`, each qualified by alias `Release_0`. Identifiers were
+supplied privately and are not reproduced in public source. A fresh STS
+read now confirms valid credentials, superseding the expired-session blocker.
+
+The authenticated AWS account differs from the account in every supplied endpoint.
+Exact read-only `GetFunctionConfiguration` requests against all three qualified
+ARNs return `AccessDeniedException`: no resource-based policy permits this caller.
+That verifies an access boundary, NOT a nonexistent/wrong function or an Alexa
+invocation failure. No function package, alias target, runtime, handler or logs
+could be read through that personal AWS session. No IAM/policy changes or function
+invocations were attempted.
+
+The three regions, separate account and console Code tab are consistent with
+Alexa-hosted resources. AWS Lambda ARN selection does NOT contradict Alexa-hosted
+hosting: Amazon explicitly provisions Lambda endpoints in these three regions
+for hosted skills, separate from personal AWS resources. Actual hosting metadata
+and deployed bytes still require authorized developer-console or ASK access.
+Do not replace these endpoints, create another skill or broaden permissions to
+work around the account boundary. Inspect the existing skill's Code deployment
+state and use Code -> Logs with the default region (`us-east-1` as supplied) for
+the simulator's actual invocation/error stream. Then compare the deployed source
+with the two reproduced source defects before attributing the simulator failure.
+
+References: [About Alexa-hosted Skills](https://developer.amazon.com/en-US/docs/alexa/hosted-skills/build-a-skill-end-to-end-using-an-alexa-hosted-skill.html)
+and [Create and Manage Alexa-hosted Skills: CloudWatch logs](https://developer.amazon.com/en-US/docs/alexa/hosted-skills/alexa-hosted-skills-create.html).
+Deployment and simulator acceptance remain **NOT VERIFIED**.
+
+### Owner simulator acceptance and approved outbound mailbox follow-up
+
+The owner subsequently reported successful deployment to the existing skill and
+working Launch, Help, unavailable-alert and Stop responses. These are
+**owner-reported simulator checks**, not independent deployed-source readback or
+live C++ connectivity. Stop spoke Goodbye when tested inside an active session.
+
+The owner approved an outbound-only AWS request/reply mailbox with narrowly scoped
+queue/IAM resources and a bounded VPS worker, and read-only Mi A3 diagnostics.
+Two dedicated queues (`homeguardian-alexa-requests`, `homeguardian-alexa-replies`)
+were created in the owner's account in `us-east-1`; readback verified managed
+encryption, TLS-required policies, 60-second retention and 16-KiB message caps.
+No hosted-role grant, AWS access key or running worker was created at this stage.
+The exact skill Lambda execution-role ARN is still required for narrow publisher
+trust; the logs-viewing SSO role is not an acceptable substitute.
+
+Fresh phone evidence distinguishes the fault: its read-only native self-probe
+reports `Running`, `read_only=true`, `capture_enabled=false`; installed APK bytes
+match the previously accepted artifact. The VPN handshake is fresh and the
+coordinator's edge TCP connection comes from the phone peer. However private
+initialize/status requests now return HTTP 200 with only `{}`, not valid JSON-RPC.
+HTTP/auth/session admission therefore MUST NOT be called a successful native
+initialize or tool result. Probe sessions were torn down. The empty bridge reply
+remains unresolved; the working local core is not evidence that relay data works.
+No phone reinstall/restart, capture, VPN, firewall, mail or public-listener change
+was made. Application-private access was denied as expected and not bypassed.
+
+The initial mailbox worker has 11 local fixture tests, including strict tool and
+destination allowlists, stale/replayed request refusal, aggregate-only replies,
+authenticated MCP session cleanup and HTTP-200-empty-object rejection. It is
+source-tested only, not deployed or accepted end to end.
+
+The Alexa-side mailbox client and explicit backend transport selector are now
+implemented with matching producer/consumer contract tests. The combined Python
+suite passes **71 tests** under both tested SDK-model combinations; dependency
+checks and syntax compilation pass. Python 3.8 syntax parsing also passes, but
+this is not execution against the managed runtime. Tests caught and corrected
+rejection of the native zero-alert payload's empty severity string; a zero is
+accepted only as an actual validated tool result, never as an unavailable default.
+
+Managed hosting can use a gitignored, non-secret `mailbox_config.json` with exactly
+four deployment settings instead of requiring Lambda environment-edit permissions.
+It contains only region, queue URLs and the publisher role ARN, never credentials.
+The default deployment stays on the existing loopback/unavailable path until
+mailbox mode is explicitly configured. No mailbox Code deployment, running VPS
+worker, dedicated worker credential or hosted role trust is claimed. The queues'
+configuration is verified, but no genuine Alexa -> SQS -> native C++ -> Alexa
+round trip is accepted. The missing exact execution-role ARN and the empty private
+bridge reply remain concrete blockers; do not replace those gaps with fixtures.
+
+### Execution-role received; configuration moved to the existing .env
+
+The owner supplied the actual hosted Lambda execution-role ARN. A dedicated
+publisher role was created in the owner's account, trusting only that exact
+principal (not the logs SSO role or the entire hosted account). Readback verified
+the trust document and the inline policy's request-send/reply-consume directions,
+exact queue resources and TLS condition; no broad attached policies were added.
+IAM policy simulation verified 12 action/resource decisions, including denial of
+opposite-direction and destructive queue actions. This is not a real hosted-role
+AssumeRole or live Alexa-to-native verification.
+
+At owner direction, the six Alexa operational settings now live in the existing
+canonical project `.env`; unrelated values were left untouched. The generated
+mailbox JSON file was removed. The loader reads only selected Alexa keys from
+`HG_ALEXA_ENV_FILE`, or `.env` beside the deployed modules; environment values
+take precedence. Local application configuration validation succeeded without
+printing/loading unrelated credentials. Do not copy the full workstation `.env`
+into Alexa: deploy only the selected mailbox settings. No `.env` values are tracked
+or published in this change. No worker key, running worker or mailbox Code
+deployment was created; the empty private bridge replies remain unresolved.
+
+The dotenv revision passes **72 Python tests** under both tested SDK combinations,
+plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
+untracked; only code/tests/sanitized documentation are published.
+
+### Coordinator security corrective batch — 2026-10-23
+
+Implemented on `main`, **SOURCE-TESTED / NOT DEPLOYED**. Malformed HTTP targets,
+non-object HTTP/WS JSON and invalid credential types are rejected without crashing
+the coordinator; async HTTP entry/body failures are contained. Token rotation
+synchronously removes existing channel authority and rejects pending requests;
+unchanged-token reload preserves the channel. Superseded/revoked sockets cannot
+heartbeat or resolve requests. Client sessions now have finite defaults (1,024
+active/initializing sessions, 30-minute idle expiry), reserved initialization
+capacity, and no retained/advertised session after failed or disconnected init.
+Rejected oversized bodies cannot dispatch later on `end`.
+
+`bash scripts/test_outbound_bridge.sh`: **13 security regressions passed, 0
+failed/skipped; existing real-native bridge checks 46 passed, 0 failed**. This run
+used the freshly built main-checkout `hg_build/hg_mcp_server`, real workstation
+loopback HTTP/WS for recovery checks, and synthetic local credentials. Node syntax
+and `git diff --check` passed. Missing native binaries fail rather than silently
+skip. Test temporary files remain inside this project. Full C++ regression/build
+preparation is separate; no claim of phone/VPS deployment or physical acceptance.
+See [coordinator security fixes](COORDINATOR_SECURITY_FIXES.md).
+
+The next authorized batches are producer provenance and detector wiring, in that
+order. No live service, VPN, capture, credential or cloud configuration was changed.
+
+### Current Alexa acceptance — 2026-10-23
+
+**Owner-reported deployed Custom Skill functional acceptance:** the owner reported
+successful Code deployment, then received `The hub state is Running. Capture is
+disabled.` and, using the full invocation `ask home guardian what are my recent
+alerts`, `There are no alerts recorded for your home.` Both read-only voice
+functions have returned the expected native readings. This is owner-attested
+simulator evidence; deployed source bytes and Skill I/O were not independently
+retrieved. It is not Smart Home, camera, Alexa+ or production certification.
+
+A subsequent independent **operator-origin mailbox smoke passed 4/4** real
+requests (two status, two alerts), with genuine read-only results and no capture.
+The worker health check showed active/running with zero restarts. This smoke is
+not a Lambda-origin latency reproduction and does not resolve intermittent failures.
+
+**Reliability remains OPEN:** the owner also observed an unavailable launch before
+a successful status response. The worker journal contains a `ReadTimeoutError`,
+but it is not correlated to that failed invocation; the cause remains unproven.
+Bare follow-up alert phrases were silent, whereas the full invocation succeeded.
+The status handler supplies no reprompt; session/routing is consistent with that
+behavior, but Skill I/O is needed to establish exactly which requests reached it.
+Keep using full invocations for isolated acceptance tests. Do not infer zero alerts
+from silence, replace unavailable results with cached readings, or change timeouts
+without reproducing the failure. No additional skill deployment, phone/VPS restart,
+capture enablement, VPN change or queue/IAM configuration change was performed for this
+follow-up. Long-outage, reboot and changed-network recovery remain unverified.
+
+### Historical checkpoint: real mailbox/native path recovered; Code deployment pending
+
+Inspection of the accepted installed APK's actual DEX confirms its bridge sets
+the required Accept header. A memory-only trace of the already established phone
+control connection confirms the phone itself sent `body={}`/status 200; raw frames
+and credentials were not printed or persisted. Source inspection identifies a
+stale-session recovery defect: native HTTP rejects unknown/expired sessions with
+404, while the bridge retains its session ID unless a specific error string is
+returned and masks the native status as 200. Reconnecting ONLY the outbound bridge
+through the app controls recovered both genuine read-only native tools. The C++
+service PID was unchanged; no native restart, APK reinstall, VPN or capture change
+was performed. The permanent Android-side session-recovery fix remains open.
+
+The dedicated worker IAM identity was provisioned with only request-consume and
+reply-send permissions. An owner-only credential file was installed on the target
+VPS; STS verified the worker user, not personal/root identity. Actual AWS requests
+in the wrong queue direction were denied. Two failed installer attempts (restricted
+PATH, then new-key propagation) revoked their issued keys before retry; no root
+credentials were transferred. The successful install verified source/unit bytes,
+file permissions, unchanged mail/coordinator PIDs and an unchanged TCP listener set.
+
+`homeguardian-alexa-mailbox` is active and boot-enabled, with 96-MiB RAM and 10% CPU
+caps. The bounded process is supervised and privately keeps the native control
+session active once per minute without sending unsolicited readings to AWS. This
+is a mitigation, not proof of recovery after a long outage. The source revision
+passed **73 Python tests** before deployment. The publisher trust and worker role
+remain scoped in opposite directions; no broad AWS policy was added.
+
+**Real operator-origin AWS -> VPS -> phone C++ -> AWS verification PASS:**
+status returned `Running`, `read_only=true`, `capture_enabled=false` in **2.085 s**;
+alerts returned `alert_count=0`, empty highest severity, `read_only=true` in
+**1.659 s**. Correlation, tool schema, expiry and session cleanup were validated.
+These are genuine native results, not cached evidence or local fixture outputs.
+
+**At this historical checkpoint, Alexa-Lambda origin / simulator-to-native was NOT VERIFIED.** The Code package
+has not been updated from this session. The browser reaches Amazon Sign-In, no
+saved login is available, and secure login prompting is unavailable in this CLI.
+The worker's publisher-role trust is data access, not hosted-Code administration.
+A private five-file Code source bundle was prepared with selected `.env` settings,
+verified against source, protected and excluded from Git. It contains no worker
+key, MCP bearer or personal AWS credentials. Authorized console deployment and
+the resulting real simulator call are the remaining release gates. Reboot,
+changed-network and long-outage recovery remain unverified.
+
+## On-phone analyzer candidate — not yet deployed
+
+The approved in-place update is being prepared on the isolated Android branch.
+The current host analyzer suite passes **34 checks, 0 failures**, including a
+synthetic alert persisted to SQLite and the exact id recovered after analyzer
+recreation. Bridge regression suites also pass: **4 Python tests**, a nested Java
+UI harness with **8 scenarios**, and **50 route-policy checks**. Initial alert
+fixture failures were traced to a test/phone configuration mismatch; classic
+fusion remains the default and its confidence gate is unchanged.
+
+A fresh ARM64 APK build is in progress; no installation or phone acceptance is
+claimed. The latest ADB inventory is empty, blocking handset deployment and
+readback. Existing phone/VPN/MCP evidence below is historical, not a fresh health
+check. Physical sensor acceptance remains open. See the
+[candidate verification checkpoint](ANDROID_EDGE_ANALYZER_UPDATE.md).
+
+## Private remote MCP readiness — 2026-10-23
+
+**04:02 IST — REMOTE MCP VERIFIED OVER THE PRIVATE VPN.** All four reported
+blockers are resolved: the phone key is enrolled with its own /32, its profile is
+configured without exporting its private key, cloud UDP ingress admits the current
+verified source, and the private coordinator runs as an active boot-enabled service
+on the tunnel address. Through that coordinator the real handset answered
+initialize, listed exactly the two native read-only tools, passed both
+authentication stages on each tool call, rejected missing/incorrect client bearers
+with 401 and a mutating tool with 400, and still answered while the screen dozed.
+Public MCP ports remain unreachable and mail was untouched.
+
+Deployment also exposed and fixed a real route-policy defect: refusing any
+destination covered by a non-VPN route made the bridge undialable on any real
+Wi-Fi plus WireGuard handset, because Wi-Fi always advertises a default route. The
+policy now follows kernel longest-prefix priority; the unsafe overlap is still
+refused. Off-device policy checks went 44 → 50 and failed before the fix. Phone
+update kept the existing signer and both native libraries byte-identical.
+
+Still open: a separately reserved worker peer is not enrolled (needs local root),
+so remote MCP is proven from the VPS client listener; restart/reboot recovery and a
+changed public address are untested. Details:
+[verified connection and remaining blockers](PRIVATE_VPN_REMOTE_MCP_READINESS.md).
+
+**03:25 IST update — VPN WORKING, COORDINATOR DEPLOYED, PHONE BRIDGE PENDING:**
+phone enrollment, saved profile configuration and current-source cloud UDP ingress
+are applied. A fresh authenticated handshake, assigned phone tunnel address and
+two successful post-handshake pings were verified. The private coordinator is active
+and boot-enabled with VPN-only bindings, exact ingress restrictions and retained
+application authentication. Public MCP ports remain unreachable and mail service
+processes were unchanged. The installed phone APK lacks bridge code; its approved
+in-place update and an actual remote MCP readback remain pending. See the
+[execution checkpoint](PRIVATE_VPN_REMOTE_MCP_READINESS.md).
+
+Earlier read-only baseline, superseded for resolved items:
+
+**BLOCKED:** the existing VPS WireGuard server is up and boot-enabled, but the
+phone's supplied public key is not enrolled and its matching local profile has
+no address or peer configured. There is no current phone handshake. Cloud UDP
+ingress is restricted to an old single source that does not match the worker's
+current public IP. The private coordinator is not deployed. Phone MCP remains
+healthy, authenticated, read-only and loopback-only; no public MCP port was opened.
+See [verified facts, minimum preparation and approval gates](PRIVATE_VPN_REMOTE_MCP_READINESS.md).
+The phone already has a boot-registered foreground service; restart after first
+unlock is configured, but a real reboot was not re-tested.
+
+## P1 physical-integration checkpoint — 2026-10-23
+
+**Existing phone runtime verified:** a fresh authenticated on-device MCP self-probe
+at 02:17:34 IST completed initialize, tool discovery and a status call in 51 ms.
+The Mi A3's foreground EdgeService reported engine `Running`, `read_only=true` and
+`capture_enabled=false`. The core runtime and read-only MCP are working on the
+phone; this is separate from acceptance of the physical alert pipeline below.
+
+**NOT ACCEPTED:** Android → C++ → durable alert → MCP physical acceptance remains
+open. The Mi A3 sensor app is installed and real 320×240 camera processing was
+observed, but recorded delivery counters stayed at zero and the isolated audit
+database contains no physical alert. APK installation and host tests are not
+end-to-end acceptance.
+
+Candidate fixes cover network permission, wire vocabulary, Android keystore
+compatibility and transport identity. USB repeatedly re-enumerated with kernel
+error `-71`; a temporary authenticated Wi-Fi ingress was authorized, but phone
+configuration and delivery were not completed. Test listeners are now stopped;
+the existing EdgeService was preserved. See
+[the acceptance report](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md) for measured
+evidence, candidate-only changes, provenance limits and remaining exit criteria.
+
+## Security Audit & Release Candidate Status
+- **Candidate `52d3d1436e115fe9061127a35f33b35d10c8dd73`:** Evaluated by Hermes Session 1 (P0-1 PASS, P0-2 PASS, P0-3 FAIL). Failed due to hardcoded physical device seed secrets, unauthenticated re-pairing, and lack of heartbeat sequence replay protection.
+- **Successor Candidate (Branch `fix/hg-sec-06-device-secrets`):** Implements complete physical-device credential remediation (Fix 1-5: CSPRNG 256-bit secrets, POSIX 0700/0600 storage protection, authenticated re-pairing, sequence replay protection across restarts). Complete details in `docs/RELEASE_AUDIT_STATUS.md`.
 
 ## Current Phase
 
-Simulator-first development — deterministic in-process sensor simulator,
-dual-device shared audio broker, and consent-gated acquisition. Real camera/
-microphone capture remains BLOCKED pending explicit operator approval.
+Simulator-first development with separately authorized physical-device acceptance.
+The deterministic simulator, shared audio broker and consent-gated acquisition
+remain distinct from physical verification. Camera capture on the Mi A3 was
+authorized and observed; microphone capture was not run in this checkpoint.
+Physical alert delivery and restart recovery remain unverified, not complete.
 
 ## Completed Work
 
 | Task | Evidence | Date |
 |------|----------|------|
-| Repository initialized | `/home/swarna-sekhar-dhar/projects/homeguardian-ai` on `main` branch | 2026-10-09 |
+| Repository initialized | `homeguardian-ai` on `main` branch | 2026-10-09 |
 | Initial documentation | README, ARCHITECTURE, ROADMAP, DEVELOPMENT, TESTING, DECISIONS, STATUS | 2026-10-09 |
 | Skill inventory | `docs/SKILL_INVENTORY.md` — 24 relevant skills documented | 2026-10-09 |
 | Three-tier architecture | `docs/ARCHITECTURE.md` updated with Tier 1/2/3 | 2026-10-09 |
@@ -122,7 +472,7 @@ Application run (simulator mode): capture-off → no media/no alerts + final_sta
 Restart: same audit DB, 2nd process reports historical_alerts=1 (distinguishable from current-process alerts)
 Alexa contract: 14 C++ contract tests + 12 Node adapter tests pass (mock clients, no deploy); LIVE integration NOT tested (needs deployed authenticated endpoint) — documented as pending
 Local process-boundary integration: hg_alexa_bridge (NDJSON stdio over the REAL AlexaContract) driven by Node — 16 integration + 4 restart cases against the actual compiled binary; reproducible demo docs/demo_alexa_integration.sh; no network listener, no deploy
-Simulated Alexa+ web experience (hackathon P0): `bash demo.sh` builds the bridge and serves a loopback-only web UI that drives the REAL backend (consent gate → event pipeline → correlation → alert dedup → SQLite persistence); `run_scenario` bridge mode produces real alerts; 8 `web_demo` Node cases; `docs/DEMO_WEB.md`. Simulated only — no Alexa device, no MCP, no live Amazon identity, no physical sensor
+Simulated Alexa+ web experience (`demo.sh`): `bash demo.sh` builds the bridge and serves a loopback-only web UI that drives the REAL backend (consent gate → event pipeline → correlation → alert dedup → SQLite persistence); `run_scenario` bridge mode produces real alerts; 8 `web_demo` Node cases; `docs/DEMO_WEB.md`. Simulated bridge only — no Alexa device, no live Amazon identity, no physical sensor. (The native C++ Model Context Protocol server `hg_mcp_server` was subsequently added in PR #20).
 Clean-clone reproducibility (hackathon P0): fixed the tests-target `../src/...` relative paths (now `${CMAKE_SOURCE_DIR}` absolute) so an out-of-source build from ANY directory configures and builds; fixed a test that read `config/homeguardian.json` relative to CWD (now resolves via `HG_SOURCE_DIR`). Verified: fresh build in `/tmp` → 255/2001 + ctest 100%, and the web demo ran end-to-end on the fresh binary
 Security review v5: docs/SECURITY_READINESS_V5.md — fail-closed auth, read-only ops, no credential leak, no network listener, no shell exec, bounded lifetime all VERIFIED; HTTPS endpoint CONDITIONAL GO (blocked on real authn/TLS/rate-limit/secrets)
 Release reproduction: fresh out-of-source build (existing dep cache) → 241/1960 + bridge, new tests included
@@ -186,8 +536,8 @@ default and none is implemented.
 
 ## Session Info
 
-- **Remote:** `origin` → `https://github.com/methakon/homeguardian-ai.git` (private)
-- **Repository:** `/home/swarna-sekhar-dhar/projects/homeguardian-ai`
+- **Remote:** `origin` → `https://github.com/methakon/homeguardian-ai.git`
+- **Repository:** `homeguardian-ai`
 - **Branch:** `main`
 - **Phase A commit:** `312cb75`
 - **Phase B commit:** `058c692`
@@ -308,8 +658,8 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Device | MediaTek MT6580 clone (`0e8d:201c`), API 27, armeabi-v7a, ~962 MB RAM, ~12.1 GB storage |
 | App | installed (v0.2.0, 883,891 B), launched clean, idle by design, permissions granted |
 | Node identity | `hg-443a03b54537c21f` (reported by the app's own native layer) |
-| Provisioning | CA + server cert (SAN contains IP 192.168.1.6) + unique device cert; credential_id matches the registry |
-| Ingress | running as a least-privilege container, `tls=mutual(min 1.2)`, `registry_devices=1 paired=1`, publishing 192.168.1.6:8443 |
+| Provisioning | CA + server cert (SAN contains IP 10.20.30.6) + unique device cert; credential_id matches the registry |
+| Ingress | running as a least-privilege container, `tls=mutual(min 1.2)`, `registry_devices=1 paired=1`, publishing 10.20.30.6:8443 |
 | Hub accepts this device | **VERIFIED**: `accepted=3 rejected=0` over mutual TLS; spoofed id refused `identity_mismatch`; watermark durable at `last_sequence=3` |
 | Phone over Wi-Fi | **PENDING OPERATOR** (phone is locked; Import + Connect + consent + Start are on-device actions) |
 | Camera/mic on hardware | **PENDING OPERATOR** |
@@ -328,7 +678,7 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | 30-second ticker proof | **BLOCKED - PHONE LOCKED** (`mDreamingLockscreen=true`, activity STOPPED, tick counter 0) |
 | H-03 acceptance (import, connect, consent, camera/mic, Wi-Fi) | **PENDING OPERATOR UNLOCK** |
 
-## H-03 JNI fix - verified on the physical device
+## H-03 JNI fix - historical lab audit on test device
 
 | item | state |
 |---|---|
@@ -362,7 +712,7 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | What it verifies | real TLS handshake; server cert chained to the private CA AND covering the expected name/address; mutual-TLS demand reported separately - **not** a TCP port check, and **not** device authentication (`device_auth=NOT_PERFORMED`) |
 | Acceptance (container test stage) | `scripts/verify_ingress_healthcheck.sh` - all checks pass, including the negatives (wrong name, non-TLS listener, missing CA, missing configured CA) |
 | Regressions | D-03 TLS acceptance 24/24, TLS identity 9/9, CA isolation 14/14 (1 skipped), full ctest green |
-| Live deployment | `docker inspect` -> `status=running health=healthy` (uid 10001, 0 restarts); the health log carries the probe's real output; the listener the phone dials is up on 192.168.1.6:8443 |
+| Live deployment | `docker inspect` -> `status=running health=healthy` (uid 10001, 0 restarts); the health log carries the probe's real output; the listener the phone dials is up on 10.20.30.6:8443 |
 | Operator prerequisites confirmed | the mounted credential tree must be readable by the container uid (`sudo chown 10001:10001`, else exit 78) and the data volumes writable by it |
 | H-03 physical acquisition / standalone Wi-Fi | **STILL PENDING** - operator-gated, not claimed |
 
@@ -405,3 +755,74 @@ No hardware figure is reported because no hardware was reachable. The exact oper
 | Physical acceptance | **PENDING OPERATOR** - next Start camera reports the negotiation; rising `frames_processed` + real motion observations required, not claimed |
 | Video flag | `video=off` in the sampled ticks is consistent: capture had stopped, and the 518 frames are cumulative - not evidence of active capture |
 
+
+## MCP server (HG-MCP-01)
+
+| item | state |
+|---|---|
+| Protocol | MCP **2025-11-25** (Streamable HTTP); also accepts 2025-06-18 / 2025-03-26 clients and answers anything else with 2025-11-25 |
+| Tools | `get_homeguardian_status`, `get_alert_summary` - both read-only, both delegated to the existing `AlexaContract` |
+| Transport | `POST /mcp` (JSON or SSE), `GET /mcp` -> 405 + Allow, `DELETE /mcp` -> session termination; sessions minted on initialize, idle-expired, capped |
+| Security | bearer auth via `AlexaCredentialStore` (0600, owner-only, fail-closed, no fallback); Origin allowlist -> 403; loopback bind with an explicit opt-in required for anything else; header/body caps, timeouts, bounded workers and in-flight cap |
+| Refusals | no credential store -> exit 3; world-readable credential file -> exit 3; non-loopback bind without opt-in -> exit 4; no unauthenticated mode exists |
+| Tests | `[mcp]` **19 cases / 89 assertions**; full suite **510 cases / 5,787 assertions** (baseline before this work: 491 / 5,698) |
+| End-to-end | `scripts/verify_mcp.sh` -> **43 passed / 0 failed** against the real binary over loopback |
+| Not implemented | OAuth 2.1 client registration, TLS, server-initiated SSE stream, resources/prompts, per-token quotas, session resumability - see docs/MCP_SERVER.md section 7 |
+| Unchanged | engine, web demo, NDJSON bridge, and every existing target; `main` untouched |
+
+
+## Coordinator handover update — 2026-10-23 12:41 IST
+
+### Alexa skill diagnostic checkpoint (owner-console evidence)
+
+- Skill: `HomeGuardian AI(dhar)`, locale en-US, invocation `home guardian`.
+- Owner reports both `open home guardian` and `ask home guardian for help` return Alexa's generic “There was a problem with the requested skill's response.”
+- Alexa Code-tab screenshot shows `lambda_function.py`, `backend.py`, `requirements.txt`, and `utils.py`; the displayed handler file begins with `import backend` before the Alexa SDK imports. The owner supplied `utils.py` contents: an S3 presigned-URL helper using `boto3`, `S3_PERSISTENCE_REGION`, and `S3_PERSISTENCE_BUCKET`. No evidence yet shows that helper is invoked during skill startup.
+- Owner reports CloudWatch Logs currently shows no logs. This is not proof of no invocation until the correct Lambda function and log group are identified.
+- Alexa Build → Endpoint screenshot shows **AWS Lambda ARN** selected, with regional ARN fields populated. This conflicts with `alexa_hosted/DEPLOYMENT.md`, which documents the intended console path as Alexa-hosted Python. Do not change endpoint configuration blindly.
+- Root cause remains **unconfirmed**. Candidate causes: endpoint ARN references the wrong/nonexistent Lambda; endpoint points at a runtime/code package different from the intended Alexa-hosted deployment; or a Python import/module initialization failure before handler execution.
+- Backend adapter defaults `HG_GATEWAY_URL` to `http://127.0.0.1:8080`; that is unsuitable for reaching a separate C++ gateway from AWS Lambda, but cannot alone explain Help failing because Help is intended not to call the backend.
+- Next diagnostic: read the full Default Region ARN from the Endpoint page and verify the exact Lambda function exists in `us-east-1`; if it exists, inspect its runtime and that function's own Monitor/CloudWatch logs. Do not add AWS permissions or change the ARN until verified. Do not share secrets or .env contents.
+- Acceptance state: **Alexa simulator acceptance FAIL / blocked**; C++ backend live connection remains unverified; skill should remain private/unpublished until owner authorizes otherwise.
+
+### Worker reliability audit update (owner-provided Hermes report; not independently re-run here)
+
+- Hermes 1 reports branch `fix/hg-worker-dispatch-p0-48` at `a303d895edcb0dc40ea57254891d863d32625eca`, PR #28 open/unmerged, and lane `experiment/hg-lan-mtls-07` at `139e53b45cdf`.
+- Reported targeted tests: `test_poller.py`, `test_dispatch_p0_48_adversarial.py`, `test_p0_48_grant_atomicity.py`, `test_task_envelope.py` all exit 0 (16/16 reported). Queue-pull and idle-resume Kanban tasks reportedly completed; duplicate/unauthorized/prose/bare-JSON negatives reportedly rejected.
+- Critical acceptance gap remains: GitHub-comment → poller → real-dispatch is **BLOCKED**, with task `HG-LAN-MTLS-07-006` blocked and dispatch attempt rc=1. Hermes attributes this to fetched comments lacking API provenance attachment `api_verified_comment(..., api_origin=True)`. Privileged dispatch must remain disabled until this path is fixed and independently verified.
+- Hermes 3 report: main HEAD `503a9a6`; native MCP investigation found a missing/unavailable alert-store path explains a generic tool refusal in one fixture; a present store returned read-only status and zero alerts. Portal device listing remains unsupported by current two-tool MCP contract and would require a new authorized read-only tool. Google sign-in remains blocked pending owner-created OAuth Web client ID. Treat all as worker-reported evidence unless independently rechecked.
+
+These notes preserve the distinction between owner-console observations, worker-reported results, and independently verified repository facts.
+
+## Workspace consolidation and handover discipline — 23 Oct 2026
+
+**Coordinator directive:** workers must use the existing canonical HomeGuardian AI repository/project root as their only working directory. Do not create extra project copies, sibling clones, worktrees, scratch project roots, or new top-level/subfolders. Keep temporary artifacts outside the project root and remove them after use. Work only in the existing, architecturally correct source/test/documentation paths; a genuinely necessary new source directory requires coordinator approval first.
+
+**Branch discipline:** continue on the single task branch already assigned to the issue/PR. Do not create experimental branches or split one task across multiple branches; ask before branching if no task branch is assigned. Keep changes scoped, commit/push the branch, and report branch, exact SHA, PR, tests/evidence, blockers, and next action. Security-sensitive work stays unmerged and privileged dispatch stays disabled until independent acceptance.
+
+**Single living handover:** update this existing `docs/STATUS.md` after each meaningful milestone and before handoff. Record only verified state, distinguish worker-reported evidence from independently reproduced results, and include changed files, exact commit SHA, test commands/results, blockers, owner, and next action. Do not create duplicate handover files.
+
+**Google Docs limitation:** as of this update, the Google Drive connector is disabled by administrator in this ChatGPT session, so I cannot truthfully claim to have edited or verified the Google Drive handover. Until Drive access is restored, this repository file is the interim canonical handover. Once access is restored, maintain the existing Google Doc (do not create a replacement) and keep this repository status synchronized.
+
+**Worker instructions posted:** 23 Oct 2026, coordinator comments added to issues #23 (comment ID 6360358111), #24 (6360358687), and #25 (6360359414). These comments communicate workspace/branch/handover discipline and task-specific guardrails. Posting instructions does not prove that a worker has started or completed work.
+
+
+## Alexa implementation handover — coordinator checkpoint, 23 Oct 2026 14:21 IST
+
+### Remote repository evidence
+
+- Verified via GitHub API that commit `fb41c9ca718d96cc57f88abb34820a2cbe02161a` exists on the repository history; its change records the approved temporary `.worktrees/alexa-main` checkout and the still-blocked console/AWS endpoint verification. This commit is the reported current `origin/main` SHA from the worker; confirm the branch head again before any subsequent write.
+- Canonical Alexa source remains `alexa_skill_python/`; `alexa_skill/` is the separate Node.js mock prototype. The Python entry point is `lambda_function.lambda_handler`. The model locale is `en-US`, invocation name `home guardian`.
+- Worker reports two supplied-source defects were reproduced with real SDK objects: (1) not invoking the Lambda handler factory; (2) serializing `outputSpeech` as a string instead of an Alexa speech object. These are source-level findings, not proof that either version is the one deployed in the console.
+- Worker reports Python 39/39 passing under two dependency combinations, Node regression 77/77 passing using existing root native binaries, plus syntax and dependency checks. These test totals are worker-reported in this checkpoint and have not been rerun independently here. The commit and file hashes can be inspected through GitHub, but GitHub metadata alone does not verify local test execution.
+- The worker reports authenticated MCP session initialization before the two allowlisted read-only tools, safe response rendering/SSML escaping, malformed-envelope handling and bounded transport behavior. Actual remote Alexa-to-C++ connectivity is explicitly **not established**.
+
+### Deployment gate remains open
+
+- Owner/worker still need authorized access to the existing Alexa Developer Console and AWS target to verify the Skill ID, selected regional Lambda ARN, actual function/runtime/handler, deployed bytes and matching CloudWatch log group.
+- No duplicate skill is to be created. Do not change endpoint/hosting mode or add permissions until the current target is identified. Do not claim simulator acceptance or live backend connectivity without direct evidence.
+- The temporary checkout under `.worktrees/alexa-main` is recorded as owner-approved for preserving unrelated root work. It is an existing exception, not permission to create any more project folders, copies or worktrees. Use the canonical project/repository root and existing paths for subsequent work.
+
+### Next action / owner
+
+- **Alexa worker + owner:** provide the selected regional Lambda ARN and confirm the Skill ID from the existing console; inspect the exact target and its logs. Keep the skill private until the endpoint, simulator behavior and approved backend route are verified.

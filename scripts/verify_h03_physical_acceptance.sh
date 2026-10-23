@@ -128,7 +128,7 @@ check_rising "observations written to the hub" "sent"
 
 # ------------------------------------------------------------------ 5. mutual TLS to the hub over Wi-Fi
 SSID_LINE="$(grep -c . "$PHONE_LOG")"
-IP="$(timeout 30 adb -s "$DEV" shell "ip route get 192.168.1.6 2>/dev/null | head -1" 2>/dev/null | tr -d '\r')"
+IP="$(timeout 30 adb -s "$DEV" shell "ip route get "${HG_LAN_PROBE_HOST:-10.20.30.6}" 2>/dev/null | head -1" 2>/dev/null | tr -d '\r')"
 if printf '%s' "$IP" | grep -q 'wlan'; then ok "the phone is routing to the hub over Wi-Fi ($(printf '%s' "$IP" | tr -s ' ' | cut -c1-48)...)"
 elif [[ -n "$IP" ]]; then ok "the phone has a route to the hub ($(printf '%s' "$IP" | tr -s ' ' | cut -c1-48))"
 else no "the phone has a route to the hub"; fi

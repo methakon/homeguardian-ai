@@ -1,0 +1,46 @@
+10-17 10:36:54.188  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:36:54.190  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:37:14.234  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:37:14.236  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:37:34.278  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:37:34.280  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:37:54.321  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:37:54.323  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:38:14.382  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:38:14.384  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:38:34.442  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:38:34.445  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:38:54.500  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:38:54.502  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:39:14.559  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:39:14.560  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:39:34.616  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:39:34.617  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:39:54.665  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:39:54.666  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:40:14.710  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:40:14.711  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:40:34.766  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:40:34.767  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:40:54.823  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:40:54.825  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:41:14.886  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:41:14.888  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:41:34.941  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:41:34.943  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:41:54.999  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:41:55.001  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:42:15.058  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:42:15.059  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:42:35.104  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:42:35.106  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:42:55.144  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:42:55.146  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:43:08.426  9266  9331 I HGEdge  : [2026-10-17 10:43:08.417] [hg_edge] [warning] mcp: rejected an unauthenticated request
+10-17 10:43:15.203  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:43:15.205  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:43:35.263  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:43:35.265  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:43:55.326  2187  2187 D InterruptionStateProvider: No bubble up: not allowed to bubble: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:43:55.328  2187  2187 D InterruptionStateProvider: No pulsing: not important enough: 0|org.homeguardian.edgeservice|4711|null|10226
+10-17 10:43:55.785  9266  9333 I HGEdge  : [2026-10-17 10:43:55.785] [hg_edge] [warning] mcp: rejected an unauthenticated request

@@ -11,26 +11,43 @@ in the component sources; this file summarizes them for attribution.
 
 Bundled in this repository (under third_party/):
 
-  - SQLite (third_party/sqlite)
+  - SQLite 3.53.4 (third_party/sqlite)
     Public domain. https://sqlite.org/copyright.html
     The SQLite source in this repository carries its own public-domain notice;
     it is not relicensed here.
 
-  - Catch2 (third_party/catch2)
+  - Catch2 2.13.10 (third_party/catch2)
     Boost Software License 1.0.
     The Catch2 headers carry their own BSL-1.0 notice (see
     third_party/catch2/single_include/catch2/catch.hpp).
 
 Fetched at build time (CMake FetchContent; not vendored in this repository):
 
-  - spdlog — MIT License. https://github.com/gabime/spdlog
-  - nlohmann/json — MIT License. https://github.com/nlohmann/json
+  - spdlog v1.13.0 — MIT License. https://github.com/gabime/spdlog
+  - nlohmann/json v3.11.3 — MIT License. https://github.com/nlohmann/json
+
+Installed via npm for the Web MCP gateway & dashboard (web_mcp/):
+
+  - werift 0.25.0 — MIT License. https://github.com/shinyoshiaki/werift-webrtc
+  - ws 8.22.0 — MIT License. https://github.com/websockets/ws
+  - mediabunny 1.61.5 — Mozilla Public License 2.0 (MPL-2.0). https://github.com/Vanilagy/mediabunny
+    Transitive WebRTC media dependency of werift. In accordance with MPL-2.0 Section 3,
+    the source code for mediabunny is available at https://github.com/Vanilagy/mediabunny.
+  - Transitive runtime dependencies installed via npm are distributed under
+    MIT, Apache-2.0, BSD-3-Clause, 0BSD, and Unlicense licenses.
 
 Optional, installed separately via npm for the Alexa skill prototype
 (alexa_skill/; not part of the native demo or the default build):
 
-  - ask-sdk-core, ask-sdk-model — Apache License 2.0.
+  - ask-sdk-core 2.14.0, ask-sdk-model 1.40.1, ask-sdk-runtime 2.14.0 — Apache License 2.0.
+    https://github.com/alexa/alexa-skills-kit-sdk-for-nodejs
 
 Original HomeGuardian AI source code (everything not under third_party/ and not
 fetched/installed as noted above) is Copyright 2026 Swarna Sekhar Dhar and is
 licensed under the Apache License, Version 2.0.
+
+Licensing history note:
+Earlier pre-release development commits used the MIT License. Effective from
+the Hackathon 2026 candidate release (PR #20), all original code is proposed
+for licensing under the Apache License, Version 2.0, pending final repository
+owner approval.

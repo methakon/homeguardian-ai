@@ -406,6 +406,9 @@ void DeviceIngressServer::handle_connection(std::unique_ptr<TlsConnection> conne
         if (message.kind == MessageKind::heartbeat) {
             std::lock_guard<std::mutex> lock(core_mutex_);
             registry_.note_heartbeat(peer.device_id, now_ms(), message.capabilities);
+            if (!registry_path_.empty()) {
+                registry_.save(registry_path_, nullptr);
+            }
             ++stats_.heartbeats;
             continue;
         }
@@ -439,6 +442,9 @@ void DeviceIngressServer::handle_connection(std::unique_ptr<TlsConnection> conne
             } else {
                 result = ingest_.accept(context, message, sinks_.accepted);
                 pump_detectors_locked();
+                if (result.accepted && !registry_path_.empty()) {
+                    registry_.save(registry_path_, nullptr);
+                }
             }
         }
 

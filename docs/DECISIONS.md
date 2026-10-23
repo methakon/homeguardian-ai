@@ -186,9 +186,7 @@ build time (CMake `configure_file`) so the binary is self-contained.
   request-time filesystem path (no traversal surface).
 
 **Consequences / semantics preserved.**
-- `--http` mode is GET-only and loopback-only; `run-scenario` is the only
-  state-advancing route (bounded ≤100 cycles); capture/consent/config stay
-  read-only.
+- `--http` mode is loopback-only; static assets and status queries are GET-only; `run-scenario` is strictly POST requiring session authentication and single-use CSRF tokens (updated in HG-SEC-01); capture/consent/config stay read-only.
 - **Per-run reset**: because one process now serves repeated scenario runs, the
   scenario resets per-run state (counters, alert policy, pipeline history,
   runtime/simulator latches) so each run behaves like the legacy fresh-process
@@ -496,7 +494,7 @@ do not build on a newer glibc than the runtime provides.
 ### Context
 
 The hub's handwritten HTTP server was designed and security-reviewed for
-loopback use: it is unauthenticated by design, relies on `Host`/`Origin`
+loopback use: reads are unauthenticated by design for local diagnostics while state changes require authenticated session and CSRF token, relying on `Host`/`Origin`
 validation, and has no TLS. The container could publish a port in one line.
 
 ### Decision

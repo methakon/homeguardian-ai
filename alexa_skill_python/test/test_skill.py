@@ -102,9 +102,10 @@ class FakeHandlerInput:
 
     This used to be a hand-written recorder that implemented `.speak()` and `.reprompt()`. The SDK's
     ResponseFactory has NO `.reprompt()` — that is the JavaScript ASK SDK's method. So the double was
-    MORE PERMISSIVE THAN REALITY, every test passed, and the deployed skill raised
+    MORE PERMISSIVE THAN REALITY; the earlier source would raise
     `AttributeError: 'ResponseFactory' object has no attribute 'reprompt'` on exactly the two handlers
-    that reprompt (LaunchRequest and HelpIntent) — the identical-failure symptom the owner reported.
+    that reprompt (LaunchRequest and HelpIntent). Whether those exact bytes are deployed remains
+    unverified; the source defect must not be mistaken for a confirmed console root cause.
 
     Using the real ResponseFactory means the tests exercise the real API surface and cannot invent a
     method the runtime lacks. Responses are dicts, so assertions read `response.outputSpeech.ssml`.
@@ -270,11 +271,11 @@ class TestDispatchAndBoundaries(unittest.TestCase):
         a.assert_not_called()
 
     def test_every_handler_runs_against_the_real_response_factory(self):
-        """THE REGRESSION FOR THE DEPLOYED FAILURE.
+        """Regression for the recovered source's SDK mismatch, not proof of deployed bytes.
 
-        The deployed skill raised `AttributeError: 'ResponseFactory' object has no attribute 'reprompt'`
-        on LaunchRequest and HelpIntent - the two handlers that reprompt - and the owner saw the same
-        failure for both. The old test double implemented `.reprompt()`, so it could never catch this.
+        The earlier source raises `AttributeError: 'ResponseFactory' object has no attribute 'reprompt'`
+        on LaunchRequest and HelpIntent. The old test double implemented `.reprompt()`, so it could
+        never catch this. Actual console code and invocation logs are still required for attribution.
 
         This runs EVERY handler through the REAL ResponseFactory. Any SDK method the code calls that
         does not exist therefore raises here, in a test, instead of in the console.

@@ -52,6 +52,7 @@ namespace homeguardian {
 // logged or returned. `revoked` and `expires_at` provide lifecycle control.
 struct AlexaCredential {
     std::string principal;
+    std::string credential_id;
     bool allow_status = false;
     bool allow_alert_summary = false;
     std::chrono::system_clock::time_point expires_at{};  // max() = never

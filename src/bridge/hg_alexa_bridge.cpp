@@ -638,7 +638,8 @@ static json integrations_payload() {
 
 int run_http_mode(Application& app, PersistenceAudit* audit,
                   IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider,
-                  const std::string& token, uint16_t port, int retention_days) {
+                  const std::string& token, uint16_t port, int retention_days,
+                  const std::string& secret = "") {
     // Bounded retention for the BRIDGE's own durable alert store. The config the
     // bridge is handed declares alert_retention_days (30 by default) and the
     // demo server writes to its own audit DB, so honour the retention window
@@ -725,7 +726,7 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
     // atomic flag is async-signal-safe.
     std::signal(SIGINT, [](int) { hg_native_http::request_shutdown(); });
     std::signal(SIGTERM, [](int) { hg_native_http::request_shutdown(); });
-    const int rc = hg_native_http::serve(port, homeguardian::kDashboardHtml, handler);
+    const int rc = hg_native_http::serve(port, homeguardian::kDashboardHtml, handler, secret);
     return rc == 4 ? 0 : rc;  // 4 = clean shutdown requested
 }
 
@@ -736,7 +737,7 @@ int main(int argc, char* argv[]) {
     //   hg_alexa_bridge <config.json> <credentials.json>
     //       NDJSON over stdin/stdout (existing contract path; used by tests).
     //   hg_alexa_bridge --http <config.json> <credentials.json>
-    //                    [--port N] [--token T]
+    //                    [--port N] [--token-file PATH]
     //       Native loopback HTTP demo (serves the embedded dashboard + JSON API).
     bool http_mode = false;
     int base = 1;
@@ -746,19 +747,53 @@ int main(int argc, char* argv[]) {
     }
     if (argc < base + 2) {
         std::cerr << "usage: hg_alexa_bridge [--http] <config.json> <credentials.json>"
-                     " [--port N] [--token T]\n";
+                     " [--port N] [--token-file PATH] [--secret-file PATH]\n"
+                     "  (environment variables HG_HTTP_TOKEN, HG_HTTP_SECRET, HG_SECRET_FILE also supported)\n";
         return 2;
     }
     const std::string config_path = argv[base];
     const std::string creds_path = argv[base + 1];
     uint16_t http_port = 0;             // 0 = ephemeral
     std::string http_token = "demo-token";
+    std::string http_secret = "";
+
+    // Prefer safe environment variables or secret files to avoid command-line token exposure in ps
+    const char* env_token = std::getenv("HG_HTTP_TOKEN");
+    if (env_token && std::strlen(env_token) > 0) {
+        http_token = env_token;
+    }
+    const char* env_secret = std::getenv("HG_HTTP_SECRET");
+    if (env_secret && std::strlen(env_secret) > 0) {
+        http_secret = env_secret;
+    }
+    const char* env_secret_file = std::getenv("HG_SECRET_FILE");
+    if (env_secret_file && std::strlen(env_secret_file) > 0) {
+        std::ifstream sf(env_secret_file);
+        if (sf.is_open()) {
+            std::getline(sf, http_secret);
+        }
+    }
+
     for (int i = base + 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--port" && i + 1 < argc) {
             http_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (a == "--token" && i + 1 < argc) {
+            std::cerr << "SECURITY WARNING: passing --token on command line exposes credential in /proc and ps. Use --token-file or HG_HTTP_TOKEN instead.\n";
             http_token = argv[++i];
+        } else if (a == "--token-file" && i + 1 < argc) {
+            std::ifstream tf(argv[++i]);
+            if (tf.is_open()) {
+                std::getline(tf, http_token);
+            }
+        } else if (a == "--secret" && i + 1 < argc) {
+            std::cerr << "SECURITY WARNING: passing --secret on command line exposes credential in /proc and ps. Use --secret-file or HG_HTTP_SECRET instead.\n";
+            http_secret = argv[++i];
+        } else if (a == "--secret-file" && i + 1 < argc) {
+            std::ifstream sf(argv[++i]);
+            if (sf.is_open()) {
+                std::getline(sf, http_secret);
+            }
         }
     }
 
@@ -849,7 +884,7 @@ int main(int argc, char* argv[]) {
     // when shutdown is requested. Otherwise fall through to the NDJSON loop.
     if (http_mode) {
         return run_http_mode(app, audit, *verifier, provider, http_token, http_port,
-                             alert_retention_days);
+                             alert_retention_days, http_secret);
     }
 
     std::ios::sync_with_stdio(false);

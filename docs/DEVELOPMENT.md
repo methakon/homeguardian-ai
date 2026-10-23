@@ -1,5 +1,21 @@
 # HomeGuardian AI — Development Guide
 
+## Physical integration checkpoint — 2026-10-23
+
+Use [Android → C++ → MCP physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md)
+for the current P1 result and exit criteria. Real Mi A3 camera processing is
+observed; physical observation delivery, durable alert creation and MCP readback
+after restart are **not accepted**. Android-stub host tests, APK installation and
+frame counters prove different layers and must not be reported as a physical
+end-to-end pass.
+
+The report describes a separately built acceptance candidate, including Android
+PKCS#12 compatibility, exact transport identity extraction and wire-vocabulary
+corrections. It does not assert those candidate fixes are merged into `main`.
+Do not bypass TLS/SAN validation, upgrade unknown provenance, lower detector
+thresholds or insert an alert by hand to close the physical gate. Keep real device
+identifiers, addresses, credentials and media out of public documentation.
+
 ## Toolchain
 
 | Tool | Version | Purpose |
@@ -258,9 +274,8 @@ cat > /tmp/creds.json <<'JSON'
 {"demo-token":{"principal":"demo","allow_status":true,"allow_alert_summary":true,"expires_at_ms":0,"revoked":false}}
 JSON
 # 3. serve (loopback only; port 0 = ephemeral, prints "DEMO_READY <port>")
-hg_build/hg_alexa_bridge --http config/homeguardian.demo.json /tmp/creds.json --port 0 --token demo-token
-```
-Routes: `/`, `/index.html`, `/api/health`, `/api/status`, `/api/run-scenario?cycles=N` (GET only).
+HG_HTTP_TOKEN=demo-token hg_build/hg_alexa_bridge --http config/homeguardian.demo.json /tmp/creds.json --port 0
+Routes: `/`, `/index.html`, `/api/health`, `/api/status`, `/api/run-scenario` (POST with session authentication).
 
 The dashboard is embedded at configure time from `src/web/index.html`
 (`cmake/hg_web_assets.h.in` -> `generated/hg_web_assets.h`). **Re-run `cmake` after
@@ -293,7 +308,7 @@ is ~25.8 MB and has different RSS, so compare like-for-like
 | `/api/run-scenario` | ~0.05–0.18 s | ~0.007–0.016 s | **node faster here — see below** |
 | Dashboard files at runtime | 0 (embedded) | 1 (served from disk) | |
 
-**Honest caveat:** for `GET /api/run-scenario` the native in-process server
+**Honest caveat:** for `/api/run-scenario` (originally `GET /api/run-scenario` in NativeHttp; state mutations in v21+ require authenticated POST/CSRF) the native in-process server
 measured **slower** than the legacy per-request child process in this
 environment. The cause was not isolated in this pass and is a documented
 follow-up. Native wins decisively on memory, CPU, process count, dependency
@@ -309,9 +324,9 @@ no timing fields and all counts are unchanged). It records only numeric
 durations — no credentials, paths, or media.
 
 ```
-HG_PROFILE=1 hg_build/hg_alexa_bridge --http config/homeguardian.demo.json <creds> \
-  --port 0 --token demo-token
-curl -s 'http://127.0.0.1:<port>/api/run-scenario?cycles=5' | python3 -m json.tool
+HG_PROFILE=1 HG_HTTP_TOKEN=demo-token hg_build/hg_alexa_bridge --http config/homeguardian.demo.json <creds> \
+  --port 0
+curl -s 'http://127.0.0.1:<port>/api/status' | python3 -m json.tool
 ```
 
 Findings and the reproduction methodology: `docs/PERF_SCENARIO_LATENCY_V15.md`.
@@ -442,7 +457,7 @@ ctest --test-dir .          # 100%
 HG_BRIDGE_PATH=/tmp/hg_rc/hg_alexa_bridge bash scripts/verify_retention.sh
 
 # 3. live matrices (start the bridge first, in a writable scratch dir)
-/tmp/hg_rc/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 8497 --token demo-token
+HG_HTTP_TOKEN=demo-token /tmp/hg_rc/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 8497
 ```
 
 Pitfalls confirmed in v21:
@@ -662,7 +677,7 @@ Provisioning (split storage — note the three directories):
 
 ```bash
 tools/provision_ca.sh init --ca-dir ~/offline-ca --runtime-dir deploy/docker/certs \
-  --device-dir ~/device-keys --server-names "DNS:homeguardian.local,IP:192.168.1.10"
+  --device-dir ~/device-keys --server-names "DNS:homeguardian.local,IP:10.20.30.10"
 tools/provision_ca.sh issue <device-id> --ca-dir ~/offline-ca \
   --runtime-dir deploy/docker/certs --device-dir ~/device-keys
 ```

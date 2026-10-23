@@ -28,6 +28,17 @@ fi
 [ -d "$JAVA_DIR" ] || { echo "FATAL: no such java source dir: $JAVA_DIR" >&2; exit 2; }
 command -v "$NM" >/dev/null 2>&1 || { echo "FATAL: $NM not found" >&2; exit 2; }
 
+# Derive the package from the sources rather than hardcoding one. The script is now used by two
+# apps with different packages (org.homeguardian.harness and org.homeguardian.edgeservice); a
+# hardcoded prefix silently checked the wrong symbol names for the second one.
+PKG="$(sed -nE 's/^[[:space:]]*package[[:space:]]+([A-Za-z0-9_.]+)[[:space:]]*;.*/\1/p' "$JAVA_DIR"/*.java 2>/dev/null | head -1)"
+if [ -z "$PKG" ]; then
+  echo "FATAL: could not read a \`package\` declaration from $JAVA_DIR/*.java" >&2
+  exit 2
+fi
+PKG_MANGLED="$(printf '%s' "$PKG" | tr '.' '_')"
+echo "    java package:             $PKG"
+
 EXPORTS="$("$NM" -D --defined-only "$SO" | awk '{print $NF}' | grep '^Java_' | sort || true)"
 MANGLED="$("$NM" -D --defined-only "$SO" | awk '{print $NF}' | grep -E '^_Z[0-9]+Java_' || true)"
 DECLARED=0
@@ -41,7 +52,7 @@ for JAVA_FILE in "$JAVA_DIR"/*.java; do
   # "native stop requested (...)") is never mistaken for a method. `[(]` needs no escaping.
   for METHOD in $(sed -nE 's/^[[:space:]]*(public|private|protected|static)[^;=]*[[:space:]]native[[:space:]]+[A-Za-z0-9_]+[[:space:]]+([A-Za-z0-9_]+)[[:space:]]*[(].*/\2/p' "$JAVA_FILE"); do
     DECLARED=$((DECLARED + 1))
-    SYMBOL="Java_org_homeguardian_harness_${CLASS_NAME}_${METHOD}"
+    SYMBOL="Java_${PKG_MANGLED}_${CLASS_NAME}_${METHOD}"
     if ! printf '%s\n' "$EXPORTS" | grep -qx "$SYMBOL"; then
       MISSING="$MISSING $SYMBOL"
     fi
@@ -68,8 +79,8 @@ fi
 if [ -n "$MISSING" ]; then
   echo "FATAL: these Java native methods have no matching C-linkage export:"
   for ONE in $MISSING; do echo "    $ONE"; done
-  echo "    A C++-mangled symbol is invisible to JNI - check the extern \"C\" region(s) in"
-  echo "    apk/jni/hg_harness_jni.cpp."
+  echo "    A C++-mangled symbol is invisible to JNI - check the extern \"C\" region(s) in the"
+  echo "    matching apk*/jni/*_jni.cpp."
   exit 1
 fi
 

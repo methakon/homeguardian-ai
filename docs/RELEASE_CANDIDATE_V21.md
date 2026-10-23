@@ -5,6 +5,7 @@ Branch: `h04/native-http-low-footprint`
 Scope: **final integration and stability verification** of the existing native
 C++ application. No new sensing backend, no real fall detection, no emergency
 notification, no Ring/live-Alexa+ integration, no MCP, no dashboard redesign.
+*(Historical Note: This v21 report evaluated the pre-PR #20 codebase; PR #20 subsequently implemented the native C++ MCP server).*
 
 > **Simulation only.** HomeGuardian AI is a simulator-first demonstration. It
 > uses no physical camera or microphone, performs no medical inference, detects
@@ -43,7 +44,7 @@ this report comes from those binaries, executed after the last source change.
 ## 3. Scenario catalogue — all 10 scenarios verified
 
 Every scenario was exercised against the running bridge and its **full**
-integration fields recorded (`/home/swarna-sekhar-dhar/.hermes/cache/scratch/hg_v21/scenarios.json`).
+integration fields recorded (`<CACHE_DIR>/scratch/hg_v21/scenarios.json`).
 Expectations are asserted programmatically: `10/10 pass`.
 
 | # | Identifier | Consent/capture prerequisites | Auth obs | Events | Detection | Anomaly | Alerts gen/deliv/supp | Severity (delivered) | Persisted | Audit |
@@ -97,18 +98,19 @@ Verified in a **real browser** (CDP) and over the API:
 | `/`, `/index.html` | GET | 200, embedded dashboard (CSP, nosniff, DENY, no-referrer) |
 | `/api/health` | GET | 200 `{"ok":true,"status":"up","simulated":true}` |
 | `/api/status` | GET | 200, or `{"error":"unavailable","ok":false}` when the audit DB is unusable (degraded) |
+| `/api/scenarios` | GET | 200, list of available simulation scenarios |
 | `/api/alerts` | GET | 200, per-alert non-sensitive detail from the durable store |
-| `/api/scenarios` | GET | 200, the 10 catalogue entries |
-| `/api/run-scenario?scenario=<id>[&cycles=N]` | GET | 200 on success; **400** for a well-formed but unsupported scenario id |
+| `/api/integrations` | GET | 200, system integrations status (`{"alexa":...,"ring":...,"mcp":...}`) |
+| `/api/session` | POST | 200 `{"ok":true,"csrf":"..."}` on valid `X-HG-Secret`; **401** on invalid/missing secret |
+| `/api/run-scenario?scenario=<id>[&cycles=N]` | POST | 200 on success (requires valid session & CSRF token); **400** for invalid scenario; **405** on GET |
 
 Adversarial matrix: **51/51 pass** — bad/missing/duplicate/non-loopback `Host`
-(403/400), cross-site `Origin` (403), non-GET methods (405), `Authorization` /
+(403/400), cross-site `Origin` (403), non-GET methods on read routes (405), `Authorization` /
 `Content-Length` / `Transfer-Encoding` / `Expect` / obs-fold / body-on-GET (400),
 unknown or duplicate query keys and malformed `scenario`/`cycles` (400), oversized
 header block (413), traversal and unknown paths (404), truncated and partial
 requests (no crash, no answer), an oversized flood followed by a valid request
-(200). The interface remains **loopback-only and unauthenticated by design**
-(this hand-written demo server is not claimed to be production-ready).
+(200). The interface remains **loopback-only** with HG-SEC-01 session-bound CSRF protection for state mutations.
 
 ### Defect fixed — unknown scenario returned 200
 
@@ -298,7 +300,7 @@ weakened to improve any number.
   biometrics; H-01/H-02/G-02 not implemented.
 - The impact classifier is a deterministic synthetic pattern, not a safety
   detector; it says so in every message, payload and panel.
-- The native HTTP demo server is loopback-only, unauthenticated by design and is
+- The native HTTP demo server is loopback-only (reads are unauthenticated by design for local diagnostics; state mutations require authenticated session & CSRF token) and is
   **not** production-ready (no TLS, no identity provider, no rate limiting).
 - Alert dedup/cooldown state resets when the process restarts (history does not).
 - In degraded mode (unusable audit DB) alerts are decided in memory but not
@@ -323,7 +325,7 @@ HG_BRIDGE_PATH=<build>/hg_alexa_bridge bash scripts/verify_retention.sh
 HG_TESTS_PATH=<build>/homeguardian_tests bash scripts/verify_suite_concurrency.sh
 
 # live demo + matrices
-<build>/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 8497 --token demo-token
+HG_HTTP_TOKEN=demo-token <build>/hg_alexa_bridge --http config/homeguardian.demo.json <creds> --port 8497
 python3 scenario_matrix.py 8497 .        # 10/10
 python3 http_adversarial.py 8497 out.json # 51/51
 python3 e2e_stability.py 8497 <pid> .     # PASS

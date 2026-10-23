@@ -1,0 +1,45 @@
+==> SDK field reconciliation
+    compileSdk / android.jar 34
+    minSdkVersion          30
+    targetSdkVersion       30
+    NDK API level          30
+    NDK ABI                arm64-v8a
+==> Toolchain check
+openjdk version "17.0.20.1" 2026-08-18
+==> Derive the native source list from the hg_mcp_server CMake target
+    41 translation units from the hg_mcp_server target (main excluded), + 1 JNI file
+==> Compile SQLite amalgamation (C, not C++)
+==> Compile libhg_edge_service.so (arm64-v8a, API 30)
+==> Verify JNI exports against the Java native declarations (from the compiled ELF)
+    java package:             org.homeguardian.edgeservice
+    shared object:            /home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-service/hg_service_apk_build/lib/libhg_edge_service.so
+    Java native declarations: 7
+    unmangled Java_* exports: 7
+    OK: every Java native declaration has an exact, unmangled JNI export
+==> Compile Java (Java 8 bytecode; no invokedynamic, no lambdas)
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+==> Dex (min-api 30)
+==> Package resources + manifest with aapt
+==> Add classes.dex and native libs
+==> zipalign
+==> Sign (local debug keystore, outside the repo)
+==> Verify
+Signer #1 certificate DN: CN=HomeGuardian Harness Debug, O=HomeGuardian, C=US
+Signer #1 certificate SHA-256 digest: 869b0a270fd855a2cd9eb66ce3f8043d0edff9f4bf2eb6552ac3f40447d0281b
+Signer #1 certificate SHA-1 digest: d5312397a76bac57560bc6e949f209743ad7879c
+Signer #1 certificate MD5 digest: 87bf3413059994a4086d29c50656ec07
+package: name='org.homeguardian.edgeservice' versionCode='1' versionName='1.0.0' platformBuildVersionName='14' platformBuildVersionCode='34' compileSdkVersion='34' compileSdkVersionCodename='14'
+sdkVersion:'30'
+targetSdkVersion:'30'
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.FOREGROUND_SERVICE'
+uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+native-code: 'arm64-v8a'
+--- packaged ABIs ---
+  2794800  2026-10-17 04:06   lib/arm64-v8a/libhg_edge_service.so
+  1822720  2026-10-17 04:06   lib/arm64-v8a/libc++_shared.so
+
+==> DONE (built and signed only — NOT installed, no permission granted, nothing started)
+APK: /home/swarna-sekhar-dhar/projects/homeguardian-ai-worktrees/hermes-mi-a3-edge-service/hg_service_apk_build/homeguardian-edge-service.apk
+     1.56 MB

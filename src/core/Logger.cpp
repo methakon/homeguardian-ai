@@ -2,20 +2,39 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <vector>
+#include <cstdlib>
 
 namespace homeguardian {
 
 std::shared_ptr<spdlog::logger> Logger::logger_ = nullptr;
+std::string Logger::current_log_path_ = "homeguardian.log";
 
-void Logger::initialize(const std::string& log_level) {
+std::string Logger::current_log_path() {
+    return current_log_path_;
+}
+
+void Logger::initialize(const std::string& log_level, const std::string& log_file_path) {
     if (logger_) {
         return;
     }
 
+    std::string path = log_file_path;
+    if (path.empty()) {
+        if (const char* env_path = std::getenv("HG_LOG_PATH")) {
+            if (*env_path != '\0') {
+                path = env_path;
+            }
+        }
+    }
+    if (path.empty()) {
+        path = "homeguardian.log";
+    }
+    current_log_path_ = path;
+
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 
     // The file sink is BEST-EFFORT. A read-only, full or missing working
-    // directory (or an unwritable homeguardian.log) must not abort the process:
+    // directory (or an unwritable log file) must not abort the process:
     // logging is diagnostic, and neither consent enforcement nor capture gating
     // depends on it. Previously the spdlog exception escaped here and
     // std::terminate killed the process (SIGABRT) before it could fail closed.
@@ -23,7 +42,7 @@ void Logger::initialize(const std::string& log_level) {
     std::string file_sink_error;
     try {
         sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(
-            "homeguardian.log", true));
+            current_log_path_, true));
     } catch (const std::exception& e) {
         file_sink_error = e.what();
     }

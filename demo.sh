@@ -57,10 +57,10 @@ echo "==> Starting native demo server (loopback 127.0.0.1 only, no Node.js)…"
 # (kept only as a reference for A/B footprint comparison; not required).
 if [[ "${HG_DEMO_LEGACY_NODE:-0}" == "1" ]]; then
   node "$DEMO_SERVER" --bridge "$BRIDGE" --config "$CONFIG" --creds "$CREDS" \
-    --port "$DEMO_PORT" --token demo-token > "$WORK/demo.out" 2> "$WORK/demo.err" &
+    --port "$DEMO_PORT" > "$WORK/demo.out" 2> "$WORK/demo.err" &
 else
   "$BRIDGE" --http "$CONFIG" "$CREDS" \
-    --port "$DEMO_PORT" --token demo-token > "$WORK/demo.out" 2> "$WORK/demo.err" &
+    --port "$DEMO_PORT" > "$WORK/demo.out" 2> "$WORK/demo.err" &
 fi
 DEMO_PID=$!
 

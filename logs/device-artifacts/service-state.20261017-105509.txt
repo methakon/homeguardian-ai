@@ -1,0 +1,16 @@
+ACTIVITY MANAGER SERVICES (dumpsys activity services)
+  User 0 active services:
+  * ServiceRecord{25e44c4 u0 org.homeguardian.edgeservice/.EdgeService}
+    intent={act=org.homeguardian.edgeservice.START cmp=org.homeguardian.edgeservice/.EdgeService}
+    packageName=org.homeguardian.edgeservice
+    processName=org.homeguardian.edgeservice
+    baseDir=/data/app/~~g1XAQiQvPE9MVjBfdX9K8w==/org.homeguardian.edgeservice-58Ou0G_eChiMZTi5ZIiPUg==/base.apk
+    dataDir=/data/user/0/org.homeguardian.edgeservice
+    app=ProcessRecord{cf4cf6e 24322:org.homeguardian.edgeservice/u0a226}
+    allowWhileInUsePermissionInFgs=false
+    startForegroundCount=1
+    recentCallingPackage=org.homeguardian.edgeservice
+    isForeground=true foregroundId=4711 foregroundNoti=Notification(channel=hg_edge_service shortcut=null contentView=null vibrate=null sound=null defaults=0x0 flags=0x6a color=0x00000000 actions=2 vis=PRIVATE)
+    createTime=-4m18s435ms startingBgTimeout=--
+    lastActivity=-4m18s435ms restartTime=-4m18s435ms createdFromFg=false
+    startRequested=true delayedStop=false stopIfKilled=false callStart=true lastStartId=1

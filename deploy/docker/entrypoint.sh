@@ -40,7 +40,7 @@ echo "homeguardian-hub: starting (port=${HG_PORT} loopback-only inside the conta
 cd "$HG_DATA_DIR"
 
 # The hub's HTTP server binds 127.0.0.1 only. Nothing here publishes it.
+export HG_HTTP_TOKEN="$HG_TOKEN"
 exec /usr/local/bin/hg_alexa_bridge \
     --http "$HG_CONFIG" "$HG_CREDS" \
-    --port "$HG_PORT" \
-    --token "$HG_TOKEN"
+    --port "$HG_PORT"

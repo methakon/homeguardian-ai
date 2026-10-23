@@ -111,6 +111,49 @@ devices.json
 revocations.json
 hg_d03_*
 
+# Node dependencies
+node_modules/
+
+# Distribution archives
+dist/
+
+# Secret files
+*.secret
+
+# Evidence and cache artifacts
+release_evidence/
+__pycache__/
+*.pyc
+
+# ---------------------------------------------------------------------------
+# Mi A3 edge experiment (branch experiment/mi-a3-edge).
+# Build trees, staged device binaries and pulled device databases are NOT source:
+# they are reproducible from scripts/mi_a3_edge_build.sh and the evidence logs.
+# ---------------------------------------------------------------------------
+build_mi_a3_edge_arm64/
+deploy/mi_a3_edge/
+# Pulled device databases are binary blobs; the TEXT evidence (probe logs, logcat)
+# under logs/device-artifacts/ IS kept, because it is the primary test evidence and
+# contains no secret.
+logs/device-artifacts/**/*.db
+logs/device-artifacts/**/*.db-wal
+logs/device-artifacts/**/*.db-shm
+logs/device-artifacts/engine/
+
+# HG-EDGE-02 edge-service APK build tree: reproducible from
+# apk_service/build_service_apk.sh. The signed APK stays a local deliverable
+# (path + SHA-256 recorded in docs/EDGE_DEVICE_MI_A3.md section 10.5).
+hg_service_apk_build/
+# Never publish the device's WHOLE logcat: it carries third-party app activity and
+# personal context from a real phone. Filter to our own tag before committing.
+logs/device-artifacts/full_logcat.txt
+
+# HG-EDGE-05: local CMake build dir for the environmental-context work.
+build_envcontext/
+
+# Compiled Java artifacts must never be committed.
+*.class
+
 # HG-CAM-03: private device backups (Panasonic ELUGA I7 and future nodes).
 # Never committed or uploaded - may contain personal media and device identity.
 /devices/backup/

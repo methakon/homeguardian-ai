@@ -4,6 +4,15 @@
       "invocationName": "home guardian",
       "intents": [
         {
+          "name": "GetRoutineStatusIntent",
+          "slots": [],
+          "samples": ["what is my routine status", "routine status", "routines"]
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        },
+        {
           "name": "AMAZON.CancelIntent",
           "samples": []
         },

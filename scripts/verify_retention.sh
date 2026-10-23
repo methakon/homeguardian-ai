@@ -15,8 +15,18 @@
 # Usage: HG_BRIDGE_PATH=/path/to/hg_alexa_bridge bash scripts/verify_retention.sh
 set -euo pipefail
 
-BRIDGE="${HG_BRIDGE_PATH:?set HG_BRIDGE_PATH to a built hg_alexa_bridge}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -z "${HG_BRIDGE_PATH:-}" ]; then
+  if [ -x "$REPO/build/hg_alexa_bridge" ]; then
+    BRIDGE="$REPO/build/hg_alexa_bridge"
+  elif [ -x "$REPO/hg_build/hg_alexa_bridge" ]; then
+    BRIDGE="$REPO/hg_build/hg_alexa_bridge"
+  else
+    BRIDGE="$REPO/build/hg_alexa_bridge"
+  fi
+else
+  BRIDGE="$HG_BRIDGE_PATH"
+fi
 PORT="${HG_RETENTION_PORT:-8531}"
 WORK="$(mktemp -d /tmp/hg_retention.XXXXXX)"
 PASS=0; FAIL=0
@@ -47,9 +57,16 @@ cat > "$WORK/config.json" <<'JSON'
 }
 JSON
 
+RET_SECRET="retention-secret-2026"
 start_bridge() {
-  ( cd "$WORK" && exec "$BRIDGE" --http "$WORK/config.json" "$WORK/creds.json" \
-      --port "$PORT" --token demo-token ) > "$WORK/out.log" 2> "$WORK/err.log" &
+  printf '%s' "$RET_SECRET" > "$WORK/ret_secret.txt"
+  chmod 600 "$WORK/ret_secret.txt"
+  printf 'X-HG-Secret: %s\n' "$RET_SECRET" > "$WORK/ret_header_secret.txt"
+  chmod 600 "$WORK/ret_header_secret.txt"
+  printf '%s' "demo-token" > "$WORK/ret_token.txt"
+  chmod 600 "$WORK/ret_token.txt"
+  ( cd "$WORK" && export HG_HTTP_SECRET="$RET_SECRET" HG_HTTP_TOKEN="demo-token" && exec "$BRIDGE" --http "$WORK/config.json" "$WORK/creds.json" \
+      --port "$PORT" --token-file "$WORK/ret_token.txt" --secret-file "$WORK/ret_secret.txt" ) > "$WORK/out.log" 2> "$WORK/err.log" &
   PID=$!
   for _ in $(seq 1 40); do
     curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health" && return 0
@@ -63,9 +80,21 @@ DB="$WORK/homeguardian_bridge_audit.db"
 SQ="${HG_SQLITE3:-$(command -v sqlite3 || echo "$HOME/.local/bin/sqlite3")}"
 count() { "$SQ" "$DB" "SELECT count(*) FROM alerts;"; }
 
+run_scenario() {
+  local sc="$1"
+  local csrf
+  csrf=$(curl -s -f -X POST "http://127.0.0.1:$PORT/api/session" \
+    -H "Host: 127.0.0.1:$PORT" -H "Origin: http://127.0.0.1:$PORT" \
+    -H "Content-Type: application/json" -H @"$WORK/ret_header_secret.txt" -d "{}" \
+    | grep -o '"csrf":"[^"]*"' | cut -d'"' -f4)
+  curl -s -f -o /dev/null -X POST "http://127.0.0.1:$PORT/api/run-scenario?scenario=$sc" \
+    -H "Host: 127.0.0.1:$PORT" -H "Origin: http://127.0.0.1:$PORT" \
+    -H "Content-Type: application/json" -H "X-HG-CSRF: $csrf" -d "{}"
+}
+
 echo "== bridge alert-store retention regression =="
 start_bridge
-curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/run-scenario?scenario=synthetic-critical-impact"
+run_scenario "synthetic-critical-impact"
 [[ "$(count)" == "2" ]] && ok "2 alerts persisted by the critical scenario" \
                         || bad "expected 2 persisted alerts, got $(count)"
 stop_bridge
@@ -92,7 +121,7 @@ grep -q "retention: pruned 1 alert(s) older than 30 day(s)" "$WORK/err.log" \
 curl -sf "http://127.0.0.1:$PORT/api/alerts" | grep -q '"total": *3' \
   && ok "API reports the post-retention count" \
   || bad "API total does not reflect retention"
-curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/run-scenario?scenario=normal" \
+run_scenario "normal" \
   && ok "scenario still runs after retention" || bad "scenario failed after retention"
 
 echo "  ----------------------------------------------"

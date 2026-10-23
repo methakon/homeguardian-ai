@@ -1,6 +1,13 @@
 
 # H-03 - Android Wi-Fi Camera and Audio Sensor: hardware acceptance
 
+> **Privacy notice:** device-specific values in this document (LAN addresses, MAC
+> addresses, Wi-Fi name and firmware/software version strings) are replaced with
+> placeholders such as `<redacted-lan-host-19>`. The concrete values are held in the
+> owner-restricted evidence file outside this repository. Every measurement, finding and
+> conclusion in this document is unchanged.
+
+
 Every claim below is labelled with HOW FAR it got. Nothing here is inferred from a successful
 build, and no device result is claimed without the device.
 
@@ -182,10 +189,10 @@ per-viewer authentication, explicit recording controls with retention limits, ba
 and an operator-visible recording indicator. It must not be published unauthenticated on the LAN.
 Until that exists: `REMOTE LIVE CCTV VIEWING: NOT YET IMPLEMENTED`.
 
-## 8. PHYSICAL DEVICE (verified 2026-10-14) - and a specification warning
+## 8. PHYSICAL DEVICE (historical lab audit 2026-10-14) - and a specification warning
 
 The phone enumerated, ADB authorized, and the app installed and ran. **The reported model name is
-spoofed and must not be used to infer anything.** Verified evidence:
+spoofed and must not be used to infer anything.** Audit evidence:
 
 | item | value | how it was verified |
 |---|---|---|
@@ -205,7 +212,7 @@ is what this build targets - and the "S25 Ultra" name, "16 GB RAM" and the Andro
 must never appear in a capability claim. `dumpsys media.camera` reporting `yuv420sp` validates the
 NV21 assumption in the feature path.
 
-### 8.1 What passed on the physical device
+### 8.1 Historical harness results on the test device
 
 * `minSdk=27`/`targetSdk=27` (manifest) - **compatible** with the device's API 27.
 * Packaged ABIs: `lib/armeabi-v7a/*` only; **0** arm64/x86 entries.
@@ -217,7 +224,7 @@ NV21 assumption in the feature path.
   press Start.` - the native library loaded and the node is idle by design. FATAL/ANR count **0**.
 * Permissions CAMERA and RECORD_AUDIO report `granted=true`.
 
-### 8.2 Hub side verified with THIS device's certificate (before the phone dials)
+### 8.2 Hub side audit with THIS device's certificate (before the phone dials)
 
 The ingress runs as the documented least-privilege container (`--cap-drop ALL`,
 `no-new-privileges`, 128 MB, only 8443 published) and logs
@@ -255,9 +262,9 @@ design, and is why the certificate must not be looked for beside the key.
 2. Open **HomeGuardian Node** and press **Import credentials** (the four files are already staged
    in `Android/data/org.homeguardian.harness/files/hg_provisioning/`; the app copies them into
    private storage and deletes the source copies).
-3. Enter host **192.168.1.6** and port **8443**, press **Connect to hub**.
+3. Enter host **<redacted-lan-host-6>** and port **8443**, press **Connect to hub**.
 4. Press **Grant consent (camera + microphone)**, then **Start camera**, then **Start microphone**.
-5. Leave the phone awake on Wi-Fi (`Airtel_Dhar`, got `192.168.1.4`).
+5. Leave the phone awake on Wi-Fi (`<redacted-wifi-ssid>`, got `<redacted-lan-host-4>`).
 
 I will then verify: camera callbacks and a rising frame counter, microphone samples, and
 observations ACCEPTED by the ingress over Wi-Fi - and only after that will I ask for the physical

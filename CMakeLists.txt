@@ -11,6 +11,17 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
 
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+if(ENABLE_ASAN)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
+if(ENABLE_UBSAN)
+    add_compile_options(-fsanitize=undefined)
+    add_link_options(-fsanitize=undefined)
+endif()
+
 # Embed the dashboard HTML (single source of truth: src/web/index.html) so the
 # native demo binary is self-contained (no Node.js, no web-server file at
 # runtime). Generated at BUILD time, with the HTML as a real dependency: an
@@ -126,6 +137,7 @@ add_executable(homeguardian
     src/core/SimulatedEventSource.cpp
     src/core/TimeWindowCorrelation.cpp
     src/core/DetectionFusionRule.cpp
+    src/core/ActivityEpisode.cpp
     src/core/ImpactClassifier.cpp
     src/core/SyntheticImpactRule.cpp
     src/core/Pipeline.cpp
@@ -188,6 +200,7 @@ if(OpenSSL_FOUND)
     message(STATUS "D-03: OpenSSL ${OPENSSL_VERSION} found -> building hg_device_ingress + hg_device_client + hg_ingress_probe")
 
     set(HG_NET_SOURCES
+        src/net/ObservationProducer.cpp
         src/net/DeviceProtocol.cpp
         src/net/DeviceRegistry.cpp
         src/net/ObservationIngest.cpp
@@ -243,6 +256,7 @@ if(OpenSSL_FOUND)
 
     add_executable(hg_device_client
         src/main_device_client.cpp
+        src/net/ObservationProducer.cpp
         src/net/DeviceProtocol.cpp
         src/net/TlsTransport.cpp
     )
@@ -329,6 +343,7 @@ add_executable(hg_alexa_bridge
     src/core/RuntimeStatus.cpp
     src/core/Pipeline.cpp
     src/core/TimeWindowCorrelation.cpp
+    src/core/ActivityEpisode.cpp
     src/core/DetectionFusionRule.cpp
     src/core/ImpactClassifier.cpp
     src/core/SyntheticImpactRule.cpp
@@ -369,14 +384,145 @@ target_link_libraries(hg_alexa_bridge PRIVATE
     sqlite3_static
 )
 
+    # --------------------------------------------------------------------------------
+    # hg_mcp_server (HG-MCP-01): MCP over Streamable HTTP.
+    #
+    # A separate executable on purpose - the existing engine, the web demo and the
+    # NDJSON bridge are untouched. It links the same core/persistence units the bridge
+    # links, because it builds the same Application, PersistenceAudit and
+    # AlexaCredentialStore and exposes them through two read-only tools.
+    # --------------------------------------------------------------------------------
+    add_executable(hg_mcp_server
+        src/main_mcp_server.cpp
+        src/mcp/McpProtocol.cpp
+        src/mcp/McpTools.cpp
+        src/mcp/McpHttpServer.cpp
+        src/core/AlexaContract.cpp
+        src/core/AlexaCredentialStore.cpp
+        src/core/Application.cpp
+        src/core/PersistenceAudit.cpp
+        src/core/AlertPolicy.cpp
+        src/core/RuntimeStatus.cpp
+        src/core/Pipeline.cpp
+        src/core/TimeWindowCorrelation.cpp
+        src/core/ActivityEpisode.cpp
+        src/core/DetectionFusionRule.cpp
+        src/core/ImpactClassifier.cpp
+        src/core/SyntheticImpactRule.cpp
+        src/core/Observation.cpp
+        src/core/PrivacyAuditLog.cpp
+        src/core/AnomalyDetector.cpp
+        src/core/AnomalyMonitor.cpp
+        src/core/FusionEngine.cpp
+        src/core/SyntheticActivityDetector.cpp
+        src/core/EventValidator.cpp
+        src/core/SimulatorRuntime.cpp
+        src/core/ConsentGate.cpp
+        src/core/ConsentGatedAcquisition.cpp
+        src/core/ConsentGuardedDevice.cpp
+        src/core/SimulatedEventSource.cpp
+        src/core/SimulatedSensorSource.cpp
+        src/core/Config.cpp
+        src/core/Logger.cpp
+        src/core/UUID.cpp
+        src/backend/simulator/SimulatedSensorBackend.cpp
+        src/backend/simulator/LogicalDevice.cpp
+        src/backend/simulator/AudioBroker.cpp
+        src/persistence/SQLiteDatabase.cpp
+        src/persistence/EventRepository.cpp
+        src/persistence/AlertRepository.cpp
+        src/persistence/ProfileRepository.cpp
+        src/persistence/ConsentRepository.cpp
+        src/persistence/RoutineRepository.cpp
+        src/persistence/SchemaManager.cpp
+        src/persistence/PersistenceManager.cpp
+    )
+    target_include_directories(hg_mcp_server PRIVATE src third_party/sqlite)
+    target_link_libraries(hg_mcp_server PRIVATE
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        sqlite3_static
+    )
+
+    add_executable(hg_device_registry_cli
+        src/main_device_registry_cli.cpp
+        src/net/DeviceRegistry.cpp
+    )
+    target_include_directories(hg_device_registry_cli PRIVATE src)
+    target_link_libraries(hg_device_registry_cli PRIVATE
+        nlohmann_json::nlohmann_json
+    )
+
+# ---------------------------------------------------------------------------
+# hg_site_connector_rehearsal: the site-connector HOST SHAPE, without a deployment.
+#
+# Mock adapters only: it opens no socket, speaks no camera protocol, carries no media, and
+# every observation it produces is labelled synthetic. It exists so the connector chain
+# (identity -> reach allowlist -> registry authorization -> per-frame consent -> session
+# termination -> control-channel wire -> media-path decision) can be run, measured and
+# regression-checked as one executable, and so the resource envelope of a future always-on
+# host is a measurement rather than a guess.
+#
+# Deliberately NOT linked into hg_mcp_server, the web demo or the bridge: camera-connector
+# work stays isolated from the MCP demonstration surface.
+add_executable(hg_site_connector_rehearsal
+    src/main_site_connector_rehearsal.cpp
+    src/core/Observation.cpp
+    src/net/DeviceRegistry.cpp
+    src/camera/CameraInventory.cpp
+    src/camera/ControlChannel.cpp
+    src/camera/DeviceFingerprint.cpp
+    src/camera/DirectMediaPlanner.cpp
+    src/camera/MockCameraAdapter.cpp
+    src/camera/RegistryAuthorizer.cpp
+    src/camera/SiteConnector.cpp
+    src/camera/SiteProfile.cpp
+)
+target_include_directories(hg_site_connector_rehearsal PRIVATE src)
+target_link_libraries(hg_site_connector_rehearsal PRIVATE
+    nlohmann_json::nlohmann_json
+)
+
+# ---------------------------------------------------------------------------
+# hg_camera_bridge: the REAL camera path on Ubuntu, with an operator gate.
+#
+# V4L2 is the kernel UAPI, so this needs NO extra library: not OpenCV, not libv4l, not
+# PipeWire. Capture requires --confirm; without it the program refuses before opening
+# anything. Frames are reduced to bounded luma/motion scalars in place - nothing is written,
+# streamed or transmitted - and the finding vocabulary is closed and boring.
+#
+# Kept out of hg_mcp_server and the web demo on purpose: a real sensor path must not change
+# the demonstration surface.
+add_executable(hg_camera_bridge
+    src/main_camera_bridge.cpp
+    src/backend/linux/V4l2CameraDevice.cpp
+    src/core/CameraActivitySession.cpp
+    src/core/DetectionFusionRule.cpp
+    src/core/FusionEngine.cpp
+    src/core/ActivityEpisode.cpp
+    src/core/ChangeCharacter.cpp
+    src/core/UUID.cpp
+    src/core/ActivityDetectors.cpp
+    src/core/BoundedFeatures.cpp
+    src/core/Observation.cpp
+)
+target_include_directories(hg_camera_bridge PRIVATE src)
+target_link_libraries(hg_camera_bridge PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+)
+
 if(HOMEGUARDIAN_BUILD_TESTS)
     add_executable(homeguardian_tests
+        ${CMAKE_SOURCE_DIR}/tests/core/test_application.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_config.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_aes128_ecb.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_logger.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_event.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_event_validator.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_simulated_event_source.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_time_window_correlation.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_environmental_context.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_pipeline.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_alert.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_family_profile.cpp
@@ -410,6 +556,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_consent.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_privacy_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_native_http.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_native_http_security.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_native_http_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_demo_scenarios.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_detection_alert.cpp
@@ -422,6 +570,53 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/tests/core/test_observation_integration.cpp
         ${CMAKE_SOURCE_DIR}/tests/core/test_skill_gaps.cpp
         ${CMAKE_SOURCE_DIR}/tests/net/test_device_transport.cpp
+        ${CMAKE_SOURCE_DIR}/tests/net/test_panasonic_node_receiver.cpp
+        ${CMAKE_SOURCE_DIR}/tests/net/test_network_contract_audit.cpp
+        ${CMAKE_SOURCE_DIR}/tests/net/test_producer_and_reliability.cpp
+        ${CMAKE_SOURCE_DIR}/tests/integration/test_network_sensor_to_mcp.cpp
+        ${CMAKE_SOURCE_DIR}/tests/integration/test_local_media_to_mcp.cpp
+        # HG-V380-09 camera adapter boundary: deterministic mock adapters plus the
+        # registry/consent authorization seam. Registered in the TEST target only —
+        # no shipped binary references them, so their footprints are unchanged.
+        ${CMAKE_SOURCE_DIR}/src/camera/MockCameraAdapter.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/V380CameraAdapter.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/V380Discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/CameraEndpointResolver.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/RegistryAuthorizer.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/SiteConnector.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_boundary.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_v380_camera_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_endpoint_resolver.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_v380_protocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/SiteProfile.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/ControlChannel.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/DirectMediaPlanner.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_site_connectors.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/DeviceFingerprint.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/CameraInventory.cpp
+        ${CMAKE_SOURCE_DIR}/tests/camera/test_camera_inventory.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnimalActivityScenarios.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_animal_activity_scenarios.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/CameraActivitySession.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/V4l2CameraDevice.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_camera_activity.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_camera_calibration.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_camera_replay.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_fusion_provenance.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_activity_episode.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_camera_scenarios.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_animal_activity.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_change_character.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_audio_observation.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_event_consumer.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_audio_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_activity_pattern.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_media_backpressure.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_local_media_observation.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_v380_adapter.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_scenario_record.cpp
+        ${CMAKE_SOURCE_DIR}/tests/core/test_sensor_audit.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_persistence.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_phase_e.cpp
         ${CMAKE_SOURCE_DIR}/tests/persistence/test_integrity.cpp
@@ -431,22 +626,37 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/EventValidator.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SimulatedEventSource.cpp
         ${CMAKE_SOURCE_DIR}/src/core/TimeWindowCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ActivityEpisode.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AnimalActivity.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ChangeCharacter.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/AudioObservation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/SensorEventConsumer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ActivityPattern.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/BoundedMediaBuffer.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/LocalMediaObservation.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/V380SourceAdapter.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/ScenarioRecord.cpp
+        ${CMAKE_SOURCE_DIR}/src/backend/linux/AlsaCommandAudioSource.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DetectionFusionRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ImpactClassifier.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SyntheticImpactRule.cpp
         ${CMAKE_SOURCE_DIR}/src/core/CaptureAccounting.cpp
         ${CMAKE_SOURCE_DIR}/src/core/NodeIdentity.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/Aes128Ecb.cpp
         ${CMAKE_SOURCE_DIR}/src/core/BoundedFeatures.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ActivityDetectors.cpp
         ${CMAKE_SOURCE_DIR}/src/core/DempsterShafer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/PrecursorDetection.cpp
         ${CMAKE_SOURCE_DIR}/src/core/EnvironmentalCorrelation.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/EnvironmentalContext.cpp
         ${CMAKE_SOURCE_DIR}/src/core/SecurityObservation.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HomeAssistantAdapter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/ObservationProducer.cpp
         ${CMAKE_SOURCE_DIR}/src/net/DeviceProtocol.cpp
         ${CMAKE_SOURCE_DIR}/src/net/DeviceRegistry.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ObservationIngest.cpp
+        ${CMAKE_SOURCE_DIR}/src/net/PanasonicNodeReceiver.cpp
         ${CMAKE_SOURCE_DIR}/src/net/ReplayState.cpp
         ${CMAKE_SOURCE_DIR}/src/net/IngressConfigPolicy.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/linux/PwAudioCaptureDevice.cpp
@@ -487,6 +697,11 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/backend/simulator/SimulatedSensorBackend.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/simulator/LogicalDevice.cpp
         ${CMAKE_SOURCE_DIR}/src/backend/simulator/AudioBroker.cpp
+        # MCP (HG-MCP-01): protocol, tools and transport, exercised without a socket
+        ${CMAKE_SOURCE_DIR}/tests/mcp/test_mcp_protocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp/McpProtocol.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp/McpTools.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp/McpHttpServer.cpp
     )
 
     target_include_directories(homeguardian_tests PRIVATE
@@ -510,4 +725,58 @@ if(HOMEGUARDIAN_BUILD_TESTS)
     # Also expose the source dir so tests that read repo-relative files work
     # when the binary is run directly from an out-of-source build directory.
     set_tests_properties(homeguardian_tests PROPERTIES ENVIRONMENT "HG_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+
+    # Evidence provenance: every camera-evidence artifact that a submission document references must
+    # resolve at the revision that is supposed to contain it, and the artifact's own content must
+    # support the evidence type the manifest declares. Python 3 + the standard library only, so this
+    # is skipped rather than failed when no interpreter is present.
+    find_program(HG_PYTHON3_EXECUTABLE NAMES python3 python)
+    if(HG_PYTHON3_EXECUTABLE)
+        add_test(NAME evidence_provenance_validator
+                 COMMAND ${HG_PYTHON3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/verify_evidence_provenance.py
+                         --root ${CMAKE_SOURCE_DIR}
+                         --json-out ${CMAKE_BINARY_DIR}/evidence/provenance-report.json
+                         --allow-external-references)
+        set_tests_properties(evidence_provenance_validator PROPERTIES
+                             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        add_test(NAME evidence_provenance_tests
+                 COMMAND ${HG_PYTHON3_EXECUTABLE} -m unittest discover -s ${CMAKE_SOURCE_DIR}/tests/scripts)
+        set_tests_properties(evidence_provenance_tests PROPERTIES
+                             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    endif()
 endif()
+
+add_executable(hg_audio_probe
+    src/main_audio_probe.cpp
+    src/backend/linux/AlsaCommandAudioSource.cpp
+    src/core/AudioObservation.cpp
+    src/core/BoundedFeatures.cpp
+    src/core/Observation.cpp
+    src/core/UUID.cpp
+)
+target_include_directories(hg_audio_probe PRIVATE src)
+target_link_libraries(hg_audio_probe PRIVATE
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+)
+
+add_executable(hg_scenario_runner
+    src/main_scenario_runner.cpp
+    src/core/ScenarioRecord.cpp
+)
+target_include_directories(hg_scenario_runner PRIVATE src)
+target_link_libraries(hg_scenario_runner PRIVATE)
+
+# The bounded V380 handshake probe: one login, one stream login, NO media.
+add_executable(hg_v380_handshake
+    ${CMAKE_SOURCE_DIR}/tools/v380_handshake.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/v380_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/Aes128Ecb.cpp)
+target_include_directories(hg_v380_handshake PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# The resolver probe: device id in, current address out. No media.
+add_executable(hg_v380_resolve
+    ${CMAKE_SOURCE_DIR}/tools/v380_resolve.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/V380Discovery.cpp
+    ${CMAKE_SOURCE_DIR}/src/camera/CameraEndpointResolver.cpp)
+target_include_directories(hg_v380_resolve PRIVATE ${CMAKE_SOURCE_DIR}/src)

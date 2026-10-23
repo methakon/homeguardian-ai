@@ -1012,11 +1012,11 @@ and two integration cases against `SimulatorRuntime` and
  (legacy)  browser ─► node http server ─► spawn hg_alexa_bridge  (NDJSON) ⟶ 2+ procs
  (v14)     browser ─► hg_alexa_bridge --http …  ─► Application / AlexaContract /
                         │ (embedded dashboard)      PersistenceAudit / Pipeline   ⟶ 1 proc
-                        └─ NativeHttp.h (loopback-only, GET-only subset)
+                        └─ NativeHttp.h (loopback-only HTTP subset; state changes require authenticated session & CSRF)
 ```
 
 `NativeHttp.h` is a small, bounded, loopback-only HTTP/1.1 subset (no external
-dependency). `hg_alexa_bridge --http <config> <creds> [--port N] [--token T]`
+dependency). `hg_alexa_bridge --http <config> <creds> [--port N] [--token-file PATH]`
 serves:
 
 - `/` and `/index.html` — the dashboard, **embedded** at build time from
@@ -1039,9 +1039,9 @@ loopback JSON API.
 behaviour. See `docs/DECISIONS.md` (D-native-http) and `docs/FRICTION_LOG.md`
 (v14) for the defects this surfaced.
 
-**Security boundary.** Loopback-only bind by construction; GET-only; `Host` must
+**Security boundary.** Loopback-only bind by construction; unauthenticated read subset with authenticated state-changing POST endpoints; `Host` must
 be a loopback authority (DNS-rebinding defence); non-loopback `Origin` rejected
-(cross-site defence); no bodies/framing headers; CSP + frame/referrer headers on
+(cross-site defence); no unauthorized bodies/framing headers; CSP + frame/referrer headers on
 HTML; bounded sizes (8192 B request, 128 B path) and 3 s client timeouts; one
 request at a time. Details and the simulator-vs-production distinction:
 `docs/SECURITY_READINESS_V8.md`.
@@ -1072,9 +1072,9 @@ request at a time. Details and the simulator-vs-production distinction:
   DELIVERED alerts. It cannot change delivery, ordering, or persistence.
 - `SimulatorRuntime::reset_consent_state()` clears only the synthetic in-memory
   consent repo; it never touches durable state.
-- HTTP: `GET /api/run-scenario[?scenario=<id>][&cycles=N]`, `GET /api/alerts`,
+- HTTP: `POST /api/run-scenario[?scenario=<id>][&cycles=N]` (authenticated POST with session and CSRF token), `POST /api/session`, `GET /api/alerts`,
   `GET /api/scenarios`, plus the existing `/`, `/index.html`, `/api/health`,
-  `/api/status`. All loopback-only, GET-only, with the H-04 protections.
+  `/api/status`. All loopback-only with HG-SEC-01 protections.
 - The dashboard is vanilla HTML/CSS/JS, embedded in the binary; it renders
   backend-derived values using `textContent` / `createElement` (never `innerHTML`
   with backend strings).
