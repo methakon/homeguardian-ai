@@ -1354,3 +1354,26 @@ available browser's Amazon sign-in state.
 Workstation shutdown remains conditional on independently working live capture,
 analysis and alert readback. Those criteria are not met; do not shut down or claim
 the requested physical-monitoring acceptance from synthetic tests.
+
+### Camera DHCP recovery hardening
+
+The native snapshot bridge now supports opt-in, explicit-MAC relocation with
+`--camera-scan auto --camera-mac <private identity> --camera-state-file <protected path>`.
+It requires registry-backed `--camera-analysis`. Capture and fresh registry
+authorization gate recovery probes and credential transmission; ordinary fetches
+also verify the destination identity when recovery is enabled. Snapshot/server
+fingerprint fallback was removed: a JPEG from an arbitrary host cannot authorize
+credential redirection. Saved state is a bounded subnet/MAC/TTL-checked cooldown
+hint, never a trusted destination. Failed scans persist cooldown; probe IO uses
+absolute monotonic deadlines and bounded concurrency.
+
+Focused parent verification: locator 1,827 assertions / 24 cases; native camera,
+portal and HTTP 1,120 assertions / 77 cases; camera portal security 6 tests. All
+passed; no physical camera was contacted by these synthetic/loopback tests.
+
+Recovery is currently **request-driven, at most once per minute**, not a scheduled
+background retry every minute. It applies to an authorized supported HTTP snapshot
+source, not the proprietary V380 listener. Installing this bridge binary does not
+configure the physical camera, implement its unsupported transport, or establish
+workstation-independent capture. Do not equate these code tests with live feed
+or physical-alert acceptance.

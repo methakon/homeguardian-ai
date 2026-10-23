@@ -335,6 +335,10 @@ add_executable(hg_alexa_bridge
     src/core/BoundedFeatures.cpp
     src/net/DeviceRegistry.cpp
     src/camera/RegistryAuthorizer.cpp
+    # MAC normalization for the camera's DHCP rediscovery (src/bridge/CameraLocator.h). One
+    # implementation of "what is a MAC" is shared with the device fingerprint code, so the
+    # all-zero/broadcast placeholders and IP literals are refused in exactly one place.
+    src/camera/DeviceFingerprint.cpp
     # Sensor/integration status route: the adapter's own config validation and the
     # real (empty) device registry are reported to the dashboard, so these two
     # translation units ARE referenced by the bridge.
@@ -754,6 +758,7 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/src/core/EventValidator.cpp
         ${CMAKE_SOURCE_DIR}/src/core/Logger.cpp
         ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/DeviceFingerprint.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AnomalyDetector.cpp
         ${CMAKE_SOURCE_DIR}/src/core/AnomalyMonitor.cpp
         ${CMAKE_SOURCE_DIR}/src/core/PersistenceAudit.cpp
@@ -771,6 +776,21 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         catch2_main spdlog::spdlog nlohmann_json::nlohmann_json sqlite3_static)
     add_test(NAME hg_camera_analysis_tests COMMAND hg_camera_analysis_tests)
     set_tests_properties(hg_camera_analysis_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
+    # MAC-anchored camera rediscovery (DHCP). Fully OFFLINE: synthetic /proc/net/arp fixtures, an
+    # injected connect/clock, and loopback HTTP peers on 127.0.0.0/8. No real camera, no real LAN,
+    # and no credential is ever part of a discovery probe (the API has no way to carry one).
+    add_executable(hg_camera_locator_tests
+        ${CMAKE_SOURCE_DIR}/tests/portal/test_camera_locator.cpp
+        ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
+        ${CMAKE_SOURCE_DIR}/src/camera/DeviceFingerprint.cpp
+    )
+    target_include_directories(hg_camera_locator_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/third_party/catch2/single_include)
+    target_link_libraries(hg_camera_locator_tests PRIVATE catch2_main)
+    add_test(NAME hg_camera_locator_tests COMMAND hg_camera_locator_tests)
+    set_tests_properties(hg_camera_locator_tests PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
     include(CTest)
     add_test(NAME homeguardian_tests COMMAND homeguardian_tests)

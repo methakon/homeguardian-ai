@@ -21,6 +21,7 @@
 //   * GET only. There is no POST/PUT/DELETE path, so this client cannot actuate
 //     anything on the peer.
 
+#include <functional>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -48,6 +49,12 @@ struct HttpResponse {
     std::string error;           // bounded, non-sensitive
     size_t bytes_received = 0;
     bool truncated = false;      // peer exceeded the cap; body holds the prefix
+    // The Server header, trimmed and bounded to HttpPolicy::kMaxHeaderValueChars. Additive and
+    // read-only: the response shape is otherwise unchanged. A device's self-reported product
+    // string is the one part of an HTTP response that a camera frames differently from a
+    // generic web server. This is diagnostic metadata, not recovery identity, and is
+    // never used for authorization.
+    std::string server;
 };
 
 class HttpClient {
@@ -55,6 +62,8 @@ public:
     struct Config {
         int timeout_ms = HttpPolicy::kDefaultTimeoutMs;
         size_t max_response_bytes = HttpPolicy::kMaxResponseBytes;
+        // Fail closed immediately before sending each request fragment (after connect).
+        std::function<bool()> before_send;
         Config() = default;
     };
 

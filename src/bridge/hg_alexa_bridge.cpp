@@ -40,7 +40,9 @@
 #include "bridge/NativeHttp.h"
 #include "bridge/PortalUploads.h"
 #include "bridge/LiveCameraFeed.h"
+#include "bridge/CameraLocator.h"
 #include "bridge/CameraAnalysis.h"
+#include "camera/DeviceFingerprint.h"
 #include "hg_web_assets.h"
 
 #include <chrono>
@@ -665,7 +667,9 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                   const std::string& camera_user = std::string("admin"),
                   const std::string& camera_password = std::string(),
                   bool camera_analysis = false, const std::string& camera_registry = "",
-                  const std::string& camera_device_id = "", const std::string& camera_credential_id = "") {
+                  const std::string& camera_device_id = "", const std::string& camera_credential_id = "",
+                  const std::string& camera_mac = std::string(), bool camera_scan = false,
+                  const std::string& camera_state_file = std::string()) {
     // Bounded retention for the BRIDGE's own durable alert store. The config the
     // bridge is handed declares alert_retention_days (30 by default) and the
     // demo server writes to its own audit DB, so honour the retention window
@@ -704,9 +708,32 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
         cam.password = camera_password;
         cam.allow_plaintext = true;          // explicit: the camera serves http on the site LAN
         cam.display_name = "Outside Main Gate";
+        // Dynamic-address support. The MAC is the camera's IDENTITY; the host above is only where
+        // it was last seen. Scanning stays off unless the operator asked for it, and a state file
+        // is only used when one was named (it is created 0600 by the locator, never world-readable).
+        cam.mac = camera_mac;
+        cam.state_file = camera_state_file;
+        cam.scan_enabled = camera_scan && !camera_host.empty();
         live_camera = std::make_shared<homeguardian::portal::LiveCameraFeed>(cam);
+        // Both status-driven recovery and frame requests use this gate, including the
+        // post-connect/pre-send recheck. Recovery requires an enrolled registry source.
+        auto auth_mutex = std::make_shared<std::mutex>();
+        live_camera->set_authorization([&app, &analysis, camera_scan, auth_mutex] {
+            std::lock_guard<std::mutex> lock(*auth_mutex);
+            if (!app.get_status().capture_enabled.load()) return false;
+            return analysis ? analysis->authorize() : !camera_scan;
+        });
         std::cerr << "portal: live camera configured for \"" << cam.display_name
-                  << "\" (credential supplied: " << (cam.password.empty() ? "no" : "yes") << ")\n";
+                  << "\" (credential supplied: " << (cam.password.empty() ? "no" : "yes")
+                  << ", mac known: " << (cam.mac.empty() ? "no" : "yes")
+                  << ", rediscovery: " << (cam.scan_enabled ? "request-driven (<=1/min)" : "off")
+                  << ")\n";
+        if (cam.scan_enabled && cam.mac.empty()) {
+            std::cerr << "portal: recovery disabled: explicit camera MAC required\n";
+        }
+        if (!cam.state_file.empty()) {
+            std::cerr << "portal: camera discovery state file " << cam.state_file << "\n";
+        }
     }
     hg_portal::UploadStore uploads(uploads_dir.empty() ? default_uploads_dir() : uploads_dir);
     if (!uploads.load())
@@ -797,6 +824,15 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                     ? "synthetic fixture camera; not a physical camera observation"
                     : "physical observation; distinct from synthetic demo and uploaded replay";
                 out["analysis"] = analysis ? analysis->status() : json{{"enabled",false},{"state","disabled"}};
+                // Vehicle for the owner's recovery requirement: while the camera is unavailable,
+                // attempt ONE bounded rediscovery per minute. The panel polls this route, so this
+                // is where the attempt is made - and it is discovery only: a MAC-anchored scan on
+                // the configured /24, then a single authenticated re-verification fetch. It is
+                // rate limited inside the locator, so polling cannot turn into a sweep loop, and
+                // it is a no-op unless --camera-scan auto was given. Worst case this blocks one
+                // status response for the bounded scan deadline; the alternative (capturing in a
+                // background thread while nobody asked) is exactly what this project refuses.
+                (void)live_camera->maybe_rediscover(live_now_ms());
                 out["camera"] = json::parse(live_camera->status_json(live_now_ms()));
                 out["camera"]["analysis_connected"] = static_cast<bool>(analysis);
                 out["camera"]["analysis_state"] = analysis ? analysis->status()["state"] : json("disabled");
@@ -908,7 +944,19 @@ int run_http_mode(Application& app, PersistenceAudit* audit,
                 cam_status=403; mime_out="application/json";
                 return R"({"ok":false,"error":"source_unauthorized"})";
             }
-            const auto frame = live_camera->fetch_frame(live_now_ms());
+            const auto frame_now = live_now_ms();
+            auto frame = live_camera->fetch_frame(frame_now);
+            if (!frame.ok && live_camera->maybe_rediscover(frame_now)) {
+                // The lease moved and the MAC-anchored rediscovery re-verified the camera with a
+                // real authenticated fetch, which stored that frame. Serve the frame we just
+                // proved, not a cached one: `last_frame()` is what the verification fetch returned.
+                if (auto fresh = live_camera->last_frame()) {
+                    frame.ok = true;
+                    frame.jpeg = std::move(*fresh);
+                    frame.captured_at_ms = live_now_ms();
+                    frame.error.clear();
+                }
+            }
             if (!frame.ok) {
                 if (analysis) analysis->note_no_frame();
                 // Fail honestly: a status code and a reason, never a stale frame dressed as live.
@@ -948,6 +996,12 @@ int main(int argc, char* argv[]) {
     std::string camera_password_file;
     bool camera_allow_plaintext = false, camera_analysis = false;
     std::string camera_registry, camera_device_id, camera_credential_id;
+    // Dynamic-address (DHCP) support for the physical camera. The MAC is the camera's identity,
+    // never the address; scanning is opt-in (default off) and the state file is opt-in too.
+    std::string camera_mac;
+    std::string camera_scan_mode = "off";     // auto|off
+    bool camera_scan = false;
+    std::string camera_state_file;
     int base = 1;
     if (argc >= 2 && std::string(argv[1]) == "--http") {
         http_mode = true;
@@ -957,6 +1011,11 @@ int main(int argc, char* argv[]) {
         std::cerr << "usage: hg_alexa_bridge [--http] <config.json> <credentials.json>"
                      " [--port N] [--token-file PATH] [--secret-file PATH]"
                      " [--uploads-dir PATH]\n"
+                     "  camera: --camera-host IP --camera-allow-plaintext"
+                     " --camera-password-file PATH [--camera-port N] [--camera-user U]"
+                     " [--camera-mac MAC] [--camera-scan auto|off] [--camera-state-file PATH]\n"
+                     "  (--camera-scan auto re-finds the camera on its own /24 by MAC at most"
+                     " once a minute on authorized requests, only while unavailable; no scheduler)\n"
                      "  (environment variables HG_HTTP_TOKEN, HG_HTTP_SECRET, HG_SECRET_FILE also supported)\n";
         return 2;
     }
@@ -1019,6 +1078,13 @@ int main(int argc, char* argv[]) {
         } else if (a == "--camera-password-file" && i + 1 < argc) {
             // A FILE, never the command line: argv is visible to ps and lands in shell history.
             camera_password_file = argv[++i];
+        } else if (a == "--camera-mac" && i + 1 < argc) {
+            // The camera's MAC, so a DHCP move can be repaired without touching the address.
+            camera_mac = argv[++i];
+        } else if (a == "--camera-scan" && i + 1 < argc) {
+            camera_scan_mode = argv[++i];
+        } else if (a == "--camera-state-file" && i + 1 < argc) {
+            camera_state_file = argv[++i];
         } else if (a == "--uploads-dir" && i + 1 < argc) {
             uploads_dir = argv[++i];
         } else if (a == "--token-file" && i + 1 < argc) {
@@ -1040,6 +1106,32 @@ int main(int argc, char* argv[]) {
     if (camera_analysis && (!http_mode || camera_host.empty() || camera_registry.empty() ||
         camera_device_id.empty() || camera_credential_id.empty())) {
         std::cerr << "camera analysis requires explicit source configuration\n"; return 3;
+    }
+    // Camera address discovery: validate the mode and the MAC BEFORE anything is built, and fail
+    // closed on nonsense rather than treating an unparseable MAC as "match any device".
+    if (camera_scan_mode != "auto" && camera_scan_mode != "off") {
+        std::cerr << "camera scan mode invalid (auto|off)\n"; return 3;
+    }
+    camera_scan = (camera_scan_mode == "auto");
+    if (!camera_mac.empty()) {
+        homeguardian::camera::HardwareFingerprint fp;
+        std::string why;
+        if (!homeguardian::camera::HardwareFingerprint::normalize(camera_mac, &fp, &why)) {
+            std::cerr << "camera MAC invalid: " << why << "\n"; return 3;
+        }
+        camera_mac = fp.canonical();
+    }
+    if (camera_scan && (camera_mac.empty() || !camera_analysis)) {
+        std::cerr << "camera scan requires explicit --camera-mac and registry-backed --camera-analysis\n"; return 3;
+    }
+    if (camera_scan && camera_host.empty()) {
+        std::cerr << "camera scan requires --camera-host (the /24 is derived from it)\n"; return 3;
+    }
+    if (!camera_state_file.empty() && camera_state_file.front() != '/') {
+        std::cerr << "camera state file must be an absolute path\n"; return 3;
+    }
+    if (!camera_state_file.empty() && !http_mode) {
+        std::cerr << "camera state file is only used in --http mode\n"; return 3;
     }
     // Never silently discard the configured camera credential or opt into
     // plaintext merely because a host was supplied. Read the exact opened file
@@ -1163,7 +1255,8 @@ int main(int argc, char* argv[]) {
         return run_http_mode(app, audit, *verifier, provider, http_token, http_port,
                              alert_retention_days, http_secret, uploads_dir,
                              camera_host, camera_port, camera_user, camera_password,
-                             camera_analysis, camera_registry, camera_device_id, camera_credential_id);
+                             camera_analysis, camera_registry, camera_device_id, camera_credential_id,
+                             camera_mac, camera_scan, camera_state_file);
     }
 
     std::ios::sync_with_stdio(false);

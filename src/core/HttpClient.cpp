@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cctype>
 #include <cstring>
 #include <string>
 
@@ -195,9 +196,19 @@ HttpResponse HttpClient::get(
         return response;
     }
 
+    if (cfg_.before_send && !cfg_.before_send()) {
+        response.error = "request authorization denied";
+        ::close(fd);
+        return response;
+    }
     size_t sent = 0;
     while (sent < request.size()) {
-        const ssize_t n = ::send(fd, request.data() + sent, request.size() - sent, 0);
+        if (cfg_.before_send && !cfg_.before_send()) {
+            response.error = "request authorization denied";
+            ::close(fd);
+            return response;
+        }
+        const ssize_t n = ::send(fd, request.data() + sent, request.size() - sent, MSG_NOSIGNAL);
         if (n <= 0) {
             response.error = "send failed";
             ::close(fd);
@@ -243,6 +254,29 @@ HttpResponse HttpClient::get(
     response.status = status;
     response.body = raw.substr(head_end + 4);
     response.ok = status >= 200 && status < 300;
+    // Server header: scanned line by line inside the header block only (never the body, which is
+    // caller data). Case-insensitive name, trimmed value, bounded length - a hostile peer cannot
+    // make this allocate past kMaxHeaderValueChars.
+    {
+        size_t at = head.find("\r\n");
+        at = (at == std::string::npos) ? head.size() : at + 2;
+        while (at < head.size()) {
+            const size_t nl = head.find("\r\n", at);
+            const std::string line =
+                head.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+            at = (nl == std::string::npos) ? head.size() : nl + 2;
+            const size_t colon = line.find(':');
+            if (colon == std::string::npos || colon == 0) continue;
+            std::string name = line.substr(0, colon);
+            for (char& c : name)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (name != "server") continue;
+            size_t v = colon + 1;
+            while (v < line.size() && (line[v] == ' ' || line[v] == '\t')) ++v;
+            response.server = line.substr(v, HttpPolicy::kMaxHeaderValueChars);
+            break;
+        }
+    }
     return response;
 }
 
