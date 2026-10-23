@@ -14,6 +14,14 @@ consent-gated, and local-first.
 > demos and regression inputs remain explicitly synthetic. Video recording,
 > publication and final submission are not verified.
 
+**Published portal:** https://homeguardian.berhampore.in/ — the native
+`hg_alexa_bridge` HTTP portal behind a Cloudflare tunnel, bound to loopback on the
+deployment host. It reports live hub state and alerts. No camera is configured, no
+observations feed that instance, and capture is disabled, so its camera panel answers
+"not configured" and its device/fusion counters are zero. Deployment notes:
+[portal deployment](docs/PORTAL_DEPLOYMENT.md); honest scope:
+[real-event pipeline acceptance](docs/REAL_EVENT_PIPELINE_ACCEPTANCE.md).
+
 ## Vision
 
 HomeGuardian AI is a privacy-first, multimodal home intelligence platform that

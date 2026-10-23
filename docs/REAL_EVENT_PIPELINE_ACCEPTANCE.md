@@ -67,8 +67,10 @@ Still missing or unproven:
 - **Physical acceptance.** No real camera was contacted. The verified fixture is a
   generated JPEG peer, and its provenance is derived as `synthetic` from the reserved
   registry id — a fixture cannot be labelled a physical observation.
-- **Deployment.** Nothing was deployed; the working classic ASK/SQS/phone lane is
-  unchanged.
+- **Deployment.** The portal is now published at `https://homeguardian.berhampore.in/`
+  (loopback-bound native bridge behind a Cloudflare tunnel). That publishes a page and
+  its read-only APIs; it does not deploy the camera analysis, configure a source, or
+  change the classic ASK/SQS/phone lane. No camera frame has been fetched.
 - **Proactive Alexa delivery.** The established path is request/response. An
   `alerts_delivered` counter or a spoken summary is not unsolicited notification.
 - **Continuous video.** Snapshot polling only; the H.264 path still needs a streaming

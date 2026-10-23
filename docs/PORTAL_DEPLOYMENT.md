@@ -157,6 +157,23 @@ This is how `homeguardian.berhampore.in` is published: a Cloudflare tunnel on th
 ingress points at `http://127.0.0.1:<portal port>`, with the portal bound to loopback. No inbound port is
 opened on that host and no other hostname is affected.
 
+## 9. Current published instance
+
+    endpoint   https://homeguardian.berhampore.in/
+    process    hg-portal.service  ->  hg_alexa_bridge --http, bound to 127.0.0.1
+    ingress    Cloudflare tunnel -> http://127.0.0.1:<portal port>  (no inbound port opened)
+    config     media_capture_enabled=false, alert_retention_days=30
+    secrets    creds / operator secret / env live in 0600 files outside the repository
+
+Verified responses: `/` 200 (embedded dashboard), `/api/health` 200, `/api/status` 200
+with `state=Running` and `capture_enabled=false`, `/api/alerts` 200, `/api/camera/status`
+200 `{"configured":false}`, `/api/camera/frame` 401.
+
+Read this instance honestly: it is one portal process with an empty device registry and
+no configured camera. It does not receive the phone's observations, which travel over the
+private MCP path, so its integration counters are zero by design. Publishing it does not
+change capture, consent, the Alexa lane or the mail host.
+
 Other unverified items: the login/authorization experience is the operator-secret panel only (no per-user
 accounts); and the dashboard's behaviour when the *application* is degraded (as opposed to the upload store
 being unusable) is covered only by reading its JavaScript, not exercised.

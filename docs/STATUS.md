@@ -2,6 +2,30 @@
 
 **Last updated:** 2026-10-24
 
+## Published endpoint
+
+**https://homeguardian.berhampore.in/** is live, serving the native portal
+(`hg_alexa_bridge --http`) from the deployment host behind a Cloudflare tunnel.
+Verified from outside the build machine:
+
+```
+GET /                   200  embedded dashboard
+GET /api/health         200  {"ok":true,"status":"up","simulated":true}
+GET /api/status         200  state=Running, capture_enabled=false, alert_count=0
+GET /api/alerts         200  {"ok":true,"alerts":[],"total":0}
+GET /api/camera/status  200  {"configured":false,"reason":"no_camera_configured"}
+GET /api/camera/frame   401  frames require the operator secret
+```
+
+The listener binds loopback only; the public name is accepted through one explicit
+`HG_HTTP_PUBLIC_HOST` / `HG_HTTP_PUBLIC_ORIGIN` opt-in (empty by default, negative
+cases tested). Mutations still require the operator-secret CSRF session.
+
+This is a **published portal, not physical acceptance**: no camera is configured, no
+observations feed this instance, `capture_enabled=false`, and the phone's private MCP
+path is unchanged. The integration panel therefore reports 0 devices, "None live" and
+0 fusion runs, which is accurate rather than a failure.
+
 ## Real camera analysis wiring (motion + statistical change)
 
 Owner-approved scope: wire the existing detectors through the real acquisition path,
