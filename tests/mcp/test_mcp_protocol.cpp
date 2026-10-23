@@ -148,7 +148,7 @@ TEST_CASE("mcp: tools/list is refused before initialize and lists both tools aft
     REQUIRE(out.has_body);
     json r = parse(out.body);
     REQUIRE(r["result"]["tools"].is_array());
-    REQUIRE(r["result"]["tools"].size() == 2);
+    REQUIRE(r["result"]["tools"].size() == 3);
     std::vector<std::string> names;
     for (const auto& t : r["result"]["tools"]) {
         names.push_back(t["name"]);
@@ -313,7 +313,8 @@ TEST_CASE("mcp: the registry cannot be extended by a client and exposes only rea
     h.initialized();
     // Every registered tool name is one of the two read tools.
     for (const auto& t : h.tools.all()) {
-        REQUIRE((t.name == std::string(kToolStatus) || t.name == std::string(kToolAlertSummary)));
+        REQUIRE((t.name == std::string(kToolStatus) || t.name == std::string(kToolAlertSummary) ||
+               t.name == std::string(kToolDevices)));
     }
     // A plausible-sounding mutating tool does not exist.
     auto out = h.call(R"({"jsonrpc":"2.0","id":40,"method":"tools/call","params":{"name":"set_capture_enabled"}})");

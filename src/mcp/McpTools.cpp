@@ -96,6 +96,16 @@ ToolRegistry make_homeguardian_tools(const IAlexaCredentialVerifier& verifier,
             return status_tool(args, cred, verifier, provider);
         }});
 
+
+    registry.add(Tool{
+        kToolAlertSummary,
+        "Read-only aggregate alert summary: total alert count, highest severity, and a "
+        "capped list of non-sensitive alert ids. Takes no arguments. Never returns raw "
+        "media, personal identifiers or alert payloads.",
+        R"({"type":"object","properties":{},"additionalProperties":false})",
+        [&verifier, &provider](const std::string& args, const std::string& cred) {
+            return alert_summary_tool(args, cred, verifier, provider);
+        }});
     registry.add(Tool{
         kToolDevices,
         "Read-only device visibility: how many devices the owner has approved as visible to an "
@@ -107,16 +117,6 @@ ToolRegistry make_homeguardian_tools(const IAlexaCredentialVerifier& verifier,
         R"({"type":"object","properties":{},"additionalProperties":false})",
         [&verifier, &provider](const std::string& args, const std::string& cred) {
             return devices_tool(args, cred, verifier, provider);
-        }});
-
-    registry.add(Tool{
-        kToolAlertSummary,
-        "Read-only aggregate alert summary: total alert count, highest severity, and a "
-        "capped list of non-sensitive alert ids. Takes no arguments. Never returns raw "
-        "media, personal identifiers or alert payloads.",
-        R"({"type":"object","properties":{},"additionalProperties":false})",
-        [&verifier, &provider](const std::string& args, const std::string& cred) {
-            return alert_summary_tool(args, cred, verifier, provider);
         }});
 
     return registry;
