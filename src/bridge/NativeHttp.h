@@ -42,6 +42,13 @@ inline constexpr size_t kRecvChunk = 2048;
 // request carries a validated Content-Type/Length and cannot be a simple form post.
 inline constexpr size_t kMaxBodyBytes = 512;
 
+// Upload cap for POST /api/upload only. A media upload is the one route whose body is bytes
+// rather than a JSON object, so it gets its own ceiling instead of widening kMaxBodyBytes for
+// every route. The declared length is checked BEFORE the bytes are trusted, and the reader is
+// bounded by the cap regardless of what was declared, so an oversized or dishonest request
+// cannot make the process allocate beyond this.
+inline constexpr size_t kMaxUploadBytes = 25u * 1024u * 1024u;  // 25 MiB
+
 // CSRF session lifetime, issuance bounds and lockout thresholds.
 inline constexpr int64_t kSessionTtlMs = 120000;      // a CSRF token lives 2 minutes
 inline constexpr size_t kMaxSessions = 64;            // bounded session table
@@ -176,10 +183,20 @@ inline bool is_same_local_origin(std::string_view origin, uint16_t server_port) 
 
 // A parsed, validated routing result handed to the handler.
 struct HandlerRequest {
-    std::string_view op;        // "status" | "scenario" | "alerts" | "scenarios"
+    std::string_view op;        // "status" | "scenario" | "alerts" | "scenarios" | "feed" | "media" | "upload" | "delete"
     std::string_view scenario;  // scenario token; "" => caller's default
     unsigned cycles = 5;        // simulator ticks (valid only when cycles_set)
     bool cycles_set = false;    // true when the caller explicitly set cycles
+    // Appended AFTER the original fields on purpose: every existing call site brace-initializes
+    // this struct positionally ({"status", "", 5, false}), so inserting a field above would
+    // silently rebind their values.
+    // Raw request body. Empty for every read route and for the JSON state routes (which carry
+    // "{}"); for /api/upload it is the media bytes. A view into the request buffer, valid for the
+    // duration of the handler call only -- the handler must not retain it.
+    std::string_view body;
+    // For op == "media": the media id from /media/<id>. Already path-validated by the transport
+    // (no %, backslash, #, NUL; bounded length); the handler validates its charset.
+    std::string_view media_id;
 };
 
 // A handler receives a validated request and MUST return a JSON body. It also
@@ -194,6 +211,13 @@ struct HandlerRequest {
 // The native integration calls the existing C++ backend (Application/
 // SimulatorRuntime/SQLite); it must never synthesize data.
 using Handler = std::function<std::string(const HandlerRequest&, int& status_out)>;
+
+// Serving an uploaded image or video is a different kind of response (bytes + a media type), so it
+// is a separate, OPTIONAL callback rather than a change to Handler. That keeps every existing
+// handler -- and every existing test that supplies one -- source-compatible: a caller that does
+// not pass a media handler simply gets 404 for /media/<id>.
+using MediaHandler =
+    std::function<std::string(const std::string& id, int& status_out, std::string& mime_out)>;
 
 // Stop flag for clean shutdown. A signal handler sets this (async-signal-safe);
 // the accept loop notices it within one listener-timeout tick.
@@ -256,8 +280,9 @@ inline std::string json_error(unsigned status, std::string_view error) {
 }
 
 inline std::string dispatch(std::string_view request, std::string_view html,
-                            const Handler& handler, SessionStore& sessions,
-                            int64_t now_ms, uint16_t server_port) {
+                            const Handler& handler,
+                      SessionStore& sessions,
+                            int64_t now_ms, uint16_t server_port, const MediaHandler& media = MediaHandler()) {
     const auto header_end = request.find("\r\n\r\n");
     // A request MAY carry a body: the POST routes do, and the GET branch rejects one explicitly.
     // The header block itself must still be complete (not truncated mid-request).
@@ -385,6 +410,14 @@ inline std::string dispatch(std::string_view request, std::string_view html,
     const bool is_state_route = (path == "/api/run-scenario" ||
                                  path.substr(0, 18) == "/api/run-scenario?");
     const bool is_session_route = (path == "/api/session");
+    // The backup-portal routes. Upload and delete are mutations and therefore require an
+    // authorized CSRF session, exactly like the scenario route; upload additionally gets the
+    // larger body ceiling and a media content-type allowlist.
+    const bool is_upload_route = (path == "/api/upload");
+    const bool is_delete_route = (path == "/api/delete");
+    const bool is_media_route = (path.substr(0, 7) == "/media/");
+    const bool is_mutation_route = (is_state_route || is_session_route ||
+                                    is_upload_route || is_delete_route);
 
     // ---- GET: read-only routes only (control 1) ------------------------------------
     if (method == "GET") {
@@ -407,23 +440,83 @@ inline std::string dispatch(std::string_view request, std::string_view html,
         // ACTUALLY connected (currently: nothing) rather than implying hardware.
         if (path == "/api/integrations")
             return invoke({"integrations", "", 5, false});
+        // Uploaded-media feed: read-only list of what an operator has uploaded. Never a live
+        // camera: the payload says so, and the handler reports only recorded uploads.
+        if (path == "/api/feed")
+            return invoke({"feed", "", 5, false});
+        if (is_media_route) {
+            // /media/<id>: read-only bytes of a previously uploaded, validated file. The transport
+            // has already refused %, backslash, #, NUL and over-long paths, so the id cannot escape
+            // a directory; the media handler additionally constrains the charset and resolves it
+            // through its own index rather than by concatenating a path.
+            if (!media) return json_error(404, "not_found");
+            const std::string_view id = path.substr(7);
+            if (id.empty()) return json_error(404, "not_found");
+            int status = 200;
+            std::string mime;
+            std::string body = media(std::string(id), status, mime);
+            return response(static_cast<unsigned>(status),
+                            mime.empty() ? "application/octet-stream" : mime, body);
+        }
         return json_error(404, "not_found");
     }
 
-    // ---- POST: the two state-adjacent routes (controls 2/4/5) ----------------------
-    if (!is_state_route && !is_session_route) return json_error(405, "method_not_allowed");
+    // ---- POST: the state-adjacent routes and the portal mutations (controls 2/4/5) -----
+    if (!is_mutation_route) return json_error(405, "method_not_allowed");
+    // The upload route is the only one allowed a body above the JSON cap. The declared length is
+    // checked first, then the reader is bounded by the same cap, so neither an honest oversized
+    // request nor a dishonest Content-Length can allocate past it.
+    const size_t body_cap = is_upload_route ? kMaxUploadBytes : kMaxBodyBytes;
     if (!cl_seen) return json_error(411, "length_required");
-    if (content_length > kMaxBodyBytes) return json_error(413, "too_large");
+    if (content_length > body_cap) return json_error(413, "too_large");
+
+    // Upload carries media bytes with an allowlisted content type; every other POST is a JSON
+    // object. Anything else is refused before the handler sees it.
+    if (is_upload_route) {
+        if (content_length == 0) return json_error(400, "malformed");
+        const bool media_type_ok = (content_type == "image/png" ||
+                                    content_type == "image/jpeg" ||
+                                    content_type == "image/webp" ||
+                                    content_type == "video/mp4" ||
+                                    content_type == "video/webm");
+        if (!media_type_ok) return json_error(415, "unsupported_media_type");
+        if (!origin_seen) return json_error(403, "forbidden_origin");
+        if (!sessions.state_route_enabled()) return json_error(503, "state_route_disabled");
+        // Single-use CSRF token from an authorized session, exactly as the scenario route.
+        if (csrf_token.empty() || !sessions.consume_csrf(csrf_token, now_ms))
+            return json_error(403, "forbidden_csrf");
+        HandlerRequest req;
+        req.op = "upload";
+        req.body = std::string_view(request).substr(header_end + 4);
+        return invoke(req);
+    }
     // A body must actually have arrived, and must be a JSON object (never a form post).
     if (request.size() != header_end + 4 + content_length)
         return json_error(400, "malformed");
     if (content_type != "application/json")
         return json_error(415, "unsupported_media_type");
     const auto body = request.substr(header_end + 4);
-    if (!body.empty() && body != "{}") return json_error(400, "malformed");
+    // The state routes take no parameters, so they accept only "{}". The delete route carries a
+    // bounded JSON object naming the upload to remove -- still JSON-only, still <= kMaxBodyBytes,
+    // and parsed by the handler, which validates the id shape.
+    if (!is_delete_route && !body.empty() && body != "{}")
+        return json_error(400, "malformed");
     // Strict same-origin: required, and it must be THIS scheme/host/port. A cross-site page,
     // or a page served from another local port, cannot satisfy it.
     if (!origin_seen) return json_error(403, "forbidden_origin");
+
+    if (is_delete_route) {
+        // Deleting an upload is a mutation: same authorized, single-use CSRF session as the
+        // scenario route. The id travels in the (bounded) JSON body rather than the query so
+        // it cannot end up in a URL, a referrer or a log line.
+        if (!sessions.state_route_enabled()) return json_error(503, "state_route_disabled");
+        if (csrf_token.empty() || !sessions.consume_csrf(csrf_token, now_ms))
+            return json_error(403, "forbidden_csrf");
+        HandlerRequest req;
+        req.op = "delete";
+        req.body = body;
+        return invoke(req);
+    }
 
     if (is_session_route) {
         // Authorization happens HERE and nowhere else. Without a configured launch secret the
@@ -521,7 +614,8 @@ inline void send_all(int fd, const std::string& bytes) {
 // Port=0 chooses an ephemeral port and announces "DEMO_READY <port>".
 // Returns only after a bind/listen/accept failure or request_shutdown().
 inline int serve(uint16_t port, std::string_view html, const Handler& handler,
-                 std::string operator_secret = std::string()) {
+                 std::string operator_secret = std::string(),
+                 const MediaHandler& media = MediaHandler()) {
     const int listener = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listener < 0) return 2;
     const int reuse = 1;
@@ -595,7 +689,7 @@ inline int serve(uint16_t port, std::string_view html, const Handler& handler,
         const auto output = too_large
             ? json_error(413, "too_large")
             : dispatch(input, html, handler, sessions, now_ms(),
-                       ntohs(addr.sin_port));
+                       ntohs(addr.sin_port), media);
         send_all(client, output);
         ::close(client);
     }
