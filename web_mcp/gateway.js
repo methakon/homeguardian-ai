@@ -47,7 +47,10 @@ const POPUP_COMPLETE_JS = `(function () {
   var match = /^#session=([A-Za-z0-9_-]{43})$/.exec(location.hash);
   history.replaceState(null, '', location.pathname);
   if (match && window.opener) {
-    window.opener.postMessage({type:'hg:oauth', code:match[1]}, location.origin);
+    try { window.opener.postMessage({type:'hg:oauth', code:match[1]}, location.origin); } catch (_) {}
+  }
+  if (match) {
+    document.getElementById('completion-message').textContent = 'Sign-in complete. Return to the original HomeGuardian tab; it will finish signing you in automatically.';
     window.close();
   }
 })();`;
@@ -301,13 +304,27 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
   // Installed in <head> before the dashboard exists. Fail closed even while
   // exchange is pending; no flash of the original private dashboard.
   var style = document.createElement('style');
-  style.textContent = 'html:not([data-hg-household="granted"]) .wrap{display:none!important}' +
+  style.textContent = 'html:not([data-hg-auth="viewer"]) .wrap{display:none!important}' +
+    'html[data-hg-auth="viewer"] #authPanel,html:not([data-hg-household="granted"]) #camFrame{display:none!important}' +
     '#hg-session-gate{max-width:1000px;margin:24px auto;padding:24px;background:#161b22;color:#e6edf3;border:1px solid #2a3441;border-radius:14px}' +
     '#hg-session-gate a,#hg-session-gate button{margin:8px;padding:10px;display:inline-block}' +
     '#hg-session-gate [hidden]{display:none!important}';
   document.head.appendChild(style);
   var message = 'Sign in with Google to verify your identity. Private household access requires a separate owner grant.';
   var generation = 0;
+  function restrictDashboard() {
+    if (!state.token || !document.querySelectorAll) return;
+    document.querySelectorAll('.wrap button,.wrap input,.wrap select').forEach(function (node) {
+      node.disabled = true; node.title = 'VIEWER read-only — household access not granted';
+    });
+    if (document.documentElement.getAttribute('data-hg-household') === 'granted') return;
+    ['status','metrics','integrations','labelLegend','chat','chips','result','alerts','alertCount',
+      'camBadge','camBanner','camOverlay','camMetrics','uploadMsg','feed','scenDesc'].forEach(function (id) {
+      var node = document.getElementById(id);
+      var text = 'Household access not granted';
+      if (node && node.textContent !== text) node.textContent = text;
+    });
+  }
   function render() {
     if (!document.body) return;
     var gate = document.getElementById('hg-session-gate');
@@ -334,6 +351,7 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
     document.getElementById('hg-sign-in').hidden = !!state.token;
     document.getElementById('hg-log-out').hidden = !state.token;
     document.getElementById('hg-switch-account').hidden = !state.token;
+    restrictDashboard();
   }
   function block(text) {
     document.documentElement.setAttribute('data-hg-household', 'denied');
@@ -341,12 +359,18 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
   }
   function clear() {
     generation += 1;
+    if (loginTimer) clearTimeout(loginTimer);
+    if (loginDeadlineTimer) clearTimeout(loginDeadlineTimer);
+    loginTimer = null; loginDeadlineTimer = null; loginBusy = false;
     loginProof = null; loginPopup = null;
     state.token = null; state.role = null; state.expiresAt = 0;
     document.documentElement.setAttribute('data-hg-auth', 'anonymous');
     block('Sign in again. This tab keeps no cookies or stored session; refreshing requires a new login.');
   }
   document.addEventListener('DOMContentLoaded', render);
+  if (typeof MutationObserver !== 'undefined') {
+    new MutationObserver(restrictDashboard).observe(document.documentElement, { childList: true, subtree: true });
+  }
   render();
   function announce() {
     document.documentElement.setAttribute('data-hg-auth', state.role ? 'viewer' : 'anonymous');
@@ -418,23 +442,43 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
     }).then(function (res) {
       return res.json().then(function (body) {
         if (!res.ok || !body || !body.token) throw new Error((body && body.error) || 'exchange_failed');
-        if (exchangeGeneration !== generation) return null;
-        state.token = body.token;
-        state.role = body.role;
-        state.expiresAt = Date.now() + (Number(body.expires_in) || 0) * 1000;
-        block('Private household access not granted. Google sign-in verifies identity only.');
-        announce();
+        if (exchangeGeneration !== generation) {
+          return nativeFetch('/api/logout', { method: 'POST',
+            headers: { Authorization: 'Bearer ' + body.token, 'Content-Type': 'application/json' },
+            body: '{}', credentials: 'omit', cache: 'no-store' }).then(function () { return null; });
+        }
+        acceptSession(body);
         return body;
       });
     }).catch(function () {
-      clear();
       return null;
     });
+  }
+
+  function acceptSession(body) {
+    state.token = body.token; state.role = body.role;
+    state.expiresAt = Date.now() + (Number(body.expires_in) || 0) * 1000;
+    loginProof = null; loginPopup = null;
+    if (loginTimer) clearTimeout(loginTimer);
+    if (loginDeadlineTimer) clearTimeout(loginDeadlineTimer);
+    loginTimer = null; loginDeadlineTimer = null;
+    announce();
+    block('Private household access not granted. Google sign-in verifies identity only.');
+  }
+  function refreshAfterLogin() {
+    if (state.token) {
+      if (typeof window.refresh === 'function') window.refresh().catch(function () {});
+      else window.fetch('/api/status').catch(function () {});
+    }
   }
 
   function logout() {
     var headers = { 'Content-Type': 'application/json' };
     if (state.token) headers.Authorization = 'Bearer ' + state.token;
+    if (loginProof) nativeFetch('/api/login/result', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verifier: loginProof, cancel: true }), credentials: 'omit', cache: 'no-store'
+    }).catch(function () {});
     clear();
     announce();
     return nativeFetch('/api/logout', {
@@ -452,11 +496,50 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
 
   var loginProof = null;
   var loginPopup = null;
+  var loginTimer = null;
+  var loginDeadlineTimer = null;
+  var loginBusy = false;
+  function schedulePoll(proof, deadline) {
+    if (loginProof !== proof) return;
+    loginTimer = setTimeout(function () { return pollResult(proof, deadline); }, 1500);
+  }
+  function pollResult(proof, deadline) {
+    if (loginProof !== proof) return Promise.resolve();
+    if (Date.now() >= deadline) {
+      return logout().then(function () { block('Google sign-in timed out. Please try again.'); });
+    }
+    if (loginBusy) { schedulePoll(proof, deadline); return Promise.resolve(); }
+    loginBusy = true;
+    var pollGeneration = generation;
+    return nativeFetch('/api/login/result', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ verifier: proof }), credentials: 'omit', cache: 'no-store'
+    }).then(function (res) {
+      if (res.status === 202 || res.status === 429) return null;
+      return res.json().then(function (body) {
+        if (res.ok && body && body.token) {
+          if (generation !== pollGeneration || loginProof !== proof) {
+            return nativeFetch('/api/logout', { method: 'POST',
+              headers: { Authorization: 'Bearer ' + body.token, 'Content-Type': 'application/json' },
+              body: '{}', credentials: 'omit', cache: 'no-store' });
+          }
+          acceptSession(body); refreshAfterLogin();
+        } else if (res.status === 400 && loginProof === proof) {
+          loginProof = null; loginPopup = null;
+          if (loginDeadlineTimer) clearTimeout(loginDeadlineTimer);
+          loginDeadlineTimer = null;
+          block('Google sign-in expired or was cancelled. Please try again.');
+        }
+      });
+    }).catch(function () { /* transient network failures retry until deadline */ })
+      .then(function () { loginBusy = false; schedulePoll(proof, deadline); });
+  }
   function base64url(bytes) {
     var binary = ''; bytes.forEach(function (b) { binary += String.fromCharCode(b); });
     return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
   }
   function startBrowserLogin(popup) {
+    if (loginProof) return Promise.resolve();
     loginPopup = popup || window.open('about:blank', '_blank');
     if (!loginPopup) { block('Sign-in unavailable: allow the sign-in popup and try again.'); return Promise.resolve(); }
     var bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
@@ -474,23 +557,28 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
     }).then(function (body) {
       if (loginProof !== proof || !/^\\/login\\?request=[A-Za-z0-9_-]{43}$/.test(body.login_url)) throw new Error('login_invalid');
       loginPopup.location = body.login_url;
+      loginDeadlineTimer = setTimeout(function () {
+        if (loginProof !== proof) return;
+        logout();
+        block('Google sign-in timed out. Please try again.');
+      }, 600000);
+      schedulePoll(proof, Date.now() + 600000);
     }).catch(function () { loginProof = null; block('Google sign-in unavailable. Please try again.'); });
   }
   window.addEventListener('message', function (event) {
     if (event.origin !== location.origin || event.source !== loginPopup || !loginProof ||
         !event.data || event.data.type !== 'hg:oauth' || !/^[A-Za-z0-9_-]{43}$/.test(event.data.code)) return;
-    var proof = loginProof; loginProof = null; loginPopup = null;
+    if (loginBusy) return; // polling owns the completion; it will retry if pending
+    loginBusy = true;
+    var proof = loginProof;
     window.__hg.ready = exchange(event.data.code, proof);
     // The old initial polls may have already failed while signed out.
     window.__hg.ready.then(function () {
-      if (state.token) {
-        if (typeof window.refresh === 'function') window.refresh().catch(function () {});
-        else window.fetch('/api/status').catch(function () {});
-      }
+      loginBusy = false; refreshAfterLogin();
     });
   });
-  // Never accept a hand-off URL in this tab. Only the matching popup can deliver
-  // a code, and only this tab holds the independent browser-memory verifier.
+  // Never accept a hand-off URL in this tab. Only this tab holds the independent
+  // browser-memory verifier; popup messages and server polling both require it.
   if (location.hash) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
   window.__hg.ready = Promise.resolve(null);
   clear();
@@ -671,6 +759,30 @@ function createGateway(options = {}) {
     new OneTimeCodeStore({ ttlMs: config.exchangeCodeTtlSeconds * 1000, now });
   const loginStarts = new OneTimeCodeStore({ ttlMs: 60000, now });
   const browserBindings = new Map(); // state -> public challenge, bounded + TTL
+  // Only SHA256(memory verifier) indexes this bounded, one-use rendezvous.
+  // Public challenges select a pending login but cannot prove possession.
+  const loginResults = new Map();
+  function sweepResults() {
+    for (const [key, entry] of loginResults) {
+      if (entry.expiresAt <= now()) {
+        loginResults.delete(key);
+        if (entry.token) sessions.revoke(entry.token);
+      }
+    }
+  }
+  function deliverResult(res, entry) {
+    if (loginResults.get(entry.challenge) !== entry || entry.expiresAt <= now()) {
+      sendJson(res, 400, { ok: false, error: 'invalid_or_used_code' }); return;
+    }
+    loginResults.delete(entry.challenge); // atomic across both completion paths
+    const session = sessions.get(entry.token);
+    if (!session) { sendJson(res, 401, { ok: false, error: 'session_expired' }); return; }
+    sendJson(res, 200, {
+      ok: true, token: entry.token, token_type: 'Bearer',
+      expires_in: Math.max(0, Math.floor((session.expiresAt - now()) / 1000)),
+      role: session.principal.role, scope: 'read_only', cookie_set: false,
+    });
+  }
 
   const mcp =
     options.mcp ||
@@ -853,7 +965,7 @@ function createGateway(options = {}) {
     }
 
     if (pathname === '/auth/complete' && req.method === 'GET') {
-      sendText(res, 200, '<!doctype html><title>HomeGuardian sign-in</title><p>Return to the original HomeGuardian tab. Standalone callbacks cannot sign you in.</p><script src="/assets/oauth-complete.js"></script>', 'text/html; charset=utf-8');
+      sendText(res, 200, '<!doctype html><title>HomeGuardian sign-in</title><p id="completion-message">Return to the original HomeGuardian tab to finish sign-in. This page cannot sign in a standalone tab.</p><script src="/assets/oauth-complete.js"></script>', 'text/html; charset=utf-8');
       return;
     }
     if (pathname === '/assets/oauth-complete.js' && req.method === 'GET') {
@@ -868,9 +980,41 @@ function createGateway(options = {}) {
       if (typeof body.challenge !== 'string' || !BROWSER_PROOF_RE.test(body.challenge)) {
         sendJson(res, 400, { ok: false, error: 'browser_challenge_required' }); return;
       }
-      const ticket = loginStarts.issue({ challenge: body.challenge });
+      sweepResults();
+      if (loginResults.has(body.challenge)) {
+        sendJson(res, 409, { ok: false, error: 'login_already_pending' }); return;
+      }
+      if (loginResults.size >= 256) {
+        sendJson(res, 429, { ok: false, error: 'login_capacity' }); return;
+      }
+      const result = { challenge: body.challenge, expiresAt: now() + 600000, nextPollAt: 0 };
+      loginResults.set(body.challenge, result);
+      const ticket = loginStarts.issue({ challenge: body.challenge, result });
       sendJson(res, 200, { ok: true, login_url: '/login?request=' + ticket });
       return;
+    }
+
+    if (pathname === '/api/login/result' && req.method === 'POST') {
+      if (!config.publicOrigin || req.headers.origin !== config.publicOrigin) {
+        sendJson(res, 403, { ok: false, error: 'forbidden_origin' }); return;
+      }
+      const body = await readJsonBody(req);
+      const challenge = typeof body.verifier === 'string' && BROWSER_PROOF_RE.test(body.verifier)
+        ? crypto.createHash('sha256').update(body.verifier).digest('base64url') : '';
+      sweepResults();
+      const entry = loginResults.get(challenge);
+      if (!entry) { sendJson(res, 400, { ok: false, error: 'invalid_login_proof' }); return; }
+      if (body.cancel === true) {
+        loginResults.delete(challenge);
+        if (entry.token) sessions.revoke(entry.token);
+        sendJson(res, 200, { ok: true, cancelled: true }); return;
+      }
+      if (entry.nextPollAt > now()) {
+        sendJson(res, 429, { ok: false, error: 'poll_too_fast' }, { 'Retry-After': '1' }); return;
+      }
+      entry.nextPollAt = now() + 1000;
+      if (!entry.token) { sendJson(res, 202, { ok: true, status: 'pending' }); return; }
+      deliverResult(res, entry); return;
     }
 
     // ---- login -----------------------------------------------------------
@@ -892,7 +1036,7 @@ function createGateway(options = {}) {
         return;
       }
       const browserStart = loginStarts.take(url.searchParams.get('request'));
-      if (!browserStart) {
+      if (!browserStart || loginResults.get(browserStart.challenge) !== browserStart.result || browserStart.result.expiresAt <= now()) {
         sendJson(res, 400, { ok: false, error: 'browser_login_required' }); return;
       }
       try {
@@ -900,7 +1044,7 @@ function createGateway(options = {}) {
         for (const [key, value] of browserBindings) if (value.expiresAt < now()) browserBindings.delete(key);
         if (browserBindings.size >= 256) browserBindings.delete(browserBindings.keys().next().value);
         const state = new URL(request.url).searchParams.get('state');
-        browserBindings.set(state, { challenge: browserStart.challenge, expiresAt: now() + 600000 });
+        browserBindings.set(state, { challenge: browserStart.challenge, result: browserStart.result, expiresAt: now() + 600000 });
         redirect(res, request.url);
       } catch (err) {
         const status = err instanceof OidcError ? err.status : 500;
@@ -943,7 +1087,9 @@ function createGateway(options = {}) {
       let completed;
       const binding = browserBindings.get(state);
       browserBindings.delete(state);
-      if (!binding || binding.expiresAt < now()) {
+      sweepResults();
+      const result = binding && loginResults.get(binding.challenge);
+      if (!binding || binding.expiresAt < now() || !result || binding.result !== result) {
         sendJson(res, 400, { ok: false, error: 'invalid_state' }); return;
       }
       try {
@@ -960,8 +1106,14 @@ function createGateway(options = {}) {
         return;
       }
 
-      const { token, session } = sessions.create(completed.principal);
-      const handoff = codes.issue({ token, sub: completed.principal.sub, challenge: binding.challenge });
+      // Logout/cancellation/expiry may have happened during Google's exchange.
+      if (loginResults.get(binding.challenge) !== result || result.expiresAt <= now()) {
+        sendJson(res, 400, { ok: false, error: 'invalid_state' }); return;
+      }
+      const { token } = sessions.create(completed.principal);
+      result.token = token;
+      result.expiresAt = now() + config.exchangeCodeTtlSeconds * 1000;
+      const handoff = codes.issue(result);
       log.info(`viewer session established for sub=${completed.principal.sub}`);
       // Fragment only: never sent to a server, never logged, single use.
       redirect(res, `/auth/complete#session=${handoff}`);
@@ -986,26 +1138,12 @@ function createGateway(options = {}) {
         sendJson(res, 400, { ok: false, error: 'invalid_or_used_code' });
         return;
       }
-      const session = sessions.get(payload.token);
       const proof = typeof body.verifier === 'string' && BROWSER_PROOF_RE.test(body.verifier)
         ? crypto.createHash('sha256').update(body.verifier).digest('base64url') : '';
       if (!proof || proof !== payload.challenge) {
-        sessions.revoke(payload.token);
         sendJson(res, 400, { ok: false, error: 'browser_proof_invalid' }); return;
       }
-      if (!session) {
-        sendJson(res, 401, { ok: false, error: 'session_expired' });
-        return;
-      }
-      sendJson(res, 200, {
-        ok: true,
-        token: payload.token,
-        token_type: 'Bearer',
-        expires_in: Math.max(0, Math.floor((session.expiresAt - now()) / 1000)),
-        role: session.principal.role,
-        scope: 'read_only',
-        cookie_set: false,
-      });
+      deliverResult(res, payload);
       return;
     }
 

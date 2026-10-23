@@ -304,11 +304,12 @@ async function loginAs(sub, extraClaims = {}) {
 // No browser dependencies or persistent storage APIs are available in this realm.
 async function testSessionUi(source) {
   const vm = require('node:vm');
-  function boot(hash = '') {
+  function boot(hash = '', live = false) {
     const nodes = new Map();
     function element(tag) {
       return { tagName: tag, children: [], attributes: {}, textContent: '', hidden: false,
         setAttribute(k, v) { this.attributes[k] = v; },
+        getAttribute(k) { return this.attributes[k]; },
         appendChild(n) { this.children.push(n); if (n.id) nodes.set(n.id, n); return n; },
         addEventListener(k, fn) { this['on' + k] = fn; },
       };
@@ -316,9 +317,14 @@ async function testSessionUi(source) {
     const document = { documentElement: element('html'), head: element('head'),
       body: element('body'), readyState: 'loading', createElement: element,
       getElementById(id) { return nodes.get(id) || null; },
+      querySelectorAll() { return [nodes.get('runBtn'), nodes.get('uploadBtn')].filter(Boolean); },
       addEventListener(k, fn) { this['on' + k] = fn; },
     };
+    for (const id of ['status','metrics','alertCount','alerts','runBtn','uploadBtn']) {
+      const node = element('div'); node.id = id; node.textContent = '0'; document.body.appendChild(node);
+    }
     const calls = [];
+    const timers = new Map(); let timerId = 0;
     let status = 403;
     const location = { origin: 'https://portal.example.test', href: 'https://portal.example.test/' + hash,
       pathname: '/', search: '', hash, assign(url) { calls.push({ navigation: url }); } };
@@ -326,6 +332,12 @@ async function testSessionUi(source) {
     const window = { dispatchEvent() {}, addEventListener(k, fn) { this['on' + k] = fn; },
       open() { return popup; }, fetch: async (url, init) => {
       calls.push({ url, init });
+      if (live) {
+        const res = await request(init?.method || 'GET', url, {
+          headers: { ...(init?.headers instanceof Headers ? Object.fromEntries(init.headers) : init?.headers),
+            Origin: location.origin }, body: init?.body || null });
+        return { ok: res.status >= 200 && res.status < 300, status: res.status, json: async () => res.json };
+      }
       if (url === '/api/login/start') return { ok: true, status: 200,
         json: async () => ({ login_url: '/login?request=' + 'z'.repeat(43) }) };
       if (url === '/api/session/exchange') return { ok: true, status: 200,
@@ -335,10 +347,17 @@ async function testSessionUi(source) {
     } };
     vm.runInNewContext(source, { window, document, location, history: { replaceState() { location.hash = ''; } },
       URL, Headers, Date, Promise, crypto: crypto.webcrypto, TextEncoder, Uint8Array,
+      setTimeout(fn, delay) { timers.set(++timerId, { fn, delay }); return timerId; },
+      clearTimeout(id) { timers.delete(id); },
       btoa: s => Buffer.from(s, 'binary').toString('base64'), CustomEvent: function () {} });
     document.readyState = 'complete';
     if (document.onDOMContentLoaded) document.onDOMContentLoaded();
-    return { window, document, nodes, calls, location, popup, setStatus(s) { status = s; } };
+    return { window, document, nodes, calls, location, popup, timers,
+      async tick(timeoutOnly = false) {
+        const batch = [...timers.entries()].filter(([, t]) => timeoutOnly ? t.delay >= 600000 : t.delay < 600000);
+        for (const [id, t] of batch) { timers.delete(id); await t.fn(); }
+      },
+      setStatus(s) { status = s; } };
   }
   async function signIn(realm) {
     await realm.nodes.get('hg-sign-in').onclick({ preventDefault() {} });
@@ -360,8 +379,12 @@ async function testSessionUi(source) {
   ok(signed.nodes.get('hg-session-message')?.textContent.includes('VIEWER') &&
     signed.nodes.get('hg-session-message')?.textContent.includes('not granted'),
     'signed-in UI truthfully states VIEWER and household access not granted');
-  ok(signed.document.documentElement.attributes['data-hg-household'] !== 'granted',
-    'denied household dashboard remains hidden');
+  ok(signed.document.documentElement.attributes['data-hg-auth'] === 'viewer' &&
+    signed.document.head.children.some(n => n.textContent.includes('html:not([data-hg-auth="viewer"]) .wrap')),
+    'signed-in VIEWER unlocks the original dashboard shell independently of household permission');
+  ok(signed.nodes.get('runBtn').disabled && signed.nodes.get('uploadBtn').disabled &&
+    signed.nodes.get('alertCount').textContent === 'Household access not granted',
+    'VIEWER mutation controls disabled and ungranted counts never show fabricated zeros');
   await signed.window.fetch('/api/camera/status').catch(() => {});
   ok(signed.nodes.get('hg-session-message')?.textContent.includes('not granted'),
     'background private-feature polls preserve the household denial state');
@@ -405,6 +428,42 @@ async function testSessionUi(source) {
   ok(crypto.createHash('sha256').update(exchangeBody.verifier).digest('base64url') === startBody.challenge,
     'browser-memory verifier proves the challenge supplied before Google login');
   ok(!pending.popup.location.includes(exchangeBody.verifier), 'browser verifier never appears in popup URL');
+  const timedOut = boot();
+  await timedOut.nodes.get('hg-sign-in').onclick({ preventDefault() {} });
+  await timedOut.tick(true);
+  ok(timedOut.timers.size === 0 && timedOut.nodes.get('hg-session-message').textContent.includes('timed out') &&
+    timedOut.calls.some(c => c.url === '/api/login/result' && JSON.parse(c.init.body).cancel),
+    'independent login deadline cancels proof and timers even without a polling response');
+
+  const severed = boot('', true);
+  await severed.nodes.get('hg-sign-in').onclick({ preventDefault() {} });
+  const login = await request('GET', severed.popup.location);
+  const google = new URL(login.headers.location);
+  stub.pending = { nonce: google.searchParams.get('nonce'), challenge: google.searchParams.get('code_challenge') };
+  await severed.tick(); // real HTTP pending poll before Google completes
+  const cb = await callback(google.searchParams.get('state'), queueToken(google.searchParams.get('nonce'), { sub: 'openerless-ungranted' }));
+  const completeScript = await request('GET', '/assets/oauth-complete.js');
+  const completionNode = { textContent: '' };
+  let closed = false;
+  const callbackLocation = { origin: severed.location.origin, pathname: '/auth/complete', hash: new URL(cb.headers.location, BASE).hash };
+  vm.runInNewContext(completeScript.raw, {
+    window: { opener: null, close() { closed = true; } }, location: callbackLocation,
+    document: { getElementById() { return completionNode; } },
+    history: { replaceState() { callbackLocation.hash = ''; } },
+  });
+  ok(closed && completionNode.textContent.includes('Sign-in complete'), 'callback with opener=null truthfully completes and attempts close');
+  clock.t += 1001;
+  await severed.tick();
+  await severed.window.__hg.ready;
+  ok(severed.window.__hg.authenticated() && severed.window.__hg.role() === 'VIEWER',
+    'actual original-tab script retrieves real gateway result despite severed popup opener');
+  ok(severed.nodes.get('hg-session-message').textContent.includes('VIEWER') &&
+    severed.document.documentElement.attributes['data-hg-auth'] === 'viewer' &&
+    severed.nodes.get('alertCount').textContent === 'Household access not granted',
+    'openerless completion unlocks original dashboard shell with VIEWER restrictions and no zeros');
+  await severed.window.__hg.logout();
+  ok(!severed.window.__hg.authenticated() && severed.timers.size === 0,
+    'logout clears browser session and stops polling timers');
 }
 
 async function run() {
@@ -488,6 +547,62 @@ async function run() {
   ok(bareHealth.status === 200 && bareHealth.json.oidc_configured === false,
     '/health stays honest about OIDC being unconfigured');
   await bare.close();
+
+  section('Browser-proof rendezvous');
+  const poll = (verifier, extra = {}, origin = 'https://portal.example.test') => request('POST', '/api/login/result', {
+    headers: origin ? { Origin: origin } : {}, body: { verifier, ...extra } });
+  const rendezvous = await startLogin();
+  const proof = browserProofs.get(rendezvous.state);
+  const duplicate = await request('POST', '/api/login/start', {
+    headers: { Origin: 'https://portal.example.test' },
+    body: { challenge: crypto.createHash('sha256').update(proof).digest('base64url') } });
+  ok(duplicate.status === 409, 'duplicate public challenge cannot overwrite pending login');
+  ok((await poll(proof)).status === 202, 'proof rendezvous is pending before callback');
+  ok((await poll(proof)).status === 429, 'pending poll rate is bounded');
+  clock.t += 1001;
+  for (const origin of [null, 'https://attacker.example.test']) {
+    ok((await poll(proof, {}, origin)).status === 403, 'result requires exact Origin');
+  }
+  const rendezvousCb = await callback(rendezvous.state, queueToken(rendezvous.nonce));
+  const wrong = await poll('q'.repeat(43));
+  ok(wrong.status === 400 && !wrong.json.token && !wrong.json.code, 'wrong verifier reveals no completion');
+  const publicChallenge = crypto.createHash('sha256').update(proof).digest('base64url');
+  ok((await poll(publicChallenge)).status === 400, 'public challenge cannot retrieve completion');
+  const raced = await Promise.all([poll(proof), exchange(handoffCode(rendezvousCb))]);
+  ok(raced.filter(r => r.status === 200).length === 1, 'poll and popup exchange have exactly one winner');
+  const winner = raced.find(r => r.status === 200);
+  ok(winner && (await request('GET', '/api/me', { token: winner.json.token })).status === 200,
+    'benign double-completion cannot revoke the winning session');
+  ok((await poll(proof)).status === 400, 'completion polling is one-use');
+  const popupFirst = await startLogin();
+  const popupCb = await callback(popupFirst.state, queueToken(popupFirst.nonce));
+  const popupResult = await exchange(handoffCode(popupCb));
+  ok(popupResult.status === 200 && (await poll(browserProofs.get(popupFirst.state))).status === 400 &&
+    (await request('GET', '/api/me', { token: popupResult.json.token })).status === 200,
+    'popup-first completion wins once and later polling cannot revoke its session');
+  const completedExpiry = await startLogin();
+  const completedCb = await callback(completedExpiry.state, queueToken(completedExpiry.nonce));
+  clock.t += config.exchangeCodeTtlSeconds * 1000 + 1;
+  ok((await poll(browserProofs.get(completedExpiry.state))).status === 400 &&
+    (await exchange(handoffCode(completedCb))).status === 400, 'completed result expires on both delivery paths');
+  const expiring = await startLogin();
+  clock.t += 600001;
+  ok((await poll(browserProofs.get(expiring.state))).status === 400, 'pending rendezvous expires');
+  const cancelled = await startLogin();
+  const cancelProof = browserProofs.get(cancelled.state);
+  await poll(cancelProof, { cancel: true });
+  ok((await poll(cancelProof)).status === 400, 'logout cancellation removes pending rendezvous');
+  const cancelledCb = await callback(cancelled.state, queueToken(cancelled.nonce));
+  ok(cancelledCb.status === 400, 'cancelled pending login cannot resurrect on callback');
+  const replaced = await startLogin();
+  const replacedProof = browserProofs.get(replaced.state);
+  await poll(replacedProof, { cancel: true });
+  const duplicateStart = await request('POST', '/api/login/start', {
+    headers: { Origin: 'https://portal.example.test' },
+    body: { challenge: crypto.createHash('sha256').update(replacedProof).digest('base64url') } });
+  ok(duplicateStart.status === 200, 'cancelled rendezvous frees its bounded capacity');
+  const oldCb = await callback(replaced.state, queueToken(replaced.nonce));
+  ok(oldCb.status === 400, 'public challenge reuse cannot reattach a cancelled OAuth state');
 
   // --------------------------------------------------------------- /login ----
   section('2. Login redirect (PKCE S256 + state + nonce)');
@@ -866,6 +981,7 @@ async function run() {
     location: { origin: 'https://portal.example.test', pathname: '/auth/complete', hash: '#session=' + 'x'.repeat(43) },
     history: { replaceState() {} },
     window: { opener: { postMessage(...args) { messages.push(args); } }, close() {} },
+    document: { getElementById() { return { textContent: '' }; } },
   };
   require('node:vm').runInNewContext(completion.raw, callbackRealm);
   ok(messages.length === 1 && messages[0][1] === 'https://portal.example.test',
@@ -876,6 +992,16 @@ async function run() {
 
   // ------------------------------------------------------------ accounting --
   section('15. Global invariants');
+  clock.t += 600001;
+  const capacityStatuses = [];
+  for (let i = 0; i < 257; i++) {
+    const started = await request('POST', '/api/login/start', {
+      headers: { Origin: 'https://portal.example.test' },
+      body: { challenge: crypto.randomBytes(32).toString('base64url') } });
+    capacityStatuses.push(started.status);
+  }
+  ok(capacityStatuses.filter(s => s === 200).length === 256 && capacityStatuses[256] === 429,
+    'rendezvous capacity is strictly bounded to 256 live entries');
   ok(cookieViolations.length === 0, `no response in the whole suite set a cookie (${cookieViolations.length} found)`);
   ok(stub.unexpectedUrls.length === 0, 'no request left the synthetic JWKS/token stubs (offline)');
   ok(gateway.sessions.size >= 0, 'session store is inspectable for audit');
