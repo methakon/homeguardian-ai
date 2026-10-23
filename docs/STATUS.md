@@ -167,6 +167,50 @@ The dotenv revision passes **72 Python tests** under both tested SDK combination
 plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
 untracked; only code/tests/sanitized documentation are published.
 
+### Real mailbox/native path recovered and verified; Code deployment pending
+
+Inspection of the accepted installed APK's actual DEX confirms its bridge sets
+the required Accept header. A memory-only trace of the already established phone
+control connection confirms the phone itself sent `body={}`/status 200; raw frames
+and credentials were not printed or persisted. Source inspection identifies a
+stale-session recovery defect: native HTTP rejects unknown/expired sessions with
+404, while the bridge retains its session ID unless a specific error string is
+returned and masks the native status as 200. Reconnecting ONLY the outbound bridge
+through the app controls recovered both genuine read-only native tools. The C++
+service PID was unchanged; no native restart, APK reinstall, VPN or capture change
+was performed. The permanent Android-side session-recovery fix remains open.
+
+The dedicated worker IAM identity was provisioned with only request-consume and
+reply-send permissions. An owner-only credential file was installed on the target
+VPS; STS verified the worker user, not personal/root identity. Actual AWS requests
+in the wrong queue direction were denied. Two failed installer attempts (restricted
+PATH, then new-key propagation) revoked their issued keys before retry; no root
+credentials were transferred. The successful install verified source/unit bytes,
+file permissions, unchanged mail/coordinator PIDs and an unchanged TCP listener set.
+
+`homeguardian-alexa-mailbox` is active and boot-enabled, with 96-MiB RAM and 10% CPU
+caps. The bounded process is supervised and privately keeps the native control
+session active once per minute without sending unsolicited readings to AWS. This
+is a mitigation, not proof of recovery after a long outage. The source revision
+passed **73 Python tests** before deployment. The publisher trust and worker role
+remain scoped in opposite directions; no broad AWS policy was added.
+
+**Real operator-origin AWS -> VPS -> phone C++ -> AWS verification PASS:**
+status returned `Running`, `read_only=true`, `capture_enabled=false` in **2.085 s**;
+alerts returned `alert_count=0`, empty highest severity, `read_only=true` in
+**1.659 s**. Correlation, tool schema, expiry and session cleanup were validated.
+These are genuine native results, not cached evidence or local fixture outputs.
+
+**Alexa-Lambda origin / simulator-to-native: STILL NOT VERIFIED.** The Code package
+has not been updated from this session. The browser reaches Amazon Sign-In, no
+saved login is available, and secure login prompting is unavailable in this CLI.
+The worker's publisher-role trust is data access, not hosted-Code administration.
+A private five-file Code source bundle was prepared with selected `.env` settings,
+verified against source, protected and excluded from Git. It contains no worker
+key, MCP bearer or personal AWS credentials. Authorized console deployment and
+the resulting real simulator call are the remaining release gates. Reboot,
+changed-network and long-outage recovery remain unverified.
+
 ## On-phone analyzer candidate — not yet deployed
 
 The approved in-place update is being prepared on the isolated Android branch.

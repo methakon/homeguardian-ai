@@ -162,16 +162,36 @@ existing protected private MCP token file. Its required environment is:
 - `HG_PRIVATE_MCP_TOKEN_FILE`: existing protected coordinator application token.
 
 The CLI is bounded to 300 seconds by default; `--duration-seconds` accepts 1..3600.
-SIGTERM/SIGINT stop its polling loop. A persistent supervisor/resource-capped
-deployment is separate from this bounded demonstration worker. Do not describe
-the source-tested worker as a running service.
+SIGTERM/SIGINT stop its polling loop. `deploy/coordinator/homeguardian-alexa-mailbox.service`
+supervises one-hour worker processes with a 96-MiB memory cap, 10% CPU quota,
+non-root identity and read-only system protections. This dedicated outbound-only
+service is now deployed, active and boot-enabled. Reboot recovery is not tested.
+It uses its own queue-scoped IAM identity/owner-only credential file, never root
+credentials. Actual wrong-direction queue requests were rejected by AWS.
 
-Readback currently proves queue configuration only. Native self-probe succeeds,
-but the private bridge's HTTP-200 `{}` replies fail JSON-RPC validation. The
-exact-principal publisher trust is now configured and read back; actual hosted
-AssumeRole, bridge repair, worker identity/deployment, updated Code deployment
-and the simulator-to-native round trip remain acceptance
-gates. None may be inferred from local fixture tests or queue existence.
+Reconnecting only the outbound phone bridge recovered genuine private native
+results while retaining the same C++ service PID and VPN. The installed bridge
+retains a native session ID and fails to clear it on HTTP 404, whose empty body it
+misreports as HTTP 200. A permanent phone-side session-recovery update remains
+open. The worker mitigates idle expiry with a private authenticated status read
+once per minute; it discards that reading and does not publish unsolicited data.
+This is not proven recovery after a long worker outage or a changed phone network.
+
+Real operator-origin AWS -> VPS -> phone C++ -> AWS mailbox reads returned status
+and alerts in 2.085 and 1.659 seconds. This verifies genuine mailbox data, not the
+hosted skill's AssumeRole/deployment. No operator credentials left the workstation.
+The remaining gate is deployment of the updated Python modules, dependencies and
+selected `.env` settings into the existing Alexa Code package, followed by a real
+simulator/native round trip. Console access still requires an authorized login;
+the publisher role does not grant Code-editor or hosted-Lambda administration.
+
+A private Code-editor source bundle contains exactly `lambda_function.py`,
+`backend.py`, `mailbox_backend.py`, `requirements.txt` and a selected-settings `.env`.
+It contains no worker key, MCP token or personal AWS credentials. Use those files
+in the existing skill's Code tab and Save/Deploy. Do not extract the bundle over
+the canonical project root (its selected-settings `.env` is NOT the full project
+configuration), do not publish the private bundle, and do not upload it as a
+standalone Lambda ZIP: dependencies are specified for the hosted build, not vendored.
 
 Rollback: set `HG_ALEXA_TRANSPORT=loopback` in the deployed `.env`/environment and
 redeploy the existing skill; stop only this worker if started. Revoke only its
