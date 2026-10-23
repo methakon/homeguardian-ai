@@ -2,6 +2,54 @@
 
 **Last updated:** 2026-10-23
 
+## Worker-dispatch branch integration
+
+Owner-authorized merge of `fix/hg-worker-dispatch-p0-48`, remote tip `e994396`,
+into main after `3dc84a5`. Adds task-envelope/guard code, canonical scope checks,
+comment-provenance checks, SQLite-backed one-use approval consumption, and
+overlay/mTLS acceptance instruments. Merge was conflict-free. Imported identity
+and policy files retain their historical network-worker assignment; merging them
+does not enroll a worker or activate dispatch.
+
+Merged-tree checks ran with a sandbox HOME and temporary state: guard 12/12,
+envelope 16/16 (also passed a repeat run), adversarial scope/provenance checks,
+grant consumption/replay/expiry checks, mocked WireGuard 7/7, Docker-boundary
+safe/unsafe self-test, vocabulary conformance, and simulated reconnect 15/15.
+One stale guard assertion expected admission with only an in-band approval
+reference; corrected it to require `AUTHENTICATION_REQUIRED`, preserving the
+hardened implementation. Python/shell syntax checks passed.
+
+Vocabulary conformance still reports missing consent-withdrawal/missing-consent
+coverage in these imported LAN fixtures; that is not a passed acceptance gate.
+`test_poller.py` was not run: it imports an external profile-local poller and is
+not self-contained in this checkout. Physical LAN acceptance and new real-socket
+mTLS recovery fixtures were not exercised during this merge. Existing Android,
+coordinator, native-ingress, release-gate and Alexa implementation files were
+verified unchanged. No live poller, task dispatch, WireGuard enrollment, deployment,
+firewall change, or device activity was performed.
+
+## Service-transport branch integration
+
+Owner-authorized merge of `experiment/hg-panasonic-service-transport-06`, remote
+tip `6f8e2ad`, into main after `062bdc4`. Includes Android welcome/version handling,
+resume-watermark adoption, refusal accounting, host regression fixtures, and the
+camera source/loopback relay/private-interface gateway adapters.
+
+The single merge conflict was resolved by retaining main's native producer
+provenance default `real` from `ea8b1c1`; Java fallback and generated synthetic
+fixtures remain `synthetic`. Imported branch audit/runbook documents describe
+their historical branch state, not a replacement for current main acceptance.
+Main's coordinator security, detector wiring and replay shutdown fixes are retained.
+
+Merged-tree verification: production Java compiled against Android 34; isolated
+JVM suites passed with 45 lifecycle, 43 schema, 27 transport-policy, 59 cross-receiver,
+34 real-socket TLS and 19 synthetic-vector checks. Receiver vocabulary was derived
+from current main (`HG_RECEIVER_REF=HEAD`), not the imported historical default.
+Camera source/relay/gateway suites passed all 87 tests with fake media sources.
+Live-camera tests and the Docker-based Java-to-C++ runner were not run; no physical
+capture or deployment acceptance is claimed. No APK, VPN, VPS, AWS configuration,
+or currently deployed Alexa service was changed.
+
 ## Alexa Python recovery and supplied-source diagnosis — 2026-10-23
 
 The canonical voice adapter is `alexa_skill_python/`, restored on `main` in
@@ -923,3 +971,62 @@ These notes preserve the distinction between owner-console observations, worker-
 ### Next action / owner
 
 - **Alexa worker + owner:** provide the selected regional Lambda ARN and confirm the Skill ID from the existing console; inspect the exact target and its logs. Keep the skill private until the endpoint, simulator behavior and approved backend route are verified.
+
+---
+
+## Hermes 1 / Network — worker-dispatch P0 + provenance — 2026-10-23
+
+**Owner:** `hg-hermes-network` (Hermes 1). **Lanes:** issue #23, #14.
+
+**Current verified state**
+
+- Branch `fix/hg-worker-dispatch-p0-48`, SHA `f44d1a6b878d471f271325ea18daff73ff312065`, pushed.
+  `origin/main` was merged in at **owner instruction** (`8458cd8`, 285 commits, no conflicts); rollback
+  point preserved: `8d74f5377dac`. `main` itself was NOT modified.
+- PR #28 (base `dev/production-integration`) — **open, not merged.** After the merge it reports
+  **`mergeable=false`** and its diff widened to 54 commits / 66 files. Both are direct consequences of the
+  merge and are flagged for owner decision, not silently accepted.
+- Privileged dispatch remains **DISABLED**. No independent acceptance has been performed.
+
+**Changed files (my lane only)**
+
+`scripts/worker/task_guard.py`, `scripts/worker/task_envelope.py`,
+`scripts/worker/test_dispatch_p0_48_adversarial.py`, `scripts/worker/test_p0_48_grant_atomicity.py`,
+`scripts/worker/test_task_envelope.py`. Verified after the merge that the five repairs are still present by
+content **and** behaviour, and that `git diff 8d74f53 f44d1a6 -- scripts/worker/` is empty.
+
+**Repairs and evidence**
+
+| # | repair | state |
+|---|---|---|
+| 1 | protected-op fallbacks never derive trusted context; refuse `AUTHENTICATION_REQUIRED` | done |
+| 2 | envelope never trusts caller-supplied author; provenance minted out-of-band with a per-process nonce | done |
+| 3 | scope confinement canonicalised (path traversal) | done |
+| 4 | absent/empty approvals deny against the trusted canonical operation | done |
+| 5 | SQLite owner grant consumed atomically once | done (was already present; demonstrated) |
+
+**Tests (nonexecuting; no network, no dispatcher, no production DB)**
+
+    test_dispatch_p0_48_adversarial.py  exit 0  item 3 9/9 + pre-fix control; repairs 1+4; repair 2
+    test_p0_48_grant_atomicity.py       exit 0  first consume accepted; second APPROVAL_REPLAYED; expired APPROVAL_EXPIRED
+    test_task_envelope.py               exit 0  16/16, verified idempotent across three consecutive runs
+    test_poller.py                      exit 0  duplicates, wrong-worker, unauthorized author, cron PATH
+
+Negative controls include **forged in-band provenance** (refused — the nonce defeats it), unauthenticated
+caller JSON (refused), missing approvals (denied), and a pre-fix predicate control proving the scope suite
+cannot pass vacuously.
+
+**Blockers**
+
+1. GitHub-comment → poller → **spawned worker turn** is unproven; completing it requires enabling
+   privileged dispatch, which is forbidden. Proven instead: fetch → mint → admit → approval gate.
+2. **Concurrent** (not merely sequential) duplicate grant consumption is not yet tested.
+3. Compliance conflicts raised rather than self-resolved: this lane works in the worktree
+   `hermes-s1-lan-mtls-07` (mandated by an earlier isolation directive, now superseded by the single-fixed-
+   workspace rule), and it holds a second branch `experiment/hg-lan-mtls-07`.
+4. `~/.hermes/scripts/hg_task_poller.py` (the poller) lives outside the repository, so its provenance-wiring
+   change is not version-controlled.
+
+**Next action** — owner/coordinator to choose the PR #28 path (keep widened, retarget to `main`, reset to
+`8d74f53` with the rollback point, or re-cut a narrow branch); then add the concurrent-consumption test and
+resolve the workspace/branch compliance items.

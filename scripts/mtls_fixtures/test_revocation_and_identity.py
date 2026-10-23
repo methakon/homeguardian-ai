@@ -79,7 +79,7 @@ class Receiver(threading.Thread):
                 if not dev.get("paired"):
                     return False, f"device_unpaired:{dev['id']}"
                 return True, f"accepted:{dev['id']}"
-        return False, "credential_not_enrolled"
+        return False, "device_unknown"      # canonical (was credential_not_enrolled)
 
     def run(self):
         while not self.stop.is_set():
@@ -181,7 +181,7 @@ def main():
         ("revocation recorded with its reason", reasons.count("device_revoked:eluga-i7-01") == 1),
         ("unpaired recorded with its reason", reasons.count("device_unpaired:eluga-i7-01") == 1),
         ("not-enrolled reached exactly twice (absent device, and CN duplicate)",
-         reasons.count("credential_not_enrolled") == 2),
+         reasons.count("device_unknown") == 2),
         ("enrolled device accepted twice (before revoke, after lift)",
          reasons.count("accepted:eluga-i7-01") == 2),
         ("the other device accepted once", reasons.count("accepted:mi-a3-01") == 1),

@@ -208,4 +208,3 @@ HG_E2E_FRESH=1 bash scripts/run_real_ingress_e2e.sh
 
 Until then: **the wire contract is verified against the real receiver, and no physical device has
 exchanged a frame with the C++ hub.**
-
