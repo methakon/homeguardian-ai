@@ -13,6 +13,7 @@ and [provenance wire fix](PROVENANCE_WIRE_FIX.md).
 | Item | Status | Evidence and required closure |
 |---|---|---|
 | Android → C++ detection → durable alert → MCP | **IN PROGRESS / NOT ACCEPTED** | Real Mi A3 camera frames and numeric processing observed; no acknowledged physical observation or persisted physical alert yet. USB instability and unfinished Wi-Fi setup remain blockers. Closure requires exact alert-id correlation through MCP and recovery after restart, plus stop/consent controls. See [physical acceptance](ANDROID_CPP_MCP_PHYSICAL_ACCEPTANCE.md). |
+| Production ingress detector wiring | **DONE (source + synthetic mTLS; not deployed)** | Accepted-and-completed observations feed `IngestDetectors`; idle availability sweeps on a bounded maintenance worker; quiet-device delivery re-authorizes. Real mTLS suite 325 assertions/4 cases, ctest `production_ingress_tls` 1/1, binary smoke accepted=3 rejected=0, full native suite 76,092 assertions/777 cases. See [detector wiring](DETECTOR_WIRING_FIX.md). Deployment still needs a controlled ingress rollout. |
 
 The historical implementation phases below are not a claim that this physical
 acceptance gate passed. Candidate APK and protocol fixes described in the report

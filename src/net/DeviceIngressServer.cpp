@@ -249,12 +249,16 @@ bool DeviceIngressServer::start(std::string* error) {
     for (size_t i = 0; i < config_.max_workers; ++i) {
         workers_.emplace_back([this] { worker_loop(); });
     }
+    // A bounded maintenance worker must not depend on incoming frames, an
+    // available connection worker, or a TLS handshake completing.
+    workers_.emplace_back([this] { availability_loop(); });
     return true;
 }
 
 void DeviceIngressServer::request_stop() {
     stopping_.store(true);
     queue_cv_.notify_all();
+    maintenance_cv_.notify_all();
     if (replay_) {
         // Flush once more at shutdown so the last accepted sequence is durable even if
         // a write was skipped, and record a failed final write loudly.
@@ -302,8 +306,32 @@ void DeviceIngressServer::run() {
 
     // Drain in-flight work before returning.
     request_stop();
-    std::lock_guard<std::mutex> lock(queue_mutex_);
-    queue_.clear();
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        queue_.clear();
+    }
+    for (std::thread& worker : workers_) {
+        if (worker.joinable()) worker.join();
+    }
+}
+
+void DeviceIngressServer::availability_loop() {
+    while (!stopping_.load()) {
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+        if (maintenance_cv_.wait_for(lock, std::chrono::milliseconds(250),
+                                     [this] { return stopping_.load(); })) return;
+        lock.unlock();
+        std::lock_guard<std::mutex> core_lock(core_mutex_);
+        if (stopping_.load()) return;
+        try {
+            refresh_authorization_locked();
+            if (authorization_available_locked(nullptr)) sweep_availability_locked();
+        } catch (const std::exception& e) {
+            std::cerr << "ingress: availability delivery failed: " << e.what() << '\n';
+        } catch (...) {
+            std::cerr << "ingress: availability delivery failed\n";
+        }
+    }
 }
 
 void DeviceIngressServer::worker_loop() {
@@ -440,7 +468,21 @@ void DeviceIngressServer::handle_connection(std::unique_ptr<TlsConnection> conne
                 result.observation_id = message.observation_id;
                 result.sequence = message.sequence;
             } else {
-                result = ingest_.accept(context, message, sinks_.accepted);
+                // Keep the validated observation, but train only after accept has
+                // completed its durable record. A refused delivery/completion or
+                // an idempotent ACK must not change detector state or liveness.
+                std::optional<SecurityObservation> accepted;
+                result = ingest_.accept(context, message, [&](const SecurityObservation& o) {
+                    if (sinks_.accepted) sinks_.accepted(o);
+                    accepted = o;
+                });
+                if (result.accepted && !result.idempotent_repeat && accepted) {
+                    detectors_.observe(*accepted);
+                    if (detector_credentials_.count(peer.device_id) ||
+                        detector_credentials_.size() < registry_.config().max_devices) {
+                        detector_credentials_[peer.device_id] = peer.credential_id;
+                    }
+                }
                 pump_detectors_locked();
                 if (result.accepted && !registry_path_.empty()) {
                     registry_.save(registry_path_, nullptr);
@@ -469,10 +511,23 @@ void DeviceIngressServer::pump_detectors_locked() {
     if (sinks_.derived) {
         for (const Observation& observation : derived) sinks_.derived(observation);
     }
+    sweep_availability_locked();
+}
+
+void DeviceIngressServer::sweep_availability_locked() {
     // A liveness transition is a real event (a device went quiet), so it follows
     // the accepted-observation path.
     for (const SecurityObservation& availability : detectors_.sweep_availability()) {
-        if (sinks_.accepted) sinks_.accepted(availability);
+        const auto* device = registry_.find(availability.device_id);
+        const auto credential = detector_credentials_.find(availability.device_id);
+        if (device && credential != detector_credentials_.end() &&
+            registry_.authenticate(availability.device_id, credential->second) ==
+                DeviceRegistry::AuthResult::ok && !device->revoked_by_file &&
+            device->consent_granted && device->capture_enabled &&
+            device->consent_subject == availability.consent_subject &&
+            device->consent_purpose == availability.consent_purpose && sinks_.accepted) {
+            sinks_.accepted(availability);
+        }
     }
 }
 

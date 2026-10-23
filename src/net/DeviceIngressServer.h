@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -104,6 +105,11 @@ private:
     void worker_loop();
     void handle_connection(std::unique_ptr<TlsConnection> connection);
     void pump_detectors_locked();
+    void availability_loop();
+    void sweep_availability_locked();
+    // Bound by the registry capacity; retained solely to reauthorize quiet-device
+    // transitions against the credential that produced their accepted evidence.
+    std::map<std::string, std::string> detector_credentials_;
 
     // Re-check the operator's authorization files and apply any change. Cheap when
     // nothing changed (two stat() calls) and rate-limited regardless, so a revocation
@@ -150,6 +156,9 @@ public:
     std::atomic<bool> stopping_{false};
     std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
+    // Dedicated to availability_loop(): a maintenance wake-up must never consume
+    // the notification a freshly queued connection needs from its worker.
+    std::condition_variable maintenance_cv_;
     std::deque<std::unique_ptr<TlsConnection>> queue_{};
     std::vector<std::thread> workers_{};
     std::mutex core_mutex_;  // guards registry_, ingest_, detectors_ and the sink

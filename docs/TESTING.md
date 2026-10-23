@@ -100,3 +100,22 @@ After every commit:
 2. Run all tests
 3. Review test output
 4. Only commit if all tests pass
+
+## D-03 production ingress (real mutual TLS)
+
+The optional TLS ingress is compiled only when OpenSSL is available. Its cases are
+tagged `[.]` because they need generated certificates, so they run through the
+registered ctest rather than the default suite:
+
+```
+cmake --build hg_build --target homeguardian_tests hg_device_ingress -j2
+ctest --test-dir hg_build -R production_ingress_tls --output-on-failure
+python3 tests/net/run_production_ingress.py        # 4 cases, 325 assertions
+python3 tests/net/run_ingress_binary_smoke.py      # shipped binary, real handshake
+```
+
+These generate a throwaway CA and client/server certificates inside `hg_build` and
+bind an ephemeral loopback port. They prove the production wiring path on the
+workstation; they do not install, deploy or exercise a phone, and a pass here is not
+physical or alert acceptance. Note that the active native executable is
+`hg_build/homeguardian_tests` — older `build/` paths above are historical.

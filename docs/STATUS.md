@@ -167,6 +167,36 @@ The dotenv revision passes **72 Python tests** under both tested SDK combination
 plus syntax and dependency checks. The canonical `.env` is confirmed ignored and
 untracked; only code/tests/sanitized documentation are published.
 
+### Production detector wiring corrective batch — 2026-10-23
+
+Implemented on `main`, **SOURCE + SYNTHETIC-mTLS TESTED / NOT DEPLOYED**. The TLS
+ingress now feeds `IngestDetectors` only after an observation's delivery has
+completed and only when it was not an idempotent repeat: refused, replayed,
+identity-mismatched, consent/capture-blocked and sink-failed observations never
+train a detector or refresh liveness. Derived detector output still reaches the
+single existing pipeline. A bounded maintenance worker (250 ms, dedicated condition
+variable) evaluates quiet devices without waiting for an inbound frame, and
+re-authorizes each idle delivery against the credential bound to that device's
+accepted evidence plus pairing/revocation/consent/capture. Offline transitions no
+longer claim `Provenance::real` or invent a `security_monitor` consent. The
+optional ingress also links now: `src/core/ActivityEpisode.cpp` was missing from
+`HG_INGEST_CORE_SOURCES`.
+
+Verified: real mutual-TLS regression `python3 tests/net/run_production_ingress.py`
+**325 assertions in 4 cases passed**; `ctest -R production_ingress_tls` **1/1
+passed (12.22 s)**; shipped-binary synthetic-CA smoke **accepted=3 rejected=0**,
+clean SIGTERM exit 0; full native suite from `hg_build` with `HG_SOURCE_DIR` set
+**76,092 assertions in 777 cases, all passed**. Implementation-time RED (no derived
+output, no idle sweep, idle delivery after rotation, a queued connection starved by
+the maintenance wait) was observed before each fix; the GREEN runs above were
+re-executed independently. See [detector wiring](DETECTOR_WIRING_FIX.md).
+
+These ingress cases are tagged `[.]` and run through that ctest/runner rather than
+by default. Limits: fixed 250 ms availability cadence, idle delivery re-checks
+registry state and the bound credential rather than the live socket, and default
+fusion policy keeps detector evidence advisory. Nothing was deployed to the phone,
+VPS, Docker service or cloud; no physical observation or alert is claimed.
+
 ### Producer provenance corrective batch — 2026-10-23
 
 Implemented on `main`, **SOURCE/Java-COMPILE/HOST-PARSER TESTED / NOT INSTALLED**.
