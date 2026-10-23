@@ -171,6 +171,9 @@ struct SensorHub {
     ~SensorHub() { stop_engine(); }
 
     SensorHub() {
+        // Each fixture starts at the present; another case's replay/warm-up
+        // clock offset must not age this fixture's first observation out.
+        fake_now = 0;
         std::string why;
         DeviceRegistry::Device d;
         d.device_id = device_id;
@@ -638,32 +641,35 @@ TEST_CASE("e2e corroboration: two distinct detector classes vote in the same win
     audio_cfg.provenance_claim = "real";
     ObservationProducer audio_producer(audio_cfg, clock_ms);
 
-    // One motion transition on the motion node.
-    for (int i = 0; i < 10; ++i) {
-        fake_now = -200'000 + i * 1000;
-        (void)hub.feed(0.08);
-    }
-    for (int i = 0; i < 12; ++i) {
-        fake_now = -11'000 + i * 1000;
-        (void)hub.feed(0.25 + 0.06 * i);
-    }
-
-    // ... and one acoustic transition on the audio node, in the same window.
     PeerContext audio_peer = hub.peer();
     audio_peer.authenticated_device_id = audio_id;
     audio_peer.credential_id = audio_cred;
-    for (int i = 0; i < 12; ++i) {
-        fake_now = -11'000 + i * 1000;
+    const auto feed_audio = [&](double value) {
         DeviceMessage m;
         std::string why;
         REQUIRE(audio_producer.next(&m, &why));
-        m.features["audio-rms"] = 0.02 + 0.01 * i;
+        m.features["audio-rms"] = value;
         (void)hub.ingest->accept(audio_peer, m, [&](const SecurityObservation& o) {
             (void)hub.detectors->observe(o);
         });
         std::vector<Observation> drained;
         hub.detectors->drain(drained);
         for (auto& observation : drained) hub.app.process_event(observation.to_event());
+    };
+
+    // Learn both baselines outside the correlation window, then interleave
+    // corroborating transitions chronologically. The old fixture rewound time
+    // for the second node and relied on Pipeline stopping at an expired arrival,
+    // accidentally hiding still-valid negative evidence from the first node.
+    for (int i = 0; i < 12; ++i) {
+        fake_now = -200'000 + i * 1000;
+        (void)hub.feed(0.08);
+        feed_audio(0.02);
+    }
+    for (int i = 0; i < 9; ++i) {
+        fake_now = -4000 + i * 500;
+        (void)hub.feed(0.35 + 0.06 * i);
+        feed_audio(0.2 + 0.04 * i);
     }
 
     const auto window = hub.app.get_pipeline().get_recent_events(std::chrono::seconds(60));

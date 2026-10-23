@@ -1471,6 +1471,30 @@ TEST_CASE("a downstream failure is never reported as an acceptance (D-03.1 secti
 // Detector wiring: the D-02x components in the hub runtime (section G)
 // ===========================================================================
 
+TEST_CASE("derived activity timestamps use the accepted ingestion instant", "[net][detectors][derived-time]") {
+    const int64_t at = ObservationIngest::system_clock_ms()() - 200000;
+    IngestDetectors detectors(IngestDetectors::defaults(), [at] { return at; });
+    SecurityObservation observation;
+    observation.device_id = "timestamp-fixture";
+    observation.source = "node";
+    observation.ingested_at = std::chrono::system_clock::time_point(std::chrono::milliseconds(at));
+    observation.acquired_at = observation.ingested_at;
+    observation.provenance = Provenance::synthetic;
+    observation.features = {{"motion-changed-fraction", 0.08}};
+    REQUIRE(detectors.observe(observation).fed);
+    std::vector<Observation> derived;
+    REQUIRE(detectors.drain(derived) == 1);
+    CHECK(derived.front().observation_timestamp == observation.ingested_at);
+
+    observation.features = {{"audio-rms", 0.02}};
+    REQUIRE(detectors.observe(observation).fed);
+    derived.clear();
+    REQUIRE(detectors.drain(derived) == 2);
+    for (const auto& result : derived) {
+        CHECK(result.observation_timestamp == observation.ingested_at);
+    }
+}
+
 TEST_CASE("ingested observations drive the D-02x detectors into the same pipeline",
           "[net][detectors]") {
     const int64_t now = ObservationIngest::system_clock_ms()();

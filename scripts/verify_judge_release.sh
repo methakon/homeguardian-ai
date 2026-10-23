@@ -245,7 +245,7 @@ fi
 # ------------------------------------------------------------------------------
 log_info "\nStep 2: Provisioning Isolated Local Loopback Sandbox..."
 
-TMP_DIR="$(mktemp -d /tmp/hg_judge_verify.XXXXXX)"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hg_judge_verify.XXXXXX")"
 
 # Dynamic unprivileged test ports
 MCP_PORT=$(( 18800 + RANDOM % 300 ))

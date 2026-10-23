@@ -156,8 +156,10 @@ IngestDetectors::Outcome IngestDetectors::observe(const SecurityObservation& obs
     double value = 0.0;
     if (numeric_feature(observation.features, "motion-changed-fraction", &value)) {
         const auto result = state->motion.observe(value, now);
-        enqueue(state->motion.to_observation(result, derived_id(observation, "motion"),
-                                             observation.device_id, observation.provenance));
+        auto derived = state->motion.to_observation(result, derived_id(observation, "motion"),
+                                                    observation.device_id, observation.provenance);
+        derived.observation_timestamp = now;
+        enqueue(std::move(derived));
         outcome.fed = true;
         outcome.detector = "motion-activity";
         outcome.reason = result.reason;
@@ -165,8 +167,10 @@ IngestDetectors::Outcome IngestDetectors::observe(const SecurityObservation& obs
     }
     if (numeric_feature(observation.features, "audio-rms", &value)) {
         const auto activity = state->audio.observe(value, now);
-        enqueue(state->audio.to_observation(activity, derived_id(observation, "audio"),
-                                            observation.device_id, observation.provenance));
+        auto derived = state->audio.to_observation(activity, derived_id(observation, "audio"),
+                                                   observation.device_id, observation.provenance);
+        derived.observation_timestamp = now;
+        enqueue(std::move(derived));
         const auto anomaly = state->anomaly.observe(value, now);
         enqueue(state->anomaly.to_observation(anomaly, derived_id(observation, "anomaly"), now,
                                               cfg_.audio_anomaly.min_samples));

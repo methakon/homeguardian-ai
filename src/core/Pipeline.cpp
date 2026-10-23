@@ -27,9 +27,9 @@ std::vector<Event> Pipeline::get_recent_events(std::chrono::milliseconds window)
     for (auto it = history_.rbegin(); it != history_.rend(); ++it) {
         if (now - it->get_observation_timestamp() <= window) {
             recent.push_back(*it);
-        } else {
-            break;
         }
+        // History is bounded arrival order, not timestamp order. A late expired
+        // observation must not hide newer evidence inserted before it.
     }
     std::reverse(recent.begin(), recent.end());
     return recent;
