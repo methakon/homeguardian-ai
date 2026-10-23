@@ -1,0 +1,88 @@
+== stopping MCP server (the bridge will be the sole writer to the audit DB) ==
+== staging engine binary ==
+provisioned
+== starting the engine (loopback 8791) ==
+  health : {"ok":true,"status":"up","simulated":true}
+  engine log:
+    SECURITY WARNING: passing --token on command line exposes credential in /proc and ps. Use --token-file or HG_HTTP_TOKEN instead.
+    SECURITY WARNING: passing --secret on command line exposes credential in /proc and ps. Use --secret-file or HG_HTTP_SECRET instead.
+    DEMO_READY 8791
+
+== available synthetic scenarios ==
+   ['default', 'normal', 'unusual', 'inconclusive', 'anomaly-warmup', 'anomaly-normal', 'anomaly-deviation', 'anomaly-missing', 'synthetic-critical-impact', 'consent-denied']
+
+== status/alerts BEFORE the scenario ==
+{"status":{"alert_count":0,"alert_ids":[],"capture_enabled":true,"error":"ok","highest_severity":"","ok":true,"state":"Running"},"summary":{"alert_count":0,"alert_ids":[],"capture_enabled":true,"error":"ok","highest_severity":"","ok":true,"state":"Running"}}
+{"alerts":[],"ok":true,"total":0}
+
+== POST /api/session (proves x-hg-secret, same-origin) ==
+  csrf issued: yes (len 64)
+== a second session POST with a WRONG secret must be 401 ==
+  -> 401
+== run-scenario with a WRONG Origin must be 403 ==
+  -> 403
+
+== POST /api/run-scenario?scenario=synthetic-critical-impact (real engine work on-device) ==
+{
+  "scenario": {
+    "alerts": [
+      {
+        "alert_id": "alert-e2829807-960c-409f-8614-fc06b6f076ed",
+        "confidence": 0.7,
+        "contributing_events": 2,
+        "detected_at_ms": 1792186485714,
+        "detectors_contributing": 2,
+        "evidence": "detected by 2 input(s), agreement 1, confidence 0.7",
+        "explanation": "rule 'detection-fusion' fired from the detection/fusion evidence (2 contributing detector observation(s), fusion verdict 'detected') at confidence 0.70",
+        "fusion_confidence": 0.7,
+        "fusion_verdict": "detected",
+        "message": "synthetic activity detected: fusion confidence 0.70 from 2 contributing detector observation(s)",
+        "provenance": "synthetic",
+        "rule": "detection-fusion",
+        "severity": "info"
+      },
+      {
+        "alert_id": "alert-3fd24c97-be50-4af3-a51e-92fdfdc33e13",
+        "confidence": 0.75,
+        "contributing_events": 2,
+        "detected_at_ms": 1792186485726,
+        "emergency_services_contacted": false,
+        "evidence": "synthetic impact classifier (confirmed): simulated impact signature: transient 0.95 followed by stillness 0.1 within 1 sample(s) (synthetic pattern; not a fall) | synthetic demonstration only; this is not fall detection and no emergency service is involved",
+        "explanation": "rule 'synthetic-impact' fired on a CONFIRMED simulated impact pattern (transient 0.95 -> stillness 0.1 within 1 sample(s)); demonstration only \u2014 this does not confirm a real fall and no emergency services are contacted",
+        "impact_pattern": "transient_then_stillness",
+        "message": "SIMULATED critical impact pattern detected (transient 0.95 -> stillness 0.10 within 1 sample(s), 2 supporting observation(s)). Demonstration only: this does not confirm a real
+  scenario wall time: 59 ms
+
+== status/alerts AFTER ==
+  alerts returned: 2
+    {'alert_id': 'alert-3fd24c97-be50-4af3-a51e-92fdfdc33e13', 'severity': 'critical', 'rule': 'synthetic-impact', 'confidence': 0.75}
+    {'alert_id': 'alert-e2829807-960c-409f-8614-fc06b6f076ed', 'severity': 'info', 'rule': 'detection-fusion', 'confidence': 0.7}
+
+== SQLite written by the ENGINE on the device ==
+total 292
+-rw-rw-rw- 1 shell shell      0 2026-10-17 03:04 homeguardian.log
+-rw-r--r-- 1 shell shell  73728 2026-10-17 02:57 homeguardian_audit.db
+-rw-r--r-- 1 shell shell   4096 2026-10-17 03:04 homeguardian_bridge_audit.db
+-rw-r--r-- 1 shell shell  32768 2026-10-17 03:04 homeguardian_bridge_audit.db-shm
+-rw-r--r-- 1 shell shell 111272 2026-10-17 03:04 homeguardian_bridge_audit.db-wal
+-rw-r--r-- 1 shell shell  73728 2026-10-17 02:54 pulled.db
+-rw-r--r-- 1 shell shell      0 2026-10-17 02:54 pulled.db-wal
+total 148
+-rw-r--r-- 1 swarna-sekhar-dhar swarna-sekhar-dhar   4096 Oct 17 03:04 homeguardian_bridge_audit.db
+-rw-r--r-- 1 swarna-sekhar-dhar swarna-sekhar-dhar  32768 Oct 17 03:04 homeguardian_bridge_audit.db-shm
+-rw-r--r-- 1 swarna-sekhar-dhar swarna-sekhar-dhar 111272 Oct 17 03:04 homeguardian_bridge_audit.db-wal
+  journal_mode: wal
+  events: 0 rows
+  alerts: 2 rows
+     {'alert_id': 'alert-e2829807-960c-409f-8614-fc06b6f076ed', 'severity': 'info'}
+     {'alert_id': 'alert-3fd24c97-be50-4af3-a51e-92fdfdc33e13', 'severity': 'critical'}
+  profiles: 0 rows
+  routines: 0 rows
+  consent_records: 0 rows
+  integrity_check: ok
+
+== JOINED PROOF: the MCP read-only tool now sees the engine's alert ==
+  tools/call get_homeguardian_status:
+    {"capture_enabled":false,"read_only":true,"state":"Running"}
+  tools/call get_alert_summary:
+    {"alert_count":2,"alert_ids":["alert-3fd24c97-be50-4af3-a51e-92fdfdc33e13","alert-e2829807-960c-409f-8614-fc06b6f076ed"],"highest_severity":"critical","read_only":true}

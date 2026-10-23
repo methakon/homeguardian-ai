@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include <unistd.h>   // getpid: process-unique fixture paths
 #include "core/SimulatorRuntime.h"
 #include "core/AlertPolicy.h"
 #include "core/PersistenceAudit.h"
@@ -27,7 +28,9 @@ using namespace homeguardian;
 namespace {
 
 std::string priv_temp_db(const std::string& tag) {
-    std::string p = "test_privacy_" + tag + ".db";
+    // Unique per process: two suite instances in the same working directory must
+    // not delete each other's database (SQLite reports that as "disk I/O error").
+    std::string p = "test_privacy_" + tag + "_" + std::to_string(::getpid()) + ".db";
     std::filesystem::remove(p);
     std::filesystem::remove(p + "-wal");
     std::filesystem::remove(p + "-shm");

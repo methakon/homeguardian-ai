@@ -7,6 +7,12 @@
 was **preserved** and audited as-is.
 **Time to deadline:** ~11 days (deadline **Oct 23, 2026 12:00 PM PDT = Oct 24, 2026 12:30 AM IST**).
 
+> [!NOTE] HISTORICAL COMPLIANCE AUDIT CONTEXT (2026-10-12)
+> This document records the pre-implementation hackathon compliance audit conducted on October 12, 2026 at commit `896f4be` prior to PR #20.
+> At the time of this audit, HomeGuardian AI pursued Route B (simulated Alexa+ experience).
+> **Subsequent Implementation Status (PR #20 / October 2026):**
+> HomeGuardian AI fully implemented and certified a genuine native C++ Model Context Protocol (MCP spec 2025-11-25) server (`hg_mcp_server`) with Streamable HTTP transport, fail-closed authentication, and 2 read-only tools. See `docs/DEVPOST_DEMONSTRATION_GUIDE.md` and `docs/PROOF_REGISTER.md` for current certified architecture.
+
 ---
 
 ## 1. Official sources inspected (accessed 2026-10-12)
@@ -157,8 +163,8 @@ creative, well-understood use of the ecosystem.
 1. Start the simulated Alexa+ web experience (one command).
 2. Grant consent for the simulated living-room sensor (show the consent gate).
 3. Speak/type "Is everything okay at home?" → the experience invokes the real backend.
-4. Two synthetic observations arrive → the correlation rule fires → an alert appears with its
-   evidence (contributing event IDs, rule, timestamp).
+4. Detection observations arrive → the detection/fusion rule qualifies → a detection-driven
+   alert appears with its evidence (fusion verdict, fused confidence, rule, timestamp).
 5. Show the dedup/cooldown behaviour on a repeat query.
 6. Withdraw consent → show subsequent observations are blocked (fail-closed).
 7. Show the persisted alert summary survives a restart (`historical_alerts`).
@@ -237,3 +243,75 @@ honest description.
 **Next action (immediately after this report):** implement **P0-1 (README honesty fix) and P0-2
 (LICENSE, pending user approval of MIT)** as one small commit, then proceed to **P0-3 (the simulated
 Alexa+ web experience)** — the single highest-value task for both eligibility and judging score.
+
+## License options (v15, 2026-10-13) — DECISION REQUIRED, nothing committed
+
+P0-2 (no LICENSE on the public repo) is still open. **No license has been added
+or selected.** Options for the user to choose:
+
+1. **MIT** — permissive, shortest, most common for hackathon/demo code; allows
+   reuse and modification with attribution; no patent grant.
+2. **Apache-2.0** — permissive like MIT **plus an express patent grant** and a
+   NOTICE/trademark clause; better for anything that might see corporate use.
+3. **BSD-3-Clause** — permissive, no patent grant, adds a no-endorsement clause.
+4. **No license (all rights reserved)** — default copyright; code is *not*
+   open-source and others cannot legally reuse it. Acceptable if the repo is to
+   stay private later; public repo + no license usually means no reuse rights.
+
+**Note:** the repository is currently **public** with **no license**, which is
+the least helpful state for judges and reusers. A LICENSE is a one-line decision
+but a legal one, so it is left to the user. If MIT/Apache/BSD is chosen, also
+update `README.md`'s license section and, for Apache-2.0, add a `NOTICE` file.
+
+## P0-2 RESOLVED (v16, 2026-10-13) — Apache License 2.0
+
+**Decision:** the project owner explicitly approved **Apache License, Version
+2.0**. (Recorded here so the earlier "options" list above is read as history, not
+as an open question.)
+
+**Implemented:**
+- Root `LICENSE` = the complete, unmodified Apache License 2.0 text. Verified
+  byte-for-byte against the official text (`https://www.apache.org/licenses/LICENSE-2.0.txt`):
+  sha256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` for
+  both the fetched official copy and the committed file.
+- Root `NOTICE` added: copyright notice + third-party attribution.
+- `README.md` license section updated from MIT to Apache-2.0 with a NOTICE link.
+
+**Attribution review (no relicensing of third-party code):**
+| Component | Location | License | Action |
+|---|---|---|---|
+| SQLite | `third_party/sqlite` (bundled) | Public domain | preserved (own notice in source) |
+| Catch2 | `third_party/catch2` (bundled) | Boost Software License 1.0 | preserved (own notice in headers) |
+| spdlog | CMake FetchContent (not vendored) | MIT | attributed in NOTICE |
+| nlohmann/json | CMake FetchContent (not vendored) | MIT | attributed in NOTICE |
+| ask-sdk-core/model | `alexa_skill` (npm, optional) | Apache-2.0 | attributed in NOTICE |
+
+**Copyright holder:** `Copyright 2026 Swarna Sekhar Dhar` — evidenced by the
+repository owner, 45 of 46 commits, and the prior MIT copyright line. One commit
+(the `NativeHttp.h` foundation, `6a996daf`) is authored by a different name; the
+owner should confirm whether a second copyright line is desired. No ownership was
+invented.
+
+**Note (correction):** an earlier v15 statement said the public repo had "no
+license". That was inaccurate — the repo carried an **MIT** `LICENSE` (added in
+`f1a923b`). P0-2 was therefore not "missing license" but "license choice"; it is
+now resolved as Apache-2.0 by explicit approval.
+
+**P0-2 status: DONE.**
+
+## Superseded rows in the claims audit above (2026-10-13, after L-11)
+
+The claims table at the top of this document was authored at an earlier
+milestone. The following rows are now out of date; the findings themselves are
+left intact as a historical record:
+
+| Original row | Current state |
+|---|---|
+| "C++ core … 255 cases / 2004 assertions" | Suite is now **329 cases / 2453 assertions** (assertions verified in this milestone's run). |
+| "End-to-end household workflow … `Alert generated: synthetic simulator presence notice` → dedup (1 delivered / 8 suppressed)" | The alert is now **detection-driven** (L-11): rule `detection-fusion`, message names the fused evidence, severity derived from the fused confidence. The demo run now reports e.g. 10 generated / 1 delivered / 9 suppressed (Unusual activity) or 10 / 2 / 8 (Default, two severities). The old presence notice no longer exists anywhere in `src/`. |
+| "README: Alexa+ … with MCP integration" | Corrected: the README no longer claims MCP. |
+| "License to be selected / no LICENSE file" | Resolved in v16: Apache-2.0 `LICENSE` + `NOTICE`. |
+| Boost.Beast/Drogon HTTP surface | Superseded: the demo HTTP surface is the native C++ transport (`hg_alexa_bridge --http`), with the Node adapter retained only as an optional legacy reference. |
+
+No new claim is made here; every figure above was produced by this milestone's
+test run or live demo.

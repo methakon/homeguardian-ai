@@ -98,6 +98,14 @@ struct Observation {
     // confidence is mapped onto the Event's confidence field when present.
     Event to_event() const;
 
+    // Reconstruct an Observation from an Event previously produced by
+    // to_event() (type == inference). Returns std::nullopt when the event is not
+    // a detection observation, lacks the required non-sensitive payload fields,
+    // or carries an unknown status. Round-trips with to_event(); used by the
+    // detection-driven correlation rule so the alert is derived from the SAME
+    // detection evidence that flowed through the pipeline.
+    static std::optional<Observation> from_event(const Event& event);
+
     // ---- bounded feature helpers ----
 
     // Hard bounds on feature data so a malformed detector cannot bloat an

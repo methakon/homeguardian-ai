@@ -26,6 +26,7 @@
 #include "core/AppState.h"
 #include "core/Application.h"
 #include "core/AlexaCredentialStore.h"
+#include "core/HomeAssistantAdapter.h"
 #include "core/Config.h"
 #include "core/Logger.h"
 #include "core/PersistenceAudit.h"
@@ -34,17 +35,24 @@
 #include "core/SyntheticActivityDetector.h"
 #include "core/FusionEngine.h"
 #include "core/PrivacyAuditLog.h"
+#include "core/DemoScenarios.h"
+#include "core/DemoScenarioRunner.h"
+#include "bridge/NativeHttp.h"
+#include "hg_web_assets.h"
 
 #include <chrono>
 #include <atomic>
+#include <csignal>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 using json = nlohmann::json;
 using namespace homeguardian;
@@ -203,172 +211,591 @@ json response_to_json(const AlexaResponse& r) {
     return j;
 }
 
-// Run the REAL synthetic household scenario through the REAL Application
-// pipeline and persist the resulting alerts. This reuses the exact components
-// Application::run() uses (SimulatorRuntime -> event sink -> Pipeline ->
-// correlation -> AlertPolicy -> PersistenceAudit). It does NOT build a second
-// event-processing engine and does NOT activate any physical sensor: the
-// simulator only ever produces synthetic, in-process observations.
-//
-// Returns a JSON summary of what the scenario actually did (delivered media,
-// events processed, alerts generated/delivered/suppressed, persistence writes)
-// so the web UI displays real results rather than fabricated values.
-json run_demo_scenario(Application& app, PersistenceAudit* audit, int cycles) {
-    SimulatorRuntime& sim = app.get_simulator_runtime();
-    RuntimeStatus& st = app.get_status();
+// --- Scenario/demo JSON adapters ---------------------------------------------
+// The scenario EXECUTION lives in core (DemoScenarioRunner), which drives the
+// REAL Application pipeline (SimulatorRuntime -> event sink -> Pipeline ->
+// correlation -> AlertPolicy). This file only adapts the run result to JSON and
+// persists exactly the alerts the pipeline delivered. No alert is fabricated.
 
-    // Capture must be enabled in the loaded config for the scenario to deliver
-    // anything. If the kill switch is off, the gate blocks all delivery — which
-    // is itself the correct, demonstrable fail-closed behaviour.
-    bool capture_on = st.capture_enabled.load();
-    json detection_summary = nlohmann::json();  // populated by the detection stage
-    PrivacyAuditLog privacy_audit;              // H-03: consent-decision audit
-
-    if (capture_on) {
-        // Enable capture on the simulator's OWN gate (Application constructs it
-        // disabled by default) and reflect it in RuntimeStatus. This mirrors
-        // exactly what Application::run() does when the config enables capture.
-        sim.set_media_capture_enabled(true);
-        st.capture_enabled.store(true);
-        // Synthetic grants for the simulator's consumers (test consent only).
-        sim.grant_consent(SimulatorRuntime::enabled_device_id(), "sim_alexa_enabled");
-        sim.grant_consent(SimulatorRuntime::assistant_device_id(), "sim_alexa_assistant");
-        // Route every AUTHORIZED synthetic observation through the real
-        // application event path (process_event -> Pipeline -> correlation ->
-        // AlertPolicy). Delivered alerts are then persisted to the SAME audit
-        // DB the status provider reads, so alert history is real and durable.
-        // (The bridge does not call Application::run(), so process_event does
-        // not auto-persist; the scenario persists delivered alerts explicitly.)
-        sim.set_event_sink([&app, audit](const Event& ev) {
-            app.process_event(ev);
-        });
-        // H-03 privacy audit: record every per-consumer delivery decision made
-        // during the scenario (metadata only; never changes delivery).
-        sim.set_privacy_audit(&privacy_audit);
-        sim.start();
-        for (int i = 0; i < cycles; ++i) {
-            int delivered = sim.tick();
-            st.media_authorized.fetch_add(static_cast<uint64_t>(delivered));
-        }
-        sim.shutdown();
-
-        // Persist a durable alert record for the delivered synthetic condition
-        // so alert history is real and survives restart. This is metadata only
-        // (no raw media). The alert id is unique per scenario run.
-        if (audit && st.alerts_delivered.load() > 0) {
-            static std::atomic<uint64_t> scenario_seq{0};
-            Alert a = Alert::create(
-                "sim-alert-" + std::to_string(scenario_seq.fetch_add(1)),
-                Severity::info, "synthetic simulator presence notice",
-                {}, 0.9, "sim-presence", nlohmann::json::object());
-            audit->record_alert(a);  // best-effort; failure degrades, never throws
-        }
-
-        // --- Detection / fusion stage (Runtime Readiness v8 framework) ---
-        // Exercise the REAL detection path that the demo otherwise bypassed:
-        // SyntheticActivityDetector produces Observations (provenance=synthetic,
-        // explicit detected/not_detected/inconclusive status), FusionEngine
-        // combines them with confidence propagation + conflict handling, and
-        // each Observation flows through the EXISTING event pipeline via
-        // to_event() -> process_event(). No second event engine, no physical
-        // sensor, no raw media. This closes the Observation -> Detection/Fusion
-        // -> Event pipeline link in the demo journey.
-        //
-        // The energy sequence is deterministic so the demo and tests are stable.
-        // It deliberately includes an inconclusive value (near threshold) and
-        // exercises fusion conflict handling so unavailable/inconclusive inputs
-        // are never asserted as detections.
-        SyntheticActivityDetector detector;
-        FusionEngine fusion;
-        std::vector<Observation> observations;
-        std::vector<double> energies = {0.8, 0.75, 0.52, 0.82, 0.78};
-        int det_detected = 0, det_not = 0, det_inconclusive = 0;
-        for (size_t i = 0; i < energies.size(); ++i) {
-            Observation o = detector.detect(
-                "det-obs-" + std::to_string(i), energies[i]);
-            o.validate();
-            observations.push_back(o);
-            switch (o.status) {
-                case DetectorStatus::detected: ++det_detected; break;
-                case DetectorStatus::not_detected: ++det_not; break;
-                default: ++det_inconclusive; break;  // inconclusive / unavailable
-            }
-            // Feed each observation through the REAL pipeline (same path the
-            // simulator events take). Inference events are counted and
-            // correlated by the existing rules; they never fabricate a
-            // detection — the detector's own status governs that.
-            app.process_event(o.to_event());
-        }
-        FusionResult fr = fusion.fuse(observations);
-
-        json det;
-        det["detector_id"] = detector.config().detector_id;
-        det["model_id"] = detector.config().model_id;
-        det["provenance"] = provenance_to_string(Provenance::synthetic);
-        det["observations"] = observations.size();
-        det["detected"] = det_detected;
-        det["not_detected"] = det_not;
-        det["inconclusive"] = det_inconclusive;
-        det["fusion_verdict"] = fusion_verdict_to_string(fr.verdict);
-        det["fusion_confidence"] = fr.confidence;
-        det["fusion_contributing"] = fr.contributing;
-        det["fusion_reason"] = fr.reason;
-        detection_summary = det;  // attached to the summary JSON below
+const char* severity_to_string(Severity s) {
+    switch (s) {
+        case Severity::critical: return "critical";
+        case Severity::warning: return "warning";
+        default: return "info";
     }
+}
+
+// Non-sensitive projection of one alert (metadata only; never media). The
+// explanation is derived from the alert's OWN rule and evidence details
+// (populated by the detection/fusion rule) — never a hardcoded string.
+json alert_to_json(const Alert& a) {
+    const bool has_details = a.details.is_object();
+    json x;
+    x["alert_id"] = a.alert_id;
+    x["severity"] = severity_to_string(a.severity);
+    x["rule"] = a.rule_name;
+    x["message"] = a.message;
+    x["confidence"] = a.confidence;
+    x["detected_at_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
+        a.detected_at.time_since_epoch()).count();
+    x["contributing_events"] = a.contributing_event_ids.size();
+    x["provenance"] = has_details
+        ? a.details.value("provenance", std::string("synthetic"))
+        : std::string("synthetic");
+    if (has_details) {
+        if (a.details.contains("fusion_verdict")) x["fusion_verdict"] = a.details["fusion_verdict"];
+        if (a.details.contains("fusion_confidence")) x["fusion_confidence"] = a.details["fusion_confidence"];
+        if (a.details.contains("contributing")) x["detectors_contributing"] = a.details["contributing"];
+        if (a.details.contains("reason")) x["evidence"] = a.details["reason"];
+        // H-01s synthetic impact evidence (non-sensitive; no media, no person).
+        if (a.details.contains("impact_pattern")) {
+            x["impact_pattern"] = a.details["impact_pattern"];
+            x["transient_intensity"] = a.details["transient_intensity"];
+            x["stillness_intensity"] = a.details["stillness_intensity"];
+            x["samples_since_transient"] = a.details["samples_since_transient"];
+            x["supporting_observations"] = a.details["supporting_observations"];
+            x["simulated"] = a.details.value("simulated", true);
+            x["emergency_services_contacted"] = false;
+        }
+    }
+
+    // WHY did this alert fire? Built only from the alert's own evidence.
+    std::ostringstream os;
+    if (has_details && a.details.contains("impact_pattern")) {
+        os << "rule '" << a.rule_name
+           << "' fired on a CONFIRMED simulated impact pattern (transient "
+           << a.details["transient_intensity"].get<double>() << " -> stillness "
+           << a.details["stillness_intensity"].get<double>() << " within "
+           << a.details["samples_since_transient"].get<size_t>()
+           << " sample(s)); demonstration only — this does not confirm a real "
+              "fall and no emergency services are contacted";
+        x["explanation"] = os.str();
+        return x;
+    }
+    os << "rule '" << a.rule_name << "' fired from the detection/fusion evidence";
+    if (has_details && a.details.contains("contributing") &&
+        a.details["contributing"].is_number()) {
+        os << " (" << a.details["contributing"].get<size_t>()
+           << " contributing detector observation(s)";
+        if (a.details.contains("fusion_verdict"))
+            os << ", fusion verdict '" << a.details["fusion_verdict"].get<std::string>() << "'";
+        os << ")";
+    }
+    os << std::fixed << std::setprecision(2) << " at confidence " << a.confidence;
+    x["explanation"] = os.str();
+    return x;
+}
+
+// Read-only recent alert detail from the REAL durable audit store. Used by the
+// dashboard timeline so it shows backend data instead of hardcoded text.
+json alerts_payload(PersistenceAudit* audit) {
+    json out;
+    out["ok"] = true;
+    out["alerts"] = json::array();
+    out["total"] = 0;
+    if (audit) {
+        for (const auto& a : audit->alerts().find_recent(ALEXA_MAX_ALERTS_RETURNED)) {
+            out["alerts"].push_back(alert_to_json(a));
+        }
+        out["total"] = audit->total_alert_count();
+    }
+    return out;
+}
+
+// The scenario catalogue (ids + human text). No outcomes are pre-baked.
+json scenarios_payload() {
+    json out;
+    out["ok"] = true;
+    out["default"] = default_demo_scenario_id();
+    out["scenarios"] = json::array();
+    for (const auto& s : demo_scenarios()) {
+        json x;
+        x["id"] = s.id;
+        x["title"] = s.title;
+        x["description"] = s.description;
+        x["expectation"] = s.expectation;
+        x["cycles"] = s.cycles;
+        out["scenarios"].push_back(x);
+    }
+    return out;
+}
+
+// Human-readable outcome: why an alert was, or was not, generated. Derived from
+// the run's real counters, the fused detection verdict and the consent audit.
+std::string outcome_text(const ScenarioRunResult& r) {
+    std::ostringstream os;
+    if (!r.capture_enabled) {
+        return "capture disabled by configuration: nothing was delivered, so no "
+               "observation was acquired, no detection ran, and no alert could "
+               "be generated (fail-closed).";
+    }
+    if (r.alerts_delivered > 0) {
+        os << "detection-driven alert delivered (" << r.alerts_delivered
+           << " delivered, " << r.alerts_suppressed
+           << " duplicate(s) suppressed by the dedup/cooldown policy).";
+        return os.str();
+    }
+    // Prefer the detection explanation: it is the reason with the most
+    // explanatory power when detection evidence exists. (A separate consumer
+    // merely lacking consent is not the reason an alert was withheld.)
+    if (r.detection.ran) {
+        os << std::fixed << std::setprecision(2);
+        if (r.detection.fusion_verdict != "detected") {
+            os << "no alert: the fused detection verdict is '"
+               << r.detection.fusion_verdict << "' (confidence "
+               << r.detection.fusion_confidence << ", "
+               << r.detection.fusion_contributing
+               << " contributing input(s)). An uncertain, unavailable or "
+                  "not-detected result never raises an alert.";
+            return os.str();
+        }
+        os << "no alert: the fused verdict was 'detected' but confidence "
+           << r.detection.fusion_confidence
+           << " is below the alert threshold.";
+        return os.str();
+    }
+    if (r.privacy.denied > 0) {
+        os << "no alert: " << r.privacy.denied
+           << " acquisition(s) were denied by the consent gate and produced no "
+              "observation; the remaining authorized evidence did not constitute "
+              "a qualifying detection.";
+        return os.str();
+    }
+    return "no alert: no detection evidence was produced for this scenario.";
+}
+
+// Run `spec` (optionally with a caller-supplied cycle override) and return the
+// JSON result. Persists exactly the delivered alerts.
+json scenario_result_json(Application& app, PersistenceAudit* audit,
+                          const DemoScenario& base_spec, bool cycles_set,
+                          unsigned cycles_override) {
+    const bool prof = [] {
+        const char* p = std::getenv("HG_PROFILE");
+        return p != nullptr && *p != '\0' && *p != '0';
+    }();
+    json timing = json::object();
+    auto pt = std::chrono::steady_clock::now();
+    auto lap = [&](const char* name) {
+        if (!prof) return;
+        const auto now = std::chrono::steady_clock::now();
+        timing[name] = std::chrono::duration<double, std::milli>(now - pt).count();
+        pt = now;
+    };
+
+    DemoScenario spec = base_spec;
+    if (cycles_set) spec.cycles = static_cast<int>(cycles_override);
+
+    ScenarioRunResult r = run_demo_scenario(app, spec);
+    lap("run");
+
+    // Persist EXACTLY the alerts the pipeline delivered (metadata only). This
+    // replaces the previous hardcoded placeholder alert.
+    size_t persisted_now = 0;
+    if (audit) persisted_now = persist_run_alerts(*audit, r);
+    lap("persist");
 
     json j;
     j["ok"] = true;
-    j["scenario"] = "synthetic-household-observation";
-    j["synthetic"] = true;          // always synthetic; no physical sensor
-    j["capture_enabled"] = capture_on;
-    j["cycles"] = capture_on ? cycles : 0;
-    j["media_authorized"] = st.media_authorized.load();
-    j["media_denied"] = st.media_denied.load();
-    j["events_processed"] = st.events_processed.load();
-    j["alerts_generated"] = st.alerts_generated.load();
-    j["alerts_delivered"] = st.alerts_delivered.load();
-    j["alerts_suppressed"] = st.alerts_suppressed.load();
-    // Durable alert history from the real audit store.
-    if (audit) {
-        j["persisted_alert_count"] = audit->total_alert_count();
+    j["synthetic"] = true;                 // always synthetic; no physical sensor
+    j["scenario_id"] = r.scenario_id;
+    j["title"] = r.title;
+    j["description"] = r.description;
+    j["expectation"] = r.expectation;
+    j["capture_enabled"] = r.capture_enabled;
+    j["cycles"] = r.capture_enabled ? r.cycles : 0;
+    j["media_authorized"] = r.media_authorized;
+    j["denied_acquisitions"] = r.denied_acquisitions;
+    j["events_processed"] = r.events_processed;
+    j["alerts_generated"] = r.alerts_generated;
+    j["alerts_delivered"] = r.alerts_delivered;
+    j["alerts_suppressed"] = r.alerts_suppressed;
+    j["alerts_persisted_this_run"] = persisted_now;
+    if (audit) j["persisted_alert_count"] = audit->total_alert_count();
+
+    // REAL delivered alerts (rule/policy output), non-sensitive.
+    j["alerts"] = json::array();
+    for (const auto& a : r.delivered_alerts) {
+        j["alerts"].push_back(alert_to_json(a));
     }
-    // Detection / fusion summary (only present when the detection stage ran,
-    // i.e. capture was on). Absent when capture is off (fail-closed).
-    if (!detection_summary.is_null()) {
-        j["detection"] = detection_summary;
+
+    // Detection / fusion summary (only when the stage ran).
+    if (r.detection.ran) {
+        json d;
+        d["detector_id"] = r.detection.detector_id;
+        d["model_id"] = r.detection.model_id;
+        d["provenance"] = r.detection.provenance;
+        d["observations"] = r.detection.observations;
+        d["detected"] = r.detection.detected;
+        d["not_detected"] = r.detection.not_detected;
+        d["inconclusive"] = r.detection.inconclusive;
+        d["fusion_verdict"] = r.detection.fusion_verdict;
+        d["fusion_confidence"] = r.detection.fusion_confidence;
+        d["fusion_contributing"] = r.detection.fusion_contributing;
+        d["fusion_reason"] = r.detection.fusion_reason;
+        j["detection"] = d;
     }
-    // Privacy audit (H-03): the consent-decision trail for this scenario run.
-    // Metadata only; reports how many data-access decisions were authorized,
-    // denied, and how many acquisitions occurred, plus the enforcement invariant.
+
+    // L-12 statistical anomaly stage: the detector's OWN result and its bounded
+    // explanation. Advisory by default — the relationship to the fusion/alert
+    // outcome is stated explicitly from the rule's evidence allowlist.
+    if (r.anomaly.ran) {
+        json a;
+        a["baseline_ready"] = r.anomaly.baseline_ready;
+        a["phase"] = r.anomaly.phase;
+        a["status"] = r.anomaly.status;          // warm-up|normal|high|low|missing
+        a["deviation"] = r.anomaly.deviation;
+        a["samples"] = r.anomaly.sample_count;
+        a["min_samples"] = r.anomaly.min_samples;
+        a["baseline_mean"] = r.anomaly.baseline_mean;
+        a["baseline_stddev"] = r.anomaly.baseline_stddev;
+        a["last_value"] = r.anomaly.last_value;
+        a["last_zscore"] = r.anomaly.last_zscore;
+        a["anomalies"] = r.anomaly.anomalies;
+        a["reason"] = r.anomaly.reason;
+        a["missing_checked"] = r.anomaly.missing_checked;
+        a["missing"] = r.anomaly.missing;
+        a["missing_reason"] = r.anomaly.missing_reason;
+        a["detector_id"] = "activity-anomaly";
+        a["provenance"] = "synthetic";
+        // Relationship: is anomaly evidence allowed to vote on the alert?
+        bool fused = false;
+        for (const auto& id : r.evidence_detectors) {
+            if (id == "activity-anomaly") { fused = true; break; }
+        }
+        a["fused_into_alert"] = fused;
+        a["relationship"] = fused
+            ? "anomaly evidence is counted as detection/fusion evidence for this "
+              "run (explicit allowlist)"
+            : "advisory: the anomaly result is reported and audited but is NOT "
+              "counted as alert evidence (the detection rule's evidence "
+              "allowlist excludes it)";
+        j["anomaly"] = a;
+    }
+
+    // H-01s synthetic impact stage: the classifier's own result. Synthetic
+    // demonstration only — this is NOT fall detection.
+    if (r.impact.ran) {
+        json im;
+        im["samples"] = r.impact.samples;
+        im["transients"] = r.impact.transients;
+        im["confirmations"] = r.impact.confirmations;
+        im["last_phase"] = r.impact.last_phase;
+        im["last_value"] = r.impact.last_value;
+        im["transient_value"] = r.impact.transient_value;
+        im["stillness_value"] = r.impact.stillness_value;
+        im["samples_since_transient"] = r.impact.samples_since_transient;
+        im["confirmed_transient_value"] = r.impact.confirmed_transient_value;
+        im["confirmed_stillness_value"] = r.impact.confirmed_stillness_value;
+        im["confirmed_samples_since_transient"] =
+            r.impact.confirmed_samples_since_transient;
+        im["last_reason"] = r.impact.last_reason;
+        im["confirmed_reason"] = r.impact.confirmed_reason;
+        im["detector_id"] = "impact-signal";
+        im["provenance"] = "synthetic";
+        im["simulated"] = true;
+        im["critical_alerts_delivered"] = r.impact.critical_alerts;
+        im["emergency_services_contacted"] = false;
+        im["disclaimer"] =
+            "Simulated critical impact pattern. This demonstration does not "
+            "confirm a real fall or contact emergency services.";
+        j["impact"] = im;
+    }
+
+    // Privacy audit (H-03): consent-decision trail for this run (metadata only).
     {
-        const auto c = privacy_audit.counts();
         json pa;
-        pa["entries"] = c.total;
-        pa["authorized"] = c.authorized;
-        pa["denied"] = c.denied;
-        pa["acquired"] = c.acquired;
-        pa["enforcement_ok"] = privacy_audit.verify_enforcement();
-        pa["capacity"] = privacy_audit.capacity();
+        pa["entries"] = r.privacy.entries;
+        pa["authorized"] = r.privacy.authorized;
+        pa["denied"] = r.privacy.denied;
+        pa["acquired"] = r.privacy.acquired;
+        pa["enforcement_ok"] = r.privacy.enforcement_ok;
+        pa["capacity"] = r.privacy.capacity;
         j["privacy_audit"] = pa;
     }
-    // If capture was off, say so explicitly (fail-closed demonstration).
-    if (!capture_on) {
+
+    j["outcome"] = outcome_text(r);
+
+    if (!r.error.empty()) {
+        j["error"] = "simulator_unavailable";
+        j["detail"] = r.error;             // generic; no paths/tokens/PII
+    }
+    if (!r.capture_enabled) {
         j["note"] = "capture disabled by configuration; no observations were "
                     "delivered (consent/capture gate blocked them)";
     }
+    if (prof) j["timing_ms"] = timing;
     return j;
+}
+
+// Build a contract response for `op` using the SAME parsed/handled path the
+// NDJSON bridge uses (never a fabricated object). The token is JSON-escaped.
+json contract_call(const std::string& token, const char* op,
+                   IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider) {
+    json jr;
+    jr["version"] = 1;
+    jr["operation"] = op;
+    jr["credential"] = token;
+    auto parsed = AlexaContract::parse(jr.dump());
+    if (std::holds_alternative<AlexaError>(parsed)) {
+        json o;
+        o["ok"] = false;
+        o["error"] = error_code(std::get<AlexaError>(parsed));
+        return o;
+    }
+    return response_to_json(
+        AlexaContract::handle(std::get<AlexaRequest>(parsed), verifier, provider));
+}
+
+// Native (Node-free) HTTP demo mode. Serves the embedded dashboard and a
+// read-only JSON API over 127.0.0.1 using the SAME Application, contract,
+// verifier and persistence as every other path. It does not duplicate the event
+// pipeline and does not synthesize data: /api/status and /api/run-scenario read
+// real backend + SQLite state. Simulator-only. Returns a process exit code.
+// ---------------------------------------------------------------------------
+// Sensor / integration status payload.
+//
+// Every value here is DERIVED from real state: the Home Assistant adapter's own
+// fail-closed configuration validation, a real (empty) device-availability
+// registry, and the closed result vocabulary the detection layer can emit. No
+// value asserts that hardware exists, and the forbidden claims (calamity
+// prediction, species identification, intruder identification, fall detection,
+// speech content) are absent from the payload entirely so that a client cannot
+// render them as results.
+// ---------------------------------------------------------------------------
+static json integrations_payload() {
+    json out = json::object();
+    out["ok"] = true;
+
+    // Home Assistant: disabled by default. The reason text comes from the
+    // adapter's own problems() validation rather than a hardcoded sentence, so it
+    // cannot drift away from the implementation.
+    HomeAssistantConfig ha;
+    const std::vector<std::string> ha_problems = ha.problems();
+    json ha_json = json::object();
+    ha_json["enabled"] = ha.enabled;
+    ha_json["configured"] = ha.enabled && ha_problems.empty();
+    ha_json["read_only"] = true;
+    ha_json["actuation"] = false;
+    ha_json["requests_issued"] = 0;  // this process has never called the API
+    ha_json["entities_allowed"] = ha.entity_allowlist.size();
+    ha_json["reason"] = ha_problems.empty() ? std::string("configured") : ha_problems.front();
+    ha_json["transport_policy"] =
+        "read-only entity state; https is refused because no TLS is linked in this build";
+    out["home_assistant"] = ha_json;
+
+    // Sensor nodes: the registry is real and empty, because no node transport
+    // exists yet (D-03). The count is read from the tracker, not written down.
+    DeviceAvailabilityTracker devices;
+    json nodes = json::object();
+    nodes["connected"] = devices.device_count();
+    nodes["registry_capacity"] = DeviceAvailabilityTracker::defaults().max_devices;
+    nodes["node_transport"] = "not implemented (D-03 secure device transport)";
+    nodes["live_media"] = false;
+    nodes["reason"] = "no acquisition node is connected; no live media reaches the hub";
+    out["sensor_devices"] = nodes;
+
+    // Animal-activity vocabulary with its evidence grade, so a client can label a
+    // hypothesis as a hypothesis instead of presenting it as a finding.
+    json animal = json::object();
+    animal["live_data"] = false;
+    animal["reason"] =
+        "only synthetic fixtures exercise this layer; no live media reaches the hub";
+    json labels = json::array();
+    labels.push_back({{"id", "activity_change_detected"}, {"grade", "A"}, {"kind", "observation"}});
+    labels.push_back({{"id", "audio_activity_deviation"}, {"grade", "A"}, {"kind", "observation"}});
+    labels.push_back({{"id", "possible_animal_activity"}, {"grade", "hypothesis"}, {"kind", "hypothesis"}});
+    labels.push_back({{"id", "environmental_correlation"}, {"grade", "B"}, {"kind", "correlation"}});
+    labels.push_back({{"id", "insufficient_evidence"}, {"grade", "-"}, {"kind", "none"}});
+    animal["labels"] = labels;
+    out["animal_activity"] = animal;
+
+    json security = json::object();
+    security["live_data"] = false;
+    security["reason"] = "no sensor node and no Home Assistant entity is connected";
+    security["source_types"] = json::array(
+        {"motion", "contact", "presence", "camera_availability", "microphone_availability",
+         "device_availability", "tamper", "environmental_threshold"});
+    out["security_observations"] = security;
+
+    out["environmental_correlations"] = {
+        {"count", 0}, {"reason", "no authorized environmental source is configured"}};
+
+    // Uncertainty model, stated for the UI rather than left implicit.
+    json evidence = json::object();
+    evidence["confidence_scale"] = "0.0-1.0";
+    evidence["reports"] = "belief, plausibility and ignorance are reported separately";
+    evidence["conflict_rule"] = "conflict mass above 0.9 suppresses the fusion instead of averaging";
+    evidence["live_fusion_runs"] = 0;
+    evidence["max_severity_from_this_layer"] = "warning";
+    out["evidence"] = evidence;
+
+    // The exact strings a client must use for provenance.
+    out["provenance"] = {{"real", "LIVE SENSOR DATA"},
+                         {"synthetic", "SYNTHETIC TEST DATA"},
+                         {"hypothesis", "HYPOTHESIS / UNVALIDATED CORRELATION"}};
+    return out;
+}
+
+int run_http_mode(Application& app, PersistenceAudit* audit,
+                  IAlexaCredentialVerifier& verifier, IAlexaStatusProvider& provider,
+                  const std::string& token, uint16_t port, int retention_days,
+                  const std::string& secret = "") {
+    // Bounded retention for the BRIDGE's own durable alert store. The config the
+    // bridge is handed declares alert_retention_days (30 by default) and the
+    // demo server writes to its own audit DB, so honour the retention window
+    // here too: prune once at startup and, at most once per interval, after a
+    // scenario has just written alerts. Without this the durable demo store grew
+    // without bound across runs and restarts. alert_retention_days == 0 keeps
+    // records forever (unchanged). Durability (WAL + synchronous=FULL) and the
+    // audit record shape are untouched.
+    const auto retention_window = std::chrono::hours(24) * retention_days;
+    if (audit != nullptr && retention_days > 0) {
+        const size_t pruned = audit->prune_older_than_age(retention_window);
+        if (pruned > 0) {
+            std::cerr << "retention: pruned " << pruned << " alert(s) older than "
+                      << retention_days << " day(s)\n";
+        }
+    }
+    auto handler = [&](const hg_native_http::HandlerRequest& req,
+                       int& status_out) -> std::string {
+        const bool prof = [] {
+            const char* p = std::getenv("HG_PROFILE");
+            return p != nullptr && *p != '\0' && *p != '0';
+        }();
+        json out;
+        json ht = json::object();
+        auto pt = std::chrono::steady_clock::now();
+        auto lap = [&](const char* n) {
+            if (!prof) return;
+            const auto now = std::chrono::steady_clock::now();
+            ht[n] = std::chrono::duration<double, std::milli>(now - pt).count();
+            pt = now;
+        };
+        if (req.op == "status") {
+            out["status"] = contract_call(token, "status", verifier, provider);
+            lap("status_call");
+            out["summary"] = contract_call(token, "alert_summary", verifier, provider);
+            lap("summary_call");
+        } else if (req.op == "scenario") {
+            const DemoScenario* spec = req.scenario.empty()
+                ? find_demo_scenario(default_demo_scenario_id())
+                : find_demo_scenario(req.scenario);
+            if (spec == nullptr) {
+                // Unknown (but syntactically valid) scenario id: rejected with a
+                // 400 and a generic JSON error body. The id is echoed back so a
+                // client can report which value was unsupported, and the body
+                // shape is unchanged from the earlier 200-with-ok:false form so
+                // existing clients (the dashboard checks scenario.ok) keep working.
+                status_out = 400;
+                out["ok"] = false;
+                out["error"] = "unknown_scenario";
+                out["scenario_id"] = std::string(req.scenario);
+            } else {
+                out["scenario"] = scenario_result_json(
+                    app, audit, *spec, req.cycles_set, req.cycles);
+                lap("scenario_total");
+                if (audit != nullptr && retention_days > 0) {
+                    (void)audit->maybe_prune_retention(retention_window,
+                                                       std::chrono::minutes(10));
+                }
+                out["status"] = contract_call(token, "status", verifier, provider);
+                lap("status_call");
+                out["summary"] = contract_call(token, "alert_summary", verifier, provider);
+                lap("summary_call");
+            }
+        } else if (req.op == "alerts") {
+            out = alerts_payload(audit);
+            lap("alerts");
+        } else if (req.op == "scenarios") {
+            out = scenarios_payload();
+        } else if (req.op == "integrations") {
+            out = integrations_payload();
+            lap("scenarios");
+        } else {
+            // Unreachable through the HTTP router (op is transport-assigned);
+            // kept as a fail-closed guard for direct handler use.
+            status_out = 400;
+            out["ok"] = false;
+            out["error"] = "unknown_operation";
+        }
+        if (prof) out["handler_timing_ms"] = ht;
+        return out.dump();
+    };
+    // Clean shutdown: the handler sets a stop flag; accept() poll-wakes on its
+    // 1s listener timeout, so no signals are needed to unblock it. Setting an
+    // atomic flag is async-signal-safe.
+    std::signal(SIGINT, [](int) { hg_native_http::request_shutdown(); });
+    std::signal(SIGTERM, [](int) { hg_native_http::request_shutdown(); });
+    const int rc = hg_native_http::serve(port, homeguardian::kDashboardHtml, handler, secret);
+    return rc == 4 ? 0 : rc;  // 4 = clean shutdown requested
 }
 
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    // Usage: hg_alexa_bridge <config.json> <credentials.json>
-    if (argc < 3) {
-        std::cerr << "usage: hg_alexa_bridge <config.json> <credentials.json>\n";
+    // Usage:
+    //   hg_alexa_bridge <config.json> <credentials.json>
+    //       NDJSON over stdin/stdout (existing contract path; used by tests).
+    //   hg_alexa_bridge --http <config.json> <credentials.json>
+    //                    [--port N] [--token-file PATH]
+    //       Native loopback HTTP demo (serves the embedded dashboard + JSON API).
+    bool http_mode = false;
+    int base = 1;
+    if (argc >= 2 && std::string(argv[1]) == "--http") {
+        http_mode = true;
+        base = 2;
+    }
+    if (argc < base + 2) {
+        std::cerr << "usage: hg_alexa_bridge [--http] <config.json> <credentials.json>"
+                     " [--port N] [--token-file PATH] [--secret-file PATH]\n"
+                     "  (environment variables HG_HTTP_TOKEN, HG_HTTP_SECRET, HG_SECRET_FILE also supported)\n";
         return 2;
     }
-    const std::string config_path = argv[1];
-    const std::string creds_path = argv[2];
+    const std::string config_path = argv[base];
+    const std::string creds_path = argv[base + 1];
+    uint16_t http_port = 0;             // 0 = ephemeral
+    std::string http_token = "demo-token";
+    std::string http_secret = "";
+
+    // Prefer safe environment variables or secret files to avoid command-line token exposure in ps
+    const char* env_token = std::getenv("HG_HTTP_TOKEN");
+    if (env_token && std::strlen(env_token) > 0) {
+        http_token = env_token;
+    }
+    const char* env_secret = std::getenv("HG_HTTP_SECRET");
+    if (env_secret && std::strlen(env_secret) > 0) {
+        http_secret = env_secret;
+    }
+    const char* env_secret_file = std::getenv("HG_SECRET_FILE");
+    if (env_secret_file && std::strlen(env_secret_file) > 0) {
+        std::ifstream sf(env_secret_file);
+        if (sf.is_open()) {
+            std::getline(sf, http_secret);
+        }
+    }
+
+    for (int i = base + 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--port" && i + 1 < argc) {
+            http_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (a == "--token" && i + 1 < argc) {
+            std::cerr << "SECURITY WARNING: passing --token on command line exposes credential in /proc and ps. Use --token-file or HG_HTTP_TOKEN instead.\n";
+            http_token = argv[++i];
+        } else if (a == "--token-file" && i + 1 < argc) {
+            std::ifstream tf(argv[++i]);
+            if (tf.is_open()) {
+                std::getline(tf, http_token);
+            }
+        } else if (a == "--secret" && i + 1 < argc) {
+            std::cerr << "SECURITY WARNING: passing --secret on command line exposes credential in /proc and ps. Use --secret-file or HG_HTTP_SECRET instead.\n";
+            http_secret = argv[++i];
+        } else if (a == "--secret-file" && i + 1 < argc) {
+            std::ifstream sf(argv[++i]);
+            if (sf.is_open()) {
+                std::getline(sf, http_secret);
+            }
+        }
+    }
 
     // Initialize logging. The Logger writes to stdout, which would interleave
     // with the NDJSON protocol on stdout — so set the level to "critical": the
@@ -383,10 +810,12 @@ int main(int argc, char* argv[]) {
     // load failure is non-fatal for a read-only bridge: capture stays reported
     // as disabled (fail-safe) and the bridge keeps serving.
     bool capture_enabled = false;
+    int alert_retention_days = Config{}.alert_retention_days;  // safe default (30)
     try {
         Config cfg;
         cfg.load(config_path);
         capture_enabled = cfg.media_capture_enabled;
+        alert_retention_days = cfg.alert_retention_days;
     } catch (const std::exception&) {
         capture_enabled = false;  // fail-safe: never imply capture is on
     }
@@ -421,23 +850,42 @@ int main(int argc, char* argv[]) {
     //    enforcement) for development/tests where the fixture is not 0600.
     // Both use the same JSON schema; neither logs or returns secret values.
     std::unique_ptr<IAlexaCredentialVerifier> verifier;
-    if (std::getenv("HG_BRIDGE_SECURE_CREDS") != nullptr) {
-        auto store = std::make_unique<AlexaCredentialStore>();
-        auto load_res = store->load(creds_path);
-        if (!load_res.ok) {
-            // Fail closed: refuse to serve with an insecurely provisioned or
-            // unreadable credential store. Do NOT fall back to the permissive
-            // local verifier. The generic reason carries no secret or path.
-            std::cerr << "credential store failed to load securely: "
-                      << load_res.reason << "\n";
-            return 3;
+    try {
+        if (std::getenv("HG_BRIDGE_SECURE_CREDS") != nullptr) {
+            auto store = std::make_unique<AlexaCredentialStore>();
+            auto load_res = store->load(creds_path);
+            if (!load_res.ok) {
+                // Fail closed: refuse to serve with an insecurely provisioned or
+                // unreadable credential store. Do NOT fall back to the permissive
+                // local verifier. The generic reason carries no secret or path.
+                std::cerr << "credential store failed to load securely: "
+                          << load_res.reason << "\n";
+                return 3;
+            }
+            verifier = std::move(store);
+        } else {
+            verifier = std::make_unique<FileCredentialVerifier>(
+                FileCredentialVerifier::load(creds_path));
         }
-        verifier = std::move(store);
-    } else {
-        verifier = std::make_unique<FileCredentialVerifier>(
-            FileCredentialVerifier::load(creds_path));
+    } catch (const std::exception&) {
+        // A malformed or unreadable credential table must fail CLOSED and CLEANLY.
+        // Previously an unhandled parse exception escaped main() and aborted the
+        // process (SIGABRT, core dump) before a single request was served - the
+        // same class of defect as the v21 logger abort. The message is generic on
+        // purpose: it must not echo the path or any file content, and there is no
+        // permissive fallback and no unauthenticated serving.
+        std::cerr << "credential load failed (fail-closed, no fallback): "
+                     "malformed or unreadable credential table\n";
+        return 3;
     }
     AppStatusProvider provider(app, audit, capture_enabled);
+
+    // Native HTTP demo mode: serve the loopback dashboard + JSON API and return
+    // when shutdown is requested. Otherwise fall through to the NDJSON loop.
+    if (http_mode) {
+        return run_http_mode(app, audit, *verifier, provider, http_token, http_port,
+                             alert_retention_days, http_secret);
+    }
 
     std::ios::sync_with_stdio(false);
     std::string line;
@@ -455,16 +903,34 @@ int main(int argc, char* argv[]) {
         //   run_scenario [cycles]
         // Reuses the real Application pipeline; persists alerts; returns a
         // real summary. Never activates a physical sensor.
+        // Control line: run a real synthetic scenario.
+        // Format: run_scenario [cycles] [scenario_id]
+        // Reuses the real Application pipeline; persists the REAL delivered
+        // alerts; returns a real summary. Never activates a physical sensor.
         if (line.rfind("run_scenario", 0) == 0) {
             int cycles = 5;
+            bool cycles_set = false;
+            std::string sid;
             std::istringstream iss(line);
             std::string cmd;
             iss >> cmd;
-            if (iss >> cycles) { /* parsed */ }
+            if (iss >> cycles) cycles_set = true;
+            if (iss >> sid) { /* optional scenario id */ }
             if (cycles < 0) cycles = 0;
             if (cycles > 100) cycles = 100;  // bound
-            json out = run_demo_scenario(app, audit, cycles);
-            std::cout << out.dump() << "\n";
+            const DemoScenario* spec = sid.empty()
+                ? find_demo_scenario(default_demo_scenario_id())
+                : find_demo_scenario(sid);
+            json sout;
+            if (spec == nullptr) {
+                sout["ok"] = false;
+                sout["error"] = "unknown_scenario";
+                sout["scenario_id"] = sid;
+            } else {
+                sout = scenario_result_json(app, audit, *spec, cycles_set,
+                                            static_cast<unsigned>(cycles));
+            }
+            std::cout << sout.dump() << "\n";
             std::cout.flush();
             continue;
         }

@@ -39,11 +39,18 @@ FusionResult FusionEngine::fuse(const std::vector<Observation>& obs) const {
         }
     }
 
-    // Record which detector ids contributed usable votes.
+    // Record which detector ids contributed usable votes, and take the provenance of the evidence
+    // from those same votes. This is the only place provenance enters a fused result.
     for (const auto* v : votes) {
         r.sources.push_back(v->detector_id);
         r.contributing++;
+        if (v->provenance == Provenance::real) {
+            ++r.real_inputs;
+        } else {
+            ++r.synthetic_inputs;
+        }
     }
+    r.provenance = derive_evidence_provenance(r.real_inputs, r.synthetic_inputs);
 
     if (r.contributing < cfg_.min_contributing) {
         r.verdict = FusionVerdict::unavailable;

@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include <unistd.h>   // getpid: process-unique fixture paths
 #include "core/IMediaDevice.h"
 #include "core/FakeMediaDevice.h"
 #include "core/ConsentGate.h"
@@ -30,7 +31,11 @@ using namespace homeguardian;
 // These are host tests of the shared consent/lifecycle core; they do NOT run
 // real Camera1 capture (that requires the device and separate approval).
 
-static const std::string C1_DB = "test_camera1_adapter.db";
+// Unique per process: two suite instances running in the same working
+// directory must not delete each other's database (SQLite reports the
+// collision as a confusing 'disk I/O error' on the next WAL/DDL call).
+static const std::string C1_DB =
+    std::string("test_camera1_adapter.db.") + std::to_string(::getpid());
 
 struct Camera1AdapterFixture {
     std::shared_ptr<SQLiteDatabase> db;

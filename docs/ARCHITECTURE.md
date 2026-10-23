@@ -695,8 +695,9 @@ alerts — correct rule behavior, but noisy. `AlertPolicy` collapses that to one
 notification per active condition with a re-notification interval, without hiding
 the first occurrence or any materially new (different-key) alert. It is a
 notification policy, **not** a safety detector; a suppressed duplicate is still
-an active condition. The alert is a synthetic presence notice, never a real-world
-danger detection.
+an active condition. The alert is a synthetic, **detection-driven** activity
+notice (L-11: it is raised only when the fused detector evidence qualifies),
+never a real-world danger detection.
 
 **Application lifecycle** (`AppState`): `Constructed → Starting → Running →
 Stopping → Stopped`, with `Failed` for config/startup errors. `run()` applies the
@@ -941,8 +942,9 @@ budget with no model download.
 **Tests:** `tests/core/test_detection.cpp` — 20 cases / 67 assertions covering
 valid input, malformed/oversized payloads, unavailable/inconclusive/conflicting
 inputs, stale windows, bounded keys/windows, no-raw-media-in-payload, and Event
-pipeline integration. Full suite: **275 cases / 2071 assertions**, CTest 100%,
-Node 76/76.
+pipeline integration. Full suite at that milestone: **275 cases / 2071
+assertions**, CTest 100%, Node 76/76 (current totals are recorded in the later
+sections of this document and in `docs/STATUS.md`).
 
 ## Privacy audit log (added 2026-10-13, roadmap H-03)
 
@@ -1003,3 +1005,546 @@ logging, reasons, bounded capacity, field clamping, the enforcement invariant
 including a negative case, clear, concurrency, the passive-observer guarantee,
 and two integration cases against `SimulatorRuntime` and
 `ConsentGatedAcquisition`).
+
+## Native demo transport: one C++ process, no Node (added 2026-10-13, v14)
+
+```
+ (legacy)  browser ─► node http server ─► spawn hg_alexa_bridge  (NDJSON) ⟶ 2+ procs
+ (v14)     browser ─► hg_alexa_bridge --http …  ─► Application / AlexaContract /
+                        │ (embedded dashboard)      PersistenceAudit / Pipeline   ⟶ 1 proc
+                        └─ NativeHttp.h (loopback-only HTTP subset; state changes require authenticated session & CSRF)
+```
+
+`NativeHttp.h` is a small, bounded, loopback-only HTTP/1.1 subset (no external
+dependency). `hg_alexa_bridge --http <config> <creds> [--port N] [--token-file PATH]`
+serves:
+
+- `/` and `/index.html` — the dashboard, **embedded** at build time from
+  `src/web/index.html` via CMake `configure_file` → `generated/hg_web_assets.h`
+  (no runtime web file, no request-time filesystem path);
+- `/api/health` — static `{ok,up,simulated}`;
+- `/api/status` — real `AlexaContract::handle(status|alert_summary)` over the
+  live `Application` + SQLite;
+- `/api/run-scenario?cycles=N` — the real `run_demo_scenario` (simulator →
+  pipeline → correlation → alert policy → persistence), bounded to N≤100.
+
+The NDJSON stdio mode is unchanged and still used by the Node/integration tests.
+The dashboard is vanilla HTML/CSS/JS (unchanged); the browser talks only to the
+loopback JSON API.
+
+**Per-run semantics.** A single long-lived process serves repeated runs, so
+`run_demo_scenario` resets per-run state at entry (`RuntimeStatus` counters,
+`AlertPolicy`, pipeline history, and `SimulatorRuntime::reset_for_reuse()`), and
+`grant_consent` is idempotent, so each run reproduces the legacy fresh-process
+behaviour. See `docs/DECISIONS.md` (D-native-http) and `docs/FRICTION_LOG.md`
+(v14) for the defects this surfaced.
+
+**Security boundary.** Loopback-only bind by construction; unauthenticated read subset with authenticated state-changing POST endpoints; `Host` must
+be a loopback authority (DNS-rebinding defence); non-loopback `Origin` rejected
+(cross-site defence); no unauthorized bodies/framing headers; CSP + frame/referrer headers on
+HTML; bounded sizes (8192 B request, 128 B path) and 3 s client timeouts; one
+request at a time. Details and the simulator-vs-production distinction:
+`docs/SECURITY_READINESS_V8.md`.
+
+## v17 — Scenario catalogue, runner and explainable alerts (2026-10-13)
+
+    DemoScenario (core/DemoScenarios)            data only: cycles, consent, energies
+            |
+            v
+    run_demo_scenario(Application&, spec)        core/DemoScenarioRunner
+            |
+            +--> SimulatorRuntime: reset counters + CONSENT STATE, grant/withdraw,
+            |       start, N x tick()  -- each AUTHORIZED observation -> event sink
+            |
+            +--> Application::process_event()    (the EXISTING path)
+            |       -> Pipeline (validation + correlation)
+            |       -> AlertPolicy (dedup/cooldown)
+            |       -> delivered alert -> Application alert sink (passive observer)
+            |
+            +--> SyntheticActivityDetector + FusionEngine (detection stage)
+            |       observations -> to_event() -> same pipeline (inference events)
+            |
+            v
+    ScenarioRunResult  ->  persist_run_alerts(PersistenceAudit&, result)
+                                writes EXACTLY the delivered alerts (real output)
+
+- `Application::set_alert_sink()` is a passive observer invoked only for
+  DELIVERED alerts. It cannot change delivery, ordering, or persistence.
+- `SimulatorRuntime::reset_consent_state()` clears only the synthetic in-memory
+  consent repo; it never touches durable state.
+- HTTP: `POST /api/run-scenario[?scenario=<id>][&cycles=N]` (authenticated POST with session and CSRF token), `POST /api/session`, `GET /api/alerts`,
+  `GET /api/scenarios`, plus the existing `/`, `/index.html`, `/api/health`,
+  `/api/status`. All loopback-only with HG-SEC-01 protections.
+- The dashboard is vanilla HTML/CSS/JS, embedded in the binary; it renders
+  backend-derived values using `textContent` / `createElement` (never `innerHTML`
+  with backend strings).
+
+## L-11 — Detection-driven alert path (2026-10-13)
+
+The alert is now CAUSED by the detection/fusion evidence. The raw-observation
+`sim-presence` rule is gone.
+
+    SimulatorRuntime::tick()  (one shared synthetic payload)
+        |
+        |  per consumer: ConsentGate decision  (authorized -> delivered)
+        v
+    authorized synthetic Observation event  --->  Application::process_event()
+        |                                                 |
+        | (the tick delivered media)                      v
+        v                                          Pipeline (validation +
+    SyntheticActivityDetector                       recent-event window)
+        |                                                 |
+        v                                                 v
+    Observation (inference event)  ----------->  DetectionFusionRule.evaluate(window)
+                                                          |
+                                        Observation::from_event() rebuilds the
+                                        detection evidence from the window
+                                                          |
+                                                          v
+                                                    FusionEngine.fuse()
+                                                          |
+                        not_detected / inconclusive / unavailable / conflict
+                                                          |
+                                                  (no alert returned)
+                                        detected AND confidence >= floor AND
+                                        >= 2 usable votes
+                                                          |
+                                                          v
+                                   Alert {severity from confidence, rule
+                                   "detection-fusion", reason/evidence in details}
+                                                          |
+                                                          v
+                                     AlertPolicy (dedup/cooldown by rule+severity)
+                                                          |
+                                                          v
+                                     Application alert sink -> PersistenceAudit
+                                                          |
+                                                          v
+                                     /api/alerts  +  embedded dashboard
+
+Key properties:
+- Detection runs ONLY after an authorized acquisition. Capture off, consent
+  withdrawn, or no authorized consumer => `tick()` delivers nothing => no
+  detection step => no detection-driven alert.
+- Raw observations never raise alerts; they are the detector's input.
+- Alert severity is derived from the fused confidence (>= 0.8 -> warning, else
+  info). The system never emits `critical`, and makes no fall/medical claim.
+- `Observation::from_event()` is the round-trip that lets the rule reuse the SAME
+  evidence the pipeline carried — no parallel detection state.
+- Everything the API/dashboard shows (verdict, confidence, contributing count,
+  provenance, reason) comes from the alert's own `details`, i.e. the real
+  evidence.
+
+## L-12 — Statistical anomaly stage (2026-10-13)
+
+    authorized synthetic observation (one per tick that delivered media)
+        |
+        +--> SyntheticActivityDetector  -> Observation (activity-energy)      [detection]
+        |
+        +--> AnomalyMonitor             -> Observation (activity-anomaly)     [L-12]
+                |
+                |  key: "activity-energy"; rolling mean/stddev (bounded window)
+                |  warm-up (< min_samples) -> inconclusive   (never a vote)
+                |  within baseline          -> not_detected
+                |  high / low deviation     -> detected      (the detector's
+                |                              target IS "an anomaly")
+                |  deliberate gap probe     -> inconclusive + status "missing"
+                v
+        Application::process_event -> Pipeline (validation + bounded history)
+                |
+                v
+        DetectionFusionRule.evaluate(window)
+                |
+                |  EVIDENCE ALLOWLIST (L-12): only detector ids on
+                |  cfg.evidence_detector_ids are reconstructed as evidence.
+                |  Default = {"activity-energy"} -> "activity-anomaly" is
+                |  ADVISORY: reported, audited, persisted, but never a vote.
+                |  Adding "activity-anomaly" makes its influence explicit and
+                |  causal (unit-tested in both directions).
+                v
+        AlertPolicy -> alert sink -> SQLite -> /api/alerts + dashboard
+
+Properties:
+- One detection step and one anomaly step per AUTHORIZED acquisition. No
+  acquisition (capture off / consent withdrawn / no authorized consumer) => no
+  observation, no anomaly sample, no alert.
+- The baseline is reset per scenario run, so repeats are deterministic.
+- Anomaly results are bounded and non-sensitive: feature value, mean, stddev,
+  z-score, counts and a short reason. No media, identities or profiles.
+- A statistical deviation is NOT a fall, emergency, medical or danger claim; the
+  alert message and rule are unchanged (L-11 semantics preserved).
+
+
+## H-01s — Synthetic impact prioritisation (2026-10-13)
+
+H-01s adds one bounded stage and one prioritisation change. It is a SIMULATION
+demonstration of severity prioritisation; it is **not** fall detection.
+
+```
+ authorized acquisition (SimulatorRuntime)
+   +--> SyntheticActivityDetector -> Observation (activity-energy)      [L-01]
+   +--> AnomalyMonitor            -> Observation (activity-anomaly)     [L-12]
+   +--> SyntheticImpactClassifier -> Observation (impact-signal)        [H-01s]
+              |
+              v
+        Pipeline (history -> time-window correlation)
+              |  DetectionFusionRule    (activity evidence -> info/warning)
+              |  SyntheticImpactRule    (confirmed impact -> CRITICAL)
+              v  highest severity wins (info < warning < critical)       [H-01s]
+        AlertPolicy (dedup + cooldown, keyed rule+severity)
+              v
+        SQLite -> Native HTTP API -> dashboard
+```
+
+**`SyntheticImpactClassifier`** (`src/core/ImpactClassifier.{h,cpp}`): deterministic
+two-phase pattern over a bounded feature in [0,1].
+
+| Sample | Condition | Result |
+|--------|-----------|--------|
+| transient | intensity >= 0.80 | `inconclusive`, phase `transient` — NOT a confirmation |
+| stillness | <= 0.25 within 4 samples of a transient | `detected`, phase `confirmed` — the pattern that H-01s acts on |
+| expired | transient with no stillness inside the window | `not_detected`, phase `expired`, with the reason |
+| otherwise | — | `not_detected` |
+
+**`SyntheticImpactRule`** (`src/core/SyntheticImpactRule.{h,cpp}`): reads only
+`impact-signal` observations reconstructed from the window; requires a confirmed
+observation AND >= 2 supporting impact observations; maps a confirmed pattern to
+`Severity::critical` and puts the bounded evidence in `details`
+(`impact_pattern`, `transient_intensity`, `stillness_intensity`,
+`samples_since_transient`, `supporting_observations`, `provenance`, `simulated`,
+`emergency_services_contacted: false`). It is the only source of critical alerts
+in the build.
+
+**Severity prioritisation.** `Pipeline::process` evaluates every registered rule
+and returns the highest severity, so a critical impact alert is never lost behind
+an activity alert. Activity evidence and impact evidence therefore both appear in
+the critical scenario (1 CRITICAL `synthetic-impact` + 1 INFO `detection-fusion`),
+and neither suppresses the other.
+
+
+## v21 — HTTP status contract, retention and failure handling (2026-10-13)
+
+**The handler owns the business status.** `hg_native_http::Handler` is
+`std::function<std::string(const HandlerRequest&, int& status_out)>`: the handler
+returns a JSON body and reports the HTTP status for the outcome it decided, while
+the transport keeps owning framing, header and query validation. An unsupported
+but well-formed value (an unknown scenario id) is therefore `400 Bad Request` with
+`{"ok":false,"error":"unknown_scenario","scenario_id":"…"}` instead of a
+`200`-with-`ok:false`. Transport rejections (413 oversized, 403 Host/Origin, 405
+method, 404 path, 400 malformed/query) never reach the handler and cannot be
+overridden by it. The dashboard reads `scenario.ok`, so the change is
+client-compatible.
+
+**The bridge's durable alert store is bounded.** `hg_alexa_bridge` writes alerts to
+its own audit DB (`homeguardian_bridge_audit.db`) and now applies the config's
+`alert_retention_days` to it: once at startup and, at most once per interval,
+after a scenario write (`PersistenceAudit::maybe_prune_retention`).
+`alert_retention_days = 0` keeps records forever. Durability (WAL +
+`synchronous=FULL`) and the alert record shape are unchanged.
+
+**Logging is diagnostic, never fatal.** `Logger::initialize` creates the
+`homeguardian.log` file sink on a best-effort basis: if the working directory is
+not writable it logs to the console only and reports the reason. It previously
+threw `spdlog::spdlog_ex` out of `main()`, so the shipped binaries died with
+SIGABRT instead of starting degraded.
+
+**Degraded mode is explicit.** If the audit database cannot be opened (unwritable
+directory, corrupt file), the bridge keeps serving: `/api/status` answers
+`{"error":"unavailable","ok":false}`, read routes fail closed, a scenario still
+produces real detection evidence but claims **no** persistence. Nothing is
+fabricated to mask the degraded state.
+
+
+## Distributed target architecture (owner-directed, 2026-10-13)
+
+The simulator-first product (v21) remains intact and is the hackathon fallback.
+The target product adds a distributed topology around the SAME core:
+
+```
+  Android node(s)                        Docker host
+  ┌──────────────────────┐               ┌───────────────────────────────────┐
+  │ Camera1/Camera2       │   D-03        │ hub container (non-root, caps off)│
+  │ AAudio microphone     │  authenticated│  ┌─────────────────────────────┐  │
+  │ ConsentGuardedDevice  │◄──encrypted──►│  │ hg_alexa_bridge (C++20)     │  │
+  │ IMediaDevice adapters │   LAN only    │  │  consent gate + audit       │  │
+  │ explicit start/stop   │               │  │  observation → detection     │  │
+  │ permission lifecycle  │               │  │  → fusion → AlertPolicy      │  │
+  └──────────────────────┘               │  │  → SQLite (WAL, FULL)        │  │
+                                          │  └─────────────────────────────┘  │
+                                          │   /data volume (durable)          │
+                                          │   127.0.0.1 only, NOT published    │
+                                          └───────────────────────────────────┘
+```
+
+Design rules that hold across the D-series:
+
+- **One event engine.** Nodes produce observations; the hub's existing pipeline
+  processes them. No node runs detection/fusion/alerting.
+- **Consent first.** A physically connected phone is not permission to record:
+  acquisition needs an explicit user action + OS permission + a consent record,
+  and every path fails closed.
+- **Loopback by default.** The hub's all-in-one HTTP server stays
+  `127.0.0.1`-only. A network-facing boundary is D-03 (authenticated, encrypted,
+  separately reviewed) — never a listener-address change.
+- **Derived observations by default.** Compact features (motion energy, audio
+  RMS, availability) are the default payload; raw media only when specifically
+  authorised.
+
+### D-01 container shape
+
+Multi-stage: a builder that compiles the hub, a `test` stage that runs the
+existing suite with the container toolchain, and a minimal runtime image running
+as uid 10001 with all capabilities dropped. `/data` is the only writable path and
+is a named volume, so container replacement preserves alert history. The
+entrypoint `exec`s the hub, making it PID 1 for clean SIGTERM.
+
+Builder and runtime use the **same** Debian release (trixie-slim): the project
+requires CMake >= 3.28.3 (bookworm ships 3.25.1 and cannot configure), and a
+binary built against a newer glibc than the runtime provides would not start.
+
+
+## D-02 — Android acquisition node (2026-10-13)
+
+```
+  Android node (apk/)                                  native contracts (src/core/)
+  ┌──────────────────────────────────────────┐         ┌───────────────────────────┐
+  │ MainActivity  (identity, consent,        │         │ CaptureAccounting         │
+  │   facing/size/FPS, rate/channels, REC    │  JNI    │  bounded + authorized +    │
+  │   banner, live counters)                 │◄───────►│  timestamped payload       │
+  │ Camera1Bridge  (preview frames)          │  12     │  contract, saturating      │
+  │ AAudioCaptureDevice (PCM buffers)        │  entry  │  counters, drop reasons    │
+  │ DeviceIdentity (Android ID → opaque id)  │  points │ NodeIdentity (node_id)     │
+  └──────────────────────────────────────────┘         └───────────────────────────┘
+             │ per-frame / per-buffer                      │ every payload
+             ▼                                             ▼
+        ConsentGuardedDevice ── authorize_delivery() ── ConsentGate (granted/
+        (IMediaDevice lifecycle)                          withdrawn/expired,
+                                                          capture enabled)
+```
+
+Design rules this milestone adds:
+
+- **One accountant, two driver threads.** Camera1 frames (Java callback thread)
+  and AAudio PCM buffers (driver thread) both go through the same
+  `CaptureAccountant`, which validates dimensions/size/rate/channels/timestamps,
+  refuses unauthorized payloads with a counted reason, and returns a counter
+  *copy* to the UI so nothing observes half-updated state.
+- **Authorization is per payload, not per session.** The camera path calls the
+  full gate for every frame; the audio path calls the full gate from its data
+  callback for every buffer. A withdrawal or permission revocation therefore
+  stops delivery at the next payload, and the audio path additionally raises a
+  stop request that the control thread turns into a real stop+release.
+- **The client is never trusted to gate itself.** `CaptureAccounting` is a core,
+  host-tested component: the same code that enforces limits on the phone is the
+  code the host tests drive, so the contract is verified without hardware.
+- **No background capture exists** in this milestone: no foreground service, and
+  leaving the activity stops every device.
+
+
+## Skills-integration layer (2026-10-14, D-02x)
+
+Three new capability groups, all pure C++20 with no added dependency, all bounded:
+
+```
+ permitted PCM ──► extract_audio_features ──► ActivityChangeDetector (level/trend)
+ permitted luma ─► extract_motion_features ─► ActivityChangeDetector (motion)
+                                          └─► AnomalyMonitor  (z-score; EXISTING)
+ any bounded vector ─────────────────────────► VectorDriftDetector (cosine regime shift)
+                                                        │
+                            bps (motion / audio / environmental)
+                                                        ▼
+                                        DempsterShafer::combine  (conflict K)
+                                                        ▼
+                                       PrecursorSuite::fusion  -> result vocabulary
+                                                        ▼
+ authorized environmental sample ──► EnvironmentalAdapter ──► CorrelationWindow
+ node / Home Assistant / fixture ──► SecurityObservation ──► to_observation()
+                                                        ▼
+                                    Observation::to_event()  (EXISTING conversion)
+                                                        ▼
+                          EXISTING Pipeline -> rules -> AlertPolicy -> SQLite -> HTTP
+```
+
+Design rules added by this layer:
+
+- **The fusion frame cannot express a calamity.** `Hypothesis` has exactly three members
+  (`routine`, `activity_change`, `environmental_anomaly`) and a test asserts the count, so a
+  seismic/flood "precursor" hypothesis is unrepresentable rather than merely discouraged.
+- **Ignorance is first-class.** Warming up is expressed as a vacuous mass (the detector does not
+  vote), and `belief`/`plausibility`/`ignorance` are reported together so the reader sees the
+  interval the fusion is working with.
+- **Contradiction suppresses.** `K > 0.9` leaves the combination un-normalised and reports
+  `suppressed`; averaging across disagreement is exactly what the skill warns against.
+- **Availability is a transition, not a heartbeat.** `DeviceAvailabilityTracker` is silent while
+  a device is healthy and emits one transition per state change, so a dead sensor stays
+  distinguishable from a silent one; a reconnect is an availability observation and never a
+  state replay.
+- **The hub talks to Home Assistant read-only.** `HttpClient` is GET-only over plaintext with an
+  explicit opt-in gate; `HomeAssistantAdapter` refuses to run disabled, misconfigured or
+  unauthorized, and every mapped observation carries real provenance plus consent context.
+- **Advisory by default.** New detector ids are not in `DetectionFusionRule`'s default evidence
+  allowlist, so the historical scenario behaviour is unchanged and the opt-in is explicit.
+
+
+## Dashboard status surface (2026-10-14)
+
+The loopback bridge now serves `/api/integrations` in addition to `/api/health`, `/api/status`,
+`/api/alerts`, `/api/scenarios` and `/api/run-scenario`. It is read-only and changes no state, and
+every value in it is derived: the Home Assistant block from `HomeAssistantConfig::problems()`, the
+sensor-device count from a real `DeviceAvailabilityTracker`, the result vocabulary from the
+detection layer's closed label set. The page renders it with the three provenance labels
+(LIVE SENSOR DATA / SYNTHETIC TEST DATA / HYPOTHESIS / UNVALIDATED CORRELATION) and a per-label
+legend, and states the never-produced claims in the page copy rather than in the API, so the
+payload cannot carry one. Per-skill detail: `docs/SKILL_VALIDATION_REPORT.md`,
+`docs/ANIMAL_ACTIVITY_DETECTION.md`, `docs/HOME_SECURITY_SENSOR_INTEGRATION.md`,
+`docs/HOME_ASSISTANT_INTEGRATION.md`.
+
+
+## D-03 — Device ingress boundary
+
+The hub now has TWO listeners with deliberately different trust levels, and the reason they are
+separate processes is that they were reviewed against different threat models.
+
+```
+Android node (Apache-2.0 APK)                       Docker host (LAN only)
++-----------------------------+                    +---------------------------------------------+
+| operator START              |                    |  ingress container (non-root, caps dropped)  |
+| OS camera/mic permission    |                    |  :8443/tcp  <-- THE ONLY PUBLISHED PORT      |
+| HomeGuardian consent gate   |                    |   1. TLS handshake (private CA, client cert  |
+| per-frame consent re-check  |   framed, versioned |      required; TLS 1.2 minimum)             |
+| bounded feature extraction  |   compact observation 2. TLS peer identity -> CN = device id    |
+| bounded queue (128, drop-oldest) ------------------> 3. fingerprint == registry credential_id |
+| ObservationTransport (TLS)  |                    |   4. registry: paired / revoked / consent /  |
++-----------------------------+                    |      capture enabled / capabilities          |
+                                                   |   5. bounds, timestamp window, sequence      |
+                                                   |      watermark, duplicate window, allowlists |
+                                                   |   6. sequence watermark COMMITTED last       |
+                                                   |   7. Observation -> IngestDetectors (per     |
+                                                   |      device) -> Pipeline -> FusionRule ->    |
+                                                   |      AlertPolicy -> SQLite (WAL, FULL)       |
+                                                   +---------------------------------------------+
+                                                                       |
+        loopback only, NOT published          +--------------------------v------------------+
+        +------------------------------------>|  hub container: dashboard + demo server  |
+        |  (docker-compose.loopback.yml binds  |  127.0.0.1 inside the container only     |
+        |   the host side to 127.0.0.1)        +-----------------------------------------+
+```
+
+Why the ingress is not simply the existing server on `0.0.0.0`:
+
+- The existing server is a handwritten HTTP server reviewed for loopback. Changing its bind address
+  would put its full surface — dashboard, API, JSON, SQLite-backed reads — on the Wi-Fi, which is a
+  different security problem than "accept compact observations from authenticated devices".
+- The ingress therefore speaks ONE protocol, exposes NO dashboard or command channel, and never
+  opens SQLite for requests. A device cannot read alerts, list other devices, or invoke any command.
+- The two containers share the image and the security posture (non-root, all capabilities dropped,
+  `no-new-privileges`, no Docker socket, no privileged mode) but not the port, the data volume or
+  the trust level.
+
+Trust chain, in the order the hub checks it:
+
+1. **Is the connection legitimate?** TLS with a client certificate that chains to the private CA,
+   `SSL_VERIFY_FAIL_IF_NO_PEER_CERT` set, verify result checked explicitly. No certificate, no
+   conversation.
+2. **Who is it?** The certificate CN is the claimed device id; the SHA-256 fingerprint of that
+   certificate must equal the `credential_id` recorded for that device. Both must hold.
+3. **May it be here?** Registry state: paired, not revoked, presence in the registry.
+4. **May it measure?** Consent granted for that device, capture enabled for that device, and the
+   source type in the device's capability allowlist.
+5. **Is the data plausible?** Bounded numeric features, timestamp inside the window, sequence
+   strictly ahead of the watermark, observation id unseen, queue not full.
+6. **Only then** is provenance derived, the watermark committed, and the observation handed to the
+   existing pipeline.
+7. **The pipeline's output lands where the hub can serve it.** The ingress and the hub share one
+   persistent volume and one SQLite database, so an alert raised from an ingested observation appears
+   in the dashboard and its API rather than only inside the ingress. Both processes use WAL with a
+   local filesystem and a 5 s busy timeout. Whether ingested evidence may VOTE in fusion is an
+   explicit operator setting (`evidence_detector_ids`); by default it is recorded and displayed but
+   casts no vote, and nothing on this path can reach `Severity::critical` (ADR-014).
+
+## Ingress authorization and replay flow (D-03.1)
+
+```
+device (mTLS, cert CN = device id)
+   |  hello
+   v
+[connection setup]  chain + endpoint identity verified
+   |  welcome { device_id, last_sequence }        <- the device's resume point
+   |  observation -----------------------------.
+   v                                           |
+[per-observation]                               |
+   refresh_authorization_locked()               |  stat registry/revocation, re-read on
+     - registry: paired/revoked/consent/capture |  change or on a 250 ms deadline
+     - revocation list                          |
+   authorization fault? -> refuse (unauthorized, fail closed)
+   else ingest.accept():                        |
+     validate -> commit hook (ReplayState,      |
+       atomic write BEFORE delivery)            |
+     -> sink / detectors / fusion -> alert      |
+   ack { observation_id, sequence, accepted, reason }
+```
+
+Two rules the diagram encodes:
+
+1. **Authorization is evaluated where the observation is delivered**, not only where the
+   connection was accepted. A revocation therefore reaches an open connection.
+2. **Durable state is written before delivery.** A crash between the two cannot make an
+   accepted observation replayable, and a failure before delivery is `processing_failed`,
+   never an acceptance.
+
+## Ingress processing and replay flow (D-03.2)
+
+```
+device (mTLS, cert CN = device id)
+   |  welcome { device_id, last_sequence }        <- the device's resume point
+   |  observation ------------------------------.
+   v                                           |
+[validate] authorization (live) + bounds + values
+   |  repeat of the last COMPLETED observation? --> answer it, DO NOT reprocess
+   |  sequence behind the watermark?           --> replayed_sequence
+   v
+[begin]  in memory: this attempt is IN FLIGHT (guards this process only)
+   |
+[process] sink -> detectors -> fusion -> alert  <-- throws => abandon + processing_failed
+   |
+[complete] DURABLE: the one write, watermark advances <-- fails => processing_failed (no false ack)
+   |
+   ack { observation_id, sequence, accepted, reason }
+```
+
+Two rules the diagram encodes, both of which were wrong before D-03.2:
+
+1. **The durable watermark may only move AFTER processing succeeded.** Recording first made
+   a failure indistinguishable from success in durable state, so the retry the hub asked for
+   was refused as a replay.
+2. **A duplicate answer must never re-run the work.** An unacknowledged observation is
+   answered from the record; only genuinely new sequences are processed.
+
+## Local voice feedback (H-02A)
+
+The spoken-response layer sits between the existing finding and the existing output, adding no
+second audio stack:
+
+    AudioActivitySession finding
+      -> VoicePhrasebook        (pure policy: closed vocabulary, gate, interval, cooldown)
+      -> VoiceResponseController (commits only on a real hand-off; owns the suppression window)
+      -> IVoiceOutput -> LocalSpeaker (fork+execvp, bounded queue, worker thread) -> PipeWire sink
+
+Rules the layer holds: the sentence set is closed at compile time and asserted by test; the
+spoken text travels as exactly one argv element so no detector or payload string can reach a
+shell; a decision is not a commitment (a refused delivery consumes nothing); the feedback window
+is bounded and can only be shortened, so environmental monitoring always resumes. An officially
+supported Alexa adapter could be added behind the same `IVoiceOutput`/phrasebook seam without
+touching the detection engine.
+
+## Android node data path (H-03)
+
+    Camera1 / AAudio  ->  consent gate (per payload, fail-closed)
+                      ->  bounded feature extraction (BoundedFeatures, shared with the host)
+                      ->  bounded observation queue in the native node (128, drops counted)
+                      ->  nativeDrainObservations() (NDJSON, numeric scalars)
+                      ->  NodeSession  ->  ObservationTransport (mutual TLS, bounded queue, ack validation)
+                      ->  hub ingress  ->  the SAME detector/fusion pipeline as the host sensors
+
+The node never transmits or persists media. Every artifact of the path is a scalar measurement plus
+its timestamp and provenance.

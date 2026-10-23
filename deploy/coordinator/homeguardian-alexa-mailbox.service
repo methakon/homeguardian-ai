@@ -1,0 +1,38 @@
+[Unit]
+Description=HomeGuardian outbound-only Alexa read-only mailbox
+After=network-online.target homeguardian-coordinator.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=homeguardian
+Group=homeguardian
+WorkingDirectory=/opt/homeguardian/app
+EnvironmentFile=/etc/homeguardian-coordinator/alexa_mailbox.env
+Environment=AWS_EC2_METADATA_DISABLED=true
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/homeguardian/app/deploy/coordinator/alexa_mailbox_worker.py --duration-seconds 3600
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+MemoryMax=96M
+CPUQuota=10%
+TasksMax=16
+LimitNOFILE=128
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SocketBindDeny=any
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

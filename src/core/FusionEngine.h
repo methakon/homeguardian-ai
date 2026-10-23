@@ -51,12 +51,52 @@ inline const char* fusion_verdict_to_string(FusionVerdict v) {
     return "unknown";
 }
 
+// The provenance of the EVIDENCE that produced a fused result - not of the engine, the build or the
+// caller. A caller that is about to publish a claim must be able to state this truthfully, so it is
+// derived here from the votes that were actually fused and cannot be set by anyone else.
+//
+//   real       every contributing observation came from a physical device frame/sample
+//   synthetic  every contributing observation came from a fixture or the simulator
+//   mixed      both kinds contributed - stated as mixed, never promoted to either extreme
+//   uncertain  nothing contributed, so nothing can be claimed about the evidence
+//
+// `uncertain` is the default for a default-constructed result: the fail-safe direction is to claim
+// less, so a result that was never computed cannot be read as real evidence.
+enum class EvidenceProvenance {
+    real,
+    synthetic,
+    mixed,
+    uncertain
+};
+
+inline const char* evidence_provenance_to_string(EvidenceProvenance p) {
+    switch (p) {
+        case EvidenceProvenance::real:      return "real";
+        case EvidenceProvenance::synthetic: return "synthetic";
+        case EvidenceProvenance::mixed:     return "mixed";
+        case EvidenceProvenance::uncertain: return "uncertain";
+    }
+    return "uncertain";
+}
+
+// The one place the rule is written down: a mix is `mixed`, an empty set is `uncertain`, and a
+// single kind is itself. There is deliberately no path from a synthetic input to a `real` verdict.
+inline EvidenceProvenance derive_evidence_provenance(size_t real_inputs, size_t synthetic_inputs) {
+    if (real_inputs > 0 && synthetic_inputs > 0) return EvidenceProvenance::mixed;
+    if (real_inputs > 0) return EvidenceProvenance::real;
+    if (synthetic_inputs > 0) return EvidenceProvenance::synthetic;
+    return EvidenceProvenance::uncertain;
+}
+
 struct FusionResult {
     FusionVerdict verdict = FusionVerdict::unavailable;
     double confidence = 0.0;                 // [0,1], derived from inputs
     size_t contributing = 0;                 // observations actually used
     std::vector<std::string> sources;        // which detector_ids contributed
     std::string reason;                      // bounded human-readable explanation
+    EvidenceProvenance provenance = EvidenceProvenance::uncertain;  // derived from the votes
+    size_t real_inputs = 0;                  // contributing observations that were physical
+    size_t synthetic_inputs = 0;             // contributing observations that were fixtures
 };
 
 class FusionEngine {

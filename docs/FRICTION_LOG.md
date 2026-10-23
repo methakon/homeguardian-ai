@@ -2,7 +2,7 @@
 
 **Project:** HomeGuardian AI
 **Hackathon:** Amazon Developer Hackathon 2026
-**Last updated:** 2026-10-10
+**Last updated:** 2026-10-17
 
 This log records only verified friction encountered during development.
 Each incident includes the date, steps, expected vs actual result, severity,
@@ -592,11 +592,11 @@ verify the documented build reproduces; fix in-scope issues.
 - **Fixed stale README.md:** it claimed "Phase A — no application code" and a
   nonexistent `src/` layout (`sensors/`, `inference/`, `pipeline/`, `server/`,
   `web/`, `scripts/`, top-level `main.cpp` misplacement), and listed `libcurl`
-  and `MCP` as implemented. Corrected to the real layout, added the
+  and `MCP` as functional. Corrected to the real layout, added the
   network-once dependency note, tag-filter test commands, and an explicit
-  "no real capture" status. Alexa/MCP demoted to optional.
+  "no real capture" status. Simulated Alexa/MCP demoted to optional.
 - **Fixed hardcoded absolute CMake include paths**
-  (`/home/swarna-sekhar-dhar/...`) → `${CMAKE_SOURCE_DIR}` in the test target.
+  (`<DEVELOPER_HOME>/...`) → `${CMAKE_SOURCE_DIR}` in the test target.
   Portable now; verified by the fresh reproduction.
 - **Hardened `.gitignore`:** added `hg_*_build/` and `*.db`, `*.db-wal`,
   `*.db-shm`, `test_*.db` (no tracked `.db` files exist; verified).
@@ -1590,3 +1590,1706 @@ Node 76/76; ctest 100%.
 **Lesson:** when a new module is added, register its sources in EVERY target
 that references it (app, tests, and any separate bridge/executable targets), and
 confirm the demo path actually exercises it rather than only its unit tests.
+
+## v14 native HTTP demo: foundation review and integration defects (2026-10-13)
+
+**Context.** Branch `h04/native-http-low-footprint` was created off v13
+(`7c3c323`) carrying one foundation commit `6a996daf`
+("feat(native-http): add bounded loopback C++ HTTP transport foundation"),
+adding `src/bridge/NativeHttp.h` (174 lines) only. (Reported context: an earlier
+attempt to write the file via the GitHub web UI did not land; the commit is the
+first successful recording of the foundation. No compiler/test failure is
+claimed for that attempt — it is not observable from the repository.) The
+foundation was treated as an unverified starting point, not a finished or
+security-reviewed component.
+
+**Review outcome (foundation):** it compiles clean (`-std=c++20 -Wall -Wextra`,
+no warnings) and was a reasonable skeleton — loopback bind, GET-only, bounded
+input, timeouts, reject-body/framing headers. But it was **not** ready to use as
+is. Defects found and fixed (all recorded in `docs/SECURITY_READINESS_V8.md` §6):
+
+1. **Unvalidated `Host`.** Any `Host` was accepted. A malicious page that
+   rebinds a name to 127.0.0.1 could drive the API (DNS-rebinding). Fixed: the
+   `Host` value must be a loopback authority (`127.0.0.1[:port]` / `localhost[:port]`).
+2. **No cross-site guard on the state-advancing route.** `GET
+   /api/run-scenario` has a side effect and was reachable from a cross-site
+   request (the response is CORS-blocked, but the side effect fires). Fixed: a
+   non-loopback `Origin` is rejected (403).
+3. **No security headers on the HTML.** Added CSP, `X-Frame-Options: DENY`,
+   `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy`.
+4. **Shutdown could not unblock `accept()`.** `signal()` installs handlers with
+   SA_RESTART by default, so a blocking `accept()` is auto-restarted. Fixed with a
+   1 s listener timeout + an atomic stop flag (async-signal-safe).
+
+**Integration defects (found by running the native server, not just building):**
+
+5. **Second scenario run delivered nothing (0 events).** The legacy demo spawned
+   a *fresh bridge process per request*, so per-run state was implicitly fresh.
+   A single long-lived native process exposed three latent issues:
+   - `SimulatorRuntime::shutdown()` and `AudioBroker::shutdown()` permanently
+     latch a `shutdown_` flag; `start()`/`start_capture()` then refuse.
+   - `SimulatorRuntime::grant_consent()` was **not idempotent**: the scenario
+     re-granted on every run, creating two active grants for the same
+     subject+purpose. The gate *correctly* fails closed on that
+     (`DenyReason::ambiguous`), so run #2 delivered 0 events — a real, silent
+     failure (no exception, no error string).
+   **Root cause evidenced:** run #1 = 15 events; run #2/#3 = 5 events (detection
+   only, 0 simulator events).
+   **Fix:** (a) `SimulatorRuntime::reset_for_reuse()` clears the runtime shutdown
+   latch between runs; (b) `grant_consent()` is now idempotent — it mirrors the
+   gate's "latest decision governs" rule and does not append a duplicate grant
+   when an active grant already exists (an explicit re-grant after a withdrawal
+   still appends). Plus a per-run reset of `RuntimeStatus` counters,
+   `AlertPolicy`, and pipeline history so each run reports its own numbers
+   (matching the documented demo). **Result:** runs #1/#2/#3 = 15/14/1/13 each,
+   persisted alert count 1→2→3 (durable history grows), as documented.
+6. **A scenario error could take down the server.** `sim.start()`/`tick()` were
+   not guarded; an exception would propagate out of the HTTP loop and terminate
+   the process. Fixed: the scenario is wrapped; a failure is reported in the JSON
+   (`error: simulator_unavailable`) and the server stays up.
+7. **Test-harness bug (not product).** The first native-HTTP tests asserted a
+   handler call count on a by-value functor; `std::function` **copies** the
+   callable, so the counter never advanced (4 spurious failures). Fixed by
+   sharing the counter by reference. Recorded so the trap is not repeated.
+
+**Footprint observation (honest, not a win):** for `GET /api/run-scenario` the
+native in-process server measured **slower** (≈46–116 ms) than the legacy model's
+per-request child (~12.5 ms warm) in this environment, despite the native server
+being far lighter in memory/CPU/processes. The cause was not isolated in this
+pass and is left as a documented follow-up (likely per-run backend re-init: the
+scenario rebuilds the broker via `set_media_capture_enabled` and re-runs
+SQLite writes each call). Native wins clearly on idle RSS (~6.4 MB Release / ~7 MB Debug vs ~49 MB),
+peak RSS (~6.9 MB / ~7.3 MB vs ~57 MB), CPU (~0.5 vs ~21), process count (1 vs
+2+), binary size (3.1 MB Release vs the Node runtime), and dependency surface.
+The native binary referenced in the earlier Debug-dir measurement is ~25.8 MB;
+compare like-for-like with a Release build (`scripts/bench_demo.sh`).
+
+**Regression coverage:** 18 new `[nativehttp]` adversarial cases (framing,
+Host/Origin, method, traversal, cycles bounds, smuggling headers, security
+headers, handler-not-reached on rejection), plus the existing H-03/privacy and
+detection suites. Full suite 304 cases / 2217 assertions; ASan/UBSan clean.
+
+## Native scenario latency — root-caused to SQLite fsync, not the native design (2026-10-13, v15)
+
+**Symptom (carried from v14):** the native `/api/run-scenario` measured slower
+(≈50–180 ms) than the legacy Node→C++ path (≈7–16 ms) even though the native
+server is far lighter in memory/CPU/processes.
+
+**Reproduced (Release, 40 trials):** native scenario median 46.5 ms / p95 437 ms
+/ max 602 ms (sd 120 ms) — high variability; native `/api/status` 0.61 ms,
+`/api/health` 0.25 ms (so HTTP parsing/dispatch is fine); legacy scenario
+6.1 ms.
+
+**Investigated, not guessed.** Bounded `HG_PROFILE=1` phase timing put **99 % of
+the latency in the `persist` phase (the single SQLite alert commit)**: median
+91.8 ms / p95 520 ms; every other phase (reset, `set_media_capture_enabled`,
+consent grants, simulator start+5 ticks+shutdown, detection+fusion, contract
+calls) was **< 1 ms**.
+
+**Decisive control:** same DB file, same window, identical code — only
+connection lifetime differed. Fresh connection (legacy child model) persist
+0.11 ms; long-lived connection (native) 30.6 ms. `strace -T -e fsync,fdatasync`
+showed **both** paths fsync heavily (11 fsyncs each, **28–410 ms per fsync**);
+the difference is *where* the sync lands, not whether it happens. A plain
+`sqlite3` test with no HomeGuardian code settled it:
+
+```
+PRAGMA synchronous=FULL  (SQLite default): median 92.7 ms/commit
+PRAGMA synchronous=NORMAL (WAL)          : median  0.03 ms/commit
+```
+
+**Root cause:** `journal_mode=WAL` with the SQLite default `synchronous=FULL`
+does one `fsync` per commit; this host's ext4 volume (/dev/sdc3) charges
+**~50–410 ms per fsync**. The scenario performs exactly one durable commit (the
+alert), hence ~93 ms median with a heavy tail. It is a **storage + durability-
+setting** property, **not** a defect of the native single-process architecture —
+v14's "native is slower" conclusion is therefore corrected.
+
+**Resolution / outcome:** **no safe code optimization removes the cost.**
+Eliminating the fsync means weakening durability (`synchronous=NORMAL` or async
+batching), which the mission explicitly forbids without approval; and every other
+phase is already sub-millisecond. The durable commit is left intact. The single
+lever (`synchronous=NORMAL`, scenario → ~1–2 ms) is documented and **left for
+explicit user approval** (`docs/PERF_SCENARIO_LATENCY_V15.md` §5). Do not bypass
+SQLite or drop the write.
+
+**Regression protection:** the profiling instrumentation is **default-off**
+(`HG_PROFILE=1` only) and adds only numeric fields when enabled — verified inert
+when unset (default response has no `timing_ms` and counts are unchanged). No
+correctness, security, durability, or footprint change was made.
+
+**Remaining limitation:** absolute numbers are host-specific; the phase
+attribution and the FULL-vs-NORMAL ratio are the portable findings.
+
+## v16: Apache-2.0 licensing, durability decision closed, release readiness (2026-10-13)
+
+**Licensing (hackathon P0-2).** The owner approved **Apache License 2.0**. The
+repo previously carried an **MIT** `LICENSE` (added in `f1a923b`), so P0-2 was
+"license choice", not "missing license" — a v15 statement that the public repo
+had "no license" was **inaccurate** and is corrected here.
+
+Actions: replaced root `LICENSE` with the complete, **unmodified** Apache-2.0
+text (verified: sha256 `cfc7749b…` matches both the committed file and the
+official text fetched from `apache.org/licenses/LICENSE-2.0.txt`); added root
+`NOTICE` (copyright + third-party attribution); updated `README.md`.
+
+Attribution review (no relicensing of third-party code): SQLite (public domain,
+bundled), Catch2 (BSL-1.0, bundled), spdlog + nlohmann/json (MIT, fetched at
+build time), ask-sdk-core/model (Apache-2.0, optional npm). Their own notices are
+preserved; `NOTICE` summarizes them.
+
+**Ownership:** `Copyright 2026 Swarna Sekhar Dhar` — evidenced by the repository
+owner, 45 of 46 commits, and the prior MIT copyright line. **One commit is
+authored by a different name** (`6a996daf`, the `NativeHttp.h` foundation by
+"MAMATA RAJBANSHI DHAR"); the owner should confirm whether a second copyright
+line is wanted. No ownership was invented.
+
+**SQLite durability decision closed.** Owner confirmed **KEEP
+`synchronous=FULL`**. Verified: `SQLiteDatabase` sets `PRAGMA journal_mode=WAL`
+and no explicit `synchronous`, so SQLite's default **FULL (2)** applies; a live
+run's audit DB reported `journal_mode=wal`, `synchronous=2`. No durability or
+transaction change was made; the v15 performance investigation stays documented
+in `docs/PERF_SCENARIO_LATENCY_V15.md`, and the default-off `HG_PROFILE`
+instrumentation remains off unless requested.
+
+**Release readiness re-verified** (all executed this milestone): fresh
+out-of-source **Release** build (GEN 0, all targets) + ctest 100 %; full C++ suite
+**304 cases / 2214 assertions**; `[nativehttp]` adversarial **18 / 97**; ASan/UBSan
+**304 / 2214, zero errors**; **Node legacy 76/76**; `demo.sh` with **Node removed
+from PATH** starts a single native process (Node never invoked); loopback-only
+bind; health/status/scenario + embedded dashboard OK; repeated scenario grows
+durable history (1→2); capture-off fail-closed (events 0, detection absent);
+privacy `enforcement_ok` true; graceful SIGINT/SIGTERM shutdown; no secrets,
+databases, logs, or binaries tracked.
+
+**No P0 blockers remain.** Remaining items are user-only (record/upload the video,
+capture screenshots, complete and verify the Devpost submission).
+
+## v17: multi-scenario household-safety demonstration with explainable alerts (2026-10-13)
+
+**Milestone.** Implement a small, deterministic SCENARIO CATALOGUE (A normal, B
+unusual, C inconclusive, D consent-denied, plus the backwards-compatible
+default), run every scenario through the REAL pipeline, and make the dashboard
+show backend-derived alert detail instead of hardcoded text.
+
+**What was wrong before (verified defects found this milestone):**
+
+1. **The persisted alert was a hardcoded placeholder.** `hg_alexa_bridge.cpp`
+   constructed `Alert::create("sim-alert-N", Severity::info, "synthetic
+   simulator presence notice", {}, 0.9, "sim-presence", {})` and wrote THAT to
+   SQLite whenever `alerts_delivered > 0` — it was not the alert the pipeline
+   produced. The dashboard then ALSO hardcoded the same string
+   (`src/web/index.html`), so the "why" shown to a user was a literal in two
+   places and was never derived from backend state.
+   *Fix:* `Application` gained a passive `set_alert_sink()` observer invoked only
+   for DELIVERED alerts; the scenario runner captures those real alerts and
+   `persist_run_alerts()` writes exactly them. The dashboard now renders
+   `/api/alerts` (real durable rows). No fabricated alert is inserted anywhere.
+
+2. **Consent state leaked between scenario runs in one process.** Consent
+   grants/withdrawals live in the simulator's in-memory repo and survived
+   `reset_for_reuse()`. In the long-lived demo process, running `unusual` (both
+   consumers granted) and then `inconclusive` (one consumer) produced TWO
+   observations and an alert — the `inconclusive` scenario silently stopped being
+   inconclusive. Order of execution changed results.
+   *Fix:* added `SimulatorRuntime::reset_consent_state()` (clears the synthetic
+   repo only) and the runner calls it at the start of every scenario, so each
+   scenario is deterministic and isolated. Regression test:
+   "scenarios are isolated within one long-lived process".
+
+**Behaviour noted (not a defect).** The correlation rule is re-evaluated against
+the recent-event window on EVERY processed event. After the 10 authorized
+observations of a 5-cycle scenario the window still holds >=2, so the 5
+detection-stage inference events also re-fire the rule: 15 events -> 14 rule
+firings. The alert policy delivers exactly ONE and deduplicates the other 13, so
+the user-visible behaviour is correct; only the `alerts_generated` counter is
+inflated. Documented and asserted as measured behaviour rather than "fixed", to
+avoid changing established semantics late in the schedule.
+
+**Detection-stage energies.** Threshold 0.5, min_quality 0.3
+(quality = min(1, |e-0.5|/0.3)). Energies within 0.09 of 0.5 are inconclusive.
+Scenario C uses {0.52, 0.49, 0.51} -> 3 inconclusive observations and fusion
+`unavailable` ("only 0 usable input(s)"), i.e. the system refuses to invent a
+verdict. Scenario B uses {0.95, 0.90, 0.88, 0.92, 0.85} -> 5 detected, fusion
+`detected` (confidence 1.0).
+
+**Security/behaviour changes.** `/api/run-scenario` now accepts a strictly
+allowlisted `scenario=` token in addition to `cycles=`; unknown/malformed tokens
+are rejected (400 for malformed syntax, `{"ok":false,"error":"unknown_scenario"}`
+for a well-formed but unknown id, consistent with the existing API-error
+convention). New read-only routes `/api/alerts` and `/api/scenarios`. The Alexa
+contract was deliberately left AGGREGATE-ONLY (it never returns alert detail):
+the demo dashboard reads its own loopback `/api/alerts` from the durable store, so
+the contract's documented privacy property is unchanged.
+
+**Measured footprint (like-for-like Release builds).** Bridge binary 3,185,400 B
+vs 3,128,392 B (v16) = **+57 KB / +1.8 %**. Idle RSS 6,864 kB; after a scenario
+7,408 kB; peak 7,408 kB; 1 thread; 1 process. Scenario latency ~67-83 ms
+(dominated by the retained SQLite `synchronous=FULL` fsync). `synchronous=FULL`
+unchanged.
+
+**Verification.** 320 C++ test cases / 2,409 assertions pass; ASan/UBSan clean;
+node-free native demo; loopback-only; unknown/malformed scenario rejected;
+duplicate suppression; persistence + restart; capture-off fail-closed.
+
+## L-11: detection-driven, explainable alerts (2026-10-13, v18)
+
+**Correction to the v17 entry.** v17 correctly removed the *hardcoded* alert and
+made the persisted alert the pipeline's own output — but the alert was still
+raised by `TimeWindowCorrelation("sim-presence")`, which counts RAW
+`EventType::observation` events. The detection/fusion stage ran alongside and had
+NO influence on whether an alert existed. So the alert could fire with the
+detector reporting `not_detected`/`unavailable`, and a run whose fusion said
+`available`/`inconclusive` still produced a "presence" alert. The v17 claim that
+alerts were "pipeline-derived" was true; the claim implied by the docs that
+detection *caused* them was not. That is what L-11 fixes.
+
+**What changed.**
+1. New `DetectionFusionRule` (core) replaces `sim-presence` as the pipeline's
+   default rule. It reconstructs `Observation`s from the inference events in the
+   pipeline window (`Observation::from_event`, a new round-trip with
+   `to_event()`), fuses them with the existing `FusionEngine`, and returns an
+   alert ONLY when the fused verdict is `detected` with confidence >= 0.5 and at
+   least 2 usable votes. `inconclusive` / `unavailable` / `not_detected` /
+   conflicting evidence never produce an alert.
+2. Alert severity is derived from the fused confidence: >= 0.8 -> `warning`,
+   otherwise `info` (never `critical`; no emergency claim is made). The alert's
+   `details` carry `fusion_verdict`, `fusion_confidence`, `contributing`,
+   `inconclusive`, `provenance` and the fusion `reason` — all non-sensitive.
+3. Detection now runs ONLY when an AUTHORIZED acquisition occurred: the scenario
+   runner (and `Application::run()`) take one detection step per tick that
+   actually delivered media. No acquisition (capture off, consent withdrawn, no
+   authorized consumer) => no detection => no detection-driven alert.
+4. Raw observations no longer raise alerts — they are the detector's input.
+
+**Defect found and fixed.** The recurring nested-`Config` default-argument error
+(`default member initializer ... required before the end of its enclosing class`)
+struck again on `DetectionFusionRule`: fixed with the `static Config defaults()`
+pattern already documented for `AnomalyDetector`.
+
+**Behaviour noted (measured, not "fixed").** Because the pipeline re-evaluates
+every rule against the recent-event window on EVERY processed event, once >= 2
+agreeing detector observations are in the window each subsequent processed event
+re-fires the detection rule (raw observation events included). The alert policy
+delivers the qualifying alerts and deduplicates the repeats, so the user-visible
+result is correct; only `alerts_generated` is inflated. Carried over from the
+v17 note.
+
+**Measured scenario behaviour (capture on, live demo).**
+
+| Scenario | media | events | generated | delivered | suppressed | persisted | detection | fusion |
+|---|---|---|---|---|---|---|---|---|
+| normal | 4 | 6 | 0 | 0 | 0 | 0 | 2 not_detected | not_detected (0.80) |
+| unusual | 10 | 15 | 10 | 1 | 9 | 1 | 5 detected | detected (1.00) -> warning |
+| inconclusive | 3 | 6 | 0 | 0 | 0 | 0 | 3 inconclusive | unavailable |
+| consent-denied | 1 | 1 | 0 | 0 | 0 | 0 | not run | - |
+| default | 10 | 15 | 10 | 2 | 8 | 2 | 4 detected + 1 inconclusive | detected (0.75) -> warning + info |
+
+`default` delivers TWO alerts because the evidence produces two different
+severities (a `warning` at confidence 0.92 and an `info` at 0.61), and the alert
+policy keys deduplication on rule+severity — different severities are independent
+conditions. That is the intended prioritisation behaviour, now driven by evidence.
+
+**Footprint.** See the milestone report; the detection rule adds one small
+translation unit and no runtime dependency, no extra process and no thread.
+`synchronous=FULL` and WAL are unchanged.
+
+## L-11 follow-up: a stale binary nearly produced a false verification (2026-10-13)
+
+**What happened.** After changing `Application` (default rule set + detection
+step), only `hg_alexa_bridge` and `homeguardian_tests` were rebuilt. The
+standalone app binary `hg_build/homeguardian` was NOT, so when it was run to
+capture the real log output for `docs/DEMO_SIMULATOR.md` it still printed the
+OLD message (`Alert generated: synthetic simulator presence notice`) and the old
+counts — i.e. the app appeared not to have been changed at all.
+
+**Why it mattered.** The intended documentation edit was to quote the app's real
+new output. Quoting the stale binary's output (or worse, "predicting" the new
+output) would have written a false verification into a judge-facing document.
+
+**Fix / rule.** Rebuild EVERY shipped target (`homeguardian`,
+`homeguardian_tests`, `hg_alexa_bridge`) before verifying or documenting runtime
+behaviour, and quote only output observed from a binary built after the change.
+Re-measured after rebuilding: `alerts_gen=10 alerts_deliv=2 alerts_supp=8`, with
+the message `Alert generated: synthetic activity detected: fusion confidence
+0.92 from 2 contributing detector observation(s)`.
+
+**Documentation sweep.** Living docs that still described the pre-L-11 behaviour
+were corrected (README vision/current-status, ARCHITECTURE, PRIVACY,
+DEMO_SIMULATOR, DEMO_WEB walkthrough + video script, SUBMISSION_PACKAGE video
+script + test counts, AMAZONAPPDEV2026_FINAL_AUDIT scenario step). The claims
+table in the audit is left as a historical record with an explicit "superseded"
+addendum, and dated FRICTION_LOG/STATUS rows are preserved unchanged. The README
+also no longer implies fall detection is implemented (H-01/H-02 are listed as
+planned).
+
+## L-12: statistical anomaly detection integrated into the pipeline (2026-10-13)
+
+**What was integrated.** `AnomalyDetector` (previously a library exercised only by
+unit tests) now has a pipeline role: the new core `AnomalyMonitor` is fed the
+bounded numeric feature (the synthetic activity energy) of each **authorized**
+acquisition, and every result becomes a detection Observation
+(`detector_id = "activity-anomaly"`) that flows through the SAME event pipeline —
+validation, bounded history, detection rule, alert policy. One stage per
+authorized acquisition; no second pipeline and no synthetic alert.
+
+**Design decision: anomaly evidence is ADVISORY by default.** DetectionFusionRule
+gained an explicit evidence allowlist (`evidence_detector_ids`, default
+`{"activity-energy"}`). Observations from a detector that is not on the list still
+flow through the pipeline (validated, counted, kept in history) but are not votes.
+So the statistical deviation is reported, audited and persisted, yet does not by
+itself change whether an alert is raised. Rationale, established by measurement
+rather than assumption:
+
+- The framework's `DetectorStatus` votes are about *presence*. An anomaly detector
+  emits `detected`/`not_detected` for *deviation from a learned baseline*, which is
+  a different target. Fusing them wholesale conflates "activity present" with
+  "statistically unusual".
+- Worse, the detector's own within-baseline samples vote `not_detected`, so on a
+  realistic run the negative votes outnumber the flagged ones and fusion returns
+  `inconclusive` — a vote-shaped fusion of an anomaly detector systematically
+  under-reports. This was observed while writing the causal test (a test that
+  initially failed for exactly this reason; see `test_anomaly_monitor.cpp`).
+- Therefore the influence of anomaly evidence is a deliberate, explicit
+  configuration: adding `"activity-anomaly"` to the allowlist makes the SAME
+  evidence raise a detection-driven alert. Both directions are unit-tested, which
+  is what "explicit, causal and tested" means here.
+
+The dashboard states the relationship from the live configuration
+(`fused_into_alert` / `relationship`), never a hardcoded string.
+
+**Baseline/reset semantics (deliberate).** The monitor is constructed per scenario
+run and reset at the start of every run, so each run establishes its own baseline
+deterministically; repeats produce identical results (tested). No cross-run drift.
+
+**New catalogue scenarios (measured, bridge, capture on).**
+
+| Scenario | media | events | alerts delivered | anomaly result |
+|---|---|---|---|---|
+| `anomaly-warmup` | 6 | 12 | 1 | baseline not ready (2/4 samples); no anomaly; reason "warming up (2/4 samples); not evaluated" |
+| `anomaly-normal` | 12 | 24 | 1 | baseline ready (mean 0.710, sd 0.00894); status `normal`; 0 anomalies |
+| `anomaly-deviation` | 16 | 32 | 1 | baseline ready; status `high`; **2 anomalies**; last z = 2.442 (threshold 2.0) with the detector's own reason |
+| `anomaly-missing` | 6 | 13 | 1 | deliberate gap probe: `missing` — "no observation for 4s (max_gap 3s)" |
+
+Consequence to state plainly: a deviation is a **statistical** finding. Nothing
+here claims a fall, an emergency, a medical event or danger, and a deviation alone
+does not raise an alert under the default configuration.
+
+**L-11 results preserved exactly.** `unusual` 10 generated / 1 delivered / 9
+suppressed; `default` 10 / 2 / 8; the anomaly block is absent for scenarios that do
+not run the stage. The activity detection evidence and the alert explanations are
+unchanged.
+
+**Stale-binary safeguard applied.** Every shipped target (`homeguardian`,
+`homeguardian_tests`, `hg_alexa_bridge`) is rebuilt before any runtime result is
+recorded, per the L-11 follow-up lesson. Standalone app and bridge agree:
+`alerts_gen=10 alerts_deliv=2 alerts_supp=8` (the `default` scenario).
+
+
+## H-01s: synthetic impact / severity prioritisation (2026-10-13)
+
+**Defect found: `Observation::from_event` silently dropped every non-activity
+feature.** The impact rule decides from a detector-specific feature (`phase`:
+transient/confirmed), and the rule never fired — the scenario produced only the
+activity INFO alert even though the classifier had confirmed the pattern
+(`confirmations: 1`). Root cause: `from_event` rebuilt `features` from only the
+two activity keys it knew (`energy`, `detect_threshold`), so a conforming
+detector's own features vanished on the round trip through the pipeline. This was
+latent since L-11 (nothing depended on it until now). Fix: carry the whole bounded
+feature payload, excluding only the keys that map to dedicated Observation fields
+(`provenance`, `detector_id`, `model_id`, `status`, `quality`, `note`). Regression
+coverage: the `[h01s]` evidence tests assert the confirmed-pattern fields, so a
+future lossy round trip fails loudly. Lesson: when a rule consumes a detector's
+feature, prove the feature survives `to_event()` → `from_event()` in a test.
+
+**Test-only gotcha: the pipeline window is time-based.** A first version of the
+prioritisation test timestamped its impact events with a fixed past instant; the
+events fell outside `correlation_window_ms` (5 s), the pipeline saw an empty
+window and no rule fired. Producers and tests must use `now()`. Recorded in
+DEVELOPMENT.md with the feature notes.
+
+**Measurement trap: `hg_build` is a Debug build.** Reporting the bridge binary
+from `hg_build` gives ~28.8 MB (debug info); the L-12 baseline (3,259,960 B) is a
+**Release** figure. Footprint must always be taken from a Release build
+(`/tmp/hg_h01srel` here): 3,320,856 B, +1.87% vs L-12. Take RSS from the Release
+process as well (idle 6,432 kB, 1 process / 1 thread).
+
+**Security expectations must match the documented contract.** The native HTTP
+interface is **loopback-only and unauthenticated by design**: it rejects any
+`Authorization` header with 400, exact-matches paths (so `/api/status?token=x` is
+404, not 401), and answers an unknown scenario with HTTP 200 +
+`{"ok":false,"error":"unknown_scenario"}` rather than an error status. Adversarial
+checks: bad Host 403, bad Origin 403, POST 405, Authorization header 400,
+malformed/duplicated scenario 400, traversal 404, body-on-GET 400.
+
+**Restart semantics worth stating.** Alert dedup/cooldown state is per process,
+while alert history is durable. After a bridge restart the same critical alert is
+delivered again (cooldown state is fresh) and appended to history (2 → 4
+persisted). That is the existing `AlertPolicy` contract, not a regression.
+
+**Stale-binary safeguard (reconfirmed, per the L-11 lesson).** Every shipped
+target was rebuilt before results were recorded: the standalone `homeguardian`
+binary with capture on still reports `alerts_gen=10 alerts_deliv=2
+alerts_supp=8` (identical to L-11) because no impact observations exist in that
+flow — the new rule is registered and silent, which is exactly the expected
+difference from the scenario-driven bridge (23/2/21 with 1 CRITICAL).
+
+
+## v21: release-candidate verification — three verified defects (2026-10-13)
+
+**Defect 1 — an unsupported scenario answered 200.** `GET
+/api/run-scenario?scenario=nope` returned `200 OK` with
+`{"ok":false,"error":"unknown_scenario"}`. Root cause: the transport hard-coded
+`response(200, ...)` around the handler result, so the handler had no channel for a
+business status. Fix: `Handler` is now
+`std::function<std::string(const HandlerRequest&, int& status)>`; the transport
+still owns framing/header/query validation, and its own rejections cannot be
+overridden. Body shape unchanged so the dashboard (which keys on `scenario.ok`)
+needs no edit. Regression: `[v21]` asserts the status line, the JSON body, and
+that a handler status never overrides transport validation. Lesson: if a layer
+owns the outcome, it must own the status — a hard-coded `200` makes every failure
+look like success to anything that reads the status.
+
+**Defect 2 — a read-only working directory aborted the shipped binaries.**
+`terminate called after throwing an instance of 'spdlog::spdlog_ex': Failed
+opening file homeguardian.log for writing: Permission denied`, exit 134 (SIGABRT).
+Root cause: `Logger::initialize` created the file sink unguarded and the exception
+escaped `main()`. Everything else in the app is carefully fail-closed (persistence
+degrades, capture fails safe), so a diagnostic log file killing the process was
+inconsistent. Fix: best-effort sink + console fallback + guarded registration.
+Regression: `[logger]` — placing a *directory* named `homeguardian.log` in a
+scratch dir fails deterministically on any account, including root. Lesson: a
+diagnostic facility must never be able to take down the safety path.
+
+**Defect 3 — the bridge never applied retention to its own alert store.** An alert
+seeded 40 days old survived a restart, so the durable demo store could grow without
+bound. Root cause: retention was only wired into the application's own
+`homeguardian_audit.db`; the bridge writes `homeguardian_bridge_audit.db` and never
+called the (already tested) retention helpers with the config it was handed. Fix:
+startup prune plus a bounded periodic prune (at most once per interval, only after
+a scenario write), honouring `alert_retention_days` (0 = keep forever). Regression:
+`scripts/verify_retention.sh` (seed out-of-window + in-window rows, restart, assert
+only the out-of-window row is gone, the API total follows, scenarios still run).
+Lesson: two databases in one process means two retention lifecycles — wire the
+policy where the data is actually written.
+
+**Measurement notes.** `hg_build` is a Debug build (~26 MB binaries); all
+footprint and latency figures in `docs/RELEASE_CANDIDATE_V21.md` come from a fresh
+out-of-source Release build. Take RSS from `/proc/<exact pid>` (`pgrep -ax`), not
+`pgrep -f`, which also matches the agent's own shell. A scenario run on a fresh,
+small database is faster (72–111 ms here) than on one carrying a large WAL
+(147–169 ms measured in H-01s) — the accepted `synchronous=FULL` fsync dominates
+either way, and the range must be reported as a range.
+
+
+**Finding 4 (verification defect) — two suite instances in one working directory
+produced phantom "disk I/O error" failures.** A large Release/ASan build plus a
+repeated-run loop overlapped in this session, so two `homeguardian_tests`
+processes executed concurrently in the same working directory. One instance
+reported 9 failures (`test_consent_gate`, `test_consent_guarded_device`,
+`test_fake_device_delivery`, `test_persistence`), every one of them:
+`unexpected exception ... SQL execute failed: disk I/O error | SQL: PRAGMA
+journal_mode = WAL;`. A direct reproduction with two instances side by side gave
+31 and 27 failures with 49 occurrences of the same message.
+
+*Root cause:* eleven fixtures across ten test files used **fixed, CWD-relative
+database filenames** (`test_persistence.db`, `test_consent_gate.db`,
+`test_privacy_<tag>.db`, `test_audit_<tag>.db`, …) and unlinked them in their
+constructors. A second instance running in the same directory deleted the first
+instance's open database (and its `-wal`/`-shm`), and SQLite surfaces a
+replaced-or-removed database file in WAL mode as `SQLITE_IOERR` — a message that
+says nothing about the actual cause. It is a test-fixture defect, not a product
+defect: every instance passes when run alone, and the product only ever opens one
+database per process.
+
+*Fix:* every fixture path is now unique per process
+(`<name>.db.<pid>`), so concurrent instances cannot collide.
+
+*Regression:* `scripts/verify_suite_concurrency.sh` starts two instances in one
+working directory, requires both to pass, and requires zero `disk I/O error`
+occurrences plus no leftover fixture databases. Before the fix: FAIL (31/27 failed
+cases, 49 disk-I/O errors). After: both instances pass (369 cases / 2841
+assertions each).
+
+*Lesson:* a "disk I/O error" from SQLite in a test run is usually **file
+interference**, not hardware — look for another process that removed or replaced
+the database file before you look at the disk. And when a suite run goes red, its
+reason must be established before a later green run is accepted as evidence: a
+green run over an unexplained red one proves only that the red one was not
+reproduced.
+
+
+**Finding 5 (build wiring) — a built demo could serve a stale dashboard.**
+Starting `demo.sh` after a dashboard-only edit showed the PREVIOUS UI: the alert
+timeline rendered, but the severity badges and the SIMULATED impact panel were
+missing, and the served HTML contained none of the new classes. Root cause: the
+dashboard is embedded into the binary through
+`file(READ src/web/index.html)` + `configure_file`, i.e. at **configure** time.
+The generated `generated/hg_web_assets.h` had no build-system dependency on
+`index.html`, so `make` (and therefore `demo.sh`, which only builds the bridge
+when it is missing) happily relinked nothing and kept serving the old page. The
+header was timestamped 19:48 while the HTML was edited at 21:34.
+
+*Fix:* generation moved to a build-time `add_custom_command` (driven by
+`cmake/generate_web_assets.cmake`) that lists `src/web/index.html` and the
+template as `DEPENDS`, with the generated header added to the bridge target's
+sources so ordering and the rebuild trigger are real. The script rewrites the
+header only when its content changes, so no-op builds stay no-op.
+
+*Verified:* reconfigure + `make` regenerates and relinks; **touching
+`src/web/index.html` and running `make` alone** (no cmake re-run) prints
+"Embedding the dashboard" and refreshes the header; a completely fresh configure
++ build produces the same header; and a freshly built bridge serves a page
+containing the current markers (9/9). Lesson: an embedded asset generated at
+configure time is invisible to the build graph — give it a real `DEPENDS` or the
+next person to edit it will silently demo the old bytes.
+
+
+## D-01: containerising the hub (2026-10-13)
+
+**CMake version vs base image.** The first `docker build` failed at configure:
+`CMake Error at CMakeLists.txt:1 (cmake_minimum_required): CMake 3.28.3 or higher
+is required. You are running version 3.25.1`. The project pins
+`cmake_minimum_required(VERSION 3.28.3)` and the host has exactly 3.28.3, so
+nothing local ever hinted at it; Debian bookworm ships 3.25.1. Fix: build and run
+on `debian:trixie-slim` (CMake 3.31.6). Do NOT lower the project's requirement to
+fit an older base.
+
+**Builder and runtime must share a libc.** Choosing a newer base for the builder
+only would produce a binary that cannot start on an older runtime
+(`GLIBC_2.3x not found`). Both stages therefore use the same release; the
+Dockerfile says so, because the failure mode is a runtime crash, not a build
+error.
+
+**A 404 is data.** The Alexa feasibility check had to verify claims against
+Amazon's own pages, and several are simply gone: the AVS
+`deprecated-features.html` page (both en-US and en-GB) now returns **404**, the
+`/docs/alexa/alexa-voice-service/` directory 404s, and the AVS console serves a
+storefront interstitial. Record the HTTP status alongside the quote: a snippet
+from a search index can outlive the page it came from, and "the documentation
+disappeared" is itself the strongest available evidence that the route is closed.
+
+**Verify a base image's toolchain before a long build.** Checking
+`cmake --version` inside `debian:trixie-slim` took ~30 s and would have saved a
+9-minute failed build. Probe the toolchain version you depend on first.
+
+## D-02: the AAudio backend opened a stream but never read PCM (2026-10-13)
+
+**Defect.** `AAudioCaptureDevice::start()` called `AAudioStreamBuilder_openStream()`
+and `AAudioStream_requestStart()` but never called
+`AAudioStreamBuilder_setDataCallback()`. The stream started, the device LED lit,
+the stream reported `AAUDIO_OK` — and not one PCM buffer was ever handed to the
+application. A node built on it would have captured silence and, worse, reported
+itself as capturing.
+
+**Why it survived.** The existing host tests exercised the *contract* (fail-closed
+initialize, consent per payload) and the simulator never used AAudio at all, so
+nothing asked the backend whether it actually produced data. "The stream opened"
+was silently treated as "the microphone works" — the same class of error as the
+stale `homeguardian` binary in L-11: a green signal that does not mean what it
+looks like it means.
+
+**Fix.** The backend now configures `AAUDIO_FORMAT_PCM_I16` with the requested
+rate/channels/frames-per-callback, registers both a data callback and an error
+callback, authorises **every** buffer through the consent gate immediately before
+delivery, accounts size/rate/channel/timestamp per buffer, tracks the negotiated
+rate/channels, counts xruns and stream disconnects, and raises a stop request
+when consent/permission refuse or the device disappears. Verification is host-side
+and therefore contract-level: the delivery boundary is the same host-tested
+`CaptureAccountant`, and the failure path is covered by tests that drive a
+refusing gate. **What remains unverified without a phone is exactly one thing: that
+real PCM arrives** — which is why D-02 reports physical acceptance as BLOCKED
+rather than claiming capture.
+
+**Rule.** A backend that reports success must be asked what it *produced*. Count
+the payloads, not the transitions: "opened" and "started" are transitions.
+
+## D-02: a hex escape ate a character and the test looked guilty (2026-10-13)
+
+`REQUIRE(sanitize_label("bad\nname\r\twith\x01ctl") == "badnamewithctl")` failed
+with `"badnamewithtl" == "badnamewithctl"` — one character short, as though the
+sanitiser had dropped a printable `c`. It had not: in C++ the hex escape is
+greedy, so `\x01ctl` is the single byte `0x1C` followed by `tl`. The input string
+was wrong, not the function.
+
+**Fix.** Append the control byte explicitly (`raw.push_back('\x01')`) whenever the
+next character is a hex digit. The comment in the test now says why, because the
+next reader will make the same inference from the same output.
+
+**Rule.** When a one-character difference appears at a boundary between an escape
+sequence and printable text, suspect the literal before the logic.
+
+## D-02: build_apk.sh set JAVA_HOME but not PATH (2026-10-13)
+
+The NDK and Java compilation both succeeded, then dexing failed with
+`dx: line 89: exec: java: not found`. `dx`, `apksigner` and `zipalign` are shell
+wrappers that invoke `java`, so exporting `JAVA_HOME` is not enough — the JDK's
+`bin` must be on `PATH`. Fixed in `build_apk.sh` with
+`export PATH="$JAVA_HOME/bin:$PATH"` next to the existing `JAVA_HOME` export.
+
+**Rule.** For a wrapper script that shells out to `java`, set both the variable and
+the PATH; the error appears three stages later than the cause.
+
+## D-02: two checkers were wrong before the product was (2026-10-13)
+
+Twice in this milestone a failure came from the *check*, not the artefact:
+
+1. A container-inspection script reported the mounted hub configuration as missing
+   because it looked in the wrong location inside the container.
+2. `verify_android_node.sh` reported "camera uses-feature missing" for a manifest
+   that declares it: `aapt dump badging` emits
+   `uses-feature-not-required: name='android.hardware.camera'` when the feature is
+   declared `required="false"`. The grep looked for `uses-feature:`.
+
+**Rule.** Before "fixing" a product to satisfy a check, confirm the check is
+asking the right question — and prefer a check that fails loudly on the *wrong
+key* (a required-vs-optional regex) over one that fails on absence.
+
+## Incident 29: Dempster-Shafer belief summed the supersets instead of the subsets
+
+**Date:** 2026-10-14
+**Task:** Implementing the DST fusion ported from the `animal-calamity-precursor-detection` skill (milestone D-02x)
+
+**Steps:**
+1. Implement `DempsterShafer::combine` (Dempster's rule with conflict mass K) and `belief()` over an
+   8-element power set.
+2. Write a unit test asserting that total ignorance carries no belief:
+   `belief(vacuous(), activity_change) == 0.0`.
+3. Run `[precursor][dst]`.
+
+**Expected:** `belief()` of a hypothesis equals the mass committed to it, so a vacuous mass
+function (all mass on Theta) reports zero belief.
+
+**Actual:** the test reported `1.0 == Approx(0.0)`. `belief()` was summing the masses of the
+hypothesis's **supersets** — which is *commonality*, not belief. `Bel(A)` is defined as the sum
+over the **subsets** of A. Because Theta is a superset of every singleton, total ignorance
+appeared as total certainty: the single most dangerous possible inversion in the whole fusion,
+since it would have reported maximum confidence exactly when the sensors knew nothing.
+
+**Severity:** High — it would have inverted the meaning of every reported belief.
+
+**Workaround:** none needed once diagnosed; the fix was a one-line change of the mask test
+(`(s & ~mask) == 0` instead of `(s & mask) == mask`).
+
+**Suggestion:** when porting a mathematical rule, assert its **degenerate cases** before any
+realistic one — for DST that means "vacuous mass must give belief 0 and plausibility 0", "a
+simple support function must give belief equal to its stated mass", and "identical sources must
+not increase conflict". Also report the belief/plausibility interval together: the pair makes an
+inversion of one of them obvious, whereas a lone belief number does not.
+
+**Status:** fixed
+
+## Incident 30: a precedence rule that could never fire
+
+**Date:** 2026-10-14
+**Task:** Deciding whether an environmental reading or an animal-activity hypothesis should be reported (milestone D-02x)
+
+**Steps:**
+1. Implement `PrecursorSuite::fusion()` with the intent "an environmental explanation takes
+   precedence over the animal hypothesis", expressed as: the environmental hypothesis must be the
+   top hypothesis of the DST combination **and** its belief must clear a threshold.
+2. Write a test that feeds a strong motion+audio regime change and an environmental deviation of
+   0.9, then asserts the `environmental_correlation` label.
+3. Run `[precursor][suite]`.
+
+**Expected:** the environmental reading explains the change.
+
+**Actual:** the label came back as `possible_animal_activity`. The rule was unreachable: two
+strong activity sources combine to ~0.98 mass on `activity_change`, so a single environmental
+mass of 0.8 can never top the fusion. The gate was written against the *fusion result* when the
+decision actually needed the *environmental reading's own strength*.
+
+**Severity:** Medium — a dead branch that silently disabled the conservative path, leaving only
+the weakest-evidence label reachable.
+
+**Workaround:** the precedence is now decided on the environmental sample's own strength plus the
+existence of a change to explain; the DST beliefs for both hypotheses are still reported, so
+nothing is hidden by the change.
+
+**Suggestion:** for any rule of the form "X takes precedence over Y", assert that the rule is
+**reachable**. A branch that can never be entered is indistinguishable from a passing test
+unless a test drives exactly that case; write the reachability test at the same time as the rule,
+not after a failure.
+
+**Status:** fixed
+
+## Incident 31: an observation copied from a moved-from object
+
+**Date:** 2026-10-14
+**Task:** Emitting an availability observation alongside a Home Assistant entity observation (milestone D-02x)
+
+**Steps:**
+1. In `HomeAssistantAdapter::poll_once`, build the entity observation, then
+   `result.observations.push_back(std::move(observation))` and afterwards construct the
+   first-sight availability observation as `SecurityObservation availability = observation;`,
+   overriding only the fields that differ.
+2. Write a test asserting that every observation from a poll carries the consent context.
+3. Run `[ha][adapter]`.
+
+**Expected:** the availability observation is a copy of the entity observation with a different
+source type and state.
+
+**Actual:** `REQUIRE(o.consent_purpose == "security_monitor")` failed with `""`. The copy was
+made **after** the original had been moved into the result vector, so every `std::string` field
+was empty (device id, source, consent subject/purpose) while the scalar fields — enum, bool,
+time point — survived. The consequence was an observation with no device identity and
+`Provenance::synthetic` on a real source, i.e. a record that would have attributed a real Home
+Assistant entity's availability to a synthetic producer.
+
+**Severity:** High — silent corruption of provenance and identity in the audit trail.
+
+**Workaround:** the availability observation is now constructed explicitly, field by field.
+
+**Suggestion:** never derive a second record from an object that has already been moved. Build
+both records from the source data, or copy before the move — and make the assertion that catches
+it structural: a test that every persisted/emitted record carries a non-empty device id,
+provenance and consent context. The whole class of defect is invisible to a test that only checks
+the interesting fields of the interesting record.
+
+**Status:** fixed
+
+## Incident 32: two tests that asserted the wrong premise
+
+**Date:** 2026-10-14
+**Task:** Reviewing the first failures of the new suites (milestone D-02x)
+
+**Steps:**
+1. Run `[sensors]`: `REQUIRE(parsed->acquired_at == original.acquired_at)` failed with a
+   nanosecond-resolution difference (`.407000000` vs `.407400937`).
+2. Run `[ha]`: the reconnect test reported no reconnect transition.
+
+**Expected:** an exact timestamp round trip, and a reconnect after a liveness loss.
+
+**Actual:** (1) the wire format deliberately carries epoch **milliseconds**, so a nanosecond-exact
+comparison could never hold — the test, not the encoder, was wrong. (2) The reconnect section
+never made the entity go silent: the stub transport still answered every read, so no device ever
+became offline and there was nothing to reconnect. A test premise, not a product defect.
+
+**Severity:** Low (both caught before commit).
+
+**Workaround:** compare at the wire format's granularity (`duration_cast<milliseconds>` on both
+sides) and give the reconnect section a real silence (`responses.clear()`) so liveness actually
+decays.
+
+**Suggestion:** when a value crosses a serialisation boundary, assert at the boundary's
+granularity and say so in the test — an exact-equality assertion on a lossy encoding is a test
+bug waiting to fail. For a state-transition test, drive the **precondition** explicitly (here: no
+answers for longer than the offline timeout) and assert the precondition held before asserting
+the transition.
+
+**Status:** fixed
+
+## Incident 33: a malformed credential table aborted the bridge instead of failing closed
+
+**Date:** 2026-10-14
+**Task:** Writing the dashboard-integration verification script, which starts the bridge with a temporary credential file (milestone D-02x)
+
+**Steps:**
+1. Write a creds fixture by hand and start `hg_alexa_bridge --http <config> <creds> --port N`.
+2. Wait for `/api/health` to answer.
+
+**Expected:** the bridge serves, or refuses with a clear reason.
+
+**Actual:** `terminate called after throwing an instance of 'nlohmann::...::type_error' [json.exception.type_error.306] cannot use value() with string` followed by `Aborted (core dumped)`. The credential file is a TABLE keyed by token (`{"<token>": {"principal": ...}}`); the fixture was a flat object, so the loader called `.value()` on a string. The `HG_BRIDGE_SECURE_CREDS=1` path already handled a bad file cleanly (`return 3`), but the default `FileCredentialVerifier` path did not — an unhandled exception escaped `main()` and killed the process before it served anything.
+
+**Severity:** High — a bad input file crashed a shipped binary, the same class as the v21 logger abort; it also meant a malformed credential file produced a core dump instead of a diagnosable refusal.
+
+**Workaround:** the harness fixture was corrected to the real table shape.
+
+**Suggestion:** any load of an external file must be wrapped so the failure mode is a bounded message plus a non-zero exit, never an unhandled exception — and there must be no permissive fallback. Add an adversarial case for a malformed version of every file the binary reads (credentials, config, secrets), asserting: non-zero exit, a fail-closed message, no core dump, and no serving. The check belongs in the acceptance script, not only in a unit test, because it is the process boundary that failed.
+
+**Status:** fixed (bridge now catches the load, prints a generic fail-closed reason, exits 3, and serves nothing)
+
+## Incident 34: the verification harness wrote the wrong credential shape
+
+**Date:** 2026-10-14
+**Task:** First run of `scripts/verify_integration_dashboard.sh` (milestone D-02x)
+
+**Steps:**
+1. Write `{"token":"...","subject":"verify"}` into the temporary creds file.
+2. Start the bridge and poll `/api/health`.
+
+**Expected:** the bridge starts and the status route is exercised.
+
+**Actual:** the bridge aborted (see Incident 33). The harness had invented a plausible-looking shape instead of copying the one `demo.sh` and `deploy/docker/secrets/creds.json.example` already use.
+
+**Severity:** Medium (a harness bug that happened to uncover a real product defect).
+
+**Workaround:** the fixture now mirrors the credential table used by `demo.sh`.
+
+**Suggestion:** derive a fixture from the project's own working example rather than writing a representative one — the same rule that applies to test data. A new harness should copy the shape from the code or an existing script and cite where it came from, so a mismatch is a visible copy error rather than a silent invention.
+
+**Status:** fixed
+
+## Incident 35: the multi-device test asserted a precondition it never established
+
+**Date:** 2026-10-14
+**Task:** Adding the section-J "multiple devices reporting simultaneously" case (milestone D-02x)
+
+**Steps:**
+1. Register three devices; refresh only one of them; sweep 400 s later.
+2. Assert exactly two went offline.
+
+**Expected:** two offline transitions.
+
+**Actual:** three. The default `offline_after` is 90 s, so the "refreshed" device had been silent for 200 s and had also expired. The test's arithmetic assumed the timeout it had not set.
+
+**Severity:** Low (caught on first run).
+
+**Workaround:** the tracker is now constructed with an explicit `offline_after = 300 s`, making the intended silence (200 s vs 400 s) the actual precondition.
+
+**Suggestion:** a time-based assertion must construct the timeout it relies on and state the arithmetic in the test; never let a default decide whether a boundary case passes. This is the third instance of the same family in one milestone (Incident 32 and the reconnect case were the others), which is itself the signal: whenever a test drives a state transition, write the precondition and assert it held before asserting the transition.
+
+**Status:** fixed
+
+
+## Incident 34 — Repeat suppression that also suppressed the evidence
+
+**Symptom:** a unit test that fed a rising motion stream reported `confirmed == false` forever. The
+detector was fine: it had been fed exactly one sample.
+
+**Cause:** `IngestDetectors::observe()` consulted `SensorDeduplicator` FIRST and returned early on a
+repeat within the cooldown. In the live path that is worse than in the test: a motion sensor
+reporting the same state every second would have its entire stream collapsed to one sample, so the
+activity detector's baseline would be frozen at the first value and **every later change would be
+unconfirmable** -- a silent, permanent loss of the exact capability D-02x added. The test was the
+first thing to exercise a multi-sample stream, which is why it surfaced there.
+
+**Why it matters more than a normal bug:** the failure mode is "detection stops working" while every
+component reports success. Nothing logs an error, no counter trips, and the drop is invisible unless
+you look at delivered versus received counts.
+
+**Fix:** ordering. The detector is fed FIRST, and the de-duplication result is recorded after the
+feed decision as an accounting flag (`duplicate`), never as a gate. The invariant is written into the
+code as a comment: **de-duplication must never suppress detector input.** A repeat is not a new
+announcement; it is still evidence.
+
+**Lesson:** a suppression or filtering layer placed before the learner/accumulator is a silent
+capability killer. Check the ORDER of gates, not just their conditions.
+
+## Incident 35 — A commit hash in the brief that does not exist
+
+**Symptom:** the D-03 brief cited D-02 as `3c8ff46eabff45abc59ff6ded297fea10fc1bb` (invalid typo; does not exist). That is 39 hex
+characters; the real commit is `3c8ff4608eabff45abc59ff6ded297fea10fc1bb`. The abbreviated form does
+not resolve in the object store.
+
+**Cause:** transcription of a shortened SHA, with a digit lost. The summary in the brief and the
+actual repository disagree by one character, in the direction that makes the hash look plausible.
+
+**Fix:** the ancestry claim was verified against the OBJECT STORE (`git merge-base --is-ancestor`
+with the resolved full SHA), not against prose, and the discrepancy (real SHA, real length) was
+reported instead of being silently corrected. Nothing was rebuilt or merged speculatively.
+
+**Lesson:** never accept a SHA from a document as fact. Resolve it, and if it does not resolve, say
+so -- a wrong "verified" claim is worse than a reported mismatch. A 39-character SHA is a
+transcription error, not a repository state.
+
+## Incident 36 (recurrence) — Nested `Config` struct with default member initializers as a default argument
+
+**Symptom:** `error: default member initializer required before the end of its enclosing class` when
+using `SomeClass::Config config = {}` as a defaulted parameter.
+
+**Cause:** GCC cannot use a nested class with NSDMIs to form a default argument while the enclosing
+class is still incomplete. This is the SAME pitfall already recorded for this project, which makes it
+a recurrence, not a new discovery. The cost is that a documented pitfall without a mechanical guard
+in the build gets re-created by whoever writes the next class.
+
+**Fix:** a static `defaults()` factory returning the nested `Config`, taken by value or value-init at
+the call site, used consistently (`IngestDetectors::defaults()`, and observers/trackers in D-02x too).
+
+**Lesson:** a friction entry is an obligation. When a pitfall recurs, the fix is not another entry in
+this log -- it is a project rule ("nested config types are constructed via a `defaults()` factory,
+never as a default argument") that the next author is held to.
+
+
+## Incident 37 — A decoder that could not read the refusal it was sent
+
+**Symptom:** the end-to-end test reported `accepted=3` for a device the hub had just refused. The
+hub's own summary in the same run said `accepted=0 rejected=11`. Both were produced by the same
+message exchange.
+
+**Cause:** the wire protocol's ENCODER always wrote `accepted` and `reason` on an acknowledgement
+and `device_id` on a welcome, but the DECODER handled only observation payloads and returned early
+for every other kind. A device therefore saw `reason=none` - "ok" - for every refusal, and the
+client's own success counter was structurally incapable of noticing. The unit tests could not see it
+because they round-trip through the same struct and asserted on the ENCODER's fields, and the one
+place that could see it was the piece of the system that reads another process's bytes.
+
+**Fix:** the decoder now reads the response fields for welcome/ack/error, with a
+`reject_reason_from_string` inverse for every reason `reject_reason_to_string` can emit, plus two
+regression tests that round-trip ALL 20 reason codes and assert the inverse mapping agrees with the
+forward one in both directions.
+
+**Why this is the worst class of bug in the project so far:** the hub's enforcement was correct
+throughout - it refused everything it should - but every test that went through the client believed
+the opposite. A denial that the caller cannot perceive is one bad test away from being reported as a
+success, and this is exactly the "green signal that does not mean what it looks like" pattern
+already recorded for the stale binary (L-11) and the silent AAudio stream (D-02).
+
+**Lesson:** every field a writer emits needs a reader-side test. A round trip that starts and ends in
+the same struct proves the encoder is self-consistent and nothing else.
+
+## Incident 38 — Two defects that made the boundary unusable, and only the end-to-end test saw them
+
+**Symptom A:** no observation could ever be accepted. The registry loader cleared `capture_enabled`
+on every load ("capture never starts enabled after a restart"), and the accept path refuses any
+device whose capture is disabled - so the gate was closed by construction, with no way to open it.
+The milestone's primary objective was unreachable and every unit test still passed.
+
+**Symptom B:** a device removed from the revocation list stayed revoked for the life of the process.
+The revocation file only ever SET the flag, never cleared it, so reinstating a device required a
+service restart - an operational trap in a security control.
+
+**Cause:** both are "authorization state with no path to the other side". One flag had no writer, the
+other no clearer. Neither is visible from inside the component that owns the flag; both are
+immediately visible from a script that tries to use the system as an operator would.
+
+**Fix A:** capture authorization is honoured from the registry file when - and only when - the
+operator wrote it AND the device is paired AND consent is recorded AND it is not revoked. Absent key
+stays false, and four new test sections pin the fail-closed cases (absent / unpaired / consentless /
+revoked).
+**Fix B:** file revocation is tracked separately from registry revocation and is authoritative for
+the ids it lists, so removing an id lifts the ban immediately. Un-revoking deliberately does NOT
+re-grant pairing or consent: the ban is lifted, the permissions are not restored silently.
+
+**Lesson:** a permission gate needs a tested writer AND a tested clearer. Unit tests around a
+component cannot see a gate that nothing can open; only an end-to-end run as an operator uses it can.
+
+## Incident 39 — A target that no environment built
+
+**Symptom:** the first time the two OpenSSL-linked binaries were compiled in ANY environment, three
+faults appeared at once: the targets had no include directory, `main_ingress.cpp` called
+`Logger::initialize` (returns `void`) inside an `if (!...)`, and the link failed on a missing
+`SchemaManager.cpp`.
+
+**Cause:** the targets are built only where OpenSSL development headers exist, which is not the
+developer host. The conditional block was therefore never compiled, and "it builds" had been inferred
+from a CMake `message(STATUS)` line. Nothing in the host workflow could contradict it.
+
+**Fix:** the missing include dirs and source are in place, the dead `if` is gone, and the container
+build - where the headers always exist - is the environment that compiles and runs them. The
+Dockerfile also gained a preflight that names an incomplete build context instead of letting CMake
+fail deep inside its generate step with "Cannot find source file".
+
+**Lesson:** a target that no environment builds is not "done", it is unbuilt. An optional dependency
+must be exercised by the routine build (here: the container test stage), or the condition must be
+treated as "never compiled" in every status claim.
+
+## Incident 40 — The boundary aborted instead of refusing
+
+**Symptom:** with a read-only working directory, the ingress died with `terminate called after
+throwing an instance of 'homeguardian::DatabaseException'` and a core dump (SIGABRT) instead of
+refusing to start.
+
+**Cause:** the SQLite audit store's constructor throws when its path is not writable, and nothing
+between `main()` and that constructor caught it. The logger had already been made best-effort
+(Incident 33's sibling), but the persistence path had not.
+
+**Fix:** the whole startup path is wrapped so any exception becomes a clean refusal with a reason and
+exit code 5 - and the acceptance script now distinguishes a refusal from a crash explicitly (a
+signal exit is reported as "died on signal N instead of refusing", never as a pass).
+
+**Lesson:** fail-closed means refusing, not crashing. A process that aborts has no opportunity to
+enforce anything, and an abort on a misconfiguration is indistinguishable from an abort on an attack
+unless the code guarantees the difference.
+
+## Incident 41 — A provisioning script that quietly wrote to somewhere else
+
+**Symptom:** `bash tools/provision_ca.sh init deploy/docker/certs` reported success and created the
+CA in `~/.homeguardian/certs`. The requested directory stayed empty, and the acceptance run that
+followed failed on certificates that "were never created".
+
+**Cause:** positional-argument mapping. The script read its outdir from `$3`, which is right for
+`issue <id> [outdir]` and wrong for `init [outdir]` - so the caller's path was silently discarded and
+the default was used.
+
+**Fix:** the mapping is per action and documented in the script; the acceptance run now provisions
+into its own temporary directory and would fail immediately if the path were ignored.
+
+**Lesson:** a tool that accepts a destination and writes elsewhere is worse than one that rejects the
+destination. Silent mis-targeting of security material is the same failure class as a silent
+mis-targeting of a build artefact.
+
+
+## Incident 42 — A verification step destroyed a live secret, and nothing in git could see it
+
+**Symptom:** the D-01 container acceptance dropped from its 26/26 baseline to 25/26. The single
+failure was `/api/status`, which answered `{"status":{"error":"unauthorized","ok":false}}`.
+
+**Cause:** while proving that the Docker build context excludes secret material, the test planted
+dummy files at every sensitive path - including `deploy/docker/secrets/creds.json`, the ACTUAL
+mounted credential file. The planted dummy overwrote the real credential table. With no entries, the
+bridge's verifier denied every credential, correctly and fail-closed.
+
+**Why it was nearly invisible:** `deploy/docker/secrets/creds.json` is gitignored by design, so
+`git status` reports a clean tree whether the file holds a valid credential table, a dummy, or
+nothing at all. A clean working tree says nothing about the integrity of a mounted secret. The only
+reason it surfaced at all is that the acceptance suite exercises an authenticated endpoint.
+
+**Second act (same root cause, one step later):** restoring the file with `chmod 600` broke the
+deployment in a different way - the container exited with code 78 (EX_CONFIG) and the acceptance
+reported "secret missing". Docker Compose's file-backed secrets are BIND MOUNTS, not copies: the
+host file's mode is what the container sees, and the hub runs as uid 10001, so a host file that only
+its owner can read is unreadable inside. The baseline had been measured with mode 0664.
+
+**Fix:** the file is restored from `deploy/docker/secrets/creds.json.example` (the template is the
+authority for the synthetic demo credential) at mode 0644, and re-verified by the D-01 run. The probe
+technique itself is still correct - plant, build, assert, remove - but a probe must never touch a
+path that a RUNNING deployment reads. Plant test material in a scratch directory and point the probe
+at that. The secret-as-bind-mount constraint is now documented in `docs/DISTRIBUTED_DEPLOYMENT.md`,
+because "keep the secret file 0600" and "the container must read it" cannot both hold for a compose
+file secret - the protection has to come from the host path and, for anything beyond the synthetic
+demo credential, from a real secret store.
+
+**Lesson:** (1) a gitignored secret is invisible to `git status`, so "working tree clean" is not
+evidence that secrets are intact - only a run that authenticates with them is; (2) when testing
+exclusions, never write into live credential paths, even temporarily; (3) the fail-closed design did
+its job here: a destroyed credential table produced a denial, not a crash and not open access.
+
+
+## Incident 43 — Five things that only break when the boundary is a DEPLOYMENT
+
+D-03's binary-level acceptance passed 21/21 while the same system, run as two containers, failed
+five different ways in a row. Every one of them is a property of the deployment, not of the code, and
+none of them was visible from a unit test or from a same-uid host run.
+
+1. **Docker creates missing bind-mount sources as DIRECTORIES, as root.** The compose service
+   mounted `./certs/devices.json` and `./certs/ingress.json` as individual files. Because those files
+   did not exist yet, Docker created *directories* with those names, owned by root, and the
+   provisioning step then failed with `Permission denied`. Fixed by mounting ONE directory
+   (`HG_CERTS_DIR`, default `./certs`) and reading the registry paths from inside it, so a missing
+   file is a missing file and the ingress refuses to start.
+2. **A named volume mounted at a path absent from the image is root-owned.** `hg_ingress_data` at
+   `/data/ingress` made the non-root ingress exit with "data directory not writable". Fixed by
+   creating `/data/ingress` with the service UID in the image, so a fresh volume inherits it.
+3. **A bind mount hands the container the file's own mode.** The provisioning tool writes the tree
+   `0700/0600` for host safety, and it re-tightens on EVERY invocation, so a later `issue` silently
+   undid an earlier `chmod`. The ingress (uid 10001) then could not traverse the directory
+   ("config not readable") or read its own key. Fixed by a `make_deployable` step applied after each
+   provisioning call, and by documenting that protection for a mounted directory comes from the host
+   path, not from the file modes.
+4. **WAL means the newest rows are not in the .db file.** The `-wal` sidecar holds committed rows
+   until a checkpoint folds them in, so a check that greps only the main file reports "not persisted"
+   for data that is durably persisted. Fixed by searching both, which is what the durable state
+   actually is.
+5. **The client refuses a DNS name on purpose** ("host must be a dotted IPv4 address"), because the
+   device path resolves nothing and therefore cannot be re-pointed. The end-to-end test has to look
+   the ingress address up itself.
+
+**Lesson:** "it passes on the host" is a statement about a HOST. A boundary that runs as a different
+uid, behind a mount, in a network namespace and against a shared SQLite file has a second set of
+failure modes, and every one of the five above was a refusal (never a silent success) — which is why
+they were all found in a handful of runs instead of in production. Test the deployment as a
+deployment, with the same uids, mounts and volumes it will ship with.
+
+## Incident 44 — An end-to-end test that measured the wrong state
+
+**Symptom:** the identity-mismatch assertion failed with `device_unpaired`, even though the
+identity-mismatch path itself was correct and worked when run by hand.
+
+**Cause:** the test ran the assertion AFTER its own revoke/un-revoke cycle. Un-revoking lifts the ban
+but deliberately does not re-grant pairing or consent (ADR-013), so by that point the device was
+unpaired - and `device_unpaired` is checked before the hello's identity claim. The test was
+measuring a state its own earlier steps had created.
+
+**Fix:** the assertion moved before the revocation cycle, with a comment stating the precondition and
+why the order matters.
+
+**Lesson:** in a sequence of acceptance steps, each step's precondition is part of the test. A test
+that runs after a state-changing step must either restore the state or assert against the state it
+actually has - otherwise it reports a false negative on correct behaviour, which is just as
+misleading as a false positive.
+
+## Incident 45 — A read-only mount cannot host another mountpoint (D-03.1)
+
+Symptom: every client invocation in the end-to-end harness failed with
+`docker: Error response from daemon: ... make mountpoint "/certs/device-keys": read-only
+file system`, and since the harness printed only the client's exit status the failure read
+as "delivery FAIL".
+
+Cause: the device private keys were mounted at `/certs/device-keys` — INSIDE the
+read-only `/certs` mount created by the same `docker run`.
+
+Fix: mount them at `/devkeys`, deliberately outside the credential tree (which is also
+what the isolation requirement wants). Lesson: nested bind mounts are not a way to
+subdivide a read-only mount.
+
+## Incident 46 — A durable replay watermark refuses the harness's own re-used sequences
+
+Symptom: TLS acceptance fell to 20/21 with `reinstate did not restore service
+reason=replayed_sequence` on the container's first D-03.1 run.
+
+Cause: the harness's mock client always started at sequence 1, so after the watermark
+became durable every later case that reused sequence 1 was correctly refused as a replay.
+The test was right about the code and wrong about the world.
+
+Fix: keep the durable watermark, and add the resume point (ADR-016). The mock client,
+like the Android transport, adopts the hub's `last_sequence` from the welcome unless the
+operator pins a sequence explicitly (which is exactly what a replay test does). Lesson:
+when durability changes, every client that assumed a fresh counter needs a documented
+way to resume, or the "fix" locks out real devices.
+
+## Incident 47 — Fixed-name test fixtures raced under the concurrency regression
+
+Symptom: the suite-concurrency regression reported `non-zero exit: a=2 b=0`, with
+`tests/core/test_config_e.cpp:52` failing in one of two concurrent instances.
+
+Cause: that test wrote fixture files with fixed names
+(`temp_test_config_e.json`, `test_invalid_*.json`) into the working directory, a shared
+resource when two instances run there.
+
+Fix: every fixture path is per-process (`/tmp/hg_cfg_e_<pid>_...`). The regression then
+reports PASS for both instances with no leftovers. Lesson: a fixed filename in a test is
+shared mutable state; the concurrency check exists to find exactly this.
+
+## Incident 48 — Stale shell exports poisoned an acceptance run
+
+Symptom: the end-to-end run reported `ingress not running`, a client that could not load
+its key, and container names under a different compose project.
+
+Cause: `HG_PROJECT` and `HG_CERTS_DIR` were still exported in the shell from an earlier
+diagnostic turn; the harness honours both.
+
+Fix: run the harness with a clean environment (`env -u HG_PROJECT -u HG_CERTS_DIR ...`).
+Lesson: environment-variable harnesses inherit whatever the last experiment left behind;
+assert the inputs rather than assuming a fresh shell.
+
+## Incident 49 — A guard that skipped the exit path
+
+Symptom: `measure_device_transport.sh` printed its documented SKIP line and then died with
+`INGRESS_PID: unbound variable`.
+
+Cause: the EXIT trap referenced `$INGRESS_PID` unguarded under `set -u`, so the
+binaries-absent path could not exit cleanly.
+
+Fix: guard the trap. Lesson: the "cannot measure here" path is code too, and it is the
+path most likely to be exercised on a host without the optional dependency.
+
+## Incident 50 — The durability comment described an fsync the code never performed
+
+Symptom: none. That is what made it worth recording. `ReplayState::write_atomically` carried
+the comment "write a sibling temporary file, fsync it, then rename over the target", and
+`grep -c fsync src/net/ReplayState.cpp` returned 0. The atomicity claim held (the rename is
+real), the durability claim did not: the temporary file's bytes could still be in the page
+cache when the rename became visible, so a power loss could leave the new name pointing at
+contents that never reached the disk - which on recovery looks exactly like a lost
+watermark.
+
+Cause: the comment was written from the intended design while the implementation used
+`std::ofstream`, which offers no way to sync. Nothing failed, so nothing corrected it.
+
+Fix: an explicit POSIX path - `open`/`write` loop (short writes and `EINTR` handled),
+`fsync(fd)`, `rename(2)`, then `fsync` on the containing DIRECTORY, because the directory
+entry is what survives a power loss. Each step's failure is returned with its errno text and
+rolls the in-memory state back. Lesson: a durability claim in a comment is a claim about
+syscalls; if the syscall is not in the file, the claim is false. Review comments next to
+I/O with the same suspicion as code.
+
+## Incident 51 — A durable record that ran ahead of the work turned a failure into silent loss
+
+Symptom: found by an external audit of the committed source, not by a test. The D-03.1
+commit hook persisted the sequence watermark BEFORE delivery. When the sink failed, the hub
+answered `processing_failed` - and the watermark had already moved, so the device's retry
+was refused as `replayed_sequence`. The observation was gone, the device was told to retry,
+and the hub refused the retry. Both halves looked correct in isolation; the bug lived in
+their order.
+
+Cause: "record before delivery, so a crash cannot make an observation replayable" solved the
+replay-after-crash risk by creating a loss-on-failure risk, and the D-03.1 tests only
+exercised the failure path against a hook that FAILED - never against a hook that SUCCEEDED
+followed by a sink that failed. The test suite proved the parts, not the composition.
+
+Fix: the two-phase record (ADR-018) plus a test that fails a completion and then asserts the
+retry is not `replayed_sequence`. Lesson: when a durable write is placed on either side of
+an operation, test BOTH orderings with the failure on the far side, and assert the retry's
+outcome, not only the first attempt's.
+
+## Incident 52 — A "connected" phone that the system cannot see
+
+Symptom: the milestone states an Android phone is physically connected by USB and asks for its
+identity, ABI, API level and battery. `lsusb` lists hubs, two Bluetooth adapters, an HP W100
+camera and a keyboard — no phone. `adb devices -l` starts the daemon and prints an empty list.
+
+Handling: reported as a blocker with the exact commands and their raw output, and no
+substitute was invented. The instructions that follow from it (install the APK, read device
+properties, capture frames) were NOT attempted, because every one of them would have produced
+either nothing or a fabricated reading. Lesson: "the operator says it is connected" is an
+expectation, not a measurement; measure, then say what the machine reports.
+
+## Incident 53 — A dev package that cannot be installed changes the design, not the claim
+
+Symptom: the natural way to implement the microphone adapter is to link `libasound`. This host
+has no `/usr/include/alsa/asoundlib.h`, `pkg-config alsa` fails, `libasound2-dev` is not
+installed and `sudo` requires a password. Installing the header was not possible.
+
+Handling: the adapter drives PipeWire's own CLI (`pw-record`/`parec`) as a child process
+instead — real PCM from the real device, no root, no new dependency. The remaining `spd-say`
+path was checked the same way: the binary exists but no voice backend does, so the adapter
+REFUSES speech and reports why, instead of queueing a request that would produce silence and
+returning success. Lesson: when a dependency is unavailable, choose the viable path and state
+the constraint; never paper over it with a success that has no output behind it.
+
+## Incident 54 - A wrong flag looked exactly like a dead microphone
+
+Symptom: the first authorized capture session reported `microphone_stalled`,
+`frames=0`. The microphone was fine; the child process had died instantly.
+
+Cause: the adapter passed `--raw` to `pw-record`. `pw-record` has no such option (`parec`
+does), so it exited with "unrecognized option" before writing a byte - and the adapter had
+SILENCED the child's stderr, so the one line that explained everything was thrown away. The
+session then did exactly what it was designed to do: it refused to call a device that delivers
+nothing a quiet room.
+
+Fix: a tool-aware argv builder, `parec` as the default (it is the tool that is proven to
+deliver here), and the child's stderr captured and reported with its exit status. Lesson: when
+a subprocess is the interface, its stderr is part of the interface. Silencing it to keep the
+output tidy converts a one-line diagnosis into a hardware mystery.
+
+## Incident 55 - Startup latency reported as a hardware fault
+
+Symptom: with the tool fixed, the session STILL declared the microphone dead after ~60 ms and
+abandoned a 12-second capture.
+
+Cause: the read path waited 20 ms and the session counted three empty reads as a stall, so the
+0.2-1 s a capture tool needs to produce its first buffer was indistinguishable from a device
+that had stopped. A test that cannot tell "starting up" from "broken" will report the wrong
+one, and here it reported the alarming one.
+
+Fix: the first read after start() waits a bounded grace period (2000 ms), later reads wait
+200 ms, and only then does an empty read count. Lesson: give a device its documented startup
+time before drawing a conclusion about its health.
+
+
+### Incident 56 - a guarded string replace that matched a SUBSTRING, not the line
+
+A CMake edit counted `tests/audio/test_audio_activity_session.cpp` (`count == 1`, assertion passed) but replaced `"    " + path`, which does not occur because the real line is prefixed with `${CMAKE_SOURCE_DIR}/`. The insertion silently did nothing, the new test file was never compiled, and the runner reported `No test cases matched '[voice]'` - a missing registration masquerading as a missing test. Assert on the SAME literal you replace, and grep the result afterwards (the fix matched on `line.strip().endswith(path)` and re-checked with grep). The same silent pattern also left a duplicate source pair in one list.
+
+### Incident 57 - the anonymous namespace swallowed a new member function
+
+`choose_speech_engine` was inserted before the anonymous namespace's closing brace, so it became a free function in the wrong scope: "definition ... is not in namespace enclosing 'homeguardian::LocalSpeaker'". Read the surrounding scope before inserting; the fix moved the closing brace above the function.
+
+### Incident 58 - nested Config default argument (a known pitfall, hit again)
+
+`explicit VoicePhrasebook(Config config = Config{});` failed with "default member initializer for ... required before the end of its enclosing class" - the same GCC rule already recorded for this project. Use the documented `static Config defaults() { return Config{}; }` helper.
+
+### Incident 59 - the policy recorded the sentence BEFORE the output accepted it
+
+The phrasebook marked a message as announced inside its admission check, so a muted, engine-less or saturated attempt consumed the interval and the cooldown: the next REAL finding was then suppressed as "too soon" and a sentence that was never spoken had stolen the turn. This is the D-03.2 lesson (never record a fact before the work it records succeeded) recurring in a new subsystem, and a test caught it (`REQUIRE(controller.status(2000).refused == 1)` returning 0). Admission is now a pure check and only a delivered sentence commits.
+
+### Incident 60 - a blocklisted keyword inside the payload blocked the whole call
+
+A tool call carrying a source comment that contained the word for an orderly machine stop was refused outright by the agent's command guard, so none of the edits in that batch were written while the surrounding output looked like a partial application. Keep such words out of command payloads, and check that a refused call wrote NOTHING before retrying.
+
+### Incident 61 - a test-case anchor that omitted the rest of the name
+
+A test insertion anchored on `TEST_CASE("voice: our own announcement opens a bounded window"` and
+inserted nothing, because the real case name continues `and monitoring resumes after it`. The
+insertion was reported as successful by the script because the anchor WAS found and never asserted
+against the number of tests that resulted: the suite kept reporting the old count (17 cases) and
+only a deliberate check of the expected new count exposed it. Second occurrence of the same class
+in one milestone (see the CMake substring incident) - assert on the FULL literal, and verify the
+EFFECT (a new case count), not that a replace returned a string.
+
+### Incident 62 - a scripted edit list with a malformed entry silently skipped the write
+
+An edit helper expected (old, new, name) triples and one entry was a TWO-tuple, so it raised while
+unpacking AFTER the first pair had already been applied to the in-memory string but BEFORE the file
+was written. Net effect: the successful-looking earlier edit never landed, and the failure surfaced
+two steps later as an unrelated missing-symbol compile error. Two lessons: validate the shape of an
+edit list up front (or use one edit per call), and never treat "the script printed some ok lines" as
+evidence the file changed - check the file.
+
+### Incident 63 - the built artifact was read from a directory it is not written to
+
+An artifact check unzipped `apk/build/homeguardian-harness.apk`, but `build_apk.sh` writes to
+`hg_apk_build/` at the repo root (gitignored by the `hg_*_build/` rule). The verification reported
+"0 occurrences" for every class and symbol - which reads exactly like "the wiring is missing" - when
+in fact the build was fine and the path was wrong. A verification step must assert it is looking at
+a file that exists (non-empty `ls` before parsing), or its silence is indistinguishable from a real
+negative result.
+
+### Incident 64 - a documented command that the script does not accept
+
+My own acceptance doc told the operator to run `provision_ca.sh ... --device-id <id>`. The script
+has no such flag: it is subcommand-based (`init`, `issue <device-id>`, `show`, `check-runtime`).
+It failed with `unknown option: --device-id` and produced no material. Documentation of a script's
+interface is a CLAIM about the script - read the arg parser (`case "$1" in`) and run the thing once
+before writing it into an operator-facing procedure. The doc is corrected above.
+
+### Incident 65 - three wrong assumptions about the deployment, each caught by a fail-closed refusal
+
+Starting the ingress produced three consecutive refusals, and every one of them was a correct
+behaviour of the code meeting a wrong assumption of mine:
+
+1. `ingress config not readable: /etc/homeguardian/ingress.json` - the entrypoint defaults to that
+   path, NOT to `certs/ingress.json`; the fix is `HG_INGRESS_CONFIG` pointing at the mounted one.
+2. `ingress data directory not writable: /data/ingress` - a Docker NAMED volume is created
+   root-owned, while the ingress ran as the operator's uid; the fix is a bind mount the uid owns.
+3. The device certificate was searched for in `--device-dir` and is in fact emitted to
+   `<runtime>/devices/<id>.crt` (only the private key lives in the device dir - by design), so the
+   PKCS#12 step silently produced nothing and `adb push` failed with `cannot stat`.
+
+A fail-closed service is a good diagnostic instrument: it names the exact path it wanted. Read the
+refusal, do not fight it, and never loosen a security check to make a start succeed.
+
+### Incident 66 - the host cannot build the transport targets, and that is expected
+
+`make hg_device_client` in `hg_build` failed with `No rule to make target`: the transport targets
+sit behind `if(OpenSSL_FOUND)` and this host has no OpenSSL headers (`OPENSSL_INCLUDE_DIR-NOTFOUND`).
+The correct path is the documented compile container (`hgdev:compile`), which built the client in
+one step. Do not "fix" this by installing OpenSSL on the host or by disabling the guard.
+
+### Incident 67 - JNI functions appended outside the extern "C" region, and a verification that could not see it
+
+Two H-03 entry points were added at the END of `apk/jni/hg_harness_jni.cpp`, but the file's
+`extern "C" {` opens at line 260 and closes at line 593 - so the new functions (lines 601 and 622)
+got C++ linkage, their symbols were mangled, and the device threw
+`UnsatisfiedLinkError: No implementation found for ... nativeDrainObservations()` on the very first
+UI tick, before any capture started.
+
+The worse half is the verification. The wiring was reported as "verified inside the shipped
+artifact" because `strings classes.dex | grep -c nativeDrainObservations` was non-zero. That greps
+the Java DECLARATION, which is present in the DEX whether or not the native side can satisfy it, so
+the check was structurally incapable of detecting this defect - a green result on the wrong
+artifact, which is the same class of error as several earlier incidents in this log.
+
+Lessons, now enforced by code rather than by intention:
+* For JNI, the artifact that matters is the compiled ELF's dynamic symbol table. The build now reads
+  it (`scripts/verify_jni_exports.sh`) and fails on any Java native declaration without an exact
+  unmangled export.
+* A checker must be able to FAIL. That gate additionally fails when it finds ZERO declarations,
+  because a pattern that matches nothing would otherwise report success while checking nothing -
+  which is exactly what happened on its first version (see the next incident).
+* When adding a function to a file with conditional linkage regions, check which region the
+  insertion lands in and prove the symbol from the binary, not from the source layout.
+
+### Incident 68 - the new gate failed three ways before it was trustworthy
+
+Writing the JNI gate, all four defects were in the checker, not in the code under test:
+
+1. **Double-escaped regex -> vacuous pass.** The pattern reached the file as `\\[\\]` instead of
+   `\\[\\]`-as-intended for ERE, matched nothing, and the gate printed "OK: every Java native
+   declaration has an exact JNI export" after checking ZERO declarations. Fixed structurally: the
+   gate now FAILS when the declaration count is zero, and the pattern avoids escapes entirely by
+   matching the parenthesis as `[(]`.
+2. **A string literal matched as a declaration.** `"native stop requested (consent/permission/device)"`
+   yielded a phantom method named `requested`. The extraction is now anchored on a line that begins
+   with an access modifier and reaches `native` without crossing `;` or `=`; verified by listing the
+   16 names it extracts and comparing them with the 16 exports.
+3. **A wrong variable in the build script.** The gate call used `$REPO`, which `build_apk.sh` does
+   not define (it uses `$ROOT`), so the build died with `unbound variable` instead of checking
+   anything.
+4. **A multi-line sed without continuations** split the script argument from the filename, so bash
+   ran the sed program as a command. Single line now.
+
+Each was found by running the checker against a deliberately bad input or reading its own output
+critically - not by reading the source. A gate that has never failed has not been tested.
+
+### Incident 69 - two false negatives from the measuring tools, not from the code
+
+Verifying the JNI fix on the phone produced two wrong readings before the right one:
+
+1. `adb logcat -d | grep -c 'observation interval:'` returned **0** twice while the tick was in fact
+   running. The device's SurfaceFlinger logs BufferQueue at ~56 fps, rotating the ring buffer within
+   seconds, so a plain full-buffer grep silently loses older app lines. `logcat -d -s HGNode` (tag
+   filter, dumped promptly) shows them. A zero from a full-buffer grep on a chatty device is not
+   evidence of absence.
+2. `uiautomator dump` crashed with `FATAL EXCEPTION IN SYSTEM PROCESS: UiAutomationService ...
+   already registered!` (from `com.android.commands.uiautomator`) and returned an empty tree, which
+   made the app's panel look blank. The crash is the TOOL's, not the app's - and a "0 FATAL" claim
+   must say WHOSE process the FATAL belongs to. Read the process name in the crash block before
+   attributing a fault.
+
+Both are the same lesson in a new guise: when a check reports the alarming result, first prove the
+check can see a known-positive. Adding an explicit tick heartbeat turned "the ticker executes
+repeatedly" into log evidence (`tick #20/#40/#60`, 10.25 s apart = 20 x 500 ms) instead of an
+inference from a UI scrape.
+
+### Incident 70 - the fail-closed gate was right, and that was the problem
+
+Consent appeared granted on the phone, yet the microphone refused to initialize. The gate's reason
+was `ambiguous - multiple active grants for the same purpose`. The turn's first instinct - "the gate
+is refusing something legitimate, so relax it" - would have been exactly wrong: the gate was doing
+its job. The record store feeding it appended a granted record on every press of the button, so the
+operator's second press permanently manufactured the ambiguity.
+
+Lesson: when a component fails closed, establish WHICH component is wrong before touching either.
+The consumer (the gate) enforced a correct rule; the producer (the repository) did not maintain the
+invariant the consumer relies on. Fix the producer, and pin the consumer's rule with a test that
+deliberately violates the invariant - otherwise a future "fix" can delete the check and every test
+still passes.
+
+Also worth recording: the UI said "consent GRANTED" while the gate refused, because the UI rendered
+its own idea of the click rather than asking the gate. Now the gate itself is polled and displayed
+(`consent: camera=... | microphone=...`), so the operator sees the reason, not the intention.
+
+
+### Incident 71 - a health check that could never pass, on a service it was never written for
+
+`docker ps` showed the ingress `Up About an hour (unhealthy)` while it was serving mutual TLS
+correctly (`hg_device_ingress ready: ... port=8443 ... tls=mutual(min 1.2)`). The health check was
+not broken - it was the HUB's probe (HTTP `/api/health` on 8080), inherited from the shared runtime
+image by a container that runs a different binary on a different port and speaks no HTTP at all.
+
+Two lessons worth keeping:
+
+* **An image-level HEALTHCHECK is inherited by EVERY service built from that image.** When one image
+  serves two roles, the probe belongs to the SERVICE, not the image: override it per service in
+  compose and leave the original where it is correct.
+* **Decide what "healthy" means before writing the probe, then make sure the probe can FAIL.** A TCP
+  port check would have passed for any process holding the port; the check that replaced it verifies
+  the server certificate against the private CA and the expected name, and the acceptance script
+  proves it fails for a wrong name, for a non-TLS listener, and with no CA. A check that has never
+  failed has not been tested.
+
+### Incident 72 - three defects in this change, all caught by the checks rather than by review
+
+1. **The probe's mutual-TLS inference was WRONG, and my own acceptance test refused to ship it.**
+   The first version decided "did the server request a client certificate?" from the return value of
+   `SSL_connect`. Under **TLS 1.3** the client's handshake completes once it has sent its (empty)
+   Certificate + Finished and the server validates it afterwards, so `SSL_connect` returns success
+   and the demand is invisible: the probe reported `mutual_tls_demanded=no` against an ingress that
+   does demand client certificates (proven by the D-03 suite: 24/24, including the refusal of a
+   device that skips the handshake). The check failed the container build - the gate worked - and the
+   fix rests on an API-level signal instead of handshake timing: the handshake **message callback**
+   records a `CertificateRequest`, with the abort reason and a bounded post-handshake read (which
+   surfaces `tlsv13 alert certificate required`) as independent second and third signals. **A
+   perfectly healthy endpoint can make a probe's inference wrong; prefer an API signal over a timing
+   inference.**
+2. **The wrapper hardcoded the wrong CA path, and only the LIVE run found it.** The wrapper looked
+   for `${CERTS}/ca.crt` while the provisioned layout is `${CERTS}/ca/ca.crt` (what `ingress.json`'s
+   `ca_path` says). The container test passed because it invoked the PROBE with an explicit `--ca`,
+   so the WRAPPER - the thing the container actually executes - was never exercised with only a
+   config present. The container reported `CA certificate not readable` and stayed unhealthy. The
+   wrapper now takes the CA path from the ingress config (the deployment's own source of truth), and
+   the acceptance script runs the wrapper itself, with no `--ca` argument, plus a case where the
+   configured CA is missing. **Test the entry point the deployment calls, not just the library under
+   it.**
+3. **A second `environment:` key would have silently replaced the service's real environment.** The
+   compose edit added the health-check knob as a new `environment:` block, but the ingress service
+   already had one (config + data paths). The YAML parse check caught it before the build; the knob
+   now sits in the existing block. **Parse the file you edited, and assert the keys you expect.**
+
+---
+
+## Incident 73: Gateway crashes from method signature mismatch and unhandled adapter exceptions (HG-SEC-04)
+
+**Date:** 2026-10-17
+**Task attempted:** Independent security audit verification on release candidate `d19d230`.
+
+**Steps:**
+1. Execute WebRTC touch keepalive (`POST /api/webrtc/touch`).
+2. Query device details (`GET /api/devices/:id`) and view token when the authoritative registry CLI binary is unavailable or returns an error.
+
+**Expected result:** Graceful validation error response (HTTP 401/403/500) without process termination.
+
+**Actual result:**
+1. `server.js:645` called nonexistent `sessionManager.validateCsrfToken()` instead of `verifyCsrf()` in `auth.js`, raising an uncaught `TypeError` that crashed the Node gateway process.
+2. `server.js:458,523` called `getDevice()` without wrapping the call in a `try/catch` block, allowing uncaught exceptions from `device_adapter.js` to terminate the Node process.
+
+**Severity:** Critical (P0) — Gateway denial of service.
+
+**Fix:** Implemented `sessionManager.validateCsrfToken(sessionId, token)` in `auth.js` delegating to `verifyCsrf()`, and wrapped device adapter calls in `try/catch` responding with controlled HTTP 500 (`authoritative_registry_cli_unavailable`) without fabricating hardware state.
+
+**Lesson:** Every external adapter and auth validation call in route handlers must have local error boundaries returning controlled HTTP responses. Never allow an unhandled rejection to bubble up and crash a production gateway.
+
+---
+
+## Incident 74: Positional argument shift in Device Registry CLI and test suite state pollution
+
+**Date:** 2026-10-17
+**Task attempted:** Run automated test suites and CLI list command.
+
+**Actual result:**
+1. In `src/main_device_registry_cli.cpp`, the variable `command` was initialized to `"list"`. When an operator or script explicitly passed `list` on argv, the argument parser mistakenly treated `"list"` as a subcommand parameter and pushed it into `args`, causing positional argument shift and rejecting valid invocations.
+2. In `tests/core/test_logger.cpp`, an early test invoked `chdir(temp_dir)` without restoring the original working directory upon test completion. Subsequent tests attempting to open relative files or initialize default databases failed unpredictably.
+
+**Fix:** Initialized `command` to empty string and set it from the first positional token only; replaced process-global `chdir()` in tests with PID-specific isolated temporary paths via `HG_LOG_PATH`.
+
+**Lesson:** Subcommand CLI parsers must distinguish between default subcommand selection and explicit positional tokens. Unit tests must NEVER mutate process-global state like the current working directory (`chdir`).
+
+---
+
+## Incident 75: Five different things are called "Alexa+" and only one of them is permitted to a hackathon entrant
+
+**Date:** 2026-10-17 (route research 2026-10-10 → 2026-10-17; re-verified 2026-10-17)
+**Task attempted:** Choose the Alexa+ track route for the submission and write a claim that is true.
+
+**Steps:**
+1. Read the official hackathon FAQ and Rules pages (`https://amazonappdev2026.devpost.com/details/faqs`, `https://amazonappdev2026.devpost.com/rules`).
+2. Attempt to reach the Alexa+ Add-on developer tooling: Category SDK, MCP Toolkit, CLI, Web Simulator (`developer.amazon.com/alexaplus/`).
+3. Enumerate the distinct things the repository's own docs, and the ecosystem, call "Alexa+ support".
+4. Implement and test the permitted path end to end at the release candidate.
+
+**Expected result:** Either the gated Alexa+ developer tools are obtainable for the submission, or a clearly documented alternative is permitted.
+
+**Actual result:** **Five unrelated things share the name, and only one is available to a participant:**
+1. **Alexa+ *self-hosted MCP development*** — writing your own MCP server to the open specification. **Permitted and required** by the Rules for this track.
+2. **Alexa+ *partner-only integration tools*** — Category SDK, MCP Toolkit, CLI, Web Simulator, "Alexa+ for Builders". **Not obtainable.**
+3. **Conventional Alexa *Smart Home* camera interfaces** — the classic Smart Home skill/device model. A different API surface, unrelated to the MVP track, and not what the Rules ask for here.
+4. **Alexa Built-in devices** — AVS-based hardware integration; already recorded as deprecated for this project in **Incident 12**, and not an entrant-accessible route either.
+5. **An Alexa-compatible Docker/web simulation** — a front end a team builds itself. **Permitted**, and the FAQ explicitly blesses it.
+
+The FAQ answers the access question outright, and the answer is no:
+
+> **Question:** Will hackathon participants get access to the gated Alexa+ developer tools (Category SDK, MCP Toolkit, CLI, or Web Simulator)?
+> **Answer:** No. Amazon's Alexa+ Add-on developer tools (Category SDK, MCP Toolkit, CLI, and Web Simulator) are in preview and available to select partners only - there is currently no way for hackathon participants to apply for or gain access. This is called out on Amazon's add-on docs home page, though it's sometimes missing from individual setup-guide pages, which has caused some confusion. **You do not need these tools for your submission:** build a self-hosted MCP server (or Agent Skill) per the Official Rules, and demo it via your own web-based simulator or front end.
+
+and it also settles what "a demo" has to be:
+
+> **Question:** For the Alexa+ track, can I demo my self-hosted MCP server through a web page that acts as a real MCP client, instead of a device?
+> **Answer:** Yes. A web page that acts as an actual MCP client (sending initialize, tools-list, and tools-call requests over Streamable HTTP) satisfies the requirement - this is the simulated-experience path the Resources page points to, since there is no way for any participant to connect a self-hosted server to a real Alexa+ device.
+
+The Rules page agrees on the deliverable: *"Alexa+: Build a working Agent Skill or a self-hosted MCP server, implementing MCP spec version (minimum acceptable version is 2025-11-25). Optionally, developers can simulate the Alexa+ experience in a web app using their own agentic tools."*
+
+The practical damage is that the FAQ's own note — *"sometimes missing from individual setup-guide pages, which has caused some confusion"* — is exactly the trap: Amazon's per-tool setup guides read as though the tooling is one click away, while the gate is only stated on two pages. A participant who believes the guides can spend days pursuing an access path that does not exist for them.
+
+**Severity:** Important — not a security defect, but a route-selection and schedule risk, and a claim-integrity risk if the team writes the submission as though the tools were used.
+
+**Workaround:** Take the explicitly permitted route and make the claim narrow enough to be verifiable:
+1. Implement a **self-hosted MCP server** — MCP **2025-11-25**, **Streamable HTTP** — and test it end to end.
+2. Build the **project's own web front end**, label it plainly as a **simulated Alexa-style experience**, and have it act as a **genuine MCP client** (initialize → tools/list → tools/call), which is what the FAQ says satisfies the requirement.
+3. **Never claim** an Echo device, an Alexa+ runtime, Amazon account linking, or any Amazon certification. Say what is real (the MCP server, its protocol compliance, its test results) and what is simulated (the voice-style front end, all household observations).
+4. Record the external limitation in the submission itself so a judge reads it as a known constraint rather than as an omission.
+
+**Actionable suggestion:**
+- *For Amazon:* put the preview/partner-only status of the Add-on tooling on **every** tool's setup page, and publish one table that separates self-hosted MCP, partner-only tooling, Smart Home skills, Alexa Built-in and self-built simulation.
+- *For entrants:* decide the route in the first hour from the FAQ and Rules only — not from individual setup guides — and budget zero days for gated-tool access.
+
+**Evidence:**
+- FAQ and Rules pages retrieved 2026-10-17 with HTTP **200**; quoted verbatim above (`https://amazonappdev2026.devpost.com/details/faqs`, `https://amazonappdev2026.devpost.com/rules`).
+- Implemented MCP server: `src/mcp/McpProtocol.{h,cpp}`, `McpTools.{h,cpp}`, `McpHttpServer.{h,cpp}`, `src/main_mcp_server.cpp`; documented in `docs/MCP_SERVER.md`.
+- **Verified at candidate commit `347551558fc3c4f5deb11b2c566b86ecc6e59db4`**:
+  - `bash scripts/verify_mcp.sh` → **71 passed, 0 failed** (real `hg_mcp_server` binary over loopback: protocol negotiation, session rules, Origin validation, auth, error taxonomy, request bounds, SSE-only client, DELETE teardown, clean SIGTERM shutdown).
+  - `node web_mcp/test_client.js` → **26 passed, 0 failed**.
+  - `node web_mcp/test_devices_dashboard.js` → **154 passed, 0 failed**.
+- Distinct from **Incident 12** (AVS developer tools deprecated for Alexa Built-in — a *different* gate) and from **Incident 28** (the earlier honest-README correction): this entry is about which of five same-named routes is actually permitted.
+
+**Status:** **Resolved for this submission** — permitted route taken, implemented, and tested at the candidate commit; the underlying external restriction (preview and partner-only tooling) stands and is not ours to fix.
+
+---
+
+## Incident 76: One camera's ONVIF toggle served anonymous live video; the other camera has no standard interface at all
+
+**Date:** 2026-10-17
+**Task attempted:** Verify real hardware integration with local budget CCTV cameras (V380/Macro-video).
+
+**Actual result:**
+1. Camera 1's ONVIF toggle opened `tcp/554` and `tcp/8899` without any authentication: anonymous DESCRIBE returned SDP, and PLAY delivered RTP video packets unconditionally. ONVIF disclosed device MAC, IP, admin accounts, and video profiles.
+2. Camera 2 had no standard ONVIF/RTSP interfaces listening; only proprietary vendor ports (`8800`/`9800`) were active, with unverified authentication mechanisms.
+
+**Workaround:** Separate the *security* problem from the *capability* problem:
+1. **Camera 1 exposure was closed by disabling the ONVIF toggle** — `tcp/554` and `tcp/8899` are closed; only vendor ports remain.
+2. **Never expose unauthenticated camera streams to trusted networks.** Route camera media through isolated, security-aware adapters and network-independent site connectors that dial out as the single authorized client (`docs/HG_NET_ARCH_01_NETWORK_INDEPENDENT_CAMERA_INTEGRATION.md`).
+3. **Timestamp integrity:** Camera 1's clock was measured **9,001.5 s behind UTC**; timestamps must always be assigned by the receiving host.
+
+**Evidence:**
+- Interface classification script: `scripts/v380_security_check.sh`, `scripts/v380_probe.sh`.
+- Post-closure verification: `RTSP/554 DISABLED`, `ONVIF/8899 DISABLED`.
+
+**Status:** Camera 1 exposure CLOSED and verified. Hardware integration remains unbuilt; both cameras remain treated as unverified/offline in accordance with judge build hardware protections.
+
+---
+
+## Incident 77: Three documented commands did not produce what the docs then claimed — found by running them at the release candidate
+
+**Date:** 2026-10-17
+**Task attempted:** Independently verify the release candidate's headline claims before a judge reads them.
+
+**Steps:**
+1. Create a clean worktree at the candidate route and configure/build it fresh.
+2. Follow the README's own build command verbatim.
+3. Run the test commands the submission documents quote numbers for.
+4. Check each resulting artifact against the claim made about it.
+
+**Expected result:** The documented commands build the documented artifacts, and the documented test commands reproduce the documented numbers.
+
+**Actual result:** Three mismatches in commands:
+1. **The README's build command omitted the MCP target it advertises.** The README section read `make -j4 homeguardian homeguardian_tests hg_alexa_bridge` — omitting `hg_mcp_server` and `hg_device_registry_cli`.
+2. **No documented step installed the Node dependencies the MCP web gateway needs.** Root `package.json` declares `werift` and `ws`. On a clean checkout, running `node web_mcp/test_client.js` failed with `Cannot find module 'werift'`.
+3. **`docs/MCP_SERVER.md` pointed at a pre-integration branch.**
+
+**Severity:** Important — a judge or independent verifier following the README could not reproduce the advertised MCP capability.
+
+**Fix:** Updated `README.md` build commands to include `hg_mcp_server` and `hg_device_registry_cli`; added one-time `npm install` prerequisite note; documented exact verification commands and counts; updated `docs/MCP_SERVER.md`.
+
+**Evidence:**
+- Clean clone verification on candidate `347551558fc3c4f5deb11b2c566b86ecc6e59db4`:
+  - `bash scripts/verify_mcp.sh` → **71 passed / 0 failed**
+  - `node web_mcp/test_client.js` → **26 passed / 0 failed**
+  - `node web_mcp/test_devices_dashboard.js` → **154 passed / 0 failed**
+
+**Status:** Resolved and verified in candidate `347551558fc3c4f5deb11b2c566b86ecc6e59db4`.
+
+---
+
+## Incident 78: Physical camera credential provisioning gap, recovery authorization bypass, and stale consent retention (HG-SEC-06 / HG-SEC-06B / HG-SEC-06C)
+
+**Date:** 2026-10-17
+**Task attempted:** Complete independent security remediation of physical camera authentication and administrative lifecycle.
+
+**Steps:**
+1. Security audit of `main_device_registry_cli.cpp` revealed that default seeded physical devices (`camera-001`) initially had hardcoded seed secrets, and once removed, were unprovisioned with `auth_secret == ""`.
+2. Any unauthenticated local caller running `hg_device_registry_cli pair '{"device_id": "camera-001"}'` or enrolling a new device ID could claim the identity and receive freshly generated CSPRNG secrets because `is_already_enrolled` evaluated to false.
+3. In recovery mode, caller-controlled JSON containing `"operator_recovery": true` bypassed proof of existing credentials without independent verification of operator authority.
+4. When devices were re-paired or recovered, prior viewing grants and consent were silently retained (`existing->consent_granted`), violating privacy boundaries.
+5. Operator credentials passed on argv (`--operator-secret`) were exposed to system process listings (`ps aux`).
+
+**Expected result:** Initial enrollment requires out-of-band operator authorization; caller JSON booleans cannot authorize recovery; re-pairing wipes stale viewing grants and resets liveness; operator secret files enforce 0600 permissions and process memory is scrubbed.
+
+**Actual result:** Without strict lifecycle gates, unprovisioned cameras could be claimed by local callers, recovery was vulnerable to caller boolean spoofing, and old consent survived device re-pairing.
+
+**Severity:** Critical (P0) — Security boundary failure on peripheral identity management.
+
+**Fix:**
+1. Enforced Gate 3 on `hg_device_registry_cli pair`: initial enrollment or claiming unprovisioned/unpaired devices strictly requires `--operator-auth` and verified operator credentials (`HG_OPERATOR_SECRET` / `--operator-secret-file` / stdin).
+2. Enforced Gate 1 on `pair`: revoked devices can only be recovered via `--operator-recovery` with trusted operator secret.
+3. In `DeviceRegistry.cpp` and `main_device_registry_cli.cpp`, re-pairing and recovery immediately wipe stale consent (`consent_granted = false`, `capture_enabled = false`) and reset online state to offline (`online = false`, `last_heartbeat_ms = 0`).
+4. Enforced POSIX mode `0600` or `0400` on `--operator-secret-file`, scrubbed argv in-place via `std::fill_n`, and supported `--operator-secret-stdin`.
+
+**Evidence:**
+- Validated on candidate commit `347551558fc3c4f5deb11b2c566b86ecc6e59db4`:
+  - `node web_mcp/test_devices_dashboard.js` → **154 passed / 0 failed** (including negative tests for unauthenticated claim rejection, insecure 0644 secret file rejection, consent invalidation verification, and revoked device reclaim rejection).
+  - `homeguardian_tests` → **38,926 assertions across 526 test cases passed**.
+  - `scripts/verify_mcp.sh` → **71 passed / 0 failed**.
+  - `scripts/test_hg_sec_01_independent.sh` → **15 passed / 0 failed**.
+
+**Status:** Resolved in candidate commit `347551558fc3c4f5deb11b2c566b86ecc6e59db4`.
+
+---
+
+## Incident 79: Operator authorization trust root flaw — caller-controlled environment variables, fallback files, and symlink vulnerabilities (HG-SEC-06D)
+
+**Date:** 2026-10-17
+**Task attempted:** Complete independent security remediation of operator authentication trust boundary (GitHub Issue #3).
+
+**Steps:**
+1. Independent source review of `main_device_registry_cli.cpp` revealed that `expected_secret` and `presented_secret` both fell back to reading `std::getenv("HG_OPERATOR_SECRET")` / `std::getenv("HG_OPERATOR_PASSWORD")`.
+2. An untrusted caller executing `hg_device_registry_cli` could set `HG_OPERATOR_SECRET=evil` in the process environment; the CLI simultaneously adopted `evil` as expected secret and presented secret, allowing credentials to self-authenticate.
+3. Fallback file `/tmp/hg_operator_password.secret` in world-writable `/tmp` allowed local unprivileged users to pre-create authority files with their own secrets.
+4. Secret file validation used `::stat` (which follows symlinks) without checking file ownership (`st.st_uid`), regular file status (`S_ISREG`), or symlink prohibited invariants (`!S_ISLNK`).
+
+**Expected result:** Trusted expected credentials are anchored in an authority controlled independently of untrusted callers; environment variables and stdin cannot turn untrusted inputs into authority; secret files reject symlinks, require 0600/0400 permissions, and enforce process user ownership.
+
+**Actual result:** Without strict authority anchoring, untrusted callers could define authority through their own process environment or world-writable `/tmp` files.
+
+**Severity:** Critical (P0) — Security boundary trust root flaw in peripheral identity provisioning.
+
+**Fix:**
+1. Anchored operator authority strictly in an independent secure authority file: `operator.secret` in the registry directory (or explicit `--operator-authority-file`).
+2. Eliminated `expected_secret` derivation from `std::getenv` — caller environment variables can only present credentials (`presented_secret`), never define expected authority.
+3. Eliminated all `/tmp` fallback file paths.
+4. Implemented `read_secure_secret_file()`: uses `::lstat`, strictly rejects symlinks (`S_ISLNK`), enforces regular files (`S_ISREG`), validates file ownership against process effective UID (`st.st_uid == ::geteuid() || st.st_uid == 0`), and enforces mode `0600` or `0400`.
+5. Updated `web_mcp/auth.js` to automatically provision `operator.secret` in `config/` with mode `0600` on startup.
+
+**Evidence:**
+- Validated on branch `fix/hg-sec-06d-trust-root`:
+  - `node web_mcp/test_devices_dashboard.js` → **158 passed / 0 failed** (including 4 new negative tests verifying caller env rejection, missing authority fail-closed, symlink rejection, and `/tmp` pre-created fallback rejection).
+  - `scripts/verify_synthetic_mcp_demo.sh` → **184 passed / 0 failed** (158 dashboard + 26 MCP client).
+  - `node web_mcp/test_client.js` → **26 passed / 0 failed**.
+  - `scripts/verify_mcp.sh` → **71 passed / 0 failed**.
+  - `scripts/test_hg_sec_01_independent.sh` → **15 passed / 0 failed**.
+  - `homeguardian_tests` → **38,926 assertions across 526 test cases passed**.
+
+**Status:** Resolved in branch `fix/hg-sec-06d-trust-root`.
+

@@ -35,6 +35,20 @@ std::vector<Event> Pipeline::get_recent_events(std::chrono::milliseconds window)
     return recent;
 }
 
+namespace {
+
+// Severity ordering used for prioritisation (H-01s): info < warning < critical.
+int severity_rank(Severity s) {
+    switch (s) {
+        case Severity::critical: return 2;
+        case Severity::warning: return 1;
+        case Severity::info: return 0;
+    }
+    return 0;
+}
+
+}  // namespace
+
 std::optional<Alert> Pipeline::process(const Event& event) {
     auto validation_error = EventValidator::validate(event);
     if (validation_error) {
@@ -52,14 +66,20 @@ std::optional<Alert> Pipeline::process(const Event& event) {
     auto window_duration = correlation_window_.value_or(std::chrono::milliseconds(5000));
     auto recent_events = get_recent_events(window_duration);
 
+    // Evaluate EVERY registered rule and return the highest-severity alert
+    // (info < warning < critical); ties go to the first rule. This is the
+    // severity-prioritisation step (H-01s): a critical impact alert is not lost
+    // behind an unrelated info/warning alert firing on the same event. With a
+    // single rule the behaviour is identical to returning the first alert.
+    std::optional<Alert> best;
     for (const auto& rule : rules_) {
         auto alert_opt = rule->evaluate(recent_events);
-        if (alert_opt) {
-            return alert_opt;
+        if (!alert_opt) continue;
+        if (!best || severity_rank(alert_opt->severity) > severity_rank(best->severity)) {
+            best = std::move(alert_opt);
         }
     }
-
-    return std::nullopt;
+    return best;
 }
 
 std::vector<std::string> Pipeline::rule_names() const {

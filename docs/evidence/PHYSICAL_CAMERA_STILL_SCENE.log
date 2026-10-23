@@ -1,0 +1,80 @@
+=====================================================================
+ REAL camera capture -> bounded scalars -> one finding per frame
+ device=/dev/video0  requested=640x480  frames=90
+ Nothing is written, streamed or transmitted. No image leaves this process.
+=====================================================================
+
+negotiated: driver=uvcvideo card=W100: W100 bus=usb-0000:00:14.0-9 640x480 YUYV stride=1280
+  [  0] seq=0      motion=0.0000 mean_delta=0.0000 baseline=0.0000 ratio=1.00  warming_up
+  [  5] seq=5      motion=0.1227 mean_delta=0.0391 baseline=0.1227 ratio=1.00  warming_up
+  [ 10] seq=10     motion=0.2018 mean_delta=0.0683 baseline=0.1266 ratio=1.28  warming_up
+  [ 25] seq=25     motion=0.1746 mean_delta=0.0570 baseline=0.1318 ratio=1.31  quiet_baseline
+  [ 30] seq=30     motion=0.2664 mean_delta=0.1006 baseline=0.1386 ratio=1.37  quiet_baseline
+  [ 35] seq=35     motion=0.1758 mean_delta=0.0568 baseline=0.1404 ratio=1.27  quiet_baseline
+  [ 40] seq=40     motion=0.0492 mean_delta=0.0151 baseline=0.1359 ratio=1.23  quiet_baseline
+  [ 45] seq=45     motion=0.0710 mean_delta=0.0195 baseline=0.1326 ratio=1.06  quiet_baseline
+  [ 50] seq=50     motion=0.0619 mean_delta=0.0186 baseline=0.1291 ratio=0.69  quiet_baseline
+  [ 55] seq=55     motion=0.0537 mean_delta=0.0171 baseline=0.1253 ratio=0.47  quiet_baseline
+  [ 60] seq=60     motion=0.0380 mean_delta=0.0124 baseline=0.1209 ratio=0.46  quiet_baseline
+  [ 65] seq=65     motion=0.0292 mean_delta=0.0116 baseline=0.1164 ratio=0.39  sustained_decrease
+  [ 70] seq=70     motion=0.0124 mean_delta=0.0075 baseline=0.1112 ratio=0.30  sustained_decrease
+  [ 75] seq=75     motion=0.0309 mean_delta=0.0117 baseline=0.1071 ratio=0.26  sustained_decrease
+  [ 80] seq=80     motion=0.0734 mean_delta=0.0206 baseline=0.1055 ratio=0.35  sustained_decrease
+  [ 85] seq=85     motion=0.0510 mean_delta=0.0150 baseline=0.1027 ratio=0.41  sustained_decrease
+
+== RESULTS ==
+  frames captured      : 90 of 90 requested
+  observations built   : 18 (cadence 5 frame(s) per observation)
+  capture stalls       : 0
+  driver-dropped frames: 0
+  elapsed              : 8040 ms
+  pixels per frame     : 640x480 (luma plane reduced in place)
+  peak motion / ratio  : 0.2664 / 1.38
+  peak confidence      : 0.371 (the rule's current gate is 0.5)
+  windows by kind      : sustained_increase=0 sustained_decrease=5 quiet=8
+  MOTION-VERDICT       : NO sustained increase observed (nothing moved in view, or the change was too brief)
+  final finding        : sustained_decrease
+    sentence           : a sustained decrease in motion in view
+    motion_level       : 0.0510   mean_delta 0.0150   baseline 0.1027
+    provenance         : real (a physical device frame)
+    NOT claimed        : motion energy is a bounded scalar: it is not a person, an animal, a species, a face, a gesture, a fall or an emergency, and nothing in this build can infer one from it
+
+== RULE EVALUATION over this capture's own observations ==
+  observations in the window : 18
+  fusion verdict             : not_detected (confidence 0.056, 13 contributing)
+  detection-fusion rule      : no alert
+  NOTE: this is the existing rule and the existing engine, fed the observations
+        this capture produced. No threshold was changed and no detector was added.
+
+  observation (through the existing event model):
+{
+  "confidence": 0.29594453285500444,
+  "event_id": "cam-activity-8040",
+  "ingestion_timestamp": 1792369321979,
+  "observation_timestamp": 1792369321979,
+  "payload": {
+    "baseline_level": 0.10273651993265143,
+    "baseline_ready": true,
+    "consecutive": 7,
+    "detector_id": "camera-motion-activity",
+    "direction": "falling",
+    "model_id": "ema-baseline-v1",
+    "motion-changed-fraction": 0.04192789713541667,
+    "note": "activity falling to 0.408111x the learned baseline over 7 samples",
+    "provenance": "real",
+    "ratio": 0.4081109342899911,
+    "samples": 17,
+    "status": "detected"
+  },
+  "processing_metadata": {
+    "detector_id": "camera-motion-activity",
+    "model_id": "ema-baseline-v1",
+    "provenance": "real",
+    "status": "detected"
+  },
+  "schema_version": 1,
+  "source": "/dev/video0",
+  "type": "inference"
+}
+
+RESULT: 90 real frame(s) reduced to scalars; nothing retained.

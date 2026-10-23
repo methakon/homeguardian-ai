@@ -1,4 +1,5 @@
 #include "catch2/catch.hpp"
+#include <unistd.h>   // getpid: process-unique fixture paths
 #include "core/ConsentGate.h"
 #include "core/ConsentRecord.h"
 #include "core/Logger.h"
@@ -13,7 +14,11 @@
 
 using namespace homeguardian;
 
-static const std::string GATE_TEST_DB = "test_consent_gate.db";
+// Unique per process: two suite instances running in the same working
+// directory must not delete each other's database (SQLite reports the
+// collision as a confusing 'disk I/O error' on the next WAL/DDL call).
+static const std::string GATE_TEST_DB =
+    std::string("test_consent_gate.db.") + std::to_string(::getpid());
 
 struct ConsentGateFixture {
     std::shared_ptr<SQLiteDatabase> db;
