@@ -167,6 +167,8 @@ printf '[]\n' > "$E2E_DIR/revocation.json"
 # 3. Ingress config: LOOPBACK ONLY, durable replay state.
 # ---------------------------------------------------------------------------------------------
 say "==> 3/6 ingress config (loopback only)"
+# Built outside the heredoc on purpose: see the note at the substitution below.
+EVIDENCE_JSON="${HG_E2E_EVIDENCE:-[\"sensor.motion\",\"sensor.presence\"]}"
 cat > "$E2E_DIR/ingress.json" <<JSON
 {
   "certificate_path": "/pki/server.pem",
@@ -180,7 +182,7 @@ cat > "$E2E_DIR/ingress.json" <<JSON
   "audit_db_path": "/state/audit.db",
   "max_connections": 4,
   "max_workers": 2,
-  "evidence_detector_ids": ${HG_E2E_EVIDENCE:-["sensor.motion", "sensor.presence"]},
+  "evidence_detector_ids": $EVIDENCE_JSON,
   "verbose": true
 }
 JSON
