@@ -844,3 +844,62 @@ These notes preserve the distinction between owner-console observations, worker-
 ### Next action / owner
 
 - **Alexa worker + owner:** provide the selected regional Lambda ARN and confirm the Skill ID from the existing console; inspect the exact target and its logs. Keep the skill private until the endpoint, simulator behavior and approved backend route are verified.
+
+---
+
+## Hermes 1 / Network — worker-dispatch P0 + provenance — 2026-10-23
+
+**Owner:** `hg-hermes-network` (Hermes 1). **Lanes:** issue #23, #14.
+
+**Current verified state**
+
+- Branch `fix/hg-worker-dispatch-p0-48`, SHA `f44d1a6b878d471f271325ea18daff73ff312065`, pushed.
+  `origin/main` was merged in at **owner instruction** (`8458cd8`, 285 commits, no conflicts); rollback
+  point preserved: `8d74f5377dac`. `main` itself was NOT modified.
+- PR #28 (base `dev/production-integration`) — **open, not merged.** After the merge it reports
+  **`mergeable=false`** and its diff widened to 54 commits / 66 files. Both are direct consequences of the
+  merge and are flagged for owner decision, not silently accepted.
+- Privileged dispatch remains **DISABLED**. No independent acceptance has been performed.
+
+**Changed files (my lane only)**
+
+`scripts/worker/task_guard.py`, `scripts/worker/task_envelope.py`,
+`scripts/worker/test_dispatch_p0_48_adversarial.py`, `scripts/worker/test_p0_48_grant_atomicity.py`,
+`scripts/worker/test_task_envelope.py`. Verified after the merge that the five repairs are still present by
+content **and** behaviour, and that `git diff 8d74f53 f44d1a6 -- scripts/worker/` is empty.
+
+**Repairs and evidence**
+
+| # | repair | state |
+|---|---|---|
+| 1 | protected-op fallbacks never derive trusted context; refuse `AUTHENTICATION_REQUIRED` | done |
+| 2 | envelope never trusts caller-supplied author; provenance minted out-of-band with a per-process nonce | done |
+| 3 | scope confinement canonicalised (path traversal) | done |
+| 4 | absent/empty approvals deny against the trusted canonical operation | done |
+| 5 | SQLite owner grant consumed atomically once | done (was already present; demonstrated) |
+
+**Tests (nonexecuting; no network, no dispatcher, no production DB)**
+
+    test_dispatch_p0_48_adversarial.py  exit 0  item 3 9/9 + pre-fix control; repairs 1+4; repair 2
+    test_p0_48_grant_atomicity.py       exit 0  first consume accepted; second APPROVAL_REPLAYED; expired APPROVAL_EXPIRED
+    test_task_envelope.py               exit 0  16/16, verified idempotent across three consecutive runs
+    test_poller.py                      exit 0  duplicates, wrong-worker, unauthorized author, cron PATH
+
+Negative controls include **forged in-band provenance** (refused — the nonce defeats it), unauthenticated
+caller JSON (refused), missing approvals (denied), and a pre-fix predicate control proving the scope suite
+cannot pass vacuously.
+
+**Blockers**
+
+1. GitHub-comment → poller → **spawned worker turn** is unproven; completing it requires enabling
+   privileged dispatch, which is forbidden. Proven instead: fetch → mint → admit → approval gate.
+2. **Concurrent** (not merely sequential) duplicate grant consumption is not yet tested.
+3. Compliance conflicts raised rather than self-resolved: this lane works in the worktree
+   `hermes-s1-lan-mtls-07` (mandated by an earlier isolation directive, now superseded by the single-fixed-
+   workspace rule), and it holds a second branch `experiment/hg-lan-mtls-07`.
+4. `~/.hermes/scripts/hg_task_poller.py` (the poller) lives outside the repository, so its provenance-wiring
+   change is not version-controlled.
+
+**Next action** — owner/coordinator to choose the PR #28 path (keep widened, retarget to `main`, reset to
+`8d74f53` with the rollback point, or re-cut a narrow branch); then add the concurrent-consumption test and
+resolve the workspace/branch compliance items.
