@@ -1465,3 +1465,73 @@ the actual socket/VPN route-selection contract. Physical camera restart, DHCP
 movement, phone reboot and workstation-off acceptance remain unverified. The
 existing Alexa lane is restored; a production-certified autonomous camera lane
 is not claimed.
+
+### Autonomous phone camera monitor: route correction and first live deployment
+
+The route refusal above was a defect in the admission rule, not in the tunnel.
+The rule treated *any* covering non-VPN route as proof of unprotected egress, so
+the Wi-Fi default route vetoed a peer that the overlay carries with a /32 host
+route. Admission now compares longest-prefix specificity: the VPN must be
+strictly more specific than every competing non-VPN route, an equal or broader
+VPN prefix is refused, and two equally specific VPNs are refused rather than
+guessed. The socket binder no longer takes the first `TRANSPORT_VPN` network; it
+re-runs admission against live platform state, binds the network that actually
+routes the destination, re-checks that the network still exists immediately
+before `Network.bindSocket`, and never falls back to another interface on
+failure.
+
+Measured device shape for the deployed phone: Wi-Fi `0.0.0.0/0` via `wlan0`
+(network 100) plus `192.168.77.1/32` and `192.168.77.4/32` via `tun0`
+(network 101). This shape is now admitted; the previous rule refused it.
+Retained refusals, all asserted: public destinations the VPN does not route,
+LAN hosts, equal-prefix VPN/LAN overlap, a more-specific LAN route, cloud
+metadata and link-local, multicast, broadcast, unspecified, unwired or
+permission-denied platform state, loopback-by-name (DNS could be repointed) and
+an ambiguous VPN pair.
+
+Off-device verification, run against the production class, not a copy:
+`tests/portal/test_android_route_security_policy.py` compiles the real
+`RouteSecurityPolicy` with the API 34 platform jar plus stubs, then executes
+`tests/portal/android_route/RouteSecurityPolicyRegressionTest.java` — **57
+checks, 0 failed**, including the measured device shape, every retained refusal
+above, and API 30 adapter behaviours (route parsing, correct-VPN selection with
+a decoy VPN enumerated first, no bind when the VPN vanished, refusal on EPERM).
+
+Deployed: APK `versionCode 9` (`1.1.1`) built with the real `hg_mcp_server`
+source set plus the camera analysis sources, signed, installed over `versionCode
+8` and started on the Mi A3. The bridge dialled, authenticated and reported
+`auth OK` with a live MCP session, which the refused build could not do. The
+previous APK was pulled and verified (`sha256
+1ec33b58d1600ac18009283f224a1b12dcb11177496a3408fc5584fc7d36de25`) as the
+rollback before the update.
+
+Live autonomous evidence from the deployed phone, with the app's Activity
+closed (same process throughout, PID 13741):
+
+```
+before HOME : capture_enabled=true  observations_processed=377
+after 171 s : capture_enabled=true  observations_processed=550   (+173, ~1.01/s)
+camera      : state=analyzed  decode_failures=0  fetch_failures=1
+              identity_gate=owner_approved_fixed_host_mac_no_rediscovery
+alerts      : committed=0  total_alert_count=2  persistence_healthy=true
+```
+
+Frames came from the supported JUAN camera at its authorized fixed private host,
+over the native `LiveCameraFeed` + `CameraAnalysis` path; no browser, relay or
+workstation process participated. Zero alerts were committed because no
+observation exceeded the detector's baseline during that window — this is the
+honest reading, not a claim of a physical event. The two alerts already in the
+store predate this deployment and are of synthetic origin.
+
+Worker-origin readback through the established private path (VPS mailbox
+worker's own MCP client) returned genuine live data with capture on:
+`get_homeguardian_status` → `{"state":"Running","read_only":true,
+"capture_enabled":true}`; `get_alert_summary` → `{"alert_count":2,
+"read_only":true,"highest_severity":"warning"}`.
+
+Also true, and not to be over-read: the SQS request/reply round trip was not
+re-exercised in this deployment. The dedicated worker credential is
+least-privilege (send-only to the reply queue) and the workstation AWS session
+is expired, so the reply queue could not be read here; that link stays at its
+previous WORKER-VERIFIED state. Physical camera restart, a real DHCP address
+move, phone reboot recovery and workstation-off operation remain unverified.

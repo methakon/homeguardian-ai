@@ -4,9 +4,10 @@
 
   Deliberately a SEPARATE package from org.homeguardian.harness:
     * the harness is the camera/microphone acquisition node and needs CAMERA +
-      RECORD_AUDIO. This service captures nothing, so it requests neither. Keeping
-      them apart means the service cannot acquire media even by accident, and the
-      permission prompt the operator approves is the minimum set.
+      RECORD_AUDIO. This service requests neither: its opt-in network-camera
+      monitor fetches owner-authorized LAN snapshots using INTERNET, not the
+      phone's camera or microphone. Network capture is off until explicitly
+      configured and consented to in the local UI.
     * their lifecycles are opposites: the harness must stop when the activity stops;
       this service must outlive the activity and the screen.
 
@@ -26,8 +27,8 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.homeguardian.edgeservice"
-    android:versionCode="4"
-    android:versionName="1.0.3">
+    android:versionCode="9"
+    android:versionName="1.1.1">
 
     <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="30" />
 

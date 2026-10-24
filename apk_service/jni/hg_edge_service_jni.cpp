@@ -38,6 +38,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <condition_variable>
+#include <fstream>
+#include <sys/stat.h>
+#include <unistd.h>
+#include "bridge/CameraAnalysis.h"
 #include "core/Alert.h"
 #include "core/AlexaContract.h"
 #include "core/AlexaCredentialStore.h"
@@ -84,13 +89,14 @@ protected:
 // availability is false whenever persistence is unhealthy.
 class EdgeStatusProvider : public IAlexaStatusProvider {
 public:
-    EdgeStatusProvider(bool capture_enabled, PersistenceAudit* audit)
-        : capture_enabled_(capture_enabled), audit_(audit) {}
+    EdgeStatusProvider(std::atomic<bool>& capture_enabled, PersistenceAudit* audit, std::mutex& audit_mutex)
+        : capture_enabled_(capture_enabled), audit_mutex_(audit_mutex), audit_(audit) {}
 
     homeguardian::AlexaStatusSnapshot snapshot() const override {
+        std::lock_guard<std::mutex> guard(audit_mutex_);
         homeguardian::AlexaStatusSnapshot s;
         s.state = "Running";
-        s.capture_enabled = capture_enabled_;
+        s.capture_enabled = capture_enabled_.load();
         s.available = (audit_ != nullptr) && audit_->healthy();
         if (audit_ != nullptr) {
             const auto recent =
@@ -117,7 +123,8 @@ public:
     }
 
 private:
-    bool capture_enabled_ = false;
+    std::atomic<bool>& capture_enabled_;
+    std::mutex& audit_mutex_;
     PersistenceAudit* audit_ = nullptr;
 };
 
@@ -126,6 +133,8 @@ private:
 // ---------------------------------------------------------------------------
 class EdgeController {
 public:
+    ~EdgeController() { stop(); }
+
     // Return codes are stable and mirrored in NativeEngine.java.
     enum : int {
         OK = 0,
@@ -141,6 +150,9 @@ public:
               uint16_t requested_port) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (running_.load()) return ALREADY_RUNNING;
+        // A naturally exited accept loop still owns a joinable thread and a
+        // possibly running camera. Reap both before replacing their dependencies.
+        if (serve_thread_.joinable() || camera_thread_.joinable()) teardown_locked();
 
         last_error_.clear();
         try {
@@ -176,7 +188,10 @@ public:
                 return CREDENTIAL_STORE_FAILED;
             }
 
-            provider_ = std::make_unique<EdgeStatusProvider>(capture_enabled, audit_.get());
+            data_dir_ = data_dir;
+            capture_.store(false); // only explicit camera authorization can turn this on
+            app_->get_status().capture_enabled.store(false);
+            provider_ = std::make_unique<EdgeStatusProvider>(capture_, audit_.get(), audit_mutex_);
             // The registry MUST outlive the server: McpHttpServer::Impl stores
             // `const ToolRegistry& tools`, not a copy, so the caller owns its lifetime
             // (main_mcp_server.cpp satisfies this by accident - its registry is a local
@@ -221,10 +236,14 @@ public:
             running_.store(true);
             serve_thread_ = std::thread([this]() {
                 server_->serve(stop_);
+                stop_.store(true);
+                capture_.store(false);
+                camera_cv_.notify_all();
                 running_.store(false);
                 __android_log_print(ANDROID_LOG_INFO, HG_LOG_TAG, "serve() returned; server stopped");
             });
 
+            start_camera_locked();
             __android_log_print(ANDROID_LOG_INFO, HG_LOG_TAG,
                                 "hg_mcp_server listening on %s:%u (loopback=true, auth=required, tools=%zu)",
                                 cfg.bind_address.c_str(), static_cast<unsigned>(port_), tools_->size());
@@ -248,6 +267,13 @@ public:
         return OK;
     }
 
+    int reload_camera(bool start) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stop_camera_locked();
+        if (start && running_.load()) start_camera_locked();
+        return running_.load() ? OK : NOT_RUNNING;
+    }
+
     bool running() const { return running_.load(); }
     uint16_t port() const { return port_; }
 
@@ -264,7 +290,12 @@ public:
         j["credentials_loaded"] = (store_ != nullptr) && store_->loaded_ok();
         j["credential_count"] = (store_ != nullptr) ? store_->size() : 0;
         j["persistence_healthy"] = (audit_ != nullptr) && audit_->healthy();
-        j["total_alert_count"] = (audit_ != nullptr) ? audit_->total_alert_count() : 0;
+        {
+            std::lock_guard<std::mutex> guard(audit_mutex_);
+            j["total_alert_count"] = (audit_ != nullptr) ? audit_->total_alert_count() : 0;
+        }
+        j["capture_enabled"] = capture_.load();
+        { std::lock_guard<std::mutex> guard(camera_status_mutex_); j["camera"] = camera_status_; }
         if (server_) {
             const auto s = server_->stats();
             j["requests"] = s.requests;
@@ -284,6 +315,9 @@ private:
         // serve() owns and closes the listener. Order matters: stop the loop and drop
         // the server BEFORE the objects its worker threads reference disappear - the
         // registry in particular is held by reference.
+        stop_camera_locked();
+        stop_.store(true);
+        if (serve_thread_.joinable()) serve_thread_.join();
         server_.reset();
         tools_.reset();
         provider_.reset();
@@ -294,6 +328,120 @@ private:
         running_.store(false);
     }
 
+    // Controller mutex is never acquired by the camera worker. Stop/join can
+    // therefore run while holding it, before provider/audit destruction.
+    static bool private_file(const std::string& path) {
+        struct stat st{};
+        return ::lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+            st.st_uid == ::geteuid() && (st.st_mode & 0777) == 0600 && st.st_size <= 16384;
+    }
+    void stop_camera_locked() {
+        camera_stop_.store(true);
+        capture_.store(false);
+        camera_cv_.notify_all();
+        if (camera_thread_.joinable()) camera_thread_.join();
+        if (app_) app_->get_status().capture_enabled.store(false);
+        std::lock_guard<std::mutex> g(camera_status_mutex_);
+        camera_status_ = {{"state", "disabled"}};
+    }
+    void start_camera_locked() {
+        if (!audit_ || !running_.load() || camera_thread_.joinable()) return;
+        const auto path = data_dir_ + "/camera_local.json";
+        try {
+            if (!private_file(path)) return;
+            std::ifstream in(path);
+            auto j = nlohmann::json::parse(in);
+            if (!j.value("consent", false) || !j.value("capture", false) ||
+                !j.value("approved_host_mac", false)) return;
+            homeguardian::portal::CameraConfig cfg;
+            cfg.host = j.at("host").get<std::string>();
+            cfg.user = j.at("user").get<std::string>();
+            cfg.password = j.at("password").get<std::string>();
+            cfg.mac = j.at("mac").get<std::string>();
+            uint32_t ip=0;
+            if (!homeguardian::portal::parse_ipv4(cfg.host, &ip) ||
+                !((ip >> 24)==10 || (ip >> 20)==0xac1 || (ip >> 16)==0xc0a8)) return;
+            homeguardian::camera::HardwareFingerprint fp;
+            if (!homeguardian::camera::HardwareFingerprint::normalize(cfg.mac, &fp, nullptr) ||
+                cfg.user.empty() || cfg.user.size()>128 || cfg.password.size()>512 ||
+                cfg.user.find(':')!=std::string::npos ||
+                (cfg.password.empty() && !j.value("empty_password_approved",false))) return;
+            cfg.mac=fp.canonical();
+            cfg.allow_plaintext=true; // explicit UI consent includes LAN HTTP risk
+            cfg.scan_enabled=false; // Android 11 cannot safely read ARP; no sweep or reattachment
+            camera_stop_.store(false);
+            camera_thread_=std::thread([this,path,cfg] {
+                try {
+                    homeguardian::portal::CameraAnalysis analysis(path,"edge-local-camera",cfg.mac,audit_.get());
+                    homeguardian::portal::LiveCameraFeed feed(cfg);
+                    // Fresh private registry AND exact owner-approved host/MAC binding on
+                    // each request, including HttpClient's final before_send callback.
+                    auto authorize=[&] {
+                        bool allowed=false;
+                        try {
+                            if (!camera_stop_.load() && !stop_.load() && private_file(path)) {
+                                std::ifstream f(path); auto fresh=nlohmann::json::parse(f);
+                                allowed=fresh.value("consent",false) && fresh.value("capture",false) &&
+                                    fresh.value("approved_host_mac",false) && fresh.value("host",std::string())==cfg.host &&
+                                    fresh.value("mac",std::string())==cfg.mac &&
+                                    fresh.value("user",std::string())==cfg.user && fresh.value("password",std::string())==cfg.password &&
+                                    (!cfg.password.empty() || fresh.value("empty_password_approved",false)) && analysis.authorize();
+                            }
+                        } catch (...) { allowed=false; }
+                        allowed = allowed && !camera_stop_.load() && !stop_.load();
+                        capture_.store(allowed);
+                        app_->get_status().capture_enabled.store(allowed);
+                        return allowed;
+                    };
+                    feed.set_authorization(authorize);
+                    while (!camera_stop_.load() && !stop_.load()) {
+                        if (!authorize()) break;
+                        const auto now=std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count();
+                        auto frame=feed.fetch_frame(now);
+                        if (!authorize()) break;
+                        if (frame.ok) {
+                            // AlertRepository's raw SQL bypasses SQLiteDatabase's wrapper
+                            // mutex. Serialize provider reads and analysis writes explicitly.
+                            std::lock_guard<std::mutex> g(audit_mutex_);
+                            analysis.process(frame.jpeg);
+                        } else analysis.note_no_frame();
+                        {
+                            auto result=analysis.status();
+                            // UI exposes counts/state only, never images or classifications.
+                            std::lock_guard<std::mutex> g(camera_status_mutex_);
+                            camera_status_={{"state",result["state"]},{"observations_processed",result["observations_processed"]},
+                                {"alerts_committed",result["alerts_committed"]},{"decode_failures",result["decode_failures"]},
+                                {"fetch_failures",feed.status(now).fetch_failures},
+                                {"identity_gate","owner_approved_fixed_host_mac_no_rediscovery"}};
+                        }
+                        std::unique_lock<std::mutex> wait(camera_wait_mutex_);
+                        camera_cv_.wait_for(wait,std::chrono::milliseconds(frame.ok?800:60000),
+                            [this]{return camera_stop_.load() || stop_.load();});
+                    }
+                    {
+                        std::lock_guard<std::mutex> g(camera_status_mutex_);
+                        camera_status_["state"] = "stopped_or_authorization_withdrawn";
+                    }
+                } catch (...) {
+                    std::lock_guard<std::mutex> g(camera_status_mutex_);
+                    camera_status_={{"state","failed_closed"}};
+                }
+                capture_.store(false);
+                app_->get_status().capture_enabled.store(false);
+            });
+        } catch (...) {
+            std::lock_guard<std::mutex> g(camera_status_mutex_);
+            camera_status_={{"state","configuration_refused"}};
+        }
+    }
+
+    std::string data_dir_;
+    std::mutex audit_mutex_, camera_status_mutex_, camera_wait_mutex_;
+    std::condition_variable camera_cv_;
+    std::thread camera_thread_;
+    std::atomic<bool> camera_stop_{true}, capture_{false};
+    nlohmann::json camera_status_={{"state","disabled"}};
     std::mutex mutex_;
     std::unique_ptr<Application> app_;
     std::unique_ptr<PersistenceAudit> audit_;
@@ -388,6 +536,11 @@ Java_org_homeguardian_edgeservice_NativeEngine_nativeLastError(JNIEnv* env, jcla
 JNIEXPORT jstring JNICALL
 Java_org_homeguardian_edgeservice_NativeEngine_nativeStatsJson(JNIEnv* env, jclass) {
     return env->NewStringUTF(controller().stats_json().c_str());
+}
+
+JNIEXPORT jint JNICALL
+Java_org_homeguardian_edgeservice_NativeEngine_nativeReloadCamera(JNIEnv*, jclass, jboolean start) {
+    return controller().reload_camera(start == JNI_TRUE);
 }
 
 }  // extern "C"

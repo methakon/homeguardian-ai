@@ -94,6 +94,24 @@ if printf '%s\n' "$MCP_SRC" | grep -qx 'src/main_mcp_server\.cpp'; then
   echo "source extraction failed to exclude main_mcp_server.cpp - refusing to build"; exit 1
 fi
 echo "    $N translation units from the hg_mcp_server target (main excluded), + 1 JNI file"
+# Autonomous camera analysis shares the controller's PersistenceAudit. These are
+# the real camera/registry/HTTP implementations, not a second engine or store.
+# Deduplicate against the extracted MCP target as it evolves.
+CAMERA_SRC=(
+  src/core/CameraActivitySession.cpp src/core/ChangeCharacter.cpp
+  src/core/ActivityDetectors.cpp src/core/BoundedFeatures.cpp
+  src/core/AnomalyDetector.cpp src/core/AnomalyMonitor.cpp
+  src/core/DetectionFusionRule.cpp src/core/ActivityEpisode.cpp
+  src/core/Pipeline.cpp src/core/AlertPolicy.cpp src/core/Observation.cpp
+  src/core/HttpClient.cpp src/net/DeviceRegistry.cpp
+  src/camera/RegistryAuthorizer.cpp src/camera/DeviceFingerprint.cpp
+)
+mapfile -t ENGINE_SRC < <(printf '%s\n' $MCP_SRC "${CAMERA_SRC[@]}" | sort -u)
+for src in "${ENGINE_SRC[@]}"; do
+  [ -f "$ROOT/$src" ] || { echo "missing engine source: $src"; exit 1; }
+done
+# Absolute paths also make invocation independent of the caller's working directory.
+ENGINE_SRC=( "${ENGINE_SRC[@]/#/$ROOT/}" )
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"/{obj,lib,classes,dex,gen}
@@ -110,10 +128,10 @@ INC=( -I"$ROOT/src" -I"$ROOT/src/core" -I"$ROOT/third_party/sqlite" -I"$SPDLOG_I
 # shellcheck disable=SC2086
 "$CXX" -std=c++20 -O2 -fPIC -DNDEBUG -DHOMEGUARDIAN_ANDROID=1 -Wall -Wextra \
   "${INC[@]}" \
-  "$APK_DIR/jni/hg_edge_service_jni.cpp" $MCP_SRC \
+  "$APK_DIR/jni/hg_edge_service_jni.cpp" "${ENGINE_SRC[@]}" \
   "$BUILD_DIR/obj/sqlite3.o" \
   -shared -o "$BUILD_DIR/lib/libhg_edge_service.so" \
-  -llog -pthread
+  -llog -ljnigraphics -pthread
 
 echo "==> Verify JNI exports against the Java native declarations (from the compiled ELF)"
 bash "$ROOT/scripts/verify_jni_exports.sh" "$BUILD_DIR/lib/libhg_edge_service.so" \

@@ -47,6 +47,12 @@ public final class NativeEngine {
     private static native int nativePort();
     private static native String nativeLastError();
     private static native String nativeStatsJson();
+    private static native int nativeReloadCamera(boolean start);
+
+    /** In-process only; never registered as an intent, bridge command or MCP tool. */
+    public static int reloadCamera(boolean start) {
+        return sLoaded ? nativeReloadCamera(start) : INTERNAL_ERROR;
+    }
 
     public static String version() {
         return sLoaded ? nativeVersion() : "native library not loaded";

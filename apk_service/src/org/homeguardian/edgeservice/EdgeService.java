@@ -117,6 +117,7 @@ public class EdgeService extends Service {
             return START_STICKY;
         }
         if (ACTION_BRIDGE_STOP.equals(action)) {
+            getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putBoolean("desired_running", false).apply();
             stopBridge();
             return START_STICKY;
         }
@@ -157,6 +158,7 @@ public class EdgeService extends Service {
             EdgeState.port = NativeEngine.port();
             EdgeState.notifyChanged();
             updateNotification("running on 127.0.0.1:" + EdgeState.port);
+            restoreBridgeIfRequested();
             return;
         }
         try {
@@ -191,6 +193,7 @@ public class EdgeService extends Service {
                             + " creds_mode=" + Provisioner.credsMode(EdgeService.this)
                             + " native=" + NativeEngine.version());
             updateNotification("running on 127.0.0.1:" + EdgeState.port);
+            restoreBridgeIfRequested();
         } else {
             EdgeState.nativeRunning = false;
             EdgeState.lastError = NativeEngine.describe(code) + " / " + NativeEngine.lastError();
@@ -355,7 +358,15 @@ public class EdgeService extends Service {
      * Start the outbound authenticated control bridge. Refuses without a coordinator URL, so the
      * production default (nothing configured) dials nowhere.
      */
-    private void startBridge(String url) {
+    private void restoreBridgeIfRequested() {
+        SharedPreferences prefs = getSharedPreferences("hg_bridge", MODE_PRIVATE);
+        String endpoint = prefs.getString("endpoint", "");
+        // A fresh install dials nowhere. Preserve an existing operator-configured
+        // endpoint, but never override an explicitly persisted Stop decision.
+        if (prefs.getBoolean("desired_running", endpoint.length() > 0)) startBridge(null);
+    }
+
+    private synchronized void startBridge(String url) {
         // Fall back to the last operator-configured endpoint, so a restart after reboot or after a
         // process kill resumes the same coordinator rather than silently idling. Nothing is
         // compiled in: an unconfigured install still has no endpoint and dials nowhere.
@@ -387,13 +398,16 @@ public class EdgeService extends Service {
         String r = bridge.start();
         Log.i(TAG, "bridge: " + r);
         EdgeState.bridgeRunning = bridge.isRunning();
+        if (EdgeState.bridgeRunning) {
+            getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putBoolean("desired_running", true).apply();
+        }
         EdgeState.bridgeStatus = r;
         updateNotification("bridge: " + r);
         EdgeState.notifyChanged();
     }
 
     /** Stop the bridge and close its session. Safe when it was never started. */
-    private void stopBridge() {
+    private synchronized void stopBridge() {
         OutboundMcpBridge b = bridge;
         bridge = null;
         if (b != null) {
@@ -406,6 +420,7 @@ public class EdgeService extends Service {
     }
 
     private void stopEverything(String reason) {
+        getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putBoolean("desired_running", false).apply();
         stopBridge();          // never leave an outbound session open past a service stop
         scheduleStop(reason);
     }

@@ -42,6 +42,10 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private Button bridgeStartBtn;
     private Button bridgeStopBtn;
     private TextView bridgeView;
+    private EditText cameraHost, cameraUser, cameraPassword, cameraMac;
+    private android.widget.CheckBox cameraConsent, cameraEmpty, cameraBinding;
+    private Button cameraSave, cameraDisable;
+    private TextView cameraMessage;
     private final Handler ui = new Handler();
     // Last rendered content. A 1 Hz ticker that calls setText() unconditionally emits an
     // accessibility content-changed event every second, which (a) wakes the compositor for
@@ -148,6 +152,7 @@ public class MainActivity extends Activity implements EdgeState.Listener {
         }));
         root.addView(row3);
 
+        addCameraUi(root);
         // ---- HG-NET-02B outbound control bridge -------------------------------------------
         // Off by default and unusable until an endpoint is entered: an unconfigured install
         // dials nowhere, which is the property that makes shipping this safe.
@@ -185,6 +190,91 @@ public class MainActivity extends Activity implements EdgeState.Listener {
         logView.setPadding(0, pad, 0, 0);
         root.addView(logView);
         return scroll;
+    }
+
+    private EditText cameraField(LinearLayout root, String hint, boolean password) {
+        EditText f = new EditText(this);
+        f.setHint(hint); f.setSingleLine(true); f.setSaveEnabled(false);
+        f.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
+                (password ? android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD :
+                 android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD));
+        f.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        root.addView(f); return f;
+    }
+
+    private android.widget.CheckBox cameraCheck(LinearLayout root, String label) {
+        android.widget.CheckBox c = new android.widget.CheckBox(this);
+        c.setText(label); c.setChecked(false); c.setSaveEnabled(false);
+        c.setFilterTouchesWhenObscured(true); root.addView(c); return c;
+    }
+
+    private void addCameraUi(LinearLayout root) {
+        TextView title = new TextView(this);
+        title.setText("\nLocal camera snapshot analysis (off until explicitly approved)\n"
+                + "GET /snapshot on port 80; private IPv4 only. About 800 ms between frames; "
+                + "60 s failure backoff. No scanning or DHCP recovery. Motion/change evidence only; "
+                + "no identity, speech or emergency classification. Raw media stays in memory locally.");
+        root.addView(title);
+        cameraHost=cameraField(root,"Camera private IPv4",false);
+        cameraUser=cameraField(root,"Camera username",false);
+        cameraPassword=cameraField(root,"Camera password (re-enter to save)",true);
+        cameraMac=cameraField(root,"Camera MAC aa:bb:cc:dd:ee:ff",false);
+        cameraEmpty=cameraCheck(root,"I explicitly approve an EMPTY camera password");
+        cameraBinding=cameraCheck(root,"I verified this fixed private host belongs to this MAC. "
+                + "Android cannot verify ARP here; stop/reconfigure if DHCP changes it.");
+        cameraConsent=cameraCheck(root,"I own/authorize this camera and consent to autonomous "
+                + "home-security capture and local analysis, including while this screen is closed "
+                + "and after service restart. I accept LAN plaintext HTTP credentials.");
+        cameraSave=button("Save + enable camera",new View.OnClickListener() {
+            public void onClick(View v) { changeCamera(true); }
+        });
+        cameraDisable=button("Stop camera + revoke consent",new View.OnClickListener() {
+            public void onClick(View v) { changeCamera(false); }
+        });
+        cameraSave.setFilterTouchesWhenObscured(true);
+        cameraDisable.setFilterTouchesWhenObscured(true);
+        root.addView(cameraSave); root.addView(cameraDisable);
+        cameraMessage=new TextView(this); root.addView(cameraMessage);
+        // No input from launch intents and no pre-checked consent. Existing credentials
+        // are intentionally not echoed or restored through Android saved-instance state.
+        try {
+            org.json.JSONObject saved=CameraProvisioner.read(this);
+            cameraHost.setText(saved.optString("host",""));
+            cameraUser.setText(saved.optString("user",""));
+            cameraMac.setText(saved.optString("mac",""));
+        } catch (Exception ignored) { cameraMessage.setText("Camera configuration unreadable; capture fails closed."); }
+    }
+
+    private void changeCamera(final boolean enable) {
+        final String host=cameraHost.getText().toString().trim();
+        final String user=cameraUser.getText().toString();
+        final String password=cameraPassword.getText().toString();
+        final String mac=cameraMac.getText().toString().trim();
+        final boolean consent=cameraConsent.isChecked(), empty=cameraEmpty.isChecked(), binding=cameraBinding.isChecked();
+        cameraPassword.setText("");
+        cameraSave.setEnabled(false); cameraDisable.setEnabled(false);
+        cameraMessage.setText("Applying camera authorization...");
+        new Thread(new Runnable() {
+            public void run() {
+                String message;
+                try {
+                    if (enable) CameraProvisioner.save(MainActivity.this,host,user,password,mac,consent,empty,binding);
+                    else CameraProvisioner.disable(MainActivity.this);
+                    message=enable ? "Camera authorization saved. Start the edge service if stopped; see native counts/status above."
+                            : "Camera stopped; persistent consent revoked.";
+                } catch (Exception ignored) {
+                    // Do not render exception text: credential-bearing inputs must never
+                    // leak into status, logcat, probe exports or crash diagnostics.
+                    message="Camera change refused/failed. Check private IPv4, MAC, credentials and explicit approvals.";
+                }
+                final String result=message;
+                ui.post(new Runnable() { public void run() {
+                    cameraMessage.setText(result); cameraSave.setEnabled(true); cameraDisable.setEnabled(true);
+                    cameraConsent.setChecked(false); cameraBinding.setChecked(false); cameraEmpty.setChecked(false);
+                    render();
+                }});
+            }
+        },"hg-camera-config").start();
     }
 
     private Button button(String label, View.OnClickListener l) {
@@ -240,7 +330,10 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private void onBridgeStart() {
         String url = endpointField.getText().toString().trim();
         getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putString("endpoint", url).apply();
-        String refusal = TransportPolicy.refusalReason(url);
+        // Use the same route-aware gate as the service: overlay peers commonly
+        // have /32 addresses, so interface-subnet inference rejects a valid VPN.
+        RouteSecurityPolicy.wireAndroidPlatform(this);
+        String refusal = RouteSecurityPolicy.refusalReason(url);
         if (refusal != null) {
             EdgeState.bridgeRunning = false;
             EdgeState.bridgeStatus = "bridge: " + refusal;
