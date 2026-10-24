@@ -32,6 +32,7 @@ import os
 import re
 import socket
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Iterator, Optional, Protocol
@@ -337,6 +338,38 @@ class RecoveringCameraSource:
         if host:
             self._locator.note_working_host(host)
 
+    # -- explicit hooks, for callers that already know the outcome ---------- #
+    #
+    # `probe()` reports an unreachable camera as a RESULT rather than raising, so
+    # a caller that only watches results (the autonomous watcher) needs these to
+    # drive recovery without faking an exception.
+
+    def note_healthy(self, host: Optional[str] = None) -> None:
+        """Record that the camera answered. Clears the failure streak."""
+        self._note_success(host or self._current_host())
+
+    def attempt_recovery(self) -> bool:
+        """Force one recovery attempt against a camera already known to be down.
+
+        Returns True only if the address was actually repaired. This is
+        deliberately the only way in: recovery is never attempted without a real
+        observed failure, so a healthy camera is never probed or swept.
+
+        A repaired address is confirmed before the camera is called healthy again.
+        Without that step the failure streak would outlive the repair and the
+        state would keep reporting DISCONNECTED for a full interval even though
+        the camera is answering.
+        """
+        self._note_failure()
+        if not self._repoint():
+            return False
+        try:
+            if bool(self._inner.probe()):
+                self.note_healthy()
+        except Exception:  # noqa: BLE001 - the next heartbeat will retry anyway
+            pass
+        return True
+
     def _current_host(self) -> Optional[str]:
         return getattr(self._inner, "_host", None)
 
@@ -450,3 +483,186 @@ def recovering_source_from_env(
 
     locator = CameraLocator(mac=resolved_mac, last_host=getattr(inner, "_host", None))
     return RecoveringCameraSource(inner, locator)
+
+
+#: How often the autonomous watcher checks the camera. The owner's choice: often
+#: enough that a camera which dropped is noticed and pulled back in reasonable
+#: time, slow enough that a fragile single-board daemon is not being touched
+#: constantly and the LAN is not being swept.
+DEFAULT_WATCH_INTERVAL_S = 90.0
+
+#: Set this to arm the watcher. Absent/empty means nothing polls, ever.
+ENV_CAMERA_WATCH = "HG_CAMERA_WATCH"
+
+#: Optional override for the interval, in seconds.
+ENV_CAMERA_WATCH_INTERVAL = "HG_CAMERA_WATCH_INTERVAL_S"
+
+#: Values of HG_CAMERA_WATCH that mean "yes". Anything else is read as "no".
+_TRUTHY = {"1", "true", "yes", "on", "enabled"}
+
+
+def watch_enabled_from_env(dotenv_path: Optional[str] = None) -> bool:
+    """Whether autonomous watching is switched on. Explicit, never inferred."""
+    raw = os.environ.get(ENV_CAMERA_WATCH)
+    if raw is None:
+        from camera_ingest.source import default_dotenv_path, load_dotenv
+
+        raw = load_dotenv(dotenv_path or default_dotenv_path()).get(ENV_CAMERA_WATCH)
+    return (raw or "").strip().lower() in _TRUTHY
+
+
+def watch_interval_from_env(dotenv_path: Optional[str] = None) -> float:
+    """The watch interval in seconds, or the default when unset/unparseable."""
+    raw = os.environ.get(ENV_CAMERA_WATCH_INTERVAL)
+    if raw is None:
+        from camera_ingest.source import default_dotenv_path, load_dotenv
+
+        raw = load_dotenv(dotenv_path or default_dotenv_path()).get(ENV_CAMERA_WATCH_INTERVAL)
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_WATCH_INTERVAL_S
+    # A sub-second heartbeat would hammer the device; treat nonsense as unset.
+    return value if value >= 1.0 else DEFAULT_WATCH_INTERVAL_S
+
+
+class RecoveryWatcher:
+    """Keep a camera reachable without anyone having to ask.
+
+    Recovery on its own only fires when a request fails, which is useless for the
+    case that actually matters: nobody is watching, the camera drops, and it stays
+    gone until someone happens to look. This supplies the missing trigger — a
+    heartbeat on its own schedule that notices the camera is unreachable, tries to
+    repair it, and keeps trying indefinitely until it answers.
+
+    Consent is explicit and never inferred: nothing polls until `start()` is
+    called, and `stop()` ends it. The heartbeat is the only thing here that
+    touches the camera on its own initiative, so it is also the only thing that
+    could annoy a fragile daemon — hence the deliberately unhurried default.
+
+    A healthy camera is never disturbed: the watcher only attempts recovery when
+    its own probe has just failed.
+    """
+
+    def __init__(
+        self,
+        source: "_CameraLike",
+        *,
+        interval: float = DEFAULT_WATCH_INTERVAL_S,
+        on_event: Optional[Callable[[str, bool], None]] = None,
+    ) -> None:
+        self._source = source
+        self._interval = max(float(interval), 1.0)
+        self._on_event = on_event
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._checks = 0
+        self._failures_seen = 0
+        self._recoveries = 0
+        self._last_ok = True
+
+    # -- introspection ---------------------------------------------------- #
+
+    @property
+    def interval(self) -> float:
+        return self._interval
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def checks(self) -> int:
+        """How many heartbeats have run."""
+        return self._checks
+
+    @property
+    def failures_seen(self) -> int:
+        """How many heartbeats found the camera unreachable."""
+        return self._failures_seen
+
+    @property
+    def recoveries(self) -> int:
+        """How many times an address was actually repaired."""
+        return self._recoveries
+
+    @property
+    def last_check_ok(self) -> bool:
+        return self._last_ok
+
+    # -- one heartbeat ---------------------------------------------------- #
+
+    def check_once(self) -> bool:
+        """Run a single heartbeat. Returns True if the camera answered.
+
+        Safe to call directly, which is how the tests exercise it without threads.
+        """
+        self._checks += 1
+        try:
+            result = self._source.probe()
+            ok = bool(result)
+        except Exception:  # noqa: BLE001 - an unreachable camera is a normal state
+            ok = False
+
+        if ok:
+            self._last_ok = True
+            note = getattr(self._source, "note_healthy", None)
+            if callable(note):
+                note()
+            if self._on_event:
+                self._on_event("reachable", True)
+            return True
+
+        self._last_ok = False
+        self._failures_seen += 1
+        if self._on_event:
+            self._on_event("unreachable", False)
+
+        # The camera is genuinely down, so recovery is allowed to run. This is
+        # the ONLY path that authorises an attempt: no failure, no attempt.
+        repair = getattr(self._source, "attempt_recovery", None)
+        if callable(repair):
+            try:
+                if repair():
+                    self._recoveries += 1
+                    if self._on_event:
+                        self._on_event("repaired", True)
+            except Exception:  # noqa: BLE001 - never let a repair kill the watcher
+                pass
+        return False
+
+    # -- lifecycle -------------------------------------------------------- #
+
+    def _run(self) -> None:
+        # wait() on the stop event, not sleep(): stop() then returns promptly
+        # instead of the caller having to wait out a whole interval.
+        while not self._stop.wait(self._interval):
+            self.check_once()
+
+    def start(self) -> "RecoveryWatcher":
+        if self.running:
+            return self
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="hg-camera-watch")
+        self._thread.start()
+        return self
+
+    def stop(self, timeout: float = 5.0) -> "RecoveryWatcher":
+        self._stop.set()
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(timeout)
+        return self
+
+    def __enter__(self) -> "RecoveryWatcher":
+        return self.start()
+
+    def __exit__(self, *_exc) -> None:
+        self.stop()
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        return (
+            f"RecoveryWatcher(running={self.running}, interval={self._interval:g}s, "
+            f"checks={self._checks}, failures={self._failures_seen}, "
+            f"recoveries={self._recoveries})"
+        )

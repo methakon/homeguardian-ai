@@ -7,11 +7,13 @@ camera and floods the LAN. Every guard is asserted on directly.
 
 from __future__ import annotations
 
+import time
 import unittest
 
 from camera_ingest.recovery import (
     CameraLocator,
     RecoveringCameraSource,
+    RecoveryWatcher,
     normalise_mac,
     parse_neigh_table,
     subnet_of,
@@ -292,6 +294,222 @@ class TestEnrolment(unittest.TestCase):
         os.environ["HG_CAMERA_MAC"] = "not-a-mac"
         with self.assertRaises(ValueError):
             recovering_source_from_env(_FakeSource(), dotenv_path=self.NO_DOTENV)
+
+
+def _watched(host: str = "192.168.1.13", *, reachable_at=None, table: str | None = None):
+    """A RecoveringCameraSource wired to a fake camera, for watcher tests."""
+    src = _FakeSource(host, reachable_at=reachable_at)
+    text = table if table is not None else f"{host} dev wlp6s0 lladdr {CAM} REACHABLE\n"
+    return RecoveringCameraSource(src, _locator(text, last=host))
+
+
+class TestWatcher(unittest.TestCase):
+    """The watcher is the piece that makes recovery autonomous.
+
+    It is also the only thing here that touches the camera of its own accord, so
+    every guard on it is asserted directly.
+    """
+
+    def test_the_default_heartbeat_is_ninety_seconds(self) -> None:
+        from camera_ingest.recovery import DEFAULT_WATCH_INTERVAL_S, RecoveryWatcher
+
+        w = RecoveryWatcher(_FakeSource())
+        self.assertEqual(w.interval, 90.0)
+        self.assertEqual(DEFAULT_WATCH_INTERVAL_S, 90.0)
+
+    def test_a_healthy_camera_is_never_swept(self) -> None:
+        src = _FakeSource("192.168.1.13")
+        loc = _locator(f"192.168.1.13 dev wlp6s0 lladdr {CAM} REACHABLE\n")
+        rec = RecoveringCameraSource(src, loc)
+        w = RecoveryWatcher(rec)
+
+        for _ in range(5):
+            self.assertTrue(w.check_once())
+
+        self.assertEqual(w.checks, 5)
+        self.assertEqual(w.failures_seen, 0)
+        self.assertEqual(w.recoveries, 0)
+        self.assertEqual(loc.scan_count, 0, "a healthy camera must never be swept")
+
+    def test_a_moved_camera_is_followed_by_the_heartbeat(self) -> None:
+        """The camera moved while nobody was watching: the heartbeat brings it back.
+
+        A probe that RAISES is repaired inside the call itself, so the heartbeat
+        ends up healthy. What matters is the outcome: the address followed the MAC.
+        """
+        src = _FakeSource("192.168.1.13", reachable_at="192.168.1.6")
+        loc = _locator(f"192.168.1.6 dev wlp6s0 lladdr {CAM} REACHABLE\n")
+        rec = RecoveringCameraSource(src, loc)
+        w = RecoveryWatcher(rec)
+
+        self.assertTrue(w.check_once(), "the heartbeat recovered it, so it is reachable")
+        self.assertEqual(src._host, "192.168.1.6", "the address followed the MAC")
+        self.assertEqual(rec.state, "LIVE")
+        self.assertEqual(loc.scan_count, 0, "a table hit needs no sweep")
+        self.assertTrue(w.check_once(), "and it stays healthy")
+
+    def test_it_keeps_retrying_until_the_camera_answers(self) -> None:
+        """The whole point: it does not give up after one attempt.
+
+        Uses the REAL camera's behaviour - an unreachable camera is reported as a
+        falsy RESULT, not an exception - which is precisely the case where nothing
+        else would ever trigger recovery.
+        """
+        table = {"text": ""}          # nothing discoverable yet
+        src = _ResultSource("192.168.1.13", reachable_at="192.168.1.99")
+        loc = CameraLocator(
+            mac=CAM, last_host="192.168.1.13",
+            neigh_reader=lambda: table["text"],
+            sweep=lambda subnet, timeout: None,
+        )
+        rec = RecoveringCameraSource(src, loc)
+        w = RecoveryWatcher(rec)
+
+        # camera gone, and recovery genuinely cannot find it yet
+        for i in range(1, 4):
+            self.assertFalse(w.check_once(), f"attempt {i} should report down")
+        self.assertEqual(w.failures_seen, 3, "it kept trying, heartbeat after heartbeat")
+        self.assertEqual(w.recoveries, 0, "nothing repaired because nothing was found")
+        self.assertEqual(src._host, "192.168.1.13", "an unverified move is never adopted")
+
+        # it comes back on a new address and becomes discoverable
+        table["text"] = f"192.168.1.99 dev wlp6s0 lladdr {CAM} REACHABLE\n"
+        self.assertFalse(w.check_once(), "this heartbeat finds it down, then repairs")
+        self.assertEqual(w.recoveries, 1, "the retry finally paid off")
+        self.assertEqual(src._host, "192.168.1.99")
+
+        # and it is healthy from here on, without any further repair
+        self.assertTrue(w.check_once(), "now healthy")
+        self.assertTrue(w.check_once(), "still healthy")
+        self.assertEqual(w.failures_seen, 4, "no extra failures after recovery")
+        self.assertEqual(w.recoveries, 1)
+
+    def test_a_probe_that_reports_failure_as_a_result_still_triggers_recovery(self) -> None:
+        """The real camera reports unreachable as a RESULT, not an exception."""
+
+        src = _ResultSource("192.168.1.13", reachable_at="192.168.1.6")
+        loc = _locator(f"192.168.1.6 dev wlp6s0 lladdr {CAM} REACHABLE\n")
+        rec = RecoveringCameraSource(src, loc)
+        w = RecoveryWatcher(rec)
+
+        self.assertFalse(w.check_once())
+        self.assertEqual(w.recoveries, 1, "a failure RESULT must still authorise recovery")
+        self.assertEqual(src._host, "192.168.1.6")
+
+    def test_start_runs_the_heartbeat_and_stop_ends_it(self) -> None:
+        src = _FakeSource("192.168.1.13")
+        rec = RecoveringCameraSource(src, _locator(f"192.168.1.13 dev wlp6s0 lladdr {CAM} REACHABLE\n"))
+        w = RecoveryWatcher(rec, interval=1.0)   # fast, only for this test
+
+        self.assertFalse(w.running)
+        w.start()
+        self.assertTrue(w.running)
+        deadline = time.monotonic() + 6.0
+        while w.checks < 2 and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertGreaterEqual(w.checks, 2, "the thread must actually be beating")
+
+        w.stop()
+        self.assertFalse(w.running)
+        settled = w.checks
+        time.sleep(1.5)
+        self.assertEqual(w.checks, settled, "stop() must actually end the heartbeats")
+
+    def test_stop_returns_promptly_rather_than_waiting_out_the_interval(self) -> None:
+        w = RecoveryWatcher(_watched(), interval=90.0)
+        w.start()
+        t0 = time.monotonic()
+        w.stop()
+        self.assertLess(time.monotonic() - t0, 3.0, "stop() must not block for the interval")
+
+    def test_it_is_used_as_a_context_manager(self) -> None:
+        w = RecoveryWatcher(_watched(), interval=30.0)
+        with w as started:
+            self.assertTrue(started.running)
+        self.assertFalse(w.running)
+
+
+class _Result:
+    """Stands in for the real ProbeResult: truthy when the camera answered."""
+
+    def __init__(self, ok: bool, detail: str = "") -> None:
+        self.ok = ok
+        self.detail = detail
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+class _ResultSource(_FakeSource):
+    """A camera whose probe REPORTS failure instead of raising, like the real one.
+
+    `JuanHttpSource.probe()` catches its own exceptions and returns a ProbeResult,
+    so nothing above it sees a raise. That is the important case: it is exactly
+    why an autonomous watcher is needed at all.
+    """
+
+    def probe(self, timeout: float = 8.0):
+        if self._host != self.reachable_at:
+            return _Result(False, f"nothing at {self._host}")
+        return _Result(True, "200 OK")
+
+
+class TestWatchEnrolment(unittest.TestCase):
+    """Autonomous polling must be explicitly switched on, in .env, never inferred."""
+
+    NO_DOTENV = "/nonexistent/hg-test-absent.env"
+
+    def setUp(self) -> None:
+        import os
+
+        self._saved = {k: os.environ.pop(k, None)
+                       for k in ("HG_CAMERA_WATCH", "HG_CAMERA_WATCH_INTERVAL_S")}
+
+    def tearDown(self) -> None:
+        import os
+
+        for k, v in self._saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+
+    def test_absent_means_no_watching(self) -> None:
+        from camera_ingest.recovery import watch_enabled_from_env
+
+        self.assertFalse(watch_enabled_from_env(self.NO_DOTENV), "must not poll by default")
+
+    def test_various_truthy_spellings_arm_it(self) -> None:
+        import os
+
+        from camera_ingest.recovery import watch_enabled_from_env
+
+        for value in ("1", "true", "YES", "On", "enabled"):
+            os.environ["HG_CAMERA_WATCH"] = value
+            self.assertTrue(watch_enabled_from_env(self.NO_DOTENV), value)
+
+    def test_rubbish_does_not_arm_it(self) -> None:
+        import os
+
+        from camera_ingest.recovery import watch_enabled_from_env
+
+        for value in ("", "0", "false", "no", "maybe"):
+            os.environ["HG_CAMERA_WATCH"] = value
+            self.assertFalse(watch_enabled_from_env(self.NO_DOTENV), value)
+
+    def test_interval_defaults_to_ninety_and_honours_an_override(self) -> None:
+        import os
+
+        from camera_ingest.recovery import watch_interval_from_env
+
+        self.assertEqual(watch_interval_from_env(self.NO_DOTENV), 90.0)
+        os.environ["HG_CAMERA_WATCH_INTERVAL_S"] = "45"
+        self.assertEqual(watch_interval_from_env(self.NO_DOTENV), 45.0)
+        os.environ["HG_CAMERA_WATCH_INTERVAL_S"] = "nonsense"
+        self.assertEqual(watch_interval_from_env(self.NO_DOTENV), 90.0)
+        os.environ["HG_CAMERA_WATCH_INTERVAL_S"] = "0.01"
+        self.assertEqual(watch_interval_from_env(self.NO_DOTENV), 90.0,
+                         "a sub-second heartbeat must not be accepted")
 
 
 if __name__ == "__main__":

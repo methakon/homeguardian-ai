@@ -41,7 +41,12 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from .recovery import recovering_source_from_env
+from .recovery import (
+    RecoveryWatcher,
+    recovering_source_from_env,
+    watch_enabled_from_env,
+    watch_interval_from_env,
+)
 from .source import (
     DEFAULT_HOST,
     ENV_PASSWORD,
@@ -219,6 +224,7 @@ class LoopbackRelay:
 
         self._httpd: Optional[http.server.ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
+        self._watcher: Optional[RecoveryWatcher] = None
 
     # -- lifecycle -------------------------------------------------------- #
 
@@ -239,9 +245,22 @@ class LoopbackRelay:
         self._httpd = http.server.ThreadingHTTPServer((self._config.bind, self._config.port), handler)
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
+
+        # Autonomous recovery, if the owner has switched it on. This is what
+        # notices a camera that dropped while nobody was watching; without it,
+        # recovery only ever fires on a request.
+        if watch_enabled_from_env():
+            self._watcher = RecoveryWatcher(
+                self._source, interval=watch_interval_from_env()
+            ).start()
         return self
 
     def stop(self, timeout: float = 5.0) -> None:
+        # Stop the heartbeat first: it talks to the camera, so it must not
+        # outlive the relay that owns the source.
+        if self._watcher is not None:
+            self._watcher.stop()
+            self._watcher = None
         if self._httpd is None:
             return
         self._httpd.shutdown()
