@@ -96,9 +96,13 @@ bool build_password_field(const std::string& password, const std::string& static
         return false;
     }
 
-    const size_t pad = kAesBlockBytes - (password.size() % kAesBlockBytes);
-    std::vector<uint8_t> block(password.size() + pad, 0);
-    std::memcpy(block.data(), password.data(), password.size());
+    // Exactly one fixed 16-byte zero-initialized AES block. Passwords <= 16 bytes
+    // (including empty) fit within this single block without variable padding expanding
+    // into a second block that would overflow the 32-byte field (16-byte key + 16-byte block).
+    std::vector<uint8_t> block(kAesBlockBytes, 0);
+    if (!password.empty()) {
+        std::memcpy(block.data(), password.data(), password.size());
+    }
 
     std::string stage_why;
     if (!aes128_ecb_encrypt_in_place(static_key, block.data(), block.size(), &stage_why)) {

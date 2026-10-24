@@ -1377,3 +1377,22 @@ source, not the proprietary V380 listener. Installing this bridge binary does no
 configure the physical camera, implement its unsupported transport, or establish
 workstation-independent capture. Do not equate these code tests with live feed
 or physical-alert acceptance.
+
+### Legacy codec boundary correction and camera-source clarification
+
+The legacy V380 password encoder allocated two encrypted blocks for an exactly
+16-byte password, then copied them into a field sized for one block plus its key.
+It now uses exactly one zero-filled 16-byte block after the existing input-size
+check. Empty, 15-byte and 16-byte inputs remain supported; 17-byte inputs fail
+without producing a field. Focused rebuilt protocol tests passed 33,042 assertions
+in 12 cases, including the 24-assertion boundary case. This is a memory-safety fix,
+not encrypted-generation camera support or physical-feed acceptance.
+
+The V380 finding must not be generalized to every owner camera. A separate
+JUAN/EseeCloud source was found on the LAN: anonymous snapshot access was rejected,
+the previously configured camera credential returned a real 24,321-byte JPEG,
+ffmpeg decoded a 160x120 grayscale frame (19,200 bytes), and consecutive snapshot
+hashes differed. Those measurements establish physical acquisition/decoding only.
+The subsequent native-analysis experiment was stopped at the owner's direction
+so the earlier device-specialist session can continue it; no persisted physical
+alert, Alexa readback, production feed or independent capture is claimed.

@@ -119,6 +119,44 @@ TEST_CASE("v380 protocol: the password field refuses what it cannot represent", 
     }
 }
 
+TEST_CASE("v380 protocol: boundary password lengths (0, 15, 16, 17 bytes) preserve 32-byte field and roundtrip",
+          "[v380proto][boundary]") {
+    std::vector<uint8_t> field;
+    std::string why;
+
+    SECTION("0-byte empty password roundtrips cleanly in a 32-byte field") {
+        const std::string pw0 = "";
+        REQUIRE(build_password_field(pw0, kSyntheticStaticKey, kSyntheticRandomKey, &field, &why));
+        REQUIRE(field.size() == kPasswordFieldBytes);
+        REQUIRE(std::string(field.begin(), field.begin() + kRandomKeyBytes) == kSyntheticRandomKey);
+        REQUIRE(decrypt_password_field(field, kSyntheticStaticKey) == pw0);
+    }
+
+    SECTION("15-byte password roundtrips cleanly in a 32-byte field") {
+        const std::string pw15 = "123456789012345";
+        REQUIRE(build_password_field(pw15, kSyntheticStaticKey, kSyntheticRandomKey, &field, &why));
+        REQUIRE(field.size() == kPasswordFieldBytes);
+        REQUIRE(std::string(field.begin(), field.begin() + kRandomKeyBytes) == kSyntheticRandomKey);
+        REQUIRE(decrypt_password_field(field, kSyntheticStaticKey) == pw15);
+    }
+
+    SECTION("16-byte boundary password roundtrips cleanly without heap buffer overflow in a 32-byte field") {
+        const std::string pw16 = "1234567890123456";
+        REQUIRE(build_password_field(pw16, kSyntheticStaticKey, kSyntheticRandomKey, &field, &why));
+        REQUIRE(field.size() == kPasswordFieldBytes);
+        REQUIRE(std::string(field.begin(), field.begin() + kRandomKeyBytes) == kSyntheticRandomKey);
+        REQUIRE(decrypt_password_field(field, kSyntheticStaticKey) == pw16);
+    }
+
+    SECTION("17-byte password is refused with meaningful reason and does not produce a field") {
+        const std::string pw17 = "12345678901234567";
+        field.clear();
+        REQUIRE_FALSE(build_password_field(pw17, kSyntheticStaticKey, kSyntheticRandomKey, &field, &why));
+        REQUIRE(why.find("longer than") != std::string::npos);
+        REQUIRE(field.empty());
+    }
+}
+
 TEST_CASE("v380 protocol: the login request lands on the documented offsets", "[v380proto][wire]") {
     LoginRequest req;
     req.device_id = 12345678;
