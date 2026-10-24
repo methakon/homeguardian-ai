@@ -1650,3 +1650,49 @@ report Wi-Fi enabled but not connected. Installing during that outage would
 not verify the repaired remote path. Restore the existing saved Wi-Fi link,
 then deploy and repeat engine restart plus both worker-origin reads. Neither
 phone reboot recovery nor changed-network recovery is accepted by this result.
+
+### Outdoor-camera judge access and interactive synthetic simulations
+
+The owner explicitly approved access for every Google-signed-in account, including
+judges, and clarified that camera controls remain read-only but simulation
+selection/execution must be interactive. The deployed gateway now enables this
+with `HG_OUTDOOR_REVIEW_ACCESS=google_viewers`. Google verification and the VIEWER
+role remain required. The review scope permits camera snapshots/status and
+aggregate status/alerts; device inventory, microphone/private media, capture and
+consent changes, uploads, deletion and administration remain restricted.
+
+GET `/api/scenarios` lists the actual native catalogue. POST
+`/api/run-scenario?scenario=<id>` executes the existing C++ scenario implementation
+in a new private fixture using a separate trusted `hg_review_bridge` executable.
+Each fixture has generated credentials and a temporary audit database, no HTTP
+listener and no physical camera configuration. Timeout, output-size and global
+single-child bounds apply. Synthetic results are labelled and never replace live
+camera state or write into the live alert store. The gateway UI enables only the
+scenario selector/run button in addition to read controls; it does not ask judges
+for an operator secret.
+
+Source milestone: `6c2efdf`. Parent verification: OAuth/UI 263 assertions; reviewer
+policy 64 assertions, also repeated with real native scenario execution; dashboard
+161 checks; MCP adapter 26 checks; native simulation integration 16 tests including
+all ten catalogue entries and timeout/overflow/cleanup controls. No skipped native
+integration was accepted.
+
+Deployed to `hg-gateway.service` only. A separate synthetic runner was installed;
+the live portal bridge binary/process, mail, tunnel, VPN and other VM services were
+not changed. Production environment remains mode 0600. Source/module/executable
+checksums were read back and matched their tested artifacts.
+
+Deployed-code preflight ran under `www-data` with temporary synthetic reviewer
+sessions, not real Google logins. Every catalogue entry ran successfully through
+the gateway; normal/inconclusive/consent-denied produced zero alerts and unusual
+produced one synthetic alert. Anonymous calls returned 401; device inventory and
+capture/consent mutation remained denied; revocation returned subsequent calls to
+401. Preflight sessions were revoked. Public HTTPS serves the updated interactive
+UI and still denies anonymous camera/simulation API calls.
+
+The gateway restart invalidated old in-memory sessions: reviewers must refresh the
+original portal tab and sign in again. A fresh real-account login after this
+cutover remains owner acceptance. Camera status currently returns
+`{"configured":false}` from the actual private bridge: access policy is fixed,
+but no live portal feed is asserted or fabricated. Simulations work independently
+of that camera connection.
