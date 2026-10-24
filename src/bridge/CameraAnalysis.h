@@ -9,6 +9,14 @@
 #include "camera/RegistryAuthorizer.h"
 #include "bridge/LiveCameraFeed.h"
 #include <nlohmann/json.hpp>
+#if defined(__ANDROID__)
+#if !defined(__ANDROID_API__) || __ANDROID_API__ < 30
+#error "Camera JPEG decoder requires Android API level 30 or newer"
+#else
+#include <android/imagedecoder.h>
+#include <android/bitmap.h>
+#endif
+#else
 #include <sys/socket.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -17,6 +25,9 @@
 #include <unistd.h>
 #include <signal.h>
 #include <cerrno>
+#endif
+#include <memory>
+#include <cstring>
 #include <mutex>
 
 namespace homeguardian::portal {
@@ -26,6 +37,41 @@ inline std::vector<uint8_t> decode_jpeg_luma(const std::vector<uint8_t>& jpeg) {
  int w=0,h=0;
  if(jpeg.size()>512*1024 || !detail::looks_like_jpeg(jpeg) ||
     !detail::jpeg_dimensions(jpeg,&w,&h) || w>4096 || h>4096) return {};
+#if defined(__ANDROID__)
+#if defined(__ANDROID_API__) && __ANDROID_API__ >= 30
+ // Each call owns its decoder; no subprocesses, shared decoder or global setup.
+ AImageDecoder* raw=nullptr;
+ const int created=AImageDecoder_createFromBuffer(jpeg.data(),jpeg.size(),&raw);
+ // On failure outDecoder is unspecified: only adopt it after success.
+ if(created!=ANDROID_IMAGE_DECODER_SUCCESS) return {};
+ std::unique_ptr<AImageDecoder,decltype(&AImageDecoder_delete)> decoder(raw,&AImageDecoder_delete);
+ if(!decoder) return {};
+ const auto* header=AImageDecoder_getHeaderInfo(decoder.get());
+ if(!header) return {};
+ const int32_t width=AImageDecoderHeaderInfo_getWidth(header);
+ const int32_t height=AImageDecoderHeaderInfo_getHeight(header);
+ const char* mime=AImageDecoderHeaderInfo_getMimeType(header);
+ if(width<=0 || height<=0 || width>4096 || height>4096 ||
+    !mime || std::strcmp(mime,"image/jpeg")!=0 ||
+    AImageDecoderHeaderInfo_getAlphaFlags(header)!=ANDROID_BITMAP_FLAGS_ALPHA_OPAQUE) return {};
+ if(AImageDecoder_setAndroidBitmapFormat(decoder.get(),ANDROID_BITMAP_FORMAT_RGBA_8888)!=ANDROID_IMAGE_DECODER_SUCCESS ||
+    AImageDecoder_setTargetSize(decoder.get(),160,120)!=ANDROID_IMAGE_DECODER_SUCCESS) return {};
+ constexpr size_t stride=160u*4u, pixel_count=160u*120u, rgba_size=stride*120u;
+ // Never allocate from untrusted dimensions or a decoder-supplied stride.
+ if(AImageDecoder_getMinimumStride(decoder.get())!=stride) return {};
+ std::vector<uint8_t> rgba(rgba_size);
+ if(AImageDecoder_decodeImage(decoder.get(),rgba.data(),stride,rgba.size())!=ANDROID_IMAGE_DECODER_SUCCESS) return {};
+ std::vector<uint8_t> luma(pixel_count);
+ for(size_t i=0;i<pixel_count;++i){
+  const auto* p=rgba.data()+i*4u;
+  // Full-range BT.601 luma, rounded; alpha is opaque for JPEG.
+  luma[i]=static_cast<uint8_t>((299u*p[0]+587u*p[1]+114u*p[2]+500u)/1000u);
+ }
+ return luma;
+#else
+ return {}; // Unsupported Android targets also fail closed if preprocessing continues.
+#endif
+#else
  int in[2],out[2];
  if(socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,in)) return {};
  if(pipe2(out,O_CLOEXEC)){close(in[0]);close(in[1]);return {};}
@@ -62,6 +108,7 @@ inline std::vector<uint8_t> decode_jpeg_luma(const std::vector<uint8_t>& jpeg) {
  if(!exited){kill(pid,SIGKILL);while(waitpid(pid,&status,0)<0 && errno==EINTR){};return {};}
  if(!eof || !WIFEXITED(status) || WEXITSTATUS(status)!=0 || bytes.size()!=19200)return {};
  return bytes;
+#endif
 }
 
 class CameraAnalysis {

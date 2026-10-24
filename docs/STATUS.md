@@ -1396,3 +1396,23 @@ hashes differed. Those measurements establish physical acquisition/decoding only
 The subsequent native-analysis experiment was stopped at the owner's direction
 so the earlier device-specialist session can continue it; no persisted physical
 alert, Alexa readback, production feed or independent capture is claimed.
+
+### Physical observations and Android decoder follow-up
+
+After the owner resumed implementation, a bounded run fetched 40 distinct JPEGs
+from the supported physical JUAN camera. The unchanged native analysis path
+produced 40 observations with `provenance:real`, zero decode failures and zero
+durable-commit failures. No event qualified for an alert in this run; zero committed
+alerts is not evidence of successful physical-alert delivery. Frames were requested
+by a local verification harness, so this is not unattended-monitoring acceptance.
+
+CameraAnalysis now includes an Android API30+ AImageDecoder implementation alongside
+the unchanged Linux subprocess decoder. Android decoding stays in native C++ and
+does not depend on a workstation ffmpeg executable. The three focused decoder
+tests passed (error/cleanup shim, Linux JPEG regression, real NDK compile/link and
+API29 rejection); existing camera analysis tests passed 146 assertions / 4 cases.
+The extracted production decoder was also cross-compiled and executed on the Mi A3
+against a real camera JPEG, producing 19,200 luma bytes with exit 0. That on-device
+decoder probe does not establish deployed autonomous acquisition, a physical alert
+or end-to-end Alexa readback. Integration into the existing foreground service and
+its actual MCP alert store remains a separate acceptance step.

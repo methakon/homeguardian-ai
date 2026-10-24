@@ -394,6 +394,11 @@ target_link_libraries(hg_alexa_bridge PRIVATE
     nlohmann_json::nlohmann_json
     sqlite3_static
 )
+if(ANDROID)
+    # API30 AImageDecoder keeps camera decoding local to the Android edge; no
+    # ffmpeg executable, subprocess or camera media routed through a server.
+    target_link_libraries(hg_alexa_bridge PRIVATE jnigraphics)
+endif()
 
     # --------------------------------------------------------------------------------
     # hg_mcp_server (HG-MCP-01): MCP over Streamable HTTP.
