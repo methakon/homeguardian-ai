@@ -164,6 +164,34 @@ Five decisions, recorded in full as ADR-020 … ADR-024 in `docs/DECISIONS.md`:
 | ADR-023 | The pre-event ring retains compressed packets, not decoded frames — a ~350x memory reduction for the same window, and retention must exceed the GOP so a keyframe is always inside it |
 | ADR-024 | Where design references conflict, the later and stricter one governs, and its correction is applied rather than averaged |
 
+### Work plan and overlap boundaries — read before writing any code
+
+`docs/EDGE_VIDEO_IMPLEMENTATION_PLAN.md` is the executing plan for this workstream, and its
+purpose is to prevent duplicate work. Its finding, recorded so it is not rediscovered: **the change
+metric at the centre of Tier-0 already exists** — `MotionFrameFeatures::changed_fraction` in
+`src/core/BoundedFeatures.*`, host-tested, allocation-free, under the DONE W-02 workstream — as do
+the discriminators the design listed as controls to build: illumination/auto-gain rejection
+(`gain_correlation`), the compact-versus-global distinction (`peak_cell_share`, `spread_radius`)
+and the changed-mass location that serves as the motion ROI (`centroid_*`), all validated on real
+frames in `docs/CHANGE_CHARACTER_SEPARATION.md`. Tier-0 is therefore a composition of existing
+components plus a gate, a ring, a bounded queue, a thermal controller and a fetch path — not new
+image processing.
+
+The plan also fixes the roadmap boundaries, so that two workstreams do not build one thing:
+
+* **W-02** (DONE) owns the feature descriptors. Reuse; do not fork or edit.
+* **D-05** (TODO) owns the real-media observation path into the existing pipeline. Tier-0
+  delivers through that contract; it does not define a parallel one.
+* **E2-02 / E2-05** (TODO, Phase E2 deferred) own adopting OpenCV and ONNX Runtime as project
+  capabilities. **This workstream does not adopt a runtime as a side effect** — Tier-0 as
+  specified needs neither.
+* Thresholds, detector allowlist entries and `src/net/*` are out of bounds; new detector ids
+  arrive ADVISORY.
+
+Sequenced stages V-0 … V-5, with V-0 (measure the existing extractor on the device) before
+anything is built, and V-0…V-2 delivering a working event detector with no neural network and no
+new dependency at all.
+
 ### What was verified on the physical device (read-only)
 
 - The handset is connected and usable: adb reports it in `device` state. Identity was taken from

@@ -180,6 +180,18 @@ deliberate property of the design, not an omission (ADR-022).
    change detection on the fetched frames, asymmetric gate, compressed pre-roll, bounded 1-2 job
    queue, then an INT8 classifier on the motion region.
 
+**Tier-0 is a composition of existing components, not new image processing.** The change metric
+and the false-positive discriminators this design proposes already exist, are allocation-free and
+host-tested: `MotionFrameFeatures::changed_fraction` is the "changed pixels / pixels" score, and
+`RegionChangeFeatures` already provides illumination/auto-gain rejection (`gain_correlation`), the
+compact-versus-global distinction (`peak_cell_share`, `spread_radius`) and the changed-mass
+location that serves as the motion ROI (`centroid_*`) — all in `src/core/BoundedFeatures.*` under
+the W-02 workstream, with the separation validated on real frames in
+`docs/CHANGE_CHARACTER_SEPARATION.md`. The workstream's new work is the gate, the ring, the queue,
+the thermal controller and the fetch path — **not** the measurement. Scope, ownership boundaries
+and the anti-duplicate list are in `docs/EDGE_VIDEO_IMPLEMENTATION_PLAN.md`, which must be read
+before any code is written here.
+
 Sequencing: implement and measure Tier-0 first, on the real device, against the 56 °C trip
 point, before any Tier-1 inference is written — because Tier-0 is the stage that must never be
 degraded.
