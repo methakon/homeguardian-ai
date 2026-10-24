@@ -1001,6 +1001,7 @@ int main(int argc, char* argv[]) {
     std::string camera_mac;
     std::string camera_scan_mode = "off";     // auto|off
     bool camera_scan = false;
+    bool camera_scan_explicit = false;
     std::string camera_state_file;
     int base = 1;
     if (argc >= 2 && std::string(argv[1]) == "--http") {
@@ -1083,6 +1084,7 @@ int main(int argc, char* argv[]) {
             camera_mac = argv[++i];
         } else if (a == "--camera-scan" && i + 1 < argc) {
             camera_scan_mode = argv[++i];
+            camera_scan_explicit = true;
         } else if (a == "--camera-state-file" && i + 1 < argc) {
             camera_state_file = argv[++i];
         } else if (a == "--uploads-dir" && i + 1 < argc) {
@@ -1112,7 +1114,17 @@ int main(int argc, char* argv[]) {
     if (camera_scan_mode != "auto" && camera_scan_mode != "off") {
         std::cerr << "camera scan mode invalid (auto|off)\n"; return 3;
     }
-    camera_scan = (camera_scan_mode == "auto");
+    // Supplying a MAC IS the operator's statement of device identity and of intent to survive a
+    // DHCP move: the address is only "where it was last seen", the MAC is what the camera IS.
+    // So enrolling a MAC arms the MAC-anchored rediscovery by default, and an IP change recovers
+    // on the next failed fetch instead of leaving the feed DISCONNECTED forever. `--camera-scan
+    // off` is still the explicit way to refuse it. Probes stay credential-free, MAC-matched,
+    // bounded, and rate-limited to one rediscovery per minute by the locator.
+    if (!camera_mac.empty() && !camera_scan_explicit) {
+        camera_scan = true;                       // a MAC was enrolled: arm recovery
+    } else {
+        camera_scan = (camera_scan_mode == "auto");
+    }
     if (!camera_mac.empty()) {
         homeguardian::camera::HardwareFingerprint fp;
         std::string why;

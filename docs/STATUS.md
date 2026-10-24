@@ -1416,3 +1416,24 @@ against a real camera JPEG, producing 19,200 luma bytes with exit 0. That on-dev
 decoder probe does not establish deployed autonomous acquisition, a physical alert
 or end-to-end Alexa readback. Integration into the existing foreground service and
 its actual MCP alert store remains a separate acceptance step.
+
+### Reviewed recovery follow-up from the camera session
+
+Reviewed the camera session's same-address restart and DHCP-move changes in the
+shared checkout before integration. The initial proposal failed to compile due to
+a duplicate `camera_scan` declaration and did not distinguish the default `off`
+from an explicit operator opt-out. The integrated version arms MAC-bound recovery
+when a MAC is explicitly enrolled, while `--camera-scan off` still disables it.
+Existing registry-backed analysis and capture/credential gates remain required.
+
+The restart regression also exposed a status defect: an old successful frame
+masked a later disconnect. Three consecutive fetch failures now take precedence
+over cached-frame freshness, and a new verified frame clears the failure streak.
+Synthetic loopback recovery tests cover same-address return, a MAC-matched address
+move via the failure-recovery hook, and zero probes for an untouched healthy feed.
+
+Parent verification passed: locator 1,856 assertions / 27 cases; native camera,
+portal and HTTP 1,120 assertions / 77 cases; portal security 6 tests; three CLI
+checks for implicit MAC enrollment, explicit off and explicit auto. This verifies
+the recovery hooks, not a no-browser background scheduler or a physically changed
+DHCP lease. The phone-local monitor integration remains separate.

@@ -556,12 +556,12 @@ public:
         s.discovery_source = discovery_source_;
         s.discovery_reason = discovery_reason_;
 
-        if (last_frame_at_ms_ != 0 && (now_ms - last_frame_at_ms_) <= cfg_.freshness_ms) {
+        if (consecutive_failures_ >= LiveCameraPolicy::kMaxConsecutiveFailures) {
+            s.state = FeedState::Disconnected;
+        } else if (last_frame_at_ms_ != 0 && (now_ms - last_frame_at_ms_) <= cfg_.freshness_ms) {
             s.state = FeedState::Live;
         } else if (last_frame_at_ms_ != 0) {
             s.state = FeedState::Stale;
-        } else if (consecutive_failures_ >= LiveCameraPolicy::kMaxConsecutiveFailures) {
-            s.state = FeedState::Disconnected;
         } else {
             s.state = FeedState::NeverConnected;
         }

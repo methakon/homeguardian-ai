@@ -978,3 +978,130 @@ TEST_CASE("Authorization revoked after candidate discovery prevents credential f
     REQUIRE(peer.requests().empty());
     REQUIRE(feed.config().host == cfg.host);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Recovery after a camera restart or a DHCP move.
+//
+// These are the two ways a working camera becomes "disconnected" without anyone touching the
+// portal. Both must self-heal, because a security feed that needs an operator to notice is not
+// a security feed. Nothing here changes a threshold, and no test manufactures motion.
+// ---------------------------------------------------------------------------------------------
+
+TEST_CASE("A camera that restarts on the SAME address returns to LIVE with no operator action",
+          "[camera-locator][camera][recovery]") {
+    // This is the ordinary power-cycle / app-restart: the address never changes, the camera
+    // simply stops answering and then answers again. No MAC scan is involved or needed.
+    std::atomic<bool> down{false};
+    TestHttpPeer camera("127.0.0.1", [&down](const std::string& request) {
+        if (down.load()) return std::string();                         // unreachable: no reply at all
+        if (!has(request, std::string("Authorization: ") + "Basic ")) return std::string(); // still must authenticate
+        return http_response(200, "Venus/1.0", jpeg_body());
+    });
+
+    CameraConfig cfg;
+    cfg.host = "127.0.0.1";
+    cfg.port = camera.port();
+    cfg.snapshot_path = "/snapshot";
+    cfg.user = "admin";
+    cfg.password = "correct-horse-battery";
+    cfg.allow_plaintext = true;
+    LiveCameraFeed feed(cfg);
+    feed.set_authorization([] { return true; });
+
+    // Healthy: ONE good frame is enough to be LIVE.
+    REQUIRE(feed.fetch_frame(1000).ok);
+    REQUIRE(feed.status(1000).state == FeedState::Live);
+
+    // The camera goes away. The feed must say so rather than re-serving the cached frame.
+    down.store(true);
+    REQUIRE_FALSE(feed.fetch_frame(2000).ok);
+    REQUIRE_FALSE(feed.fetch_frame(2300).ok);
+    REQUIRE_FALSE(feed.fetch_frame(2600).ok);
+    const auto while_down = feed.status(2600);
+    REQUIRE(while_down.state == FeedState::Disconnected);
+    REQUIRE(while_down.consecutive_failures == 3);
+
+    // The camera comes back on the SAME address. The very next fetch must recover it.
+    down.store(false);
+    const auto recovered = feed.fetch_frame(5000);
+    REQUIRE(recovered.ok);
+    const auto after = feed.status(5000);
+    REQUIRE(after.state == FeedState::Live);
+    REQUIRE(after.consecutive_failures == 0);      // the failure streak is cleared
+    REQUIRE(after.frames_served >= 2);
+}
+
+TEST_CASE("An enrolled MAC recovers an IP move through the AUTOMATIC path",
+          "[camera-locator][camera][recovery]") {
+    // A DHCP move is repaired by the feed's own failure handling, NOT by an operator calling
+    // rediscover(). scan_enabled is exactly what enrolling a MAC now arms, so this test would
+    // fail if that arm were removed -- which is the point of it.
+    TestHttpPeer moved("127.0.0.2", [](const std::string& request) {
+        if (!has(request, std::string("Authorization: ") + "Basic ")) return std::string();
+        return http_response(200, "Venus/1.0", jpeg_body());
+    });
+
+    const std::string state_path = temp_dir() + "/feed_auto_recover";
+    ::unlink(state_path.c_str());
+
+    CameraConfig cfg;
+    cfg.host = "127.0.0.1";        // where it was last seen; nothing listens there now
+    cfg.port = moved.port();
+    cfg.snapshot_path = "/snapshot";
+    cfg.user = "admin";
+    cfg.password = "correct-horse-battery";
+    cfg.allow_plaintext = true;
+    cfg.mac = kCameraMac;          // the identity, not the address
+    cfg.scan_enabled = true;       // armed by enrolling that MAC
+    cfg.state_file = state_path;
+    LiveCameraFeed feed(cfg);
+    feed.set_authorization([] { return true; });
+
+    auto io = std::make_shared<OfflineIo>();
+    io->arp_text = arp_table({{"127.0.0.2", kCameraMac}});
+    io->now.store(2000);
+    feed.set_locator(std::make_shared<CameraLocator>(cfg.host, cfg.port, cfg.snapshot_path,
+                                                     cfg.mac, io->io()));
+
+    // The old address is dead.
+    REQUIRE_FALSE(feed.fetch_frame(1000).ok);
+
+    // The AUTOMATIC path -- no explicit rediscover() call.
+    REQUIRE(feed.maybe_rediscover(2000));
+    const auto st = feed.status(2000);
+    REQUIRE(st.state == FeedState::Live);
+    REQUIRE(st.discovery_state == "found");
+    REQUIRE(st.discovery_source == "rediscovered");
+    REQUIRE(feed.config().host == "127.0.0.2");
+
+    // The recovered address is persisted so a bridge restart does not have to rescan.
+    PersistedLocatorState saved;
+    REQUIRE(load_locator_state(state_path, &saved));
+    REQUIRE(saved.host == "127.0.0.2");
+}
+
+TEST_CASE("An untouched feed never scans, so a healthy camera is not swept",
+          "[camera-locator][camera][recovery][security]") {
+    // Guards the fix: arming recovery on MAC enrolment must NOT mean sweeping a working feed.
+    // maybe_rediscover refuses while there is no failure evidence and while the feed is LIVE.
+    auto io = std::make_shared<OfflineIo>();
+    io->arp_text = arp_table({{"10.0.0.9", kCameraMac}});
+    io->now.store(1000);
+
+    CameraConfig cfg;
+    cfg.host = "10.0.0.10";
+    cfg.port = 80;
+    cfg.snapshot_path = "/snapshot";
+    cfg.allow_plaintext = true;
+    cfg.mac = kCameraMac;
+    cfg.scan_enabled = true;          // armed, exactly as enrolling a MAC now does
+    LiveCameraFeed feed(cfg);
+    feed.set_authorization([] { return true; });
+    feed.set_locator(std::make_shared<CameraLocator>(cfg.host, cfg.port, cfg.snapshot_path,
+                                                     cfg.mac, io->io()));
+
+    // No frame has ever been attempted, so there is no evidence of a problem: refuse.
+    REQUIRE_FALSE(feed.maybe_rediscover(1000));
+    // ... and prove the refusal was real, not just a "false" return: NOTHING was probed.
+    REQUIRE(io->probed_count() == 0);
+}
