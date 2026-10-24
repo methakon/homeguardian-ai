@@ -1437,3 +1437,31 @@ portal and HTTP 1,120 assertions / 77 cases; portal security 6 tests; three CLI
 checks for implicit MAC enrollment, explicit off and explicit auto. This verifies
 the recovery hooks, not a no-browser background scheduler or a physically changed
 DHCP lease. The phone-local monitor integration remains separate.
+
+### Android deployment checkpoint and preservation of the Alexa lane
+
+The recovery integration above is published as `30a99b8`. A separate Android
+foreground-service camera integration remains uncommitted work in progress; do
+not treat that integration as included in the recovery commit.
+
+The updated service APK compiled, signed, installed and started, but private
+bridge restoration was refused by its route policy: the underlying Wi-Fi default
+route was treated as a conflicting non-VPN route for the approved tunnel peer.
+The UI also used the older interface-subnet gate, which rejected a /32 overlay
+configuration. No firewall, tunnel keys, network routes or public listeners were
+changed, and no route check was bypassed to force a connection.
+
+Restored the previous installed APK with a signed version-code rollback wrapper,
+retained its application data and restarted its existing saved private bridge.
+Fresh reads from the VPS using the established mailbox worker's private MCP
+client returned genuine native responses: status `Running`, `read_only: true`,
+`capture_enabled: false`; summary `alert_count: 2`, `highest_severity: warning`,
+`read_only: true`. The count alone does not establish the alerts' provenance or
+physical-event-to-Alexa acceptance. Restored connectivity does not mean that the
+new autonomous phone camera monitor is deployed: capture is currently disabled.
+
+Android camera integration deployment is blocked pending a tested correction to
+the actual socket/VPN route-selection contract. Physical camera restart, DHCP
+movement, phone reboot and workstation-off acceptance remain unverified. The
+existing Alexa lane is restored; a production-certified autonomous camera lane
+is not claimed.
