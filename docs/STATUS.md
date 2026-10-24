@@ -1552,3 +1552,41 @@ reads then returned `{"state":"Running","read_only":true,"capture_enabled":true}
 with capture still on. This is evidence of self-recovery from a dropped control
 session on an unchanged network. It is not evidence of recovery from a reboot, a
 changed camera address or a changed phone network, which remain unverified.
+
+#### First real-frame alert committed and readable through the Alexa path
+
+While the deployed monitor was running unattended, it crossed the detector
+baseline and committed one alert from real camera frames:
+
+```
+camera.alerts_committed : 1        (was 0 in the deployment sample above)
+camera.observations_processed : 1,082
+camera.decode_failures  : 0
+camera.state            : analyzed
+capture_enabled         : true
+total_alert_count       : 3        (was 2)
+```
+
+The alert count is the store's own count, not a delivery counter. Read through
+the established private path — the same mailbox worker client the Alexa skill
+reaches — the summary moved with it:
+
+```
+get_alert_summary -> {"alert_count": 3, "read_only": true,
+                      "highest_severity": "warning"}
+get_homeguardian_status -> {"state": "Running", "read_only": true,
+                            "capture_enabled": true}
+```
+
+So: a real LAN camera frame, analysed natively on the phone with no viewer and
+no workstation process, produced a durable alert that is now returned by the
+worker-origin read the Alexa skill uses. The observation's provenance is `real`
+(the edge camera configuration is registered with `is_synthetic: false`), which
+is why this is a physical-path result rather than the synthetic matrix.
+
+What this still does not establish: that Alexa spoke the reply to the owner
+(the SQS request/reply leg was not re-exercised, as noted above), that the
+monitor recovers from a reboot, a camera address change or a phone network
+change, or that the workstation being powered off changes anything — the
+workstation was never part of this path, but proving that requires the owner's
+shutdown, which was not performed.
