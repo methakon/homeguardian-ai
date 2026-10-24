@@ -316,9 +316,12 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
   function restrictDashboard() {
     if (!state.token || !document.querySelectorAll) return;
     document.querySelectorAll('.wrap button,.wrap input,.wrap select').forEach(function (node) {
+      var simulation = state.simulationsAllowed && ['runBtn', 'scenarioSel'].indexOf(node.id) !== -1;
       var read = ['refreshBtn', 'camReconnect', 'camFullscreen'].indexOf(node.id) !== -1;
-      node.disabled = !(read && householdGranted());
-      node.title = node.disabled ? 'VIEWER read-only — control not permitted' : 'Read-only household view';
+      node.disabled = !(read && householdGranted()) && !simulation;
+      if (simulation && state.simulationBusy) node.disabled = true;
+      node.title = simulation ? 'Interactive synthetic simulation — isolated from the camera'
+        : node.disabled ? 'VIEWER — control not permitted' : 'Read-only camera/status view';
     });
     if (document.documentElement.getAttribute('data-hg-household') === 'granted') return;
     ['status','metrics','integrations','labelLegend','chat','chips','result','alerts','alertCount',
@@ -371,6 +374,7 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
     loginTimer = null; loginDeadlineTimer = null; loginBusy = false;
     loginProof = null; loginPopup = null;
     state.token = null; state.role = null; state.expiresAt = 0;
+    state.reviewOnly = false; state.simulationsAllowed = false; state.simulationBusy = false;
     document.documentElement.setAttribute('data-hg-auth', 'anonymous');
     block('Sign in again. This tab keeps no cookies or stored session; refreshing requires a new login.');
   }
@@ -486,10 +490,15 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
       return res.json();
     }).then(function (me) {
       if (g !== generation || token !== state.token) return;
-      if (me.household_authorized !== true) return block('Private household access not granted. Google sign-in verifies identity only.');
+      if (me.household_authorized !== true && me.outdoor_review_authorized !== true) return block('Private household access not granted. Google sign-in verifies identity only.');
+      state.simulationsAllowed = me.outdoor_review_authorized === true;
+      state.reviewOnly = me.household_authorized !== true && me.outdoor_review_authorized === true;
       document.documentElement.setAttribute('data-hg-household', 'granted');
-      message = 'Owner-approved household read access. Mutations, consent, uploads and administration remain denied.';
+      message = state.reviewOnly
+        ? 'Outdoor camera: read-only for Google-signed-in users and judges. Synthetic simulations: interactive and isolated. Device management remains restricted.'
+        : 'Owner-approved household read access. Mutations, consent, uploads and administration remain denied.';
       render();
+      if (state.simulationsAllowed && typeof window.loadScenarios === 'function') window.loadScenarios();
       if (typeof window.camRefreshStatus === 'function') window.camRefreshStatus();
       if (typeof window.camTickFrame === 'function') window.camTickFrame();
     }).catch(function () { if (g === generation) block('Household authorization unavailable.'); });
@@ -508,6 +517,27 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
   // MCP has aggregates, NOT timeline records or scenario/consent flags. Do not
   // let the old renderers turn absent fields into fabricated disabled/zero data.
   document.addEventListener('DOMContentLoaded', function () {
+    // Synthetic writes use the browser's authenticated session and exact Origin,
+    // not the live bridge's operator secret. The server runs a separate sandbox.
+    window.runScenario = function () {
+      if (!state.simulationsAllowed || state.simulationBusy) return Promise.resolve();
+      var select = document.getElementById('scenarioSel');
+      var id = select && select.value;
+      if (!id) return Promise.resolve();
+      state.simulationBusy = true; restrictDashboard();
+      text('scenDesc', 'Running an isolated synthetic simulation; live camera and alerts are unchanged.');
+      return window.fetch('/api/run-scenario?scenario=' + encodeURIComponent(id), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      }).then(function (res) { return res.json().then(function (body) {
+        if (!res.ok || !body.scenario || body.synthetic !== true || body.isolated !== true) throw new Error('simulation_unavailable');
+        window.__lastScenario = body.scenario;
+        if (typeof window.renderResult === 'function') window.renderResult(body.scenario);
+        text('scenDesc', 'Synthetic simulation result — isolated from live camera alerts. ' + (body.scenario.outcome || ''));
+      }); }).catch(function () { text('scenDesc', 'Simulation unavailable or busy. No live-camera state was changed.'); })
+        .then(function () { state.simulationBusy = false; restrictDashboard(); });
+    };
+    var runButton = document.getElementById('runBtn');
+    if (runButton) runButton.onclick = window.runScenario;
     var originalCameraStatus = window.camRenderStatus;
     if (typeof originalCameraStatus === 'function') window.camRenderStatus = function (d) {
       originalCameraStatus(d);
@@ -521,6 +551,11 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
       text('metrics', 'Read-only native MCP status; scenario metrics are not provided.');
     };
     window.refreshIntegrations = function () {
+      if (state.reviewOnly) {
+        text('integrations', 'Outdoor-camera review only. Private device inventory is restricted.');
+        text('labelLegend', 'Read-only review access; device management is not available.');
+        return Promise.resolve();
+      }
       return window.fetch('/api/devices').then(function (r) { return r.json(); }).then(function (d) {
         text('integrations', 'Device count: ' + d.device_count + ' · visibility: ' + d.visibility +
           (d.device_labels.length ? ' · ' + d.device_labels.join(', ') : ''));
@@ -902,7 +937,16 @@ function createGateway(options = {}) {
     });
   }
 
-  async function authorized(session) {
+  // Explicit owner opt-in for judges and other Google-authenticated reviewers.
+  // Never grants device inventory, mutations, microphone media or arbitrary routes.
+  function outdoorReviewAuthorized(session, pathname) {
+    return env.HG_OUTDOOR_REVIEW_ACCESS === 'google_viewers' &&
+      session.principal.role === ROLE_VIEWER &&
+      ['/api/status', '/api/alerts', '/api/camera/status', '/api/camera/frame'].includes(pathname);
+  }
+
+  async function authorized(session, pathname) {
+    if (outdoorReviewAuthorized(session, pathname)) return true;
     try {
       return typeof options.authorizeHousehold === 'function'
         ? (await options.authorizeHousehold(session.principal.sub)) === true
@@ -910,8 +954,17 @@ function createGateway(options = {}) {
     } catch (_) { return false; }
   }
 
+  let simulationReview = options.simulationReview || null;
+  function simulations() {
+    if (!simulationReview) {
+      const { SimulationReview } = require('./simulation_review');
+      simulationReview = new SimulationReview({ binaryPath: env.HG_REVIEW_BRIDGE_BIN });
+    }
+    return simulationReview;
+  }
+
   async function handleProxy(res, route, session, pathname) {
-    if (!(await authorized(session))) {
+    if (!(await authorized(session, pathname))) {
       sendJson(res, 403, {
         ok: false, error: 'household_authorization_required', role: ROLE_VIEWER,
         message: 'Private household access has not been granted. Google sign-in verifies identity only.',
@@ -1274,6 +1327,7 @@ function createGateway(options = {}) {
         ok: true,
         ...publicPrincipal(session.principal, session, now()),
         household_authorized: await authorized(session),
+        outdoor_review_authorized: outdoorReviewAuthorized(session, '/api/status'),
         config: {
           oidc_configured: config.isConfigured(),
           session_ttl_seconds: config.sessionTtlSeconds,
@@ -1286,6 +1340,40 @@ function createGateway(options = {}) {
     if ((pathname === '/api/logout' || pathname === '/logout') && req.method === 'POST') {
       sessions.revoke(token);
       sendJson(res, 200, { ok: true, logged_out: true, role: session.principal.role });
+      return;
+    }
+
+    // Owner-approved synthetic sandbox writes, never live-camera mutations.
+    if ((pathname === '/api/scenarios' || pathname === '/api/run-scenario') &&
+        env.HG_OUTDOOR_REVIEW_ACCESS === 'google_viewers') {
+      const run = pathname === '/api/run-scenario';
+      if (req.method !== (run ? 'POST' : 'GET')) {
+        sendJson(res, 405, { ok: false, error: 'method_not_allowed' }); return;
+      }
+      if (!originAllowed(req, config, req.headers.host)) {
+        sendJson(res, 403, { ok: false, error: 'forbidden_origin' }); return;
+      }
+      const keys = [...url.searchParams.keys()];
+      const id = url.searchParams.get('scenario');
+      if ((!run && keys.length) || (run && (keys.length !== 1 || keys[0] !== 'scenario' ||
+          typeof id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(id)))) {
+        sendJson(res, 400, { ok: false, error: 'invalid_scenario' }); return;
+      }
+      if (run) {
+        const body = await readJsonBody(req);
+        if (!body || Array.isArray(body) || Object.keys(body).length !== 0) {
+          sendJson(res, 400, { ok: false, error: 'simulation_body_must_be_empty' }); return;
+        }
+      }
+      try {
+        const data = run ? await simulations().run(id) : await simulations().catalogue();
+        sendJson(res, 200, { ...data, synthetic: true, isolated: true,
+          scope: 'synthetic_simulation', live_camera_modified: false });
+      } catch (err) {
+        const status = [400, 404, 429].includes(err.status) ? err.status : 503;
+        sendJson(res, status, { ok: false, error: status === 503 ? 'simulation_unavailable' : 'simulation_rejected',
+          synthetic: true, isolated: true });
+      }
       return;
     }
 

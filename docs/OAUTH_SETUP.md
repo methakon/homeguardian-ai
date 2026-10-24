@@ -49,29 +49,48 @@ old bridge on 8091. Other tunnel routes, mail, WireGuard and Alexa are unchanged
    current session before starting another Google account-selection flow.
 
 After authentication the existing dashboard shell is visible, with a VIEWER banner
-and logout/account-switch controls. Restricted controls are disabled and private
-readings say "Household access not granted", rather than displaying fabricated zeros.
-Every identity receives VIEWER. Google identity is not a household grant.
-Production currently has no household authorizer: status and alert summaries
-return 403 household_authorization_required without querying MCP, even after
-Google login. Devices, camera/media, consent, administrator actions and mutations
-are also denied. This intentionally prevents accidental household disclosure.
-A separately approved household authorization model is still required for real
-private-data access; there is no email-based or administrator bypass.
+and logout/account-switch controls. Every identity remains VIEWER. Protected
+subject grants still control access to private household resources.
+
+The owner has separately approved an outdoor-camera judge/reviewer policy:
+`HG_OUTDOOR_REVIEW_ACCESS=google_viewers` permits every successfully Google-signed-in
+account to read the configured outdoor-camera snapshots/status and aggregate
+status/alerts. It does not grant private device inventory, microphone feeds,
+consent changes, camera activation, uploads, deletion or administration. Without
+that exact opt-in, the original subject-grant default-deny policy remains active.
+
+The same reviewer mode permits GET `/api/scenarios` and POST
+`/api/run-scenario?scenario=<catalogue-id>`. Simulation controls are interactive,
+not camera controls. The gateway requires an authenticated memory-only session,
+exact allowed Origin and an empty JSON POST body. It runs the trusted executable
+named by `HG_REVIEW_BRIDGE_BIN` in a fresh private synthetic fixture, not the live
+camera process. Each fixture has independent credentials and an independent audit
+store; there is no HTTP listener or physical acquisition. Runs are bounded to one
+child at a time, 15 seconds and 1 MiB combined output. Results are labelled
+synthetic/isolated, and temporary state is removed after the child exits.
+
+A callback `invalid_state` means its login attempt expired, was cancelled, was
+already consumed, or lost its in-memory server state; it is not household denial.
+Start again from the sign-in button in the original portal tab rather than
+refreshing or sharing a callback URL containing a one-use Google code.
 
 ## Verified evidence
 
 Focused offline suites (synthetic RSA/JWKS and token endpoint fixtures):
 
-- node web_mcp/test_oauth.js: 199 assertions passed, 0 failed.
+- node web_mcp/test_oauth.js: 263 assertions passed, 0 failed.
+- node web_mcp/test_outdoor_review.js: 64 authorization assertions passed.
+- HG_REVIEW_INTEGRATION=1 node web_mcp/test_outdoor_review.js: the same policy checks with real native scenario execution passed.
+- node --test web_mcp/test_simulation_review.js: 16 tests passed, including all ten native scenarios and bounded-process failure controls.
 - node web_mcp/test_client.js: 26 passed, 0 failed.
 - node web_mcp/test_devices_dashboard.js: 161 passed, 0 failed.
 
 Coverage includes token validation and expiry, state/nonce/replay, browser-bound
 handoff, default-deny household isolation, explicit authorized-subject test seam,
 MCP unavailable responses, logout/expiry, and cookieless security headers.
-The explicit household-authorizer seam is supplied only by tests, not the
-production executable. Backend failures are unavailable, never fabricated zeros.
+The production executable supports protected-file subject grants and the explicit
+owner-enabled outdoor-review policy above. Backend failures are unavailable,
+never fabricated zeros.
 
 Public HTTPS probes after tunnel readback:
 

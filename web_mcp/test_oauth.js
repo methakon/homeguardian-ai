@@ -304,7 +304,7 @@ async function loginAs(sub, extraClaims = {}) {
 // No browser dependencies or persistent storage APIs are available in this realm.
 async function testSessionUi(source) {
   const vm = require('node:vm');
-  function boot(hash = '', live = false, granted = false) {
+  function boot(hash = '', live = false, granted = false, review = false) {
     const nodes = new Map();
     function element(tag) {
       return { tagName: tag, children: [], attributes: {}, textContent: '', hidden: false,
@@ -318,10 +318,10 @@ async function testSessionUi(source) {
     const document = { documentElement: element('html'), head: element('head'),
       body: element('body'), readyState: 'loading', createElement: element,
       getElementById(id) { return nodes.get(id) || null; },
-      querySelectorAll() { return ['runBtn','uploadBtn','refreshBtn','camReconnect','camFullscreen'].map(id => nodes.get(id)).filter(Boolean); },
+      querySelectorAll() { return ['runBtn','scenarioSel','uploadBtn','refreshBtn','camReconnect','camFullscreen'].map(id => nodes.get(id)).filter(Boolean); },
       addEventListener(k, fn) { var previous = this['on' + k]; this['on' + k] = function () { if (previous) previous(); fn(); }; },
     };
-    for (const id of ['status','metrics','integrations','alertCount','alerts','runBtn','uploadBtn','refreshBtn','camReconnect','camFullscreen','camFrame']) {
+    for (const id of ['status','metrics','scenDesc','scenarioSel','integrations','alertCount','alerts','runBtn','uploadBtn','refreshBtn','camReconnect','camFullscreen','camFrame']) {
       const node = element('div'); node.id = id; node.textContent = '0'; document.body.appendChild(node);
     }
     const calls = [];
@@ -344,10 +344,12 @@ async function testSessionUi(source) {
       if (url === '/api/session/exchange') return { ok: true, status: 200,
         json: async () => ({ token: 'a'.repeat(64), role: 'VIEWER', expires_in: 3600 }) };
       if (url === '/api/logout') return { ok: true, status: 200, json: async () => ({ ok: true }) };
-      if (url === '/api/me') return { ok: true, status: 200, json: async () => ({ household_authorized: granted }) };
-      if (granted && url === '/api/status') return { ok: true, status: 200,
+      if (url === '/api/me') return { ok: true, status: 200, json: async () => ({ household_authorized: granted, outdoor_review_authorized: review }) };
+      if (review && url === '/api/run-scenario?scenario=normal') return { ok: true, status: 200,
+        json: async () => ({ synthetic: true, isolated: true, scenario: { ok: true, outcome: 'Synthetic normal fixture' } }) };
+      if ((granted || review) && url === '/api/status') return { ok: true, status: 200,
         json: async () => ({ status: { state: 'Running', capture_enabled: true } }) };
-      if (granted && url === '/api/camera/frame') return { ok: true, status: 200,
+      if ((granted || review) && url === '/api/camera/frame') return { ok: true, status: 200,
         blob: async () => new Blob([Buffer.from([255,216,255,217])], { type: 'image/jpeg' }) };
       if (granted && url === '/api/devices') return { ok: true, status: 200,
         json: async () => ({ device_count: 2, device_labels: ['Gate'], visibility: 'owner-approved-only' }) };
@@ -404,6 +406,24 @@ async function testSessionUi(source) {
   signed.setStatus(200);
   await signed.window.fetch('/api/status');
   ok(signed.document.documentElement.attributes['data-hg-household'] !== 'granted', 'status success alone does not override /api/me household denial');
+  const reviewed = await signIn(boot('', false, false, true));
+  await reviewed.window.__hg.ready;
+  ok(reviewed.document.documentElement.attributes['data-hg-household'] === 'granted' &&
+    !reviewed.nodes.get('runBtn').disabled && !reviewed.nodes.get('scenarioSel').disabled &&
+    reviewed.nodes.get('uploadBtn').disabled, 'judge review enables simulations but never camera management or uploads');
+  reviewed.nodes.get('scenarioSel').value = 'normal';
+  await reviewed.nodes.get('runBtn').onclick();
+  const simulationRequest = reviewed.calls.find(c => c.url === '/api/run-scenario?scenario=normal');
+  ok(simulationRequest && simulationRequest.init.method === 'POST' &&
+    simulationRequest.init.headers.get('Authorization') === 'Bearer ' + 'a'.repeat(64) &&
+    !simulationRequest.init.headers.has('X-HG-CSRF'), 'served simulation UI uses memory-only viewer bearer, not an operator secret');
+  ok(reviewed.nodes.get('scenDesc').textContent.includes('isolated from live camera alerts'),
+    'served simulation UI labels its result separately from physical observations');
+  await reviewed.window.refreshIntegrations();
+  ok(!reviewed.calls.some(c => c.url === '/api/devices') && reviewed.nodes.get('integrations').textContent.includes('restricted'),
+    'judge UI does not request private device inventory or trigger a blanket household denial');
+  await reviewed.window.__hg.logout();
+  ok(!reviewed.window.__hg.authenticated(), 'judge logout revokes access without persistent storage');
   const granted = await signIn(boot('', false, true));
   await granted.window.__hg.ready;
   ok(granted.document.documentElement.attributes['data-hg-household'] === 'granted' &&

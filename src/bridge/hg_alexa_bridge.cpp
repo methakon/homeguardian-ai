@@ -1280,6 +1280,33 @@ int main(int argc, char* argv[]) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
 
+        // Structured local-stdio simulation controls. Like run_scenario below,
+        // these are never part of the authenticated read-only MCP/HTTP surface.
+        // The review gateway runs this process in a fresh synthetic fixture.
+        if (line.size() <= kMaxLineBytes && line.front() == '{') {
+            const auto control = json::parse(line, nullptr, false);
+            if (control.is_object() && control.contains("op") && control["op"].is_string()) {
+                const auto op = control["op"].get<std::string>();
+                if (op == "scenarios" || op == "scenario") {
+                    json result;
+                    if (op == "scenarios" && control.size() == 1) {
+                        result = scenarios_payload();
+                    } else if (op == "scenario" && control.size() == 2 &&
+                               control.contains("id") && control["id"].is_string()) {
+                        const auto id = control["id"].get<std::string>();
+                        const auto* spec = find_demo_scenario(id);
+                        if (spec) result = scenario_result_json(app, audit, *spec, false, 0);
+                        else result = {{"ok", false}, {"error", "unknown_scenario"}};
+                    } else {
+                        result = {{"ok", false}, {"error", "invalid_simulation_request"}};
+                    }
+                    std::cout << result.dump() << "\n";
+                    std::cout.flush();
+                    continue;
+                }
+            }
+        }
+
         // Control line for clean shutdown from the client.
         if (line == "shutdown") break;
 
