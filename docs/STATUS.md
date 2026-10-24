@@ -1753,3 +1753,37 @@ before deployment. Retention configuration does not currently hide or delete
 objects; all pending and ready reservations remain quota-charged indefinitely.
 Cloudflare credentials and a genuine recording-worker clip remain prerequisites
 for external upload/completion/playback acceptance.
+
+#### Event-video integration review correction
+
+The checkpoint's optional-field mismatch is fixed: absent native alert IDs and
+confidence remain absent in the stored metadata and render as `not reported`,
+not zero/undefined or a fabricated classification. Supplied optional values
+remain type/bounds checked. A new real-HTTP hermetic integration drives the
+actual producer reservation route, a direct PUT to an explicitly fake loopback
+R2, HEAD completion, durable catalog restart/readback, the served list/detail/
+player script, notification read and logout/revocation. It also proves that
+failed completion cannot publish a clip and synthetic producer provenance is
+rejected. This is a storage/UI contract fixture, not actual camera footage or
+external Cloudflare acceptance.
+
+Storage saturation now preserves HTTP 507 `event_video_storage_full` through the
+gateway, so the producer can stop uploads rather than treating a hard budget as
+a generic retryable outage. The notification credential rejects executable,
+group-accessible, symlink, hardlink and FIFO files without blocking the event
+loop. Separate read-only notification and upload credentials remain enforced.
+
+Parent verification passed 154 backend/UI/integration tests, the gateway-route
+suite, 268 OAuth/UI assertions, 64 reviewer assertions and 87 Python ASK/mailbox
+tests. The complete producer-to-served-UI fixture also passed under the deployed
+Node v18.19.1 and `www-data`, in a temporary isolated directory with fake
+credentials and a separate local catalog. All three source/module hashes matched
+the transferred test artifacts; the temporary directory was removed. No live
+gateway, mailbox, camera, mail, tunnel, VPN or public listener was changed.
+
+A fresh read-only preflight still found all four required R2 settings absent.
+Deployment therefore remains held pending the owner's private-bucket credentials
+and the recording worker's genuine clip. Automatic cloud retention cleanup is
+not implemented; pending/ready objects remain quota-charged and new uploads stop
+at the configured byte/entry ceilings. No live video upload/playback, new SQS/Echo
+delivery, retention deletion or zero-billing guarantee is claimed.

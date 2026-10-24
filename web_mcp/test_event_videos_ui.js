@@ -78,6 +78,27 @@ async function selected(overrides = {}) {
   walk(f.get('cards')).find(n => n.tagName === 'BUTTON').click();
   reply(f.requests[1], { ok: true, event: event(overrides) }); await tick(); return f;
 }
+test('minimal backend records with absent alert ID and confidence remain viewable without fabricated values', async () => {
+  const minimal = event(); delete minimal.alert_id; delete minimal.confidence;
+  const f = await loaded([minimal]);
+  assert.equal(f.get('cards').children.length, 1);
+  walk(f.get('cards')).find(n => n.tagName === 'BUTTON').click();
+  reply(f.requests[1], { ok: true, event: minimal }); await tick();
+  assert.ok(f.get('video'));
+  assert.match(f.get('detail').textContent, /Alert ID: not reported/);
+  assert.match(f.get('detail').textContent, /Confidence: not reported/);
+  assert.doesNotMatch(f.get('detail').textContent, /undefined|Confidence: 0/);
+  assert.equal(Object.hasOwn(JSON.parse(f.get('metadata').textContent), 'confidence'), false);
+});
+test('present optional fields must still satisfy their actual types and bounds', async () => {
+  for (const change of [{ alert_id: null }, { alert_id: 42 }, { confidence: null }, { confidence: '0.9' }, { confidence: -0.1 }, { confidence: 1.1 }]) {
+    const f = await loaded([event(change)]);
+    assert.equal(f.get('cards').children.length, 0);
+    assert.match(f.get('status').textContent, /unavailable/);
+  }
+  const zero = await selected({ confidence: 0 });
+  assert.match(zero.get('detail').textContent, /Confidence: 0/);
+});
 test('DOMContentLoaded and browser autoload execute actual script', async () => {
   const f = fixture('', 'loading'); assert.equal(f.document.getElementById('hg-event-videos'), null);
   f.grant(); assert.equal(f.requests.length, 1); f.domReady(); assert.equal(f.requests.length, 1);

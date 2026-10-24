@@ -47,8 +47,12 @@
     function record(e) {
       return e && typeof e === 'object' && UUID.test(e.id) && e.provenance === 'real' &&
         typeof e.detected_at === 'string' && Number.isFinite(new window.Date(e.detected_at).getTime()) &&
-        ['event_id', 'alert_id', 'summary', 'severity', 'detector'].every(function (k) { return typeof e[k] === 'string'; }) &&
-        ['confidence', 'duration_seconds', 'size_bytes'].every(function (k) { return typeof e[k] === 'number' && Number.isFinite(e[k]) && e[k] >= 0; }) && e.confidence <= 1;
+        ['event_id', 'summary', 'severity', 'detector'].every(function (k) { return typeof e[k] === 'string'; }) &&
+        (!Object.prototype.hasOwnProperty.call(e, 'alert_id') || typeof e.alert_id === 'string') &&
+        (!Object.prototype.hasOwnProperty.call(e, 'confidence') ||
+          (typeof e.confidence === 'number' && Number.isFinite(e.confidence) && e.confidence >= 0 && e.confidence <= 1)) &&
+        typeof e.duration_seconds === 'number' && Number.isFinite(e.duration_seconds) && e.duration_seconds > 0 &&
+        Number.isSafeInteger(e.size_bytes) && e.size_bytes > 0;
     }
     function fail(body) {
       var err = new Error('unavailable');
@@ -130,8 +134,11 @@
         function datePart(k) { return localDate.filter(function (p) { return p.type === k; })[0].value; }
         var day = datePart('year') + '-' + datePart('month') + '-' + datePart('day');
         if (day < from.value || day > to.value) element('p', 'Selected event is outside the current date filters.', 'outside', detail);
-        element('p', 'Video ID: ' + e.id + ' · Event ID: ' + e.event_id + ' · Alert ID: ' + e.alert_id, null, detail);
-        element('p', 'Detected at (original): ' + e.detected_at + ' · Confidence: ' + e.confidence + ' · Duration: ' + e.duration_seconds + ' seconds · Size: ' + e.size_bytes + ' bytes · Provenance: real', null, detail);
+        element('p', 'Video ID: ' + e.id + ' · Event ID: ' + e.event_id + ' · Alert ID: ' +
+          (e.alert_id === undefined ? 'not reported' : e.alert_id), null, detail);
+        element('p', 'Detected at (original): ' + e.detected_at + ' · Confidence: ' +
+          (e.confidence === undefined ? 'not reported' : e.confidence) + ' · Duration: ' + e.duration_seconds +
+          ' seconds · Size: ' + e.size_bytes + ' bytes · Provenance: real', null, detail);
         // Render original metadata as inert text, including unknown detector evidence fields.
         element('pre', JSON.stringify(e, null, 2), 'metadata', detail);
         var link = element('a', 'Event permalink', 'permalink', detail);

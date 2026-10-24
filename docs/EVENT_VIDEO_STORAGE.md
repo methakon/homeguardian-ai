@@ -85,6 +85,10 @@ metadata. Completion is idempotent. A signed PUT or HTTP 201 reservation is not
 an upload-success acknowledgment. Inspect the completion result before discarding
 the local recording. The producer owns durable retry/backoff and local cleanup.
 
+HTTP 507 `event_video_storage_full` means the reservation/entry budget is full:
+stop cloud uploads and report the storage condition. Do not retry in a hot loop,
+discard the local clip as uploaded, or rotate event IDs to evade accounting.
+
 ## Viewer routes
 
 Google authentication plus the existing explicit outdoor-review grant is required
@@ -184,3 +188,17 @@ PUT/HEAD/GET proof. Live acceptance additionally requires a private bucket and
 credentials, a genuine clip from the recording worker, verified completion,
 playback after login, anonymous/mutation denials, and actual ASK readback with the
 stable portal link. Preserve the existing camera/native detection deployment.
+
+Regression commands (all use isolated synthetic fixtures, never the real bucket):
+
+    node --unhandled-rejections=strict --test web_mcp/test_event_videos.js web_mcp/test_event_videos_ui.js web_mcp/test_event_video_integration.js
+    node web_mcp/test_event_video_routes.js
+    node web_mcp/test_oauth.js
+    node web_mcp/test_outdoor_review.js
+
+The integration test executes the actually served video UI against real local
+HTTP gateway endpoints and an explicitly fake S3 transport. Missing optional
+native `alert_id`/`confidence` are accepted and displayed as `not reported`;
+provided invalid values are rejected. The same test has passed on production's
+Node 18 runtime under the service user without accessing real storage or changing
+the running gateway. This rehearsal is not deployment or real clip acceptance.

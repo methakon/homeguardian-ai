@@ -988,19 +988,19 @@ function createGateway(options = {}) {
     if (!token) return false;
     let fd;
     try {
-      fd = fs.openSync(env.HG_EVENT_VIDEO_NOTIFICATION_TOKEN_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      fd = fs.openSync(env.HG_EVENT_VIDEO_NOTIFICATION_TOKEN_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
       const st = fs.fstatSync(fd);
-      if (!st.isFile() || st.size > 128 || st.mode & 0o077 || st.uid !== process.geteuid()) return false;
+      if (!st.isFile() || st.nlink !== 1 || st.size > 128 || (st.mode & 0o7777) !== 0o600 || st.uid !== process.geteuid()) return false;
       const key = fs.readFileSync(fd, 'utf8').trim();
       return SESSION_TOKEN_RE.test(key) && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(key));
     } catch (_) { return false; }
     finally { if (fd !== undefined) fs.closeSync(fd); }
   }
   function videoError(res, err) {
-    const status = [400, 404, 409, 413, 429].includes(err.status) ? err.status : 503;
+    const status = [400, 404, 409, 413, 429, 507].includes(err.status) ? err.status : 503;
     const errors = { 400: 'invalid_event_video_request', 404: 'event_video_not_found',
       409: 'event_video_conflict', 413: 'event_video_too_large', 429: 'event_video_limit_reached',
-      503: 'event_videos_unavailable' };
+      503: 'event_videos_unavailable', 507: 'event_video_storage_full' };
     const error = status === 503 && err.code === 'event_video_storage_unconfigured'
       ? err.code : errors[status];
     sendJson(res, status, { ok: false, error, ...(status === 503 ? { status: 'unavailable' } : {}) });
