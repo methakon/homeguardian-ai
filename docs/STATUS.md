@@ -1518,10 +1518,11 @@ alerts      : committed=0  total_alert_count=2  persistence_healthy=true
 
 Frames came from the supported JUAN camera at its authorized fixed private host,
 over the native `LiveCameraFeed` + `CameraAnalysis` path; no browser, relay or
-workstation process participated. Zero alerts were committed because no
-observation exceeded the detector's baseline during that window — this is the
-honest reading, not a claim of a physical event. The two alerts already in the
-store predate this deployment and are of synthetic origin.
+workstation process participated. No alert was committed during that sample;
+counts alone do not identify which qualification or suppression gate prevented
+an alert. The two alerts already in the store predate this deployment. Their
+provenance was not established by the aggregate readback, so neither a synthetic
+nor a physical origin is asserted for those two records.
 
 Worker-origin readback through the established private path (VPS mailbox
 worker's own MCP client) returned genuine live data with capture on:
@@ -1590,3 +1591,62 @@ monitor recovers from a reboot, a camera address change or a phone network
 change, or that the workstation being powered off changes anything — the
 workstation was never part of this path, but proving that requires the owner's
 shutdown, which was not performed.
+
+#### Follow-up: sustained operation, engine restart and authorization negatives
+
+Before the controlled restart, fresh worker-origin reads returned `Running`,
+`capture_enabled: true` and 12 stored alerts. The service was still PID 13741.
+The local native counter had reached 6,724 observations. The local RESTART
+control restarted only the native engine, not Android or the network: the
+counter reset to 4 and advanced to 18, decode failures stayed at zero, and all
+12 stored alerts survived. This verifies native-engine restart and resumption;
+it is not a phone-reboot test or remote-recovery acceptance.
+
+Both missing-bearer and deliberately invalid-bearer requests to the actual
+phone-local MCP endpoint returned HTTP 401. No credentials, grants or capture
+consent were altered for those negative checks.
+
+The remote read did not pass after restart. Source review found an independent
+session defect: the bridge attaches its cached native session even to a fresh
+`initialize`, while the native server returns HTTP 404 for an expired/unknown
+session before dispatch. The bridge previously cleared that cache only on a particular error-message
+substring, which the empty 404 response does not contain. The correction below
+has now passed host regression testing; no passing remote restart result is
+claimed yet.
+
+A later transport check also found the phone's Wi-Fi enabled but not connected,
+with no IPv4 address on `wlan0`. Only the VPN virtual network remained in the
+platform view; the VPS had received no recent handshake from the phone. The
+coordinator returned HTTP 503, so current unavailability cannot be attributed
+solely to the session defect. Restarting only the saved outbound bridge did
+not restore that underlying Wi-Fi link. No Wi-Fi/VPN configuration, firewall,
+route, peer key or public listener was changed. Live remote recovery requires
+the existing physical network link to return before it can be accepted.
+
+#### Native MCP session recovery correction: tested and built, deployment held
+
+Fresh initialization now omits any cached native session header. Only a
+successful initialization adopts the new session header. Native HTTP 404,
+401 and 403 invalidate the cached session; error status and JSON-RPC errors
+are preserved instead of being presented as HTTP 200. Generated errors retain
+the original request ID. Redirects are disabled; the fixed loopback destination,
+bearer authentication and read-only allowlists remain enforced. No request is
+automatically replayed.
+
+`python3 tests/portal/test_android_mcp_session.py` compiles the actual production
+relay against the Android platform jar, then drives that relay against a real
+loopback HTTP peer with test credentials. Parent verification passed 13 checks:
+stale-session initialization, subsequent use of the fresh session, HTTP
+404/401/403/500 failures, explicit reinitialization after 404, redirect refusal,
+error/request-ID preservation, malformed input, failed initialization, ordinary
+tool text not modifying session state, mutating-tool denial and JSON typing.
+The route-security regression also passed. These are host tests, not proof of
+phone-to-VPS recovery.
+
+The signed versionCode 10 (`1.1.2`) APK built successfully; SHA-256:
+`4f48d5814de642faa15ddc93e6c52c2ba5f775e14132530ad62191f960b95a55`.
+Deployment is held: the phone remains on versionCode 9, and fresh checks still
+report Wi-Fi enabled but not connected. Installing during that outage would
+not verify the repaired remote path. Restore the existing saved Wi-Fi link,
+then deploy and repeat engine restart plus both worker-origin reads. Neither
+phone reboot recovery nor changed-network recovery is accepted by this result.

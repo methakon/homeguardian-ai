@@ -378,15 +378,15 @@ public class OutboundMcpBridge {
 
         inFlight.incrementAndGet();
         try {
-            String resp = relayToLoopback(body.toString());
+            LoopbackResponse resp = relayToLoopback(body.toString());
             JSONObject parsed;
             try {
-                parsed = new JSONObject(resp);
+                parsed = new JSONObject(resp.text);
             } catch (Exception e) {
                 // Never echo a non-JSON body back to the coordinator.
-                parsed = errorBody(body.optInt("id", -1), -32603, "local response was not JSON");
+                parsed = errorBody(body.has("id") ? body.opt("id") : -1, -32603, "local response was not JSON");
             }
-            safeResponse(corrId, 200, parsed);
+            safeResponse(corrId, resp.statusCode, parsed);
             return true;
         } finally {
             inFlight.decrementAndGet();
@@ -397,9 +397,22 @@ public class OutboundMcpBridge {
      * Performs the local MCP call. The URL is a CONSTANT - never built from the request - which is
      * what stops this becoming a generic proxy to arbitrary local services.
      */
-    private String relayToLoopback(String body) {
+    private static final class LoopbackResponse {
+        final int statusCode;
+        final String text;
+        LoopbackResponse(int statusCode, String text) {
+            this.statusCode = statusCode;
+            this.text = text;
+        }
+    }
+
+    private LoopbackResponse relayToLoopback(String body) {
         HttpURLConnection c = null;
+        Object requestId = -1;
         try {
+            JSONObject request = new JSONObject(body);
+            if (request.has("id")) requestId = request.opt("id");
+            boolean initialize = "initialize".equals(request.optString("method", ""));
             String token = Provisioner.readToken(ctx);     // in-process; never transmitted
             URL url = new URL("http://" + Provisioner.LOOPBACK + ":" + Provisioner.DEFAULT_PORT + "/mcp");
             c = (HttpURLConnection) url.openConnection();
@@ -413,32 +426,45 @@ public class OutboundMcpBridge {
             // measured against the real hg_mcp_server, not assumed.
             c.setRequestProperty("Accept", "application/json, text/event-stream");
             c.setRequestProperty("Authorization", "Bearer " + token);
-            // Carry the local MCP session forward. Without it the native engine treats each relayed
-            // call as a brand-new client and answers "initialize must be called first".
+            // Never follow a local redirect with the bearer token or replay the POST elsewhere.
+            c.setInstanceFollowRedirects(false);
+            // Unknown native sessions are rejected BEFORE dispatch (even initialize). A fresh
+            // initialize must therefore omit the cached header, without preemptively dropping it.
             String sid = mcpSessionId;
-            if (sid != null) c.setRequestProperty("Mcp-Session-Id", sid);
+            if (!initialize && sid != null) c.setRequestProperty("Mcp-Session-Id", sid);
             byte[] b = body.getBytes("UTF-8");
             c.setFixedLengthStreamingMode(b.length);
             OutputStream os = c.getOutputStream();
             os.write(b);
             os.flush();
             os.close();
-            // initialize mints the session; remember it for every later call.
-            String respSid = c.getHeaderField("Mcp-Session-Id");
-            if (respSid != null && respSid.length() > 0) mcpSessionId = respSid;
             int code = c.getResponseCode();
             InputStream is = (code >= 200 && code < 300) ? c.getInputStream() : c.getErrorStream();
             String text = is == null ? "" : readAll(is);
-            // A stale or rejected session must not latch: drop it so the next initialize re-mints.
-            if (text.contains("initialize must be called first")) {
+            JSONObject parsed = null;
+            try { parsed = new JSONObject(text); } catch (Exception ignored) { }
+            JSONObject rpcError = parsed == null ? null : parsed.optJSONObject("error");
+            // Native unknown-session/auth failures can have only an empty JSON body. Do not
+            // inspect arbitrary tool result text, and never replay a possibly mutating request.
+            if (code == 404 || code == 401 || code == 403 || (rpcError != null &&
+                    rpcError.optString("message", "").contains("initialize must be called first"))) {
                 Log.w(TAG, "local MCP session rejected; dropping it for re-initialization");
                 mcpSessionId = null;
+            } else if (initialize && code >= 200 && code < 300 && parsed != null &&
+                    parsed.has("result") && !parsed.has("error")) {
+                String respSid = c.getHeaderField("Mcp-Session-Id");
+                if (respSid != null && respSid.length() > 0) mcpSessionId = respSid;
             }
-            if (text.length() == 0) return errorBody(-1, -32603, "empty response").toString();
-            return text;
+            if (code < 200 || code >= 300) {
+                // Preserve native JSON-RPC errors, but {} is not a successful RPC response.
+                if (rpcError == null) text = errorBody(requestId, -32603, "local MCP HTTP " + code).toString();
+            } else if (text.length() == 0) {
+                text = errorBody(requestId, -32603, "empty response").toString();
+            }
+            return new LoopbackResponse(code, text);
         } catch (Exception e) {
             Log.w(TAG, "loopback relay failed: " + e);
-            return errorBody(-1, -32603, "local relay failed").toString();
+            return new LoopbackResponse(502, errorBody(requestId, -32603, "local relay failed").toString());
         } finally {
             if (c != null) c.disconnect();
         }
@@ -457,7 +483,7 @@ public class OutboundMcpBridge {
         }
     }
 
-    private static JSONObject errorBody(int id, int code, String msg) {
+    private static JSONObject errorBody(Object id, int code, String msg) {
         try {
             JSONObject err = new JSONObject();
             err.put("code", code);
