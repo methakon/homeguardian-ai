@@ -2,6 +2,15 @@
 
 **Last updated:** 2026-10-24
 
+## Current execution queue
+
+See [current task record and discussion decisions](CURRENT_TASK_HANDOFF.md) for
+the owner-ordered pending work, settings validation, acceptance criteria and
+security boundaries. Restore both phone MCP tools FIRST; storage-pressure guards,
+R2 activation and the existing Alexa-hosted Code update follow serially. This
+record is a handoff, not a new roadmap milestone. Local R2 read/list access has
+been verified; production upload/playback and the new 80% guard are not accepted.
+
 ## Published endpoint
 
 **https://homeguardian.berhampore.in/** is live, serving the native portal
