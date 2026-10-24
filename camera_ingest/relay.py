@@ -41,6 +41,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from .recovery import recovering_source_from_env
 from .source import (
     DEFAULT_HOST,
     ENV_PASSWORD,
@@ -203,7 +204,14 @@ class LoopbackRelay:
     """
 
     def __init__(self, source: Optional[CameraSource] = None, config: Optional[RelayConfig] = None):
-        self._source = source if source is not None else JuanHttpSource(stream="sub")
+        if source is not None:
+            self._source = source
+        else:
+            # Default to a MAC-anchored source. This is opt-in and inert unless a
+            # MAC is enrolled, in which case a camera whose address moves repairs
+            # itself and consumers never notice: they only ever talk to this
+            # relay's own loopback address.
+            self._source = recovering_source_from_env(stream="sub")
         self._config = config or RelayConfig()
         if self._config.token is None:
             self._config.token = os.environ.get(ENV_RELAY_TOKEN) or secrets.token_urlsafe(32)

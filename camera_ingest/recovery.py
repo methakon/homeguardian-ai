@@ -424,6 +424,7 @@ def recovering_source_from_env(
     inner: Optional["_CameraLike"] = None,
     *,
     mac: Optional[str] = None,
+    stream: str = "sub",
     dotenv_path: Optional[str] = None,
 ) -> "_CameraLike":
     """Wrap a camera source with MAC-anchored recovery when a MAC is enrolled.
@@ -435,19 +436,17 @@ def recovering_source_from_env(
     from camera_ingest.source import CameraCredential, JuanHttpSource, default_dotenv_path
 
     resolved_mac = mac or os.environ.get(ENV_CAMERA_MAC)
-    if resolved_mac is None and dotenv_path is not None:
-        # Reuse the same parser the credential loader uses, so the .env is read
-        # one way in this codebase, not two.
+    if resolved_mac is None:
         from camera_ingest.source import load_dotenv
 
-        resolved_mac = load_dotenv(dotenv_path).get(ENV_CAMERA_MAC)
+        resolved_mac = load_dotenv(dotenv_path or default_dotenv_path()).get(ENV_CAMERA_MAC)
     if not resolved_mac:
         return inner if inner is not None else JuanHttpSource(
-            credential=CameraCredential.from_env(default_dotenv_path())
+            credential=CameraCredential.from_env(), stream=stream
         )
 
     if inner is None:
-        inner = JuanHttpSource(credential=CameraCredential.from_env(default_dotenv_path()))
+        inner = JuanHttpSource(credential=CameraCredential.from_env(), stream=stream)
 
     locator = CameraLocator(mac=resolved_mac, last_host=getattr(inner, "_host", None))
     return RecoveringCameraSource(inner, locator)

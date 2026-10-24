@@ -242,7 +242,15 @@ class TestRealScenarios(unittest.TestCase):
 
 
 class TestEnrolment(unittest.TestCase):
-    """Recovery is opt-in: enrolling a MAC is what arms it."""
+    """Recovery is opt-in: enrolling a MAC is what arms it.
+
+    These tests must not read this machine's real .env: the owner's camera MAC may
+    be enrolled there, which would make "no MAC configured" impossible to express.
+    Each test therefore names its own (absent) dotenv explicitly.
+    """
+
+    #: A path that is guaranteed not to exist, so no MAC can be discovered.
+    NO_DOTENV = "/nonexistent/hg-test-absent.env"
 
     def setUp(self) -> None:
         import os
@@ -261,7 +269,8 @@ class TestEnrolment(unittest.TestCase):
         from camera_ingest.recovery import recovering_source_from_env
 
         src = _FakeSource()
-        self.assertIs(recovering_source_from_env(src), src, "an unenrolled camera must not be wrapped")
+        got = recovering_source_from_env(src, dotenv_path=self.NO_DOTENV)
+        self.assertIs(got, src, "an unenrolled camera must not be wrapped")
 
     def test_enrolling_a_mac_arms_recovery(self) -> None:
         import os
@@ -270,7 +279,7 @@ class TestEnrolment(unittest.TestCase):
 
         os.environ["HG_CAMERA_MAC"] = CAM
         src = _FakeSource()
-        wrapped = recovering_source_from_env(src)
+        wrapped = recovering_source_from_env(src, dotenv_path=self.NO_DOTENV)
         self.assertIsInstance(wrapped, RecoveringCameraSource)
         assert isinstance(wrapped, RecoveringCameraSource)  # narrow for the type checker
         self.assertEqual(wrapped._locator.mac, CAM)
@@ -282,7 +291,7 @@ class TestEnrolment(unittest.TestCase):
 
         os.environ["HG_CAMERA_MAC"] = "not-a-mac"
         with self.assertRaises(ValueError):
-            recovering_source_from_env(_FakeSource())
+            recovering_source_from_env(_FakeSource(), dotenv_path=self.NO_DOTENV)
 
 
 if __name__ == "__main__":
