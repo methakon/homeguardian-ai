@@ -1860,3 +1860,20 @@ passed under Node v18.19.1 and the actual gateway service user: 25 retention tes
 7 scheduler/auth/shutdown tests and the complete local HTTP round trip. Every
 transferred gateway/backend/UI hash matched the candidate source. Temporary test
 state was isolated and removed; no real bucket or camera was accessed.
+
+Retention source `2aa2a57d0f9e9472d0dc7ac2023adde6dcb8b98b` was then pushed and
+deployed to the existing gateway only. All three deployed gateway/backend/UI
+hashes match the pushed source, with a root-only rollback archive retained. The
+protected environment was byte-identical before/after; cleanup was not enabled,
+no credential was rotated, and the mailbox worker's bytes and process ID remained
+unchanged. Both services remain active. Public HTTPS serves the new UI digest,
+anonymous list/maintenance requests return 401, and authenticated maintenance
+returns `enabled:false, examined:0, expired:0`. Reader-key and browser-Origin
+attempts cannot authorize cleanup. No real object was deleted or quota reclaimed.
+
+Latest worker-user probes still return UNAVAILABLE for both native MCP tools;
+the R2 runtime values remain absent. These are outstanding external/live-path
+gates, not successful video or Alexa acceptance. The detector/recording worker's
+code and devices were not changed. The Alexa-hosted Code update remains blocked
+on authorized Amazon console access; no new hosted deployment was attempted
+without that authorization.
