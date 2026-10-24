@@ -1535,3 +1535,20 @@ least-privilege (send-only to the reply queue) and the workstation AWS session
 is expired, so the reply queue could not be read here; that link stays at its
 previous WORKER-VERIFIED state. Physical camera restart, a real DHCP address
 move, phone reboot recovery and workstation-off operation remain unverified.
+
+#### Deployment addendum: artifact identity and bridge self-recovery
+
+The installed APK was pulled back off the device and hashed against the build
+output: both are `sha256 6366ef7deb5a76e6f51eec80121d1edd9c34a8baf14226359d71a7b3eef4ecbd`,
+and that APK was built from the committed source, so the running artifact is the
+reviewed one rather than a look-alike.
+
+One transient outage was observed and is recorded rather than smoothed over.
+With the screen off, the outbound bridge session dropped; for a few minutes the
+worker-origin private read returned `UNAVAILABLE` while the on-device engine kept
+answering its own loopback probe and kept analysing frames. No operator action
+was taken: the bridge re-established itself, and three consecutive worker-origin
+reads then returned `{"state":"Running","read_only":true,"capture_enabled":true}`
+with capture still on. This is evidence of self-recovery from a dropped control
+session on an unchanged network. It is not evidence of recovery from a reboot, a
+changed camera address or a changed phone network, which remain unverified.
