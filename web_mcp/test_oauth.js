@@ -321,7 +321,7 @@ async function testSessionUi(source) {
       querySelectorAll() { return ['runBtn','scenarioSel','uploadBtn','refreshBtn','camReconnect','camFullscreen'].map(id => nodes.get(id)).filter(Boolean); },
       addEventListener(k, fn) { var previous = this['on' + k]; this['on' + k] = function () { if (previous) previous(); fn(); }; },
     };
-    for (const id of ['status','metrics','scenDesc','scenarioSel','integrations','alertCount','alerts','runBtn','uploadBtn','refreshBtn','camReconnect','camFullscreen','camFrame']) {
+    for (const id of ['status','metrics','scenDesc','scenarioSel','camBadge','camBanner','camOverlay','camMetrics','integrations','alertCount','alerts','runBtn','uploadBtn','refreshBtn','camReconnect','camFullscreen','camFrame']) {
       const node = element('div'); node.id = id; node.textContent = '0'; document.body.appendChild(node);
     }
     const calls = [];
@@ -411,6 +411,8 @@ async function testSessionUi(source) {
   ok(reviewed.document.documentElement.attributes['data-hg-household'] === 'granted' &&
     !reviewed.nodes.get('runBtn').disabled && !reviewed.nodes.get('scenarioSel').disabled &&
     reviewed.nodes.get('uploadBtn').disabled, 'judge review enables simulations but never camera management or uploads');
+  ok(['camBadge','camBanner','camOverlay','camMetrics'].every(id => reviewed.nodes.get(id).textContent !== 'Household access not granted'),
+    'successful outdoor authorization clears stale household-denial camera placeholders');
   reviewed.nodes.get('scenarioSel').value = 'normal';
   await reviewed.nodes.get('runBtn').onclick();
   const simulationRequest = reviewed.calls.find(c => c.url === '/api/run-scenario?scenario=normal');
@@ -422,6 +424,9 @@ async function testSessionUi(source) {
   await reviewed.window.refreshIntegrations();
   ok(!reviewed.calls.some(c => c.url === '/api/devices') && reviewed.nodes.get('integrations').textContent.includes('restricted'),
     'judge UI does not request private device inventory or trigger a blanket household denial');
+  await reviewed.window.fetch('/api/devices').catch(() => {});
+  ok(reviewed.document.documentElement.attributes['data-hg-household'] === 'granted',
+    'private inventory denial cannot revoke an already granted outdoor review view');
   await reviewed.window.__hg.logout();
   ok(!reviewed.window.__hg.authenticated(), 'judge logout revokes access without persistent storage');
   const granted = await signIn(boot('', false, true));

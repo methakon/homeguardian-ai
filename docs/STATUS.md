@@ -1696,3 +1696,18 @@ cutover remains owner acceptance. Camera status currently returns
 `{"configured":false}` from the actual private bridge: access policy is fixed,
 but no live portal feed is asserted or fabricated. Simulations work independently
 of that camera connection.
+
+#### Reviewer camera visibility correction
+
+An independently reproduced browser-state defect let a denied private-device
+inventory request overwrite an already authorized outdoor-camera view with
+`Household access not granted`. The regression failed before the correction.
+Private inventory denial now remains local to that restricted resource; it does
+not revoke outdoor review authorization. Inventory polling also waits for
+scope resolution, and camera placeholders from the initial denied/loading state
+are cleared only after `/api/me` explicitly grants review access.
+
+The served-script regression and full OAuth/UI suite pass 265 assertions; the
+review policy suite passes 64. Camera activation and other mutations remain
+restricted. This fixes misleading authorization UI, not an absent camera source:
+the production private bridge still reports `configured:false`.

@@ -422,7 +422,8 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
             if (requestToken && requestToken === state.token) clear();
           }
           else if (res.status === 403) {
-            if (household) block('Private household access not granted. Google sign-in verifies identity only.');
+            var privateInventory = state.reviewOnly && absolute(url).pathname === '/api/devices';
+            if (household && !privateInventory) block('Private household access not granted. Google sign-in verifies identity only.');
             else { render(); }
           } else { message = 'HomeGuardian data unavailable. No household readings or zero counts are being reported.'; render(); }
           // The old page does not check response.ok: never let its JSON fallbacks
@@ -494,6 +495,12 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
       state.simulationsAllowed = me.outdoor_review_authorized === true;
       state.reviewOnly = me.household_authorized !== true && me.outdoor_review_authorized === true;
       document.documentElement.setAttribute('data-hg-household', 'granted');
+      // Remove old denial placeholders only after the server grants this scope.
+      // Real backend renderers replace these with data or availability errors.
+      ['status','metrics','alerts','alertCount','camBadge','camBanner','camOverlay','camMetrics','scenDesc'].forEach(function (id) {
+        var node = document.getElementById(id);
+        if (node && node.textContent === 'Household access not granted') node.textContent = 'Loading authorized view…';
+      });
       message = state.reviewOnly
         ? 'Outdoor camera: read-only for Google-signed-in users and judges. Synthetic simulations: interactive and isolated. Device management remains restricted.'
         : 'Owner-approved household read access. Mutations, consent, uploads and administration remain denied.';
@@ -551,7 +558,7 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
       text('metrics', 'Read-only native MCP status; scenario metrics are not provided.');
     };
     window.refreshIntegrations = function () {
-      if (state.reviewOnly) {
+      if (state.reviewOnly || !householdGranted()) {
         text('integrations', 'Outdoor-camera review only. Private device inventory is restricted.');
         text('labelLegend', 'Read-only review access; device management is not available.');
         return Promise.resolve();
