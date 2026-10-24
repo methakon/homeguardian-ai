@@ -133,3 +133,66 @@ input if progress is impossible.
 For each task, record changed paths, source SHA, actual test command/result,
 deployment readback, consumer result, remaining limitations and the next task.
 Until that evidence exists, retain PENDING or BLOCKED rather than DONE.
+
+---
+
+## Design discussion and decisions — edge video event detection (2026-10-24)
+
+Recorded here as discussion and decision history. This is **not** a re-ordering of the
+execution queue above: the owner-ordered tasks (restore both phone MCP tools, storage-pressure
+safeguard, R2 activation, Alexa-hosted Code update) remain the execution order. Nothing in this
+section is implemented.
+
+### What was discussed
+
+A continuous video event-detection capability for the edge node, triggered by the observation
+that no single inference interval works: two minutes is blind, one to two seconds thermally
+throttles the device, and five seconds still misses a subject that crosses the frame in 3-4 s.
+The conclusion was that the interval is not the variable to tune — the architecture is. Cheap
+continuous observation must be decoupled from expensive event-gated analysis, and the analysis
+must be able to examine frames captured *before* it was asked.
+
+### What was decided
+
+Five decisions, recorded in full as ADR-020 … ADR-024 in `docs/DECISIONS.md`:
+
+| ADR | decision |
+|---|---|
+| ADR-020 | Video event detection is trigger-driven, not scheduled. Asymmetric gate (one strong hit fires immediately; weak motion needs 2 of the last 3), latched 0.8-1.5 s past the last hit, event timestamp taken on the **first weak hit**, Tier-0 never degraded to relieve heat |
+| ADR-021 | The edge node stays a native NDK/Bionic `arm64-v8a` runtime. No Termux, no PRoot/glibc userland, no extra hosting package |
+| ADR-022 | Camera ingestion is network-side. The edge service holds no CAMERA or RECORD_AUDIO permission, so continuous monitoring never activates an on-device sensor |
+| ADR-023 | The pre-event ring retains compressed packets, not decoded frames — a ~350x memory reduction for the same window, and retention must exceed the GOP so a keyframe is always inside it |
+| ADR-024 | Where design references conflict, the later and stricter one governs, and its correction is applied rather than averaged |
+
+### What was verified on the physical device (read-only)
+
+- The handset is connected and usable: adb reports it in `device` state. Identity was taken from
+  corroborating device properties, **not** from the USB descriptor string, which mislabels this
+  device (FRICTION_LOG Incident 80).
+- Idle capacity is ample: load 0.00, 713% of 800% CPU idle, ~3.4 GiB RAM available, 93 GB free.
+- **The binding thermal constraint is 56 °C** on the skin/quiet zone — far tighter than the
+  generic single-board-computer figure previously assumed, and the headroom that any Tier-1
+  budget must be derived from (FRICTION_LOG Incident 83, and §5.2 of the design document).
+- **Camera acquisition from the node works**: reachable on the same subnet, HTTP fetch returns
+  200 with a valid JPEG payload in ~28 ms.
+- Two previously recorded blockers did **not** reproduce — the adb transport is healthy and
+  device-to-camera reachability is fine.
+- **What is running: the edge service only**, as a foreground service, loopback-bound, answering
+  `401` to anonymous callers. The harness is installed but not running and holds no sensor
+  permission. Vision runtime, model and capture ingestion are absent.
+
+### What was explicitly not done
+
+No camera or microphone on the device was activated. No device state was modified — every check
+was read-only. No vision code, runtime, model or dependency was added to the tree. No listener,
+permission or package was introduced. No deployment, restart or configuration change was made to
+any running component.
+
+### Open items
+
+Full list with reasons in `docs/EDGE_VIDEO_EVENT_DETECTION.md` §7. The three that gate any
+implementation: nobody has written Tier-0 yet; the mutual-TLS ingestion path remains unavailable
+on this node until OpenSSL is cross-compiled for Android (plain-HTTP camera acquisition is
+unaffected); and autonomous restart plus on-battery behaviour are unproven for a continuous
+monitoring role. No design reference used here was validated on the target hardware, so the first
+real measurement on the device — not the references — settles the tuning values.

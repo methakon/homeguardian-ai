@@ -3293,3 +3293,138 @@ The practical damage is that the FAQ's own note — *"sometimes missing from ind
 
 **Status:** Resolved in branch `fix/hg-sec-06d-trust-root`.
 
+## Incident 80: Device identity was initially read from a misleading USB descriptor label
+
+**Date:** 2026-10-24
+**Task attempted:** Confirm which handset was connected and usable for edge-video work.
+
+**Steps:**
+1. Enumerated USB devices with `lsusb` to find the connected handset.
+2. The only handset-like entry was `ID 2717:ff08 Xiaomi Inc. Redmi Note 3 (ADB Interface)`, so the connection was initially treated as *not* the target device.
+3. Queried adb instead: `adb devices -l` and the device's own properties.
+
+**Expected result:** The connected device is identified reliably before any capability or compatibility conclusion is drawn from it.
+
+**Actual result:** The USB ID-to-name string in the local descriptor database is stale/generic — `2717:ff08` is a Xiaomi debug interface used across many models. It reported "Redmi Note 3" for a device that is in fact the Mi A3 (`laurel_sprout`, API 30, `arm64-v8a`). Drawing a conclusion from the descriptor string would have produced a false negative on device availability, and a conclusion drawn from `ro.product.model` alone would have been no better — the same vendor label problem exists in the properties a clone device can spoof.
+
+**Severity:** Medium (P2) — analysis could have been abandoned or mis-targeted on a false device-identity premise.
+
+**Fix:**
+Not a code fix. Identity is established from the kernel/USB topology plus a set of corroborating properties that a single spoofed field cannot satisfy, not from a single descriptor string or model name. This matters here specifically because a fake-spec clone device has previously appeared on the same USB port.
+
+**Evidence:**
+- `lsusb` → `2717:ff08 Xiaomi Inc. Redmi Note 3 (ADB Interface)`
+- `adb devices -l` → `edd53dbd04de device usb:2-1 product:laurel_sprout model:Mi_A3 device:laurel_sprout`
+- `getprop` → `ro.product.manufacturer=Xiaomi`, `ro.board.platform=trinket`, `ro.build.version.sdk=30`, `ro.product.cpu.abi=arm64-v8a`
+
+**Suggestion:** Establish device identity from a corroborating set of kernel and property evidence before drawing any conclusion from it, and never from a single USB descriptor string or model name. Record the identifying facts in the device report so a later session does not re-derive them from a misleading label.
+
+**Status:** fixed
+
+## Incident 81: A recorded device-state assumption was stale and inverted the conclusion
+
+**Date:** 2026-10-24
+**Task attempted:** Determine what of this project is actually running on the handset.
+
+**Steps:**
+1. Started from a prior session record stating the harness was not present on the device.
+2. Enumerated installed packages and running processes on the device rather than acting on that record.
+
+**Expected result:** The prior record reflects current device state.
+
+**Actual result:** The record was stale. Both the edge service and the harness are installed, and the edge service was **running as a foreground service** with a live MCP endpoint. A conclusion built on the stale note would have reported the device as unprovisioned. Separately, a long-running blocker recorded as "wireless reachability" did not reproduce either — reachability was fine.
+
+**Severity:** Medium (P2) — a stale note would have produced a wrong "nothing is deployed" report.
+
+**Fix:**
+Not a code fix. Device state is re-enumerated at the start of any session that depends on it, and the derived facts are written back to the device report rather than kept in session notes.
+
+**Evidence:**
+- `pm list packages | grep -iE 'homeguard'` → `org.homeguardian.edgeservice`, `org.homeguardian.harness`
+- `ps -A -o USER,PID,RSS,NAME | grep -i homeguard` → edge service running, harness not running
+- `dumpsys activity services` → `isForeground=true`
+- `/proc/net/tcp` → loopback listener; `POST /mcp` → `401` with `WWW-Authenticate: Bearer`
+
+**Suggestion:** Treat any recorded device or deployment state as a hypothesis to re-check, not as fact — especially a negative ("X is absent"), because a negative is what makes a session skip the verification that would have contradicted it. Re-verify and rewrite the record at the point of use.
+
+**Status:** fixed
+
+## Incident 82: A missing build tool looked like a prerequisite but was a deliberate exclusion
+
+**Date:** 2026-10-24
+**Task attempted:** Confirm the toolchain could produce an `arm64-v8a` artifact for the handset.
+
+**Steps:**
+1. Checked for the NDK, `cmake` and `ninja` on the build host.
+2. Found the NDK and `cmake` present and `ninja` absent, which the working assumption treated as a gap to be closed.
+3. Searched the repository for how the build is actually driven before installing anything.
+
+**Expected result:** A missing build dependency is identified and resolved before building.
+
+**Actual result:** `ninja` is **deliberately not a dependency of this project** — a recorded decision selects `make -j4`, accepting longer build times. The "missing prerequisite" was an intentional exclusion, and acting on the assumption would have added a tool the project had already decided against, on a shared workstation, for no benefit.
+
+**Severity:** Low (P3) — would have installed an unnecessary tool and diverged the build from its recorded decision.
+
+**Fix:**
+Not a code fix. The repository's own decisions were consulted before treating an absent tool as a defect.
+
+**Evidence:**
+- `docs/DECISIONS.md` — "No Ninja dependency (use `make`)"; "Build times longer than Ninja (mitigated by `-j4` flag)"
+- `docs/EDGE_DEVICE_MI_A3.md` — documented cross-compile invocation using the NDK CMake toolchain file with `-DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-30 -DANDROID_STL=c++_shared` and no Ninja generator
+
+**Suggestion:** When a toolchain component appears to be missing, grep the repository's decisions and build scripts for it before installing anything. "Not installed" and "not a dependency by decision" look identical from a version probe, and only the second is correct here.
+
+**Status:** fixed
+
+## Incident 83: The thermal budget was assumed from a generic SBC figure and was far too permissive
+
+**Date:** 2026-10-24
+**Task attempted:** Establish the thermal envelope available to an always-on video analysis stage on the handset.
+
+**Steps:**
+1. Read the thermal zones and their trip points from the device.
+2. Compared against the widely-cited single-board-computer throttling figure used as the working assumption for this class of work.
+
+**Expected result:** The assumed throttling threshold approximates the device's actual throttling threshold.
+
+**Actual result:** The device's tightest passive trip point is **56 °C** on the skin/quiet zone — roughly 25-30 °C below the assumed figure. The CPU zones have ~86-91 °C of headroom and are not the constraint; the binding constraint is the skin zone. The device has previously been observed reaching ~56 °C on its hottest zone, so it *can* reach its throttling point. A budget derived from the assumed figure would have been permissive by a large factor, and the tightest zone is the least obvious one to check (it is not the CPU thermal zone).
+
+**Severity:** Medium (P2) — a duty-cycle budget derived from the wrong threshold would overrun the real thermal envelope.
+
+**Fix:**
+Not a code fix. Thermal budget is derived from the device's own trip points, read per zone, with the *minimum* passive trip across all zones taken as the envelope — not from a published figure for a different class of hardware, and not from the CPU zone.
+
+**Evidence:**
+- `/sys/class/thermal/thermal_zone*/trip_point_0_temp` → quiet-therm-adc 56 °C (binding); skin-therm-adc 125 °C; cpuss-*-usr 125 °C
+- Live read: quiet-therm-adc 34 °C (21 °C headroom), skin-therm-adc 33 °C, cpuss-0-usr 38 °C
+
+**Suggestion:** Read the device's own thermal trip points per zone and take the tightest as the budget; never inherit a throttling threshold from a different hardware class. Check the non-CPU zones explicitly — the skin/quiet zone is frequently the binding constraint and is the one a CPU-focused check misses.
+
+**Status:** fixed
+
+## Incident 84: Sequentially derived design references were treated as independent corroboration
+
+**Date:** 2026-10-24
+**Task attempted:** Reconcile three design references for edge video event detection before adopting a design.
+
+**Steps:**
+1. Read all three references and noted where they agreed and disagreed.
+2. Initially treated agreement across the set as independent corroboration that a parameter or approach was correct.
+
+**Expected result:** Agreement between references increases confidence in the agreed guidance.
+
+**Actual result:** The references are **not independent** — they form a review chain: the first is the origin, the second reviews the first and states corrections to it, the third reviews both. Agreement across the chain is therefore partly just repetition, and one "correction" was genuinely a contradiction (the ring representation; a decoded high-resolution pre-event ring versus compressed packets, a ~350x memory difference). Treating the set as corroborating would have counted the corrected document's original errors as confirmed.
+
+**Severity:** Medium (P2) — averaging across a review chain silently discards its corrections.
+
+**Fix:**
+Not a code fix. Provenance is established before consensus is counted: agreement is treated as meaningful only where the documents are independent, and where one document states it is correcting another, the correction governs rather than the majority. Parameters that genuinely vary across all three are recorded as ranges rather than one author's figure.
+
+**Evidence:**
+- Reference 2's summary states it changes several parts of reference 1 and decomposes a ring buffer that reference 1 proposed as decoded frames.
+- Reference 3's summary reviews both and adds the sampling-probability and duty-cycle arithmetic.
+- Recorded as ADR-024 in `docs/DECISIONS.md`; the reconciled design and the two applied corrections are in `docs/EDGE_VIDEO_EVENT_DETECTION.md` §4.
+
+**Suggestion:** Establish whether multiple sources are independent before treating their agreement as corroboration; for a review chain, recency plus an explicit statement of correction outranks the count of documents that agree. Where sources were written in sequence, the later one's diff is the signal, not the overlap.
+
+**Status:** fixed

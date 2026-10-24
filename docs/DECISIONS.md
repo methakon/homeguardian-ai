@@ -929,3 +929,132 @@ of TLS and sockets - so the host suite tests it rather than requiring a containe
 
 **Consequences.** A live deployment cannot lose replay protection silently. Isolated tests
 keep a documented path, and the ingress announces when it is used.
+
+## ADR-020 — Video event detection is trigger-driven, not scheduled
+
+**Context.** Any fixed inference interval fails. Two minutes is functionally blind (~2 minutes:
+a subject crosses in seconds). One to two seconds sustains CPU load to the point of thermal
+throttling. Five seconds is thermally survivable but still misses a subject crossing in 3-4 s.
+A fast subject is missed twice over: the sample may not land during the crossing, and the
+subject has left the frame by the time analysis runs. Raising the sample rate does not fix it,
+because cost grows linearly with the rate while the device throttles.
+
+**Decision.** Video event analysis is event-gated, never scheduled. A cheap always-on change
+detector (Tier-0) runs at 10-15 checks/s on a reduced luma image (80x60 or 160x90); an
+asymmetric gate opens only on validated motion (one strong hit fires immediately, weak motion
+requires 2 of the last 3 observations, and the gate latches 0.8-1.5 s past the last hit); the
+expensive analyser (Tier-1) sleeps until the gate fires and then analyses 3-8 selected frames
+from **before** the trigger. The event timestamp is recorded on the first weak hit, not at
+confirmation, because that timestamp anchors the look-back window. Thermal pressure is relieved
+by shrinking Tier-1 work, never by reducing the Tier-0 rate.
+
+**Rationale.** The requirement is continuous responsiveness without invoking throttling.
+Decoupling cheap continuous observation from expensive gated analysis is the only shape that
+delivers both. Rejected: a longer interval (misses fast subjects), a shorter interval (throttles),
+and requiring several consecutive motion frames before triggering — at 10 Hz that spans
+200-300 ms, so a short crossing may never accumulate enough hits, which misses precisely the
+events the system exists to catch.
+
+**Consequences.** Fast subjects are caught because the pre-trigger buffer already holds them.
+Cost becomes a function of event rate rather than sample rate, so idle load is near zero and
+scales with activity instead of time. It costs architectural complexity: a pre-event ring, a
+bounded event queue, a latched gate and a thermal controller with explicit operating states.
+Consultation order for anything in this area: `docs/EDGE_VIDEO_EVENT_DETECTION.md`.
+
+## ADR-021 — The edge node stays a native NDK/Bionic runtime
+
+**Context.** The analysis needed a runtime for the device. Candidate routes were a native
+NDK/Bionic binary, a Termux userland, or a Debian/Ubuntu rootfs under PRoot. The PRoot route
+intercepts every syscall through `ptrace` and costs 300 MB-1 GB on disk; Termux costs ~200 MB
+and a second app install. The device has no root, SELinux is enforcing and verified boot is
+green, so there is no privileged shortcut available regardless.
+
+**Decision.** The device runs the real binaries natively under Android's Bionic libc,
+cross-compiled with the NDK for `arm64-v8a` / API 30. No Termux, no PRoot/glibc userland, no new
+package to host the runtime.
+
+**Rationale.** Native Bionic carries no syscall interception, needs no extra app install, and
+matches the libc the platform itself uses. Verified end to end: the binaries build for, start
+on, and serve from the device with real persistence. `ninja` is deliberately not a dependency
+(`docs/DECISIONS.md`, no-Ninja decision); use `make -j4`. Rejected the alternatives on
+disk cost, syscall overhead, and an extra unmanaged app in the trust path.
+
+**Consequences.** The device remains a single controlled runtime. Cross-compilation is a build
+step the project already scripts, and new native code follows the same route. The cost is that
+anything requiring a glibc-only dependency is unavailable without porting it to Bionic — visible
+already in the OpenSSL gap (ADR-022 consequences).
+
+## ADR-022 — Camera ingestion is network-side; the edge service holds no camera permission
+
+**Context.** Tier-0 needs frames. Two sources were available: the device's own camera, or a LAN
+camera reachable from the device. The device camera requires CAMERA permission on the service
+and constitutes activating a sensor on the handset. The network path requires only the INTERNET
+permission the service already holds.
+
+**Decision.** Frame acquisition is over the network from the LAN camera. The production edge
+service requests and holds no CAMERA or RECORD_AUDIO permission. The separate harness package is
+the only component that requests them, and it is neither running nor granted.
+
+**Rationale.** Acquisition is verified working from the device (HTTP 200, valid JPEG payload,
+~28 ms round trip), so the network path is proven rather than assumed. Keeping the service a
+network client means continuous monitoring never activates an on-device sensor as a side effect,
+and it keeps the trust surface small: no sensor permission on the always-running component.
+Rejected the device camera as the default source.
+
+**Consequences.** The service can monitor continuously without any sensor-activation question
+arising, and the same code path works against any reachable camera. The cost is that the node
+depends on network reachability and on the camera's own availability — the recovery behaviour
+for address changes and restarts is therefore load-bearing (see ADR-023 note in
+`docs/EDGE_VIDEO_EVENT_DETECTION.md`), and mutual-TLS ingestion remains unavailable on this node
+until OpenSSL is cross-compiled for Android.
+
+## ADR-023 — The pre-event ring retains compressed packets, not decoded frames
+
+**Context.** Retrospective analysis requires retaining 1-3 s of history so Tier-1 can look back
+to where the event began. The originating design retained decoded high-resolution frames. The
+representation determines both memory and the achievable window: for a 2-second payload,
+80x60 grayscale is 141 KiB, 320x240 BGR is 6.6 MiB, and 1920x1080 BGR is 356 MiB, while the same
+window as compressed H.264 is ~1 MB at 4 Mbit/s.
+
+**Decision.** Retain compressed packets (reference-counted, later fed to the decoder) for an
+encoded camera, raw JPEG bytes for an MJPEG webcam, and a reduced frame size for a raw webcam.
+Never retain decoded full-resolution frames. Retain **more than the desired pre-roll**: a clip
+cannot begin decoding from an arbitrary P/B frame, so the ring must extend past the preceding
+keyframe — with a 2 s pre-roll and a 1 s GOP, retain 3-4 s.
+
+**Rationale.** ~350x reduction in memory for the same window, which is what makes a longer
+retention window affordable. A longer window is what guarantees a keyframe is inside it.
+Rejected the decoded-frame ring: it is the single largest memory mistake available in this
+design, and it does not improve what Tier-1 can see.
+
+**Consequences.** Memory stays bounded and small, and the retention window can be generous. The
+cost is decode complexity: the decode worker must seek back to the preceding keyframe, feed
+packets, discard output before the desired start, and only then analyse. Retention must never
+fall below the GOP length or the clip becomes undecodable.
+
+## ADR-024 — Where design references conflict, the later and stricter one governs
+
+**Context.** Three design references were reviewed. They are not independent: the first is the
+origin, the second reviews the first and states corrections, the third reviews both. They
+contradict each other in places — the ring representation (ADR-023), trigger strictness
+(ADR-020), whether sustained inference risks physical damage, and the latch duration (the
+earliest says 750 ms; the later two say 0.8-1.5 s).
+
+**Decision.** Where the references conflict, the later and more rigorous document governs, and
+its correction is applied explicitly rather than by averaging. Numeric parameters that vary
+across all three are recorded as ranges (latch 0.8-1.5 s, weak 0.4-0.6%, strong 2-2.5%) rather
+than as one author's figure. Guidance on which all three agree is treated as settled: the
+asymmetric trigger, the latched gate, 3-8 frame sampling, the 1-2 job bound, and disabling
+runtime thread spinning.
+
+**Rationale.** The references disagree because they were written in sequence with review, so
+recency correlates with correctness — but only where the later document says it is correcting
+the earlier one. Averaging would silently discard the correction. Recording ranges where the
+spread is genuine tuning latitude keeps the numbers honest.
+
+**Consequences.** The design has a defensible provenance and its known corrections are visible
+rather than buried. Two corrections were applied: the ring stays compressed, and "CPU burn-out"
+is too strong (the device throttles). The cost is that the documented parameter set is
+deliberately a range, so the first real device measurement — not the references — settles the
+values actually used. None of the references was validated on the target hardware; see
+`docs/EDGE_VIDEO_EVENT_DETECTION.md` §7.
