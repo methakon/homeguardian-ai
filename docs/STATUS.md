@@ -1787,3 +1787,45 @@ and the recording worker's genuine clip. Automatic cloud retention cleanup is
 not implemented; pending/ready objects remain quota-charged and new uploads stop
 at the configured byte/entry ceilings. No live video upload/playback, new SQS/Echo
 delivery, retention deletion or zero-billing guarantee is claimed.
+
+#### Portal and VPS mailbox deployment — storage inactive, hosted skill pending
+
+After explicit owner approval to deploy the tested/pushed portion first, source
+`5e7392149e6c043b86da87cebbf621ffc0a9299a` was deployed to the existing gateway and
+VPS mailbox worker. Only `gateway.js`, `event_videos.js`, `event_videos_ui.js` and
+`alexa_mailbox_worker.py` were replaced. The old gateway/worker and protected
+environment files were retained in a root-only rollback archive. Deployed file
+hashes were read back and matched the pushed source. Both supervised services
+are active. No camera, detection/recording, Android APK, hosted Lambda, mail,
+firewall, tunnel, routing or public listener change was made.
+
+The protected catalog directory and independent producer/notification credentials
+were provisioned. The notification reader has a separate owner-only copy for the
+worker user. Existing environment settings were preserved; no cloud-storage or
+AWS credential was changed. R2 remains unconfigured, and neither the deployment
+nor the new app credentials enable uploads without valid private-bucket settings.
+
+Public HTTPS verification: the original page and both session/video scripts return
+200/no-store with no cookies; the video script digest matches the tested source.
+Anonymous event-list, playback, scenario and machine-notification requests each
+return 401. An isolated instance of the deployed module, using its actual service
+user/configuration and a synthetic reviewer session, verified viewer grant,
+private-device denial, origin/method guards, producer/reader credential isolation
+and revocation. Its video calls return explicit HTTP 503
+`event_video_storage_unconfigured`, not fabricated empty history. This is not a
+fresh real Google-account acceptance; gateway restart invalidates old tab sessions.
+
+Under the actual mailbox service user, the authenticated notification endpoint
+returns 503 and the optional reader safely returns unavailable. Both genuine
+phone MCP tools were UNAVAILABLE before deployment and remained UNAVAILABLE after
+it; no observer recovery or new Alexa delivery is claimed by this rollout.
+
+The Alexa-hosted Code update could not be deployed: the developer console redirects
+to Amazon Sign-In, the credential vault has no saved login, and the secure login
+prompt is unavailable in this headless session. Existing hosted code was not
+modified. A verified two-file update bundle was prepared privately for the
+existing skill; it is not a standalone Lambda package and contains no environment
+file or credentials. Hosted deployment and new Alexa app-card acceptance remain
+blocked on authorized console access. R2 upload/playback still requires the
+owner's four storage settings and a genuine recording-worker clip. Automatic
+retention deletion remains unimplemented.

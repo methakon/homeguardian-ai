@@ -13,6 +13,13 @@ The production gateway currently has **no R2 configuration**. Implementation and
 hermetic tests are not live Cloudflare acceptance. Do not claim clips uploaded,
 playback working, or an Echo receiving a new link until those legs are exercised.
 
+The gateway UI/backend and VPS mailbox adapter from source
+`5e7392149e6c043b86da87cebbf621ffc0a9299a` are deployed. The list/player is served
+by the original portal after login, but storage requests currently report 503
+until R2 is configured. The Alexa-hosted Code portion is not deployed: authorized
+Amazon developer-console access is still required. Restarting the gateway cleared
+old in-memory browser sessions, so use the original portal and sign in again.
+
 ## Data path
 
 1. The observer produces a browser-compatible, bounded MP4 (H.264 video; AAC if
