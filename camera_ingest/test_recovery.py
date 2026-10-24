@@ -17,17 +17,17 @@ from camera_ingest.recovery import (
     subnet_of,
 )
 
-CAM = "9c:a3:a9:ca:02:38"
+CAM = "02:00:5e:00:53:01"
 OTHER = "aa:bb:cc:dd:ee:ff"
 
 
 class TestIdentity(unittest.TestCase):
     def test_mac_is_canonicalised(self) -> None:
-        self.assertEqual(normalise_mac("9C-A3-A9-CA-02-38"), CAM)
-        self.assertEqual(normalise_mac(" 9c:a3:a9:ca:02:38 "), CAM)
+        self.assertEqual(normalise_mac("02-00-5E-00-53-01"), CAM)
+        self.assertEqual(normalise_mac(" 02:00:5e:00:53:01 "), CAM)
 
     def test_a_non_mac_is_rejected_loudly(self) -> None:
-        for bad in ("", "not-a-mac", "9c:a3:a9:ca:02", "192.168.1.13"):
+        for bad in ("", "not-a-mac", "02:00:5e:00:53", "192.168.1.13"):
             with self.assertRaises(ValueError, msg=bad):
                 normalise_mac(bad)
 
