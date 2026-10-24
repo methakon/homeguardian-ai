@@ -979,6 +979,23 @@ function createGateway(options = {}) {
     }
     return eventVideoService;
   }
+  const cleanupTimers = options.videoCleanupTimers || { setInterval, clearInterval };
+  let cleanupTimer = null, cleanupPromise = null, closing = null;
+  function cleanupTick() {
+    if (closing || env.HG_EVENT_VIDEO_CLEANUP_ENABLED !== '1') return Promise.resolve();
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = Promise.resolve().then(() => videos().cleanupExpired())
+      .catch(() => { log.warn('Event-video retention cleanup unavailable; storage accounting remains conservative.'); })
+      .finally(() => { cleanupPromise = null; });
+    return cleanupPromise;
+  }
+  function startVideoCleanup() {
+    if (env.HG_EVENT_VIDEO_CLEANUP_ENABLED !== '1' || cleanupTimer !== null || closing) return;
+    // No immediate deletion on start. One bounded transaction per minute, and
+    // only the storage backend decides eligibility under the configured policy.
+    cleanupTimer = cleanupTimers.setInterval(cleanupTick, 60000);
+    if (cleanupTimer && typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
+  }
   function singleAuthorization(req) {
     return req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i].toLowerCase() === 'authorization').length === 1;
   }
@@ -997,9 +1014,9 @@ function createGateway(options = {}) {
     finally { if (fd !== undefined) fs.closeSync(fd); }
   }
   function videoError(res, err) {
-    const status = [400, 404, 409, 413, 429, 507].includes(err.status) ? err.status : 503;
+    const status = [400, 404, 409, 410, 413, 429, 507].includes(err.status) ? err.status : 503;
     const errors = { 400: 'invalid_event_video_request', 404: 'event_video_not_found',
-      409: 'event_video_conflict', 413: 'event_video_too_large', 429: 'event_video_limit_reached',
+      409: 'event_video_conflict', 410: 'event_video_expired', 413: 'event_video_too_large', 429: 'event_video_limit_reached',
       503: 'event_videos_unavailable', 507: 'event_video_storage_full' };
     const error = status === 503 && err.code === 'event_video_storage_unconfigured'
       ? err.code : errors[status];
@@ -1185,18 +1202,21 @@ function createGateway(options = {}) {
         }
         if (notification) { sendJson(res, 200, await videos().latestNotification()); return; }
         const prepare = pathname === '/internal/event-videos/uploads';
+        const maintenance = pathname === '/internal/event-videos/maintenance';
         const complete = /^\/internal\/event-videos\/uploads\/([^/]+)\/complete$/.exec(pathname);
-        if (!prepare && (!complete || !EVENT_VIDEO_ID_RE.test(complete[1]))) {
+        if (!prepare && !maintenance && (!complete || !EVENT_VIDEO_ID_RE.test(complete[1]))) {
           sendJson(res, 400, { ok: false, error: 'invalid_event_video_route' }); return;
         }
         if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || '')) {
           sendJson(res, 400, { ok: false, error: 'json_object_required' }); return;
         }
         const body = await readJsonBody(req, true);
-        if (complete && Object.keys(body).length) {
+        if ((complete || maintenance) && Object.keys(body).length) {
           sendJson(res, 400, { ok: false, error: 'completion_body_must_be_empty' }); return;
         }
-        sendJson(res, prepare ? 201 : 200, prepare ? await videos().prepare(body) : await videos().complete(complete[1]));
+        const result = prepare ? await videos().prepare(body) : maintenance
+          ? await videos().cleanupExpired() : await videos().complete(complete[1]);
+        sendJson(res, prepare ? 201 : 200, result);
       } catch (err) { videoError(res, err); }
       return;
     }
@@ -1590,12 +1610,23 @@ function createGateway(options = {}) {
         server.once('error', reject);
         server.listen(port, host, () => {
           server.removeListener('error', reject);
+          startVideoCleanup();
           resolve(server.address());
         });
       });
     },
     close() {
-      return new Promise((resolve) => server.close(() => resolve()));
+      if (closing) return closing;
+      if (cleanupTimer !== null) cleanupTimers.clearInterval(cleanupTimer);
+      cleanupTimer = null;
+      const httpClosed = new Promise((resolve) => {
+        server.close(() => resolve());
+        if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+      });
+      // Finish any already-started bounded catalog transaction rather than
+      // abandoning its lock during an ordinary service restart.
+      closing = Promise.all([httpClosed, cleanupPromise || Promise.resolve()]).then(() => undefined);
+      return closing;
     },
   };
 }
@@ -1663,7 +1694,16 @@ module.exports = {
 };
 
 if (require.main === module) {
-  startGateway().catch((err) => {
+  startGateway().then((gateway) => {
+    let stopping = false;
+    const stop = () => {
+      if (stopping) return;
+      stopping = true;
+      gateway.close().catch(() => { process.exitCode = 1; });
+    };
+    process.once('SIGTERM', stop);
+    process.once('SIGINT', stop);
+  }).catch((err) => {
     console.error(`[gateway] failed to start: ${err.message}`);
     process.exitCode = 1;
   });

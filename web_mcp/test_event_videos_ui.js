@@ -99,6 +99,23 @@ test('present optional fields must still satisfy their actual types and bounds',
   const zero = await selected({ confidence: 0 });
   assert.match(zero.get('detail').textContent, /Confidence: 0/);
 });
+test('expired and deleting clips retain event metadata but never offer a playable video', async () => {
+  for (const clip_status of ['expired', 'deleting']) {
+    const f = await loaded([event({ clip_status })]);
+    assert.equal(f.get('cards').children.length, 1);
+    assert.match(f.get('cards').textContent, /expired|cleanup in progress/);
+    walk(f.get('cards')).find(n => n.tagName === 'BUTTON').click();
+    reply(f.requests[1], { ok: true, event: event({ clip_status }) }); await tick();
+    assert.ok(f.get('metadata'));
+    assert.ok(f.get('permalink'));
+    assert.equal(f.get('video'), null); assert.equal(f.get('play'), null);
+    assert.match(f.get('detail-status').textContent, /metadata is retained/);
+    assert.equal(f.requests.length, 2);
+  }
+  const bad = await loaded([event({ clip_status: 'invented_state' })]);
+  assert.equal(bad.get('cards').children.length, 0);
+  assert.match(bad.get('status').textContent, /unavailable/);
+});
 test('DOMContentLoaded and browser autoload execute actual script', async () => {
   const f = fixture('', 'loading'); assert.equal(f.document.getElementById('hg-event-videos'), null);
   f.grant(); assert.equal(f.requests.length, 1); f.domReady(); assert.equal(f.requests.length, 1);

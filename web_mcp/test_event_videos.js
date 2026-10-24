@@ -259,7 +259,7 @@ test('independent Python hashlib/hmac golden SigV4 PUT vector and canonical head
   assert.equal(signR2(args), signR2({ ...args, headers: { 'If-None-Match': '*', 'Content-MD5': FAKE_MD5, 'Content-Length': '1234', 'Content-Type': 'video/mp4' } }));
   assert.notEqual(signR2(args), signR2({ ...args, headers: { ...args.headers, 'Content-Length': '1235' } }));
   assert.notEqual(signR2(args), signR2({ ...args, headers: { ...args.headers, 'Content-MD5': crypto.createHash('md5').update('different bytes').digest('base64') } }));
-  for (const change of [{ accountId: 'evil.test' }, { expires: 301 }, { expires: 0 }, { method: 'DELETE' }, { key: '../escape' }, { headers: { ...args.headers, 'If-None-Match': undefined } }]) assert.throws(() => signR2({ ...args, ...change }), EventVideoError);
+  for (const change of [{ accountId: 'evil.test' }, { expires: 301 }, { expires: 0 }, { method: 'POST' }, { key: '../escape' }, { headers: { ...args.headers, 'If-None-Match': undefined } }]) assert.throws(() => signR2({ ...args, ...change }), EventVideoError);
 });
 test('separate Node processes serialize reservations; disk catalog survives actual process restart', async t => {
   const f = fixture(t, { HG_EVENT_VIDEO_STORAGE_LIMIT_BYTES: '3702' });

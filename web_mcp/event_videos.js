@@ -2,8 +2,8 @@
 
 // Private metadata only. Media goes producer → R2, never through this module.
 // "real/detected" is the authenticated observer's assertion, NOT a server-verified
-// classification. No automatic retention hiding or deletion is performed.
-// Operator reconciliation must DELETE actual R2 objects before freeing accounting.
+// classification. Retention deletion is strictly opt-in; quota is freed only
+// after durable deleting state, successful DELETE and authenticated HEAD 404.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -65,7 +65,7 @@ function validR2({ accountId, bucket, accessKeyId, secretAccessKey }) {
 function signR2({ accountId, bucket, accessKeyId, secretAccessKey, key, method = 'GET', headers = {}, expires = 120, now = Date.now() }) {
   if (!validR2({ accountId, bucket, accessKeyId, secretAccessKey }) || typeof key !== 'string' ||
       !key || key.length > 1024 || key.split('/').some(p => !p || p === '.' || p === '..') ||
-      !['PUT', 'GET', 'HEAD'].includes(method) || !Number.isInteger(expires) || expires < 1 || expires > 300 || !Number.isFinite(now)) unavailable();
+      !['PUT', 'GET', 'HEAD', 'DELETE'].includes(method) || !Number.isInteger(expires) || expires < 1 || expires > 300 || !Number.isFinite(now)) unavailable();
   const host = `${accountId}.r2.cloudflarestorage.com`;
   const canonicalHeaders = { host };
   for (const [k, v] of Object.entries(headers)) {
@@ -88,7 +88,7 @@ function signR2({ accountId, bucket, accessKeyId, secretAccessKey, key, method =
 function headTransport(url, { method, timeout = 8000 }) {
   return new Promise((resolve, reject) => {
     const req = https.request(url, { method, timeout, maxHeaderSize: 16384 }, res => {
-      // HEAD has no response body. Never follow redirects or accumulate a body.
+      // Control responses only. Never follow redirects or accumulate a body.
       res.destroy(); resolve({ status: res.statusCode, headers: res.headers });
     });
     const deadline = setTimeout(() => req.destroy(new Error('deadline')), timeout);
@@ -171,6 +171,54 @@ class EventVideos {
   constructor({ env = process.env, publicOrigin, now = Date.now, transport = headTransport } = {}) {
     this.env = env; this.publicOrigin = publicOrigin; this.now = now; this.transport = transport;
   }
+  async cleanupExpired() {
+    if (this.env.HG_EVENT_VIDEO_CLEANUP_ENABLED !== '1') return { ok: true, enabled: false, examined: 0, expired: 0 };
+    const c = this._config();
+    return this._write(c, async data => {
+      const result = { ok: true, enabled: true, examined: data.entries.length, expired: 0 };
+      const cutoff = this.now() - c.retention * 86400000;
+      // Resume unfinished deletions first. Never reclaim a pending reservation.
+      const candidates = data.entries.filter(e => e.status === 'deleting' || (e.status === 'ready' && e.ready_at <= cutoff));
+      candidates.sort((a, b) => Number(b.status === 'deleting') - Number(a.status === 'deleting') || a.ready_at - b.ready_at || a.id.localeCompare(b.id));
+      const e = candidates[0];
+      if (!e) return result;
+      if (e.status === 'ready') {
+        e.status = 'deleting';
+        try { this._save(c, data); } catch (_) { corrupt(); } // Durable denial BEFORE DELETE.
+      }
+      const deleted = await this._control(c, e, 'DELETE');
+      if (![200, 204].includes(deleted?.status)) fail(503, 'event_video_r2_unavailable');
+      const confirmed = await this._control(c, e, 'HEAD');
+      if (confirmed?.status !== 404) fail(503, 'event_video_r2_unavailable');
+      // Copy rather than mutate the charged state if persistence fails.
+      try { this._save(c, { ...data, entries: data.entries.map(item => item === e ? { ...e, status: 'expired' } : item) }); }
+      catch (_) {
+        // A directory fsync can fail after rename. Restore the charged catalog
+        // while still holding the lock; never report expiration on this path.
+        try {
+          if (this._load(c).entries.find(item => item.id === e.id)?.status === 'expired') this._save(c, data);
+        } catch (_) {
+          // If even rollback cannot be persisted, leave the exclusion lock for
+          // operator reconciliation instead of permitting uncharged new PUTs.
+          const error = new EventVideoError(503, 'event_video_catalog_unavailable');
+          error.preserveCatalogLock = true; throw error;
+        }
+        corrupt();
+      }
+      return { ...result, expired: 1 };
+    });
+  }
+  async _control(c, e, method) {
+    const url = signR2({ ...c.r2, key: e.object_key, method, expires: 120, now: this.now() });
+    let timer;
+    try {
+      return await Promise.race([
+        this.transport(url, { method, timeout: 2000, redirect: 'error', maxBodyBytes: 0 }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('deadline')), 2000); })
+      ]);
+    } catch (_) { fail(503, 'event_video_r2_unavailable'); }
+    finally { clearTimeout(timer); }
+  }
   authenticateProducer(req) {
     try {
       const secret = protectedRead(this.env.HG_EVENT_VIDEO_INGEST_TOKEN_FILE, 4096).trim();
@@ -208,10 +256,10 @@ class EventVideos {
       if (!data || Object.keys(data).sort().join(',') !== 'entries,version' || data.version !== 1 || !Array.isArray(data.entries) || data.entries.length > MAX_ENTRIES) throw new Error();
       const ids = new Set(), events = new Set(); let bytes = 0;
       for (const e of data.entries) {
-        if (!e || Object.keys(e).sort().join(',') !== 'created_at,expires_at,id,metadata,object_key,ready_at,status' || !UUID.test(e.id) || ids.has(e.id) || !['pending','ready'].includes(e.status) || e.object_key !== `event-videos/${e.id}.mp4` || !Number.isSafeInteger(e.created_at) || e.created_at < 0 || e.expires_at !== e.created_at + 3600000 || (e.status === 'pending' ? e.ready_at !== null : !Number.isSafeInteger(e.ready_at) || e.ready_at < e.created_at)) throw new Error();
+        if (!e || Object.keys(e).sort().join(',') !== 'created_at,expires_at,id,metadata,object_key,ready_at,status' || !UUID.test(e.id) || ids.has(e.id) || !['pending','ready','deleting','expired'].includes(e.status) || e.object_key !== `event-videos/${e.id}.mp4` || !Number.isSafeInteger(e.created_at) || e.created_at < 0 || e.expires_at !== e.created_at + 3600000 || (e.status === 'pending' ? e.ready_at !== null : !Number.isSafeInteger(e.ready_at) || e.ready_at < e.created_at)) throw new Error();
         const m = validateBody(e.metadata, { duration: 120, bytes: MAX_BYTES }, this.now(), true);
         if (stable(m) !== stable(e.metadata) || events.has(m.event_id)) throw new Error();
-        ids.add(e.id); events.add(m.event_id); bytes += m.size_bytes;
+        ids.add(e.id); events.add(m.event_id); if (e.status !== 'expired') bytes += m.size_bytes;
       }
       if (bytes > MAX_STORAGE) throw new Error();
       return data;
@@ -245,25 +293,29 @@ class EventVideos {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
     }
+    let preserveLock = false;
     try { return await action(this._load(c)); }
-    finally { fs.closeSync(fd); fs.unlinkSync(lock); }
+    catch (e) { preserveLock = e.preserveCatalogLock === true; throw e; }
+    finally { fs.closeSync(fd); if (!preserveLock) fs.unlinkSync(lock); }
   }
   _portal(c, id) { return `${c.origin}/?event_video=${id}#event-videos`; }
   _public(c, e, detail = false) {
     const m = e.metadata;
-    const result = { id: e.id, event_id: m.event_id, detected_at: m.detected_at, summary: m.summary, severity: m.severity, detector: m.detector, duration_seconds: m.duration_seconds, size_bytes: m.size_bytes, provenance: 'real', portal_url: this._portal(c, e.id) };
+    const result = { id: e.id, event_id: m.event_id, detected_at: m.detected_at, summary: m.summary, severity: m.severity, detector: m.detector, duration_seconds: m.duration_seconds, size_bytes: m.size_bytes, provenance: 'real', portal_url: this._portal(c, e.id), clip_status: e.status === 'expired' ? 'expired' : e.status === 'deleting' ? 'deleting' : 'available' };
     for (const k of ['alert_id', 'confidence']) if (m[k] !== undefined) result[k] = m[k];
     if (detail) { result.content_type = 'video/mp4'; result.detection_status = 'detected'; if (m.evidence !== undefined) result.evidence = JSON.parse(JSON.stringify(m.evidence)); }
     return result;
   }
-  _retained(c, e) { return e.status === 'ready'; } // All bytes remain charged; no fake retention deletion.
+  _retained(c, e) { return e.status === 'ready'; }
+  _published(e) { return ['ready', 'deleting', 'expired'].includes(e.status); }
   _find(c, data, id) {
     if (typeof id !== 'string' || !UUID.test(id)) fail(404, 'event_video_not_found');
-    const e = data.entries.find(e => e.id === id && this._retained(c, e));
+    const e = data.entries.find(e => e.id === id && this._published(e));
     if (!e) fail(404, 'event_video_not_found');
     return e;
   }
   _prepared(c, e) {
+    if (e.status === 'deleting' || e.status === 'expired') fail(409, 'event_video_expired');
     const out = { ok: true, video_id: e.id, complete_path: `/internal/event-videos/uploads/${e.id}/complete`, portal_url: this._portal(c, e.id) };
     if (e.status === 'ready') return { ...out, upload: null, already_ready: true, event: this._public(c, e, true) };
     const expires = Math.min(300, Math.floor((e.expires_at - this.now()) / 1000));
@@ -279,7 +331,7 @@ class EventVideos {
         if (stable(existing.metadata) !== stable(metadata)) fail(409, 'event_video_event_conflict');
         return this._prepared(c, existing);
       }
-      if (data.entries.length >= MAX_ENTRIES || data.entries.reduce((n, e) => n + e.metadata.size_bytes, 0) + metadata.size_bytes > c.storage) fail(507, 'event_video_storage_full');
+      if (data.entries.length >= MAX_ENTRIES || data.entries.reduce((n, e) => n + (e.status === 'expired' ? 0 : e.metadata.size_bytes), 0) + metadata.size_bytes > c.storage) fail(507, 'event_video_storage_full');
       const id = crypto.randomUUID(), created = this.now();
       const entry = { id, object_key: `event-videos/${id}.mp4`, created_at: created, expires_at: created + 3600000, status: 'pending', ready_at: null, metadata };
       data.entries.push(entry); this._save(c, data); // Durable charge BEFORE releasing a signed PUT.
@@ -292,6 +344,7 @@ class EventVideos {
     return this._write(c, async data => {
       const e = data.entries.find(e => e.id === id);
       if (!e) fail(404, 'event_video_not_found');
+      if (e.status === 'deleting' || e.status === 'expired') fail(409, 'event_video_expired');
       if (e.status !== 'ready') {
         if (this.now() > e.expires_at) fail(409, 'event_video_reservation_expired');
         const url = signR2({ ...c.r2, key: e.object_key, method: 'HEAD', expires: 120, now: this.now() });
@@ -327,7 +380,7 @@ class EventVideos {
       return Number(raw);
     }
     const page = pagination('page', 1, Number.MAX_SAFE_INTEGER), page_size = pagination('page_size', 12, 50);
-    const entries = this._load(c).entries.filter(e => this._retained(c, e) && Date.parse(e.metadata.detected_at) >= start * 86400000 - 19800000 && Date.parse(e.metadata.detected_at) < (end + 1) * 86400000 - 19800000).sort((a, b) => b.metadata.detected_at.localeCompare(a.metadata.detected_at) || a.id.localeCompare(b.id));
+    const entries = this._load(c).entries.filter(e => this._published(e) && Date.parse(e.metadata.detected_at) >= start * 86400000 - 19800000 && Date.parse(e.metadata.detected_at) < (end + 1) * 86400000 - 19800000).sort((a, b) => b.metadata.detected_at.localeCompare(a.metadata.detected_at) || a.id.localeCompare(b.id));
     const total = entries.length;
     return { ok: true, events: entries.slice((page - 1) * page_size, page * page_size).map(e => this._public(c, e)), page, page_size, total, total_pages: Math.ceil(total / page_size), from, to, time_zone: 'Asia/Kolkata' };
   }
@@ -336,6 +389,7 @@ class EventVideos {
   }
   async playback(id) {
     const c = this._config(), e = this._find(c, this._load(c), id);
+    if (e.status !== 'ready') fail(410, 'event_video_expired');
     return { ok: true, url: signR2({ ...c.r2, key: e.object_key, method: 'GET', expires: 120, now: this.now() }), expires_in: 120, video_id: id };
   }
   async latestNotification() {

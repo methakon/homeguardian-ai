@@ -79,6 +79,9 @@ test('producer upload/completion → persisted catalog → Google-viewer scope �
         assert.equal(req.headers['content-md5'], crypto.createHash('md5').update(bytes).digest('base64'));
         objects.set(key, bytes); res.writeHead(200); res.end(); return;
       }
+      if (req.method === 'DELETE') {
+        objects.delete(key); res.writeHead(204); res.end(); return;
+      }
       const bytes = objects.get(key);
       if (!bytes) { res.writeHead(404); res.end(); return; }
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': bytes.length, ETag: '"' + crypto.createHash('md5').update(bytes).digest('hex') + '"' });
@@ -95,13 +98,14 @@ test('producer upload/completion → persisted catalog → Google-viewer scope �
   fs.writeFileSync(env.HG_EVENT_VIDEO_INGEST_TOKEN_FILE, producer, { mode: 0o600 });
   fs.writeFileSync(env.HG_EVENT_VIDEO_NOTIFICATION_TOKEN_FILE, reader, { mode: 0o600 });
   const publicOrigin = 'https://homeguardian.berhampore.in';
+  let clock = Date.now();
   function service() {
-    return new EventVideos({ env, publicOrigin, transport: async (url, opts) => {
-      // The ONLY upstream substitution is explicitly the fake S3 HEAD transport.
+    return new EventVideos({ env, publicOrigin, now: () => clock, transport: async (url, opts) => {
+      // Only pinned metadata/delete control requests reach the FAKE S3 fixture.
       const u = new URL(url);
       assert.equal(u.origin, 'https://' + 'a'.repeat(32) + '.r2.cloudflarestorage.com');
-      assert.equal(opts.method, 'HEAD');
-      const response = await wire(s3.address().port, u.pathname + u.search, { method: 'HEAD', headers: { Host: u.host } });
+      assert.ok(['HEAD', 'DELETE'].includes(opts.method));
+      const response = await wire(s3.address().port, u.pathname + u.search, { method: opts.method, headers: { Host: u.host } });
       return { status: response.status, headers: response.headers };
     } });
   }
@@ -112,7 +116,7 @@ test('producer upload/completion → persisted catalog → Google-viewer scope �
     headers: { Host: 'homeguardian.berhampore.in', ...(token ? { Authorization: 'Bearer ' + token } : {}),
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body) });
   const bytes = Buffer.from('FAKE/generated bounded clip fixture; not actual detection footage.');
-  const body = { event_id: 'fixture-integration', detected_at: new Date().toISOString(), summary: 'Synthetic contract fixture: observer verdict', detector: 'fixture-only',
+  const body = { event_id: 'fixture-integration', detected_at: new Date(clock).toISOString(), summary: 'Synthetic contract fixture: observer verdict', detector: 'fixture-only',
     severity: 'warning', provenance: 'real', detection_status: 'detected', duration_seconds: 4, size_bytes: bytes.length, content_type: 'video/mp4', content_md5: crypto.createHash('md5').update(bytes).digest('base64') };
   assert.equal((await route('/internal/event-videos/uploads', viewer, body)).status, 401);
   assert.equal((await route('/internal/event-videos/uploads', producer, { ...body, provenance: 'synthetic' })).status, 400);
@@ -154,12 +158,27 @@ test('producer upload/completion → persisted catalog → Google-viewer scope �
   const downloaded = await wire(s3.address().port, playback.pathname + playback.search, { headers: { Host: playback.host } });
   assert.equal(downloaded.status, 200); assert.deepEqual(downloaded.bytes, bytes);
   assert.equal(playback.searchParams.get('X-Amz-Expires'), '120');
-  const v = client.get('video'); g.sessions.revoke(viewer);
+  const v = client.get('video');
+  // Explicit fixture-only policy activation. No live storage deletion occurs.
+  env.HG_EVENT_VIDEO_CLEANUP_ENABLED = '1';
+  clock += 7 * 86400000;
+  const cleanup = await route('/internal/event-videos/maintenance', producer, {});
+  assert.equal(cleanup.status, 200); assert.equal(cleanup.json.expired, 1);
+  assert.equal(objects.size, 0);
+  assert.equal((await route('/api/event-videos/' + id + '/playback', viewer)).status, 410);
+  const historical = await route('/api/event-videos/' + id, viewer);
+  assert.equal(historical.status, 200); assert.equal(historical.json.event.clip_status, 'expired');
+  assert.equal((await route('/internal/event-videos/notification', reader)).json.event, null);
+  client.get('refresh').click();
+  await until(() => client.get('metadata') && JSON.parse(client.get('metadata').textContent).clip_status === 'expired');
+  assert.equal(client.get('cards').children.length, 1); assert.equal(client.get('video'), null);
+  assert.match(client.get('detail-status').textContent, /metadata is retained/);
+  g.sessions.revoke(viewer);
   client.document.documentElement.setAttribute('data-hg-auth', 'anonymous');
   assert.equal(v.src, ''); assert.equal(v.paused, true);
   assert.equal(client.get('cards').textContent, ''); assert.equal(client.get('detail').textContent, '');
   assert.equal((await route('/api/event-videos/' + id + '/playback', viewer)).status, 401);
   assert.equal((await route('/api/event-videos/' + id + '/playback')).status, 401);
-  assert.deepEqual(transfers, ['HEAD', 'PUT', 'HEAD', 'GET']);
+  assert.deepEqual(transfers, ['HEAD', 'PUT', 'HEAD', 'GET', 'DELETE', 'HEAD']);
   console.log('Hermetic producer-to-served-UI round trip verified; live R2/physical clip acceptance NOT claimed.');
 });

@@ -46,6 +46,7 @@
     }
     function record(e) {
       return e && typeof e === 'object' && UUID.test(e.id) && e.provenance === 'real' &&
+        (e.clip_status === undefined || ['available', 'deleting', 'expired'].indexOf(e.clip_status) !== -1) &&
         typeof e.detected_at === 'string' && Number.isFinite(new window.Date(e.detected_at).getTime()) &&
         ['event_id', 'summary', 'severity', 'detector'].every(function (k) { return typeof e[k] === 'string'; }) &&
         (!Object.prototype.hasOwnProperty.call(e, 'alert_id') || typeof e.alert_id === 'string') &&
@@ -86,6 +87,8 @@
       element('p', timestamp(e.detected_at), null, parent);
       element('p', e.summary, null, parent);
       element('p', 'Severity: ' + e.severity + ' · Detector: ' + e.detector, null, parent);
+      if (e.clip_status === 'expired') element('p', 'Video expired under the retention policy; event metadata is retained.', null, parent);
+      if (e.clip_status === 'deleting') element('p', 'Video cleanup in progress; event metadata is retained. Playback is unavailable.', null, parent);
     }
     async function loadList(deepID) {
       if (!active || !granted()) { sync(); return; }
@@ -144,6 +147,12 @@
         var link = element('a', 'Event permalink', 'permalink', detail);
         var origin = new window.URL(window.location.href).origin;
         link.href = origin + '/?event_video=' + id + '#event-videos'; link.referrerPolicy = 'no-referrer';
+        if (e.clip_status === 'expired' || e.clip_status === 'deleting') {
+          detailStatus = element('p', e.clip_status === 'expired'
+            ? 'The video has expired under the retention policy. Original event metadata is retained.'
+            : 'Video cleanup is in progress. Original event metadata is retained; playback is unavailable.', 'detail-status', detail);
+          return;
+        }
         video = element('video', undefined, 'video', detail);
         video.controls = true; video.playsInline = true; video.preload = 'none'; video.referrerPolicy = 'no-referrer';
         video.setAttribute('referrerpolicy', 'no-referrer'); video.setAttribute('playsinline', '');

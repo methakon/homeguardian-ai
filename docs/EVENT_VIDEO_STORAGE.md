@@ -109,7 +109,7 @@ remain forbidden; simulations remain isolated.
 |---|---|---|
 | GET | `/api/event-videos` | completed real clips, default current day in Asia/Kolkata |
 | GET | `/api/event-videos?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&page_size=12` | inclusive date range, newest first, paginated |
-| GET | `/api/event-videos/<video_id>` | complete stored event metadata/evidence, no storage key or signed URL |
+| GET | `/api/event-videos/<video_id>` | complete stored event metadata/evidence and clip availability, no storage key or signed URL |
 | GET | `/api/event-videos/<video_id>/playback` | short-lived signed R2 URL after fresh authorization |
 
 Dates are real calendar dates, interpreted in Asia/Kolkata. Page size is capped
@@ -117,6 +117,13 @@ at 50; range is bounded to 366 days. Responses include explicit pagination total
 The deep link is `/?event_video=<video_id>#event-videos`; it contains no
 credentials, survives the existing popup login in the original tab, and opens the
 selected event even when it is outside today's default list.
+
+Published records include `clip_status: available|deleting|expired`. Expired clips
+retain their original event metadata, evidence, list entries and permalinks.
+The portal labels expiration/cleanup explicitly and does not offer a video player
+for those states; playback requests return HTTP 410. Unverified pending uploads
+never enter the list. Alexa's optional latest-video metadata includes ready clips
+only, so an expired video is not advertised as playable.
 
 The existing cookieless session wrapper attaches its closure-held bearer only to
 same-origin API requests. Direct video playback uses the short-lived R2 capability,
@@ -155,7 +162,8 @@ Set only in the protected deployment environment, never source control:
 | `HG_EVENT_VIDEO_MAX_DURATION_SECONDS` | clip-duration limit, default 30, hard maximum 120 |
 | `HG_EVENT_VIDEO_MAX_BYTES` | per-clip byte limit, no greater than 25 MiB |
 | `HG_EVENT_VIDEO_STORAGE_LIMIT_BYTES` | reservation budget; default/hard ceiling 8 GiB |
-| `HG_EVENT_VIDEO_RETENTION_DAYS` | reserved retention setting, default 7 days; no expiry/deletion is applied yet |
+| `HG_EVENT_VIDEO_RETENTION_DAYS` | completed-clip retention from publication time, default 7 days; only applies when cleanup is explicitly enabled |
+| `HG_EVENT_VIDEO_CLEANUP_ENABLED` | exact `1` enables cleanup; absent/other values leave it OFF |
 
 Keep bucket public development URLs and public custom domains disabled. Confirm
 this in Cloudflare; signed access alone does not prove the bucket is private.
@@ -167,12 +175,31 @@ silently free reservations whose PUT result is unknown, because an orphaned obje
 could still consume storage. Saturation fails closed instead of allowing continued
 uploads. A corrupt/unreadable catalog is an error, never a new empty catalog.
 
-No automatic retention hiding or deletion is currently performed. Automatic cloud
-object expiration/lifecycle configuration and reconciled quota release require
-separate live verification; until then old/abandoned reservations remain charged
-and uploads eventually stop at the budget. Do not advertise unlimited retention
-or an implemented deletion job. Configure and test a dedicated-bucket lifecycle
-before accepting unattended long-term use.
+Cleanup is implemented but OFF by default. Enabling it is a destructive retention
+policy decision; do not enable it incidentally while provisioning credentials.
+Once explicitly enabled, the gateway schedules at most one completed clip per
+minute, with no immediate deletion on startup. Eligibility starts at verified
+publication time, not a producer-supplied historical detection date. A machine
+producer may also POST `{}` to `/internal/event-videos/maintenance`; browser
+sessions and the notification-reader key cannot authorize that operation, choose
+a target or override the policy. The same exact opt-in applies to manual calls.
+
+Each cleanup transaction durably marks the clip `deleting` before sending an
+authenticated R2 DELETE, then requires DELETE 200/204 and authenticated HEAD 404
+before persisting `expired` and releasing the byte charge. Failures keep the
+charge and permit conservative retry; unknown pending uploads are never reclaimed.
+DELETE/confirmation requests are individually bounded to two seconds and carry
+no media. Expired event metadata is retained, so the existing 10,000-entry and
+16-MiB catalog bounds still apply even after cloud bytes are reclaimed. This is
+not unlimited event-history storage.
+
+Normal gateway shutdown cancels future ticks and waits for an active bounded
+transaction. Forced process death, a stale exclusion lock or unrecoverable
+post-rename catalog rollback still requires operator reconciliation; never
+remove a lock or release quota based on age alone. Disabling the policy stops
+future cleanup but cannot restore an already deleted video. Live R2 deletion
+acceptance remains separate from the hermetic tests and must precede enabling
+unattended cleanup on the real bucket.
 
 R2's published free Standard allowance is 10 GB-month, 1 million Class A and
 10 million Class B requests per month, with free internet egress. The 8 GiB
@@ -198,7 +225,7 @@ stable portal link. Preserve the existing camera/native detection deployment.
 
 Regression commands (all use isolated synthetic fixtures, never the real bucket):
 
-    node --unhandled-rejections=strict --test web_mcp/test_event_videos.js web_mcp/test_event_videos_ui.js web_mcp/test_event_video_integration.js
+    node --unhandled-rejections=strict --test web_mcp/test_event_videos.js web_mcp/test_event_video_retention.js web_mcp/test_event_videos_ui.js web_mcp/test_event_video_maintenance.js web_mcp/test_event_video_integration.js
     node web_mcp/test_event_video_routes.js
     node web_mcp/test_oauth.js
     node web_mcp/test_outdoor_review.js

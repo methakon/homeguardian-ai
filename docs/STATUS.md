@@ -1829,3 +1829,34 @@ file or credentials. Hosted deployment and new Alexa app-card acceptance remain
 blocked on authorized console access. R2 upload/playback still requires the
 owner's four storage settings and a genuine recording-worker clip. Automatic
 retention deletion remains unimplemented.
+
+#### Opt-in event-video retention follow-up
+
+Retention cleanup is now implemented in source, disabled unless
+`HG_EVENT_VIDEO_CLEANUP_ENABLED` is exactly `1`. The policy defaults to seven days
+from verified publication when enabled; its automatic scheduler attempts one
+completed clip per minute. A durable `deleting` transition precedes the cloud DELETE; quota is
+released only after DELETE 200/204, authenticated HEAD 404 and durable expiration.
+Pending reservations are never automatically reclaimed. Published event metadata
+and evidence survive clip expiration, list/date filters keep those records, and
+the UI labels `available`/`deleting`/`expired` rather than showing a broken player.
+Expired playback returns 410 and expired clips are excluded from Alexa's optional
+latest-playable-video metadata. Native observer/recording code remains untouched.
+
+Cross-process locking, bounded control deadlines, failed-delete/HEAD/disk-write
+accounting, restart retries and graceful gateway shutdown are covered. Parent
+verification passed 187 backend/retention/UI/lifecycle/integration tests, including
+actual local HTTP upload/playback/deletion with an explicitly fake R2 fixture;
+268 OAuth/UI and 64 reviewer assertions also pass. No real cloud deletion or
+physical clip is represented by these tests. The earlier obsolete negative
+signer fixture now rejects POST instead of the newly supported DELETE method.
+
+Production preflight still finds all four R2 values absent. Cleanup remains OFF;
+the new code is not permission to enable live deletion. Authorized Amazon console
+access is still unavailable for the hosted skill update. Commit/push and disabled
+runtime rollout follow the production-version rehearsal; external R2 acceptance
+and the recording worker's real clip remain separate gates. The rehearsal has now
+passed under Node v18.19.1 and the actual gateway service user: 25 retention tests,
+7 scheduler/auth/shutdown tests and the complete local HTTP round trip. Every
+transferred gateway/backend/UI hash matched the candidate source. Temporary test
+state was isolated and removed; no real bucket or camera was accessed.
