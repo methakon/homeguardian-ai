@@ -40,6 +40,8 @@ const {
 
 const DEFAULT_PORTAL_PATH = path.join(__dirname, '..', 'src', 'web', 'index.html');
 const PORTAL_ASSET_PATH = '/assets/portal-session.js';
+const EVENT_VIDEO_ASSET_PATH = '/assets/event-videos.js';
+const EVENT_VIDEO_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MAX_BODY_BYTES = 64 * 1024;
 const SESSION_TOKEN_RE = /^[0-9a-f]{64}$/;
 const BROWSER_PROOF_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -395,6 +397,8 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
   window.fetch = function (input, init) {
     var url = typeof input === 'string' ? input : (input && input.url) || '';
     var api = isSameOriginApi(url);
+    var eventVideoPath = api ? absolute(url).pathname : '';
+    var eventVideo = eventVideoPath === '/api/event-videos' || eventVideoPath.indexOf('/api/event-videos/') === 0;
     // Original inline polls may start before the one-time exchange resolves.
     return Promise.resolve(window.__hg.ready).then(function () {
       var opts = {};
@@ -425,14 +429,14 @@ const PORTAL_SESSION_JS = `/* HomeGuardian cookieless session bootstrap (served 
             var privateInventory = state.reviewOnly && absolute(url).pathname === '/api/devices';
             if (household && !privateInventory) block('Private household access not granted. Google sign-in verifies identity only.');
             else { render(); }
-          } else { message = 'HomeGuardian data unavailable. No household readings or zero counts are being reported.'; render(); }
+          } else if (!eventVideo) { message = 'HomeGuardian data unavailable. No household readings or zero counts are being reported.'; render(); }
           // The old page does not check response.ok: never let its JSON fallbacks
           // convert a denial/outage into empty alerts or zero connected devices.
           throw new Error('gateway_access_denied_or_unavailable');
         }
         return res;
       }, function (err) {
-        if (api && requestGeneration === generation) block('HomeGuardian data unavailable. No readings are being reported.');
+        if (api && !eventVideo && requestGeneration === generation) block('HomeGuardian data unavailable. No readings are being reported.');
         throw err;
       });
     });
@@ -723,7 +727,7 @@ function computeInlineHashes(html) {
   return { scriptHashes, styleHashes };
 }
 
-function buildCsp(inline) {
+function buildCsp(inline, r2Origin = '') {
   const scriptSrc = ["'self'", ...inline.scriptHashes].join(' ');
   // Inline style="" attributes cannot be hashed (30 of them in the bridge page),
   // so styles keep 'unsafe-inline'. Scripts never do: hashes only, no 'unsafe-inline'.
@@ -733,7 +737,7 @@ function buildCsp(inline) {
     `script-src ${scriptSrc}`,
     `style-src ${styleSrc}`,
     "img-src 'self' data: blob:",
-    "media-src 'self' blob:",
+    "media-src 'self' blob:" + (r2Origin ? ' ' + r2Origin : ''),
     "connect-src 'self'",
     "font-src 'self'",
     "object-src 'none'",
@@ -756,13 +760,13 @@ function securityHeaders(res, csp) {
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 }
 
-function loadPortal(portalPath) {
+function loadPortal(portalPath, r2Origin = '') {
   const html = fs.readFileSync(portalPath, 'utf8');
   const inline = computeInlineHashes(html);
-  const shimTag = `<script src="${PORTAL_ASSET_PATH}"></script>`;
+  const shimTag = `<script src="${PORTAL_ASSET_PATH}"></script>\n<script defer src="${EVENT_VIDEO_ASSET_PATH}"></script>`;
   // Parser blocking: install fetch and fail-closed visibility before bridge code.
   const served = html.replace(/<head\b[^>]*>/i, (head) => head + '\n' + shimTag);
-  return { html: served, inline, csp: buildCsp(inline), sourcePath: portalPath };
+  return { html: served, inline, csp: buildCsp(inline, r2Origin), sourcePath: portalPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -801,7 +805,7 @@ function redirect(res, location, status = 302) {
   res.end();
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, strict = false) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -822,6 +826,10 @@ function readJsonBody(req) {
       }
       try {
         const parsed = JSON.parse(raw);
+        if (strict && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))) {
+          reject(new OidcError('json_object_required', 'request must be a JSON object', 400));
+          return;
+        }
         resolve(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {});
       } catch (_) {
         reject(new OidcError('malformed_json', 'request body is not valid JSON', 400));
@@ -920,7 +928,9 @@ function createGateway(options = {}) {
   let portal = null;
   let portalError = null;
   try {
-    portal = loadPortal(portalPath);
+    const r2Origin = /^[0-9a-f]{32}$/.test(env.HG_R2_ACCOUNT_ID || '')
+      ? `https://${env.HG_R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : '';
+    portal = loadPortal(portalPath, r2Origin);
   } catch (err) {
     portalError = err.message; // reported honestly at request time
   }
@@ -959,6 +969,41 @@ function createGateway(options = {}) {
         ? (await options.authorizeHousehold(session.principal.sub)) === true
         : householdAuthorized(env.HG_HOUSEHOLD_SUBJECTS_FILE, session.principal.sub) === true;
     } catch (_) { return false; }
+  }
+
+  let eventVideoService = options.eventVideos || null;
+  function videos() {
+    if (!eventVideoService) {
+      const { EventVideos } = require('./event_videos');
+      eventVideoService = new EventVideos({ env, publicOrigin: config.publicOrigin, now });
+    }
+    return eventVideoService;
+  }
+  function singleAuthorization(req) {
+    return req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i].toLowerCase() === 'authorization').length === 1;
+  }
+  function notificationAuthorized(req) {
+    if (!singleAuthorization(req)) return false;
+    const token = bearerToken(req);
+    if (!token) return false;
+    let fd;
+    try {
+      fd = fs.openSync(env.HG_EVENT_VIDEO_NOTIFICATION_TOKEN_FILE, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || st.size > 128 || st.mode & 0o077 || st.uid !== process.geteuid()) return false;
+      const key = fs.readFileSync(fd, 'utf8').trim();
+      return SESSION_TOKEN_RE.test(key) && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(key));
+    } catch (_) { return false; }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
+  }
+  function videoError(res, err) {
+    const status = [400, 404, 409, 413, 429].includes(err.status) ? err.status : 503;
+    const errors = { 400: 'invalid_event_video_request', 404: 'event_video_not_found',
+      409: 'event_video_conflict', 413: 'event_video_too_large', 429: 'event_video_limit_reached',
+      503: 'event_videos_unavailable' };
+    const error = status === 503 && err.code === 'event_video_storage_unconfigured'
+      ? err.code : errors[status];
+    sendJson(res, status, { ok: false, error, ...(status === 503 ? { status: 'unavailable' } : {}) });
   }
 
   let simulationReview = options.simulationReview || null;
@@ -1108,6 +1153,51 @@ function createGateway(options = {}) {
     if (pathname === '/favicon.ico') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    if (pathname === EVENT_VIDEO_ASSET_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
+      try {
+        const script = fs.readFileSync(path.join(__dirname, 'event_videos_ui.js'));
+        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8',
+          'Content-Length': script.length, 'Cache-Control': 'no-store' });
+        res.end(req.method === 'HEAD' ? undefined : script);
+      } catch (_) { sendJson(res, 503, { ok: false, error: 'event_video_ui_unavailable' }); }
+      return;
+    }
+
+    // Machine-only metadata/signing handoff. Browser VIEWER sessions never grant
+    // uploads; video bytes go directly from the recorder to private R2 storage.
+    if (pathname.startsWith('/internal/event-videos/')) {
+      if (req.headers.origin) {
+        sendJson(res, 403, { ok: false, error: 'browser_ingest_forbidden' }); return;
+      }
+      try {
+        const notification = pathname === '/internal/event-videos/notification';
+        if (!(notification ? notificationAuthorized(req) : singleAuthorization(req) && videos().authenticateProducer(req))) {
+          sendJson(res, 401, { ok: false, error: 'producer_authentication_required' }); return;
+        }
+        if ([...url.searchParams].length) {
+          sendJson(res, 400, { ok: false, error: 'invalid_event_video_query' }); return;
+        }
+        if (req.method !== (notification ? 'GET' : 'POST')) {
+          sendJson(res, 405, { ok: false, error: 'method_not_allowed' }); return;
+        }
+        if (notification) { sendJson(res, 200, await videos().latestNotification()); return; }
+        const prepare = pathname === '/internal/event-videos/uploads';
+        const complete = /^\/internal\/event-videos\/uploads\/([^/]+)\/complete$/.exec(pathname);
+        if (!prepare && (!complete || !EVENT_VIDEO_ID_RE.test(complete[1]))) {
+          sendJson(res, 400, { ok: false, error: 'invalid_event_video_route' }); return;
+        }
+        if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || '')) {
+          sendJson(res, 400, { ok: false, error: 'json_object_required' }); return;
+        }
+        const body = await readJsonBody(req, true);
+        if (complete && Object.keys(body).length) {
+          sendJson(res, 400, { ok: false, error: 'completion_body_must_be_empty' }); return;
+        }
+        sendJson(res, prepare ? 201 : 200, prepare ? await videos().prepare(body) : await videos().complete(complete[1]));
+      } catch (err) { videoError(res, err); }
       return;
     }
 
@@ -1347,6 +1437,31 @@ function createGateway(options = {}) {
     if ((pathname === '/api/logout' || pathname === '/logout') && req.method === 'POST') {
       sessions.revoke(token);
       sendJson(res, 200, { ok: true, logged_out: true, role: session.principal.role });
+      return;
+    }
+
+    // Owner-approved outdoor event recordings: authenticated reads only, using
+    // the same explicit reviewer grant as the camera, not household membership.
+    if (pathname === '/api/event-videos' || pathname.startsWith('/api/event-videos/')) {
+      if (req.method !== 'GET') {
+        sendJson(res, 405, { ok: false, error: 'method_not_allowed_read_only' }); return;
+      }
+      if (req.headers.origin && req.headers.origin !== config.publicOrigin) {
+        sendJson(res, 403, { ok: false, error: 'forbidden_origin' }); return;
+      }
+      if (!(await authorized(session, '/api/camera/status'))) {
+        sendJson(res, 403, { ok: false, error: 'household_authorization_required' }); return;
+      }
+      try {
+        if (pathname === '/api/event-videos') {
+          sendJson(res, 200, await videos().list(url.searchParams)); return;
+        }
+        const match = /^\/api\/event-videos\/([^/]+)(\/playback)?$/.exec(pathname);
+        if (!match || !EVENT_VIDEO_ID_RE.test(match[1]) || [...url.searchParams].length) {
+          sendJson(res, 400, { ok: false, error: 'invalid_event_video_route' }); return;
+        }
+        sendJson(res, 200, match[2] ? await videos().playback(match[1]) : await videos().detail(match[1]));
+      } catch (err) { videoError(res, err); }
       return;
     }
 

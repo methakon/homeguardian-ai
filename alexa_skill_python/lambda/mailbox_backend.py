@@ -14,6 +14,7 @@ No long-lived client/credentials or result cache is retained here.
 """
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import math
 import os
@@ -121,6 +122,37 @@ def _make_sqs(session, region, role, deadline):
     return assumed.client("sqs", region_name=region, config=SDK_CONFIG)
 
 
+PORTAL_ORIGIN = "https://homeguardian.berhampore.in"
+
+
+def validate_latest_video(value):
+    """Mirror the coordinator boundary; never accept a media or credential URL."""
+    keys = {"id", "event_id", "summary", "severity", "detected_at", "portal_url"}
+    if not isinstance(value, dict) or set(value) != keys:
+        return None
+    if not all(isinstance(value[k], str) for k in keys):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value["id"]):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value["event_id"]):
+        return None
+    text = value["summary"]
+    if not 0 < len(text) <= 500 or not text.strip() or any(not c.isprintable() for c in text):
+        return None
+    if value["severity"] not in {"info", "warning", "critical"}:
+        return None
+    timestamp = value["detected_at"]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})", timestamp):
+        return None
+    try:
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if value["portal_url"] != PORTAL_ORIGIN + "/?event_video=" + value["id"] + "#event-videos":
+        return None
+    return {key: value[key] for key in keys}
+
+
 def _result(tool, value):
     if not isinstance(value, dict) or value.get("read_only") is not True:
         return None
@@ -132,12 +164,17 @@ def _result(tool, value):
                 or type(value["capture_enabled"]) is not bool):
             return None
     else:
-        if (set(value) != {"alert_count", "highest_severity", "read_only"}
+        if (set(value) - {"latest_video"} != {"alert_count", "highest_severity", "read_only"}
                 or type(value["alert_count"]) is not int or value["alert_count"] < 0
                 or (value["highest_severity"] is not None
                     and (not isinstance(value["highest_severity"], str)
                          or not re.fullmatch(r"[a-zA-Z0-9_ /-]{0,64}", value["highest_severity"])))):
             return None
+        result = {key: value[key] for key in ("alert_count", "highest_severity", "read_only")}
+        video = validate_latest_video(value.get("latest_video"))
+        if value["alert_count"] > 0 and video is not None:
+            result["latest_video"] = video
+        return result
     return value.copy()
 
 

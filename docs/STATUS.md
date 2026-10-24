@@ -1711,3 +1711,45 @@ The served-script regression and full OAuth/UI suite pass 265 assertions; the
 review policy suite passes 64. Camera activation and other mutations remain
 restricted. This fixes misleading authorization UI, not an absent camera source:
 the production private bridge still reports `configured:false`.
+
+### Short event-video storage and authenticated review — integration in progress
+
+The owner selected private Cloudflare R2 Standard storage for short real
+detection-triggered clips only. A separate worker owns detection, recording,
+duration/codec validation and the native observer changes. This work is limited
+to the storage handoff, portal list/player and optional Alexa portal links; no
+camera, detector, Android service or live capture configuration was changed.
+
+The producer contract is documented in [Event video storage](EVENT_VIDEO_STORAGE.md).
+Video bytes upload directly from the producer to R2. The gateway accepts bounded
+real/detected metadata, reserves storage before issuing upload capabilities, and
+requires successful object verification before publishing a playable record.
+Google-signed-in outdoor reviewers receive read-only list/detail/playback access,
+not upload rights or private household membership. Today's list uses Asia/Kolkata;
+date-range filtering, pagination and login-preserving event links are included.
+
+Parent gateway-route authorization tests pass. Login/UI regressions pass 268
+assertions, including a failing-before/fixed-after check that an R2 outage cannot
+revoke camera access or claim the independent observer is unavailable. Existing
+outdoor-review policy passes 64 assertions. The actual Python ASK/SQS adapter,
+including optional metadata validation, safe SSML and Simple app cards with portal
+links, passes all 87 tests against real ASK SDK serialization and offline fixtures.
+This does not establish new SQS/Echo acceptance or proactive announcements.
+
+Deployment acceptance remains BLOCKED: preflight found no R2 settings in the
+protected gateway configuration. The owner elected to enable/create the private
+bucket and provision bucket-scoped credentials securely. No footage has been
+uploaded by this work, no public storage or paid Stream has been enabled, and
+neither an R2 round trip nor production playback is claimed. Storage retention
+visibility is not verified cloud deletion or a guarantee of zero account charges.
+
+Checkpoint requested before further work: parent execution passed 151 backend/UI
+tests (137 backend and 14 served-UI fixtures), the gateway authorization suite,
+268 OAuth/UI assertions, 64 outdoor-review assertions and 87 Python ASK/mailbox
+tests. No production change has been made. End-to-end integration review remains
+open: the backend permits absent `alert_id`/`confidence`, whereas the initial UI
+validator requires both, so valid minimal producer records need reconciliation
+before deployment. Retention configuration does not currently hide or delete
+objects; all pending and ready reservations remain quota-charged indefinitely.
+Cloudflare credentials and a genuine recording-worker clip remain prerequisites
+for external upload/completion/playback acceptance.

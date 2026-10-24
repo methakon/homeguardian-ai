@@ -355,6 +355,7 @@ async function testSessionUi(source) {
         json: async () => ({ device_count: 2, device_labels: ['Gate'], visibility: 'owner-approved-only' }) };
       if (granted && url === '/api/alerts') return { ok: true, status: 200,
         json: async () => ({ total: 3, highest_severity: 'high' }) };
+      if (status === 0) throw new Error('synthetic network failure');
       return { ok: status === 200, status, json: async () => ({ error: 'household_authorization_required' }) };
     } };
     vm.runInNewContext(source, { window, document, location, history: { replaceState() { location.hash = ''; } },
@@ -427,6 +428,18 @@ async function testSessionUi(source) {
   await reviewed.window.fetch('/api/devices').catch(() => {});
   ok(reviewed.document.documentElement.attributes['data-hg-household'] === 'granted',
     'private inventory denial cannot revoke an already granted outdoor review view');
+  const reviewMessage = reviewed.nodes.get('hg-session-message').textContent;
+  reviewed.setStatus(503);
+  await reviewed.window.fetch('/api/event-videos').catch(() => {});
+  ok(reviewed.nodes.get('hg-session-message').textContent === reviewMessage,
+    'R2 video outage stays local and does not claim the observer/camera is unavailable');
+  reviewed.setStatus(0);
+  await reviewed.window.fetch('/api/event-videos').catch(() => {});
+  ok(reviewed.document.documentElement.attributes['data-hg-household'] === 'granted',
+    'event-video network failure cannot revoke separately granted camera access');
+  reviewed.setStatus(401);
+  await reviewed.window.fetch('/api/event-videos').catch(() => {});
+  ok(!reviewed.window.__hg.authenticated(), 'event-video 401 still revokes an expired browser session');
   await reviewed.window.__hg.logout();
   ok(!reviewed.window.__hg.authenticated(), 'judge logout revokes access without persistent storage');
   const granted = await signIn(boot('', false, true));

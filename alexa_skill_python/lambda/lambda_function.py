@@ -41,6 +41,7 @@ from ask_sdk_core.dispatch_components import AbstractExceptionHandler, AbstractR
 from ask_sdk_core.handler_input import HandlerInput
 from ask_sdk_core.skill_builder import SkillBuilder
 from ask_sdk_model import Response
+from ask_sdk_model.ui import SimpleCard
 
 import backend
 
@@ -160,7 +161,25 @@ class RecentAlertsIntentHandler(AbstractRequestHandler):
 
     def handle(self, handler_input: HandlerInput) -> Response:
         summary = backend.get_alert_summary(household_id(handler_input))
-        return handler_input.response_builder.speak(_alerts_speech(summary)).response
+        speech = _alerts_speech(summary)
+        # Only a valid read-only aggregate may carry optional recorded metadata.
+        # Older replies and invalid optional fields retain the established speech.
+        validated = None
+        if isinstance(summary, dict) and "latest_video" in summary:
+            try:
+                from mailbox_backend import _result as validated_mailbox_result
+                validated = validated_mailbox_result("get_alert_summary", summary)
+            except Exception:
+                pass  # Optional dependencies cannot break the old request/response path.
+        video = validated.get("latest_video") if validated else None
+        builder = handler_input.response_builder
+        if video is not None:
+            text = video["summary"]
+            concise = text if len(text) <= 200 else text[:197].rstrip() + "..."
+            speech += " Latest recorded event: " + escape(concise) + ". See the HomeGuardian portal link in your Alexa app card."
+            builder.set_card(SimpleCard(title="Latest recorded event", content=(
+                text + "\nRecorded at: " + video["detected_at"] + "\n" + video["portal_url"])))
+        return builder.speak(speech).response
 
 
 class HelpIntentHandler(AbstractRequestHandler):

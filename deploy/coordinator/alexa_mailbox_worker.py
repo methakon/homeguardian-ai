@@ -7,6 +7,8 @@ queue chooses only an allowlisted tool, never a destination, token or arguments.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
+import stat
 import ipaddress
 import json
 import math
@@ -15,6 +17,7 @@ from pathlib import Path
 import re
 import signal
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -66,6 +69,89 @@ def minimize(tool, value):
     if isinstance(severity, str) and len(severity) <= 128:
         result["highest_severity"] = severity
     return result
+
+
+PORTAL_ORIGIN = "https://homeguardian.berhampore.in"
+NOTIFICATION_URL = "http://127.0.0.1:8810/internal/event-videos/notification"
+
+
+def validate_latest_video(value):
+    """Allowlisted recorded-event metadata; never accept a media or credential URL.
+
+    Keep this boundary in sync with the Lambda mailbox validator.
+    """
+    keys = {"id", "event_id", "summary", "severity", "detected_at", "portal_url"}
+    if not isinstance(value, dict) or set(value) != keys:
+        return None
+    if not all(isinstance(value[k], str) for k in keys):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", value["id"]):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value["event_id"]):
+        return None
+    text = value["summary"]
+    if not 0 < len(text) <= 500 or not text.strip() or any(not c.isprintable() for c in text):
+        return None
+    if value["severity"] not in {"info", "warning", "critical"}:
+        return None
+    timestamp = value["detected_at"]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})", timestamp):
+        return None
+    try:
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if value["portal_url"] != PORTAL_ORIGIN + "/?event_video=" + value["id"] + "#event-videos":
+        return None
+    return {key: value[key] for key in keys}
+
+
+class PortalNotificationClient:
+    """Optional fixed loopback reader, using a separate read-only file credential."""
+    def __init__(self, token_file, opener=None, clock=time.time):
+        self.token_file = token_file
+        self.open = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open
+        self.clock = clock
+
+    def fetch(self, expires_at):
+        try:
+            # O_NONBLOCK also prevents a substituted FIFO from blocking the worker.
+            fd = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as source:
+                info = os.fstat(source.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                        or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 256):
+                    return None
+                raw_token = source.read(257)
+            token = raw_token.strip()
+            if len(raw_token) > 256 or not re.fullmatch(rb"[0-9a-f]{64}", token):
+                return None
+            remaining = expires_at - self.clock()
+            if remaining <= 0:
+                return None
+            req = urllib.request.Request(NOTIFICATION_URL, method="GET",
+                headers={"Authorization": "Bearer " + token.decode("ascii"), "Accept": "application/json"})
+            with self.open(req, timeout=min(0.5, remaining)) as response:
+                raw = response.read(16385)
+            if len(raw) > 16384 or self.clock() >= expires_at:
+                return None
+            def pairs(items):
+                result = {}
+                for key, value in items:
+                    if key in result:
+                        raise ValueError("duplicate key")
+                    result[key] = value
+                return result
+            data = json.loads(raw, object_pairs_hook=pairs)
+            if not isinstance(data, dict) or set(data) != {"ok", "event"} or data["ok"] is not True:
+                return None
+            return validate_latest_video(data["event"])
+        except urllib.error.HTTPError as error:
+            error.close()
+            return None
+        except Exception:
+            # Optional failure never changes native availability; log no URL/body/token.
+            return None
 
 
 class PrivateMcpClient:
@@ -148,8 +234,9 @@ class PrivateMcpClient:
 
 
 class Worker:
-    def __init__(self, sqs, request_url, reply_url, mcp, clock=time.time):
+    def __init__(self, sqs, request_url, reply_url, mcp, clock=time.time, portal=None):
         self.sqs, self.request_url, self.reply_url, self.mcp, self.clock = sqs, request_url, reply_url, mcp, clock
+        self.portal = portal
         self.seen = {}
         self.last_keepalive = self.clock()
 
@@ -181,6 +268,14 @@ class Worker:
                 self.sqs.delete_message(QueueUrl=self.request_url, ReceiptHandle=receipt)
             return False
         value = minimize(tool, self.mcp.fetch(tool, expires))
+        if (value is not None and tool == "get_alert_summary" and value["alert_count"] > 0
+                and self.portal is not None and self.clock() < expires):
+            try:
+                video = validate_latest_video(self.portal.fetch(expires))
+                if video is not None:
+                    value["latest_video"] = video
+            except Exception:
+                pass  # Optional reader failures must not disrupt native Alexa results.
         if self.clock() < expires:
             self.sqs.send_message(QueueUrl=self.reply_url, MessageBody=json.dumps({
                 "version": 1, "request_id": identifier, "tool": tool,
@@ -230,7 +325,9 @@ def main():
         raise SystemExit("Private MCP token file must not be world-accessible")
     client = PrivateMcpClient(os.environ["HG_PRIVATE_MCP_URL"], token_file.read_text().strip(),
                               approved_private_ip=os.environ.get("HG_PRIVATE_MCP_APPROVED_IP"))
-    worker = Worker(sqs, request_url, reply_url, client)
+    portal_file = os.environ.get("HG_EVENT_VIDEO_NOTIFICATION_TOKEN_FILE")
+    portal = PortalNotificationClient(portal_file) if portal_file else None
+    worker = Worker(sqs, request_url, reply_url, client, portal=portal)
     stop = [False]
     def shutdown(signum, frame):
         stop[0] = True
