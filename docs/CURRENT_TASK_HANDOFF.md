@@ -18,11 +18,13 @@ with the owner after its handoff; do not use it as a blanket implementation gate
 
 - Newer recovery finding (2026-10-26): the other workstream's Linux recovery is
   already merged and its focused 28-test suite passes. Ordinary Android app tests
-  now prove RTM_GETNEIGH returns IPv4/MAC neighbors on the Mi, despite EACCES for
-  `/proc/net/arp` and SIOCGARP. Read `ANDROID_CAMERA_RELOCATION_READINESS.md` first:
-  the netlink backend is the primary implementation route, not a mandatory new
-  vendor SDK/site connector. Production recovery is NOT wired or accepted yet;
-  shared Android call-site edits require the owner's file-ownership approval.
+  prove RTM_GETNEIGH is usable on the Mi without explicit bind. The owner approved
+  existing locator/JNI/manifest edits and tested APK deployment. Those edits and
+  the bounded production netlink backend are implemented; API30 APK 1.1.3/code 11
+  is built, signing-continuity verified, and awaiting installation/readback.
+  See `ANDROID_CAMERA_RELOCATION_READINESS.md` for exact evidence and artifact
+  digest. Vendor SDK/site-connector work is not a prerequisite on this handset.
+  Do not call the production camera recovered until fresh native counts advance.
 - Pulled `origin/main` with `--ff-only`: already up to date. The existing shared
   main checkout additionally contains the other workstream's local Tier0Gate
   checkpoint `7c94b0e`; its source/tests were not modified by integration.

@@ -368,7 +368,10 @@ private:
                 (cfg.password.empty() && !j.value("empty_password_approved",false))) return;
             cfg.mac=fp.canonical();
             cfg.allow_plaintext=true; // explicit UI consent includes LAN HTTP risk
-            cfg.scan_enabled=false; // Android 11 cannot safely read ARP; no sweep or reattachment
+            // Owner-approved enrolled-MAC recovery; Android reads the kernel
+            // neighbor table through bounded netlink, not restricted /proc.
+            cfg.scan_enabled=true;
+            cfg.state_file = data_dir_ + "/camera_locator.state";
             camera_stop_.store(false);
             camera_thread_=std::thread([this,path,cfg] {
                 try {
@@ -376,7 +379,11 @@ private:
                     homeguardian::portal::LiveCameraFeed feed(cfg);
                     // Fresh private registry AND exact owner-approved host/MAC binding on
                     // each request, including HttpClient's final before_send callback.
+                    // Sweep workers also check authorization. Serialize the
+                    // mutable analysis authorizer across those bounded workers.
+                    std::mutex camera_authorization_mutex;
                     auto authorize=[&] {
+                        std::lock_guard<std::mutex> auth_guard(camera_authorization_mutex);
                         bool allowed=false;
                         try {
                             if (!camera_stop_.load() && !stop_.load() && private_file(path)) {
@@ -399,6 +406,10 @@ private:
                         const auto now=std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::system_clock::now().time_since_epoch()).count();
                         auto frame=feed.fetch_frame(now);
+                        // Reuse the existing single acquisition loop and locator.
+                        // A recovery fetch only verifies attachment; the next ordinary
+                        // fetch supplies analysis, never a cached-frame substitution.
+                        const bool recovered = !frame.ok && authorize() && feed.maybe_rediscover(now);
                         if (!authorize()) break;
                         if (frame.ok) {
                             // AlertRepository's raw SQL bypasses SQLiteDatabase's wrapper
@@ -410,13 +421,16 @@ private:
                             auto result=analysis.status();
                             // UI exposes counts/state only, never images or classifications.
                             std::lock_guard<std::mutex> g(camera_status_mutex_);
+                            const auto source=feed.status(now);
                             camera_status_={{"state",result["state"]},{"observations_processed",result["observations_processed"]},
                                 {"alerts_committed",result["alerts_committed"]},{"decode_failures",result["decode_failures"]},
-                                {"fetch_failures",feed.status(now).fetch_failures},
-                                {"identity_gate","owner_approved_fixed_host_mac_no_rediscovery"}};
+                                {"fetch_failures",source.fetch_failures},{"frames_fetched",source.frames_served},
+                                {"discovery_state",source.discovery_state},{"discovery_source",source.discovery_source},
+                                {"discovery_reason",source.discovery_reason},{"discovery_scanned_hosts",source.discovery_scanned_hosts},
+                                {"identity_gate","authorized_enrolled_mac_kernel_netlink"}};
                         }
                         std::unique_lock<std::mutex> wait(camera_wait_mutex_);
-                        camera_cv_.wait_for(wait,std::chrono::milliseconds(frame.ok?800:60000),
+                        camera_cv_.wait_for(wait,std::chrono::milliseconds((frame.ok || recovered)?800:60000),
                             [this]{return camera_stop_.load() || stop_.load();});
                     }
                     {

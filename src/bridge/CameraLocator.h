@@ -68,6 +68,9 @@
 #include <unistd.h>
 
 #include "camera/DeviceFingerprint.h"
+#ifdef __ANDROID__
+#include "bridge/AndroidNeighborTable.h"
+#endif
 
 namespace homeguardian {
 namespace portal {
@@ -216,13 +219,17 @@ inline std::optional<std::string> resolve_host_by_mac(const std::vector<ArpEntry
     camera::HardwareFingerprint want;
     if (!camera::HardwareFingerprint::normalize(expected_mac, &want, nullptr)) return std::nullopt;
     const std::string canonical = want.canonical();
+    std::optional<std::string> host;
     for (const auto& e : entries) {
-        if (!e.usable) continue;
-        if (e.mac != canonical) continue;
-        if (!same_subnet24(e.address, subnet_base)) continue;
-        return e.ip;
+        if (!e.usable || e.mac != canonical || !same_subnet24(e.address, subnet_base)) continue;
+        if (host && *host != e.ip) return std::nullopt;
+        host = e.ip;
     }
-    return std::nullopt;
+    if (!host) return std::nullopt;
+    for (const auto& e : entries) {
+        if (e.ip == *host && (!e.usable || e.mac != canonical)) return std::nullopt;
+    }
+    return host;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -574,7 +581,11 @@ inline int64_t steady_now_ms() {
 
 inline LocatorIo default_io() {
     LocatorIo io;
+#ifdef __ANDROID__
+    io.read_arp = [] { return neighbor_netlink::read_table(); };
+#else
     io.read_arp = [] { return read_proc_arp(); };
+#endif
     io.tcp_probe = [](const std::string& ip, uint16_t port, int timeout_ms) {
         return tcp_connect_only(ip, port, timeout_ms);
     };
@@ -612,13 +623,8 @@ public:
         uint32_t configured = 0, destination = 0;
         if (expected_mac_.empty() || !parse_ipv4(configured_host_, &configured) ||
             !parse_ipv4(host, &destination) || !same_subnet24(configured, destination)) return false;
-        bool matched = false;
-        for (const auto& e : read_entries()) {
-            if (e.ip != host) continue;
-            if (!e.usable || e.mac != expected_mac_) return false;
-            matched = true;
-        }
-        return matched;
+        const auto identified = resolve_host_by_mac(read_entries(), expected_mac_, configured & 0xFFFFFF00u);
+        return identified && *identified == host;
     }
     const std::string& configured_host() const { return configured_host_; }
     const std::string& expected_mac() const { return expected_mac_; }

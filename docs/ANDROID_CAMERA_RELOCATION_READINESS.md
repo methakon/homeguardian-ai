@@ -1,5 +1,44 @@
 # Android camera relocation: verified gap and safe integration prerequisite
 
+## Approved implementation checkpoint — 2026-10-26
+
+The owner explicitly approved the existing locator, Android JNI and APK manifest
+edits plus tested APK deployment. The source now selects bounded netlink reads on
+Android, keeps the Linux backend, rejects ambiguous MAC/IP passes, persists locator
+cooldown/hints and invokes existing recovery from the single authorized camera
+loop. Probe-worker authorization is serialized. After relocation, analysis receives
+the next genuine fetch, not a cached-frame substitution. No pre-filter files changed.
+
+Verification before installation:
+
+- New parser/identity harness: 1,092 assertions, including malformed/incomplete/
+  interrupted dumps, sender/sequence validation, bounds, NOARP tunnel records and
+  conflicting device mappings. The final harness passed AddressSanitizer and
+  UndefinedBehaviorSanitizer as well as the normal compiler gate.
+- Existing locator suite: 1,856 assertions / 27 cases, all passed.
+- Android recovery contract/API30 compilation: 3 tests passed; decoder: 3 tests
+  passed; MCP session harness: 13 checks passed.
+- The ACTUAL production reader was packaged in an ordinary-UID diagnostic APK and
+  returned a completed table with two eligible records. Explicit netlink bind is
+  denied on this phone; unbound sendto auto-assignment is required. Empty hardware
+  addresses on legitimate NOARP tunnel entries must be ignored, not treated as
+  malformed Ethernet records. The diagnostic was removed and absence verified.
+- Managed-service APK version 1.1.3/code 11 built successfully, API30/arm64-v8a,
+  unchanged four normal permissions, same installed signing certificate. APK v3
+  signature verified and netlink implementation symbols confirmed linked.
+- Candidate APK SHA-256:
+  `ea09f7a04279657f80697bac6f8050de60931d260e20a8dfb6be181353767f25`;
+  size 1,810,992 bytes. Source SHA is recorded externally, not embedded in the APK.
+
+This is source/build verification, NOT installation or fresh-camera acceptance.
+The installed version-9 baseline was freshly read as no_frame, zero observations,
+zero current-run alerts, zero decode failures and 654 fetch failures. Runtime
+readback follows installation. Preserve app data; never uninstall the enrolled
+service to downgrade. A separately signed, payload-identical forward-version
+recovery candidate is prepared privately, but not installed or runtime certified.
+Recovery retains the existing same-site /24 scope; arbitrary cross-subnet/NAT
+migration is not certified by this change.
+
 ## Recheck on the actual Android phone — 2026-10-26
 
 The other workstream DID implement MAC-anchored recovery and an autonomous
