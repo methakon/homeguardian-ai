@@ -1,5 +1,44 @@
 # Android camera relocation: verified gap and safe integration prerequisite
 
+## Deployed worker verification — 2026-10-26
+
+Tested source `73b09e61bfb1b39438990dffb43d089c10932814` was pushed and the remote
+SHA read back before deployment. APK 1.1.3/code 11 was installed IN PLACE, with
+no enrolled-service uninstall or data clearing. Installed APK SHA-256 matched the
+verified candidate exactly; the existing signing identity and normal permissions
+were preserved. The existing camera configuration and VPN were not edited.
+
+Actual phone readback:
+
+    before update: no_frame, observations=0, fetch_failures=654
+    after update: analyzed, observations=4
+    later sample: analyzed, observations=75, frames_fetched=76
+    after Activity closed / screen off: observations=242, frames_fetched=243
+    observations added across that interval: 167
+    decode_failures=0, fetch_failures=1, current-run alerts_committed=0
+    discovery_state=found, discovery_source=rediscovered
+    discovery_scanned_hosts=254
+    identity_gate=authorized_enrolled_mac_kernel_netlink
+
+The screen-off interval included an explicit bounded wait of at least 20 seconds.
+The camera was recovered from the already-stale attachment by the phone itself;
+no operator rebind, workstation locator, credentials spray or synthetic frame was
+used. The one verification frame was not substituted into analysis; later normal
+fetches supplied fresh observations. These counters prove existing native
+motion/statistical processing, not semantic person/fall coverage or pre-filter
+integration. No new persisted alert was manufactured.
+
+With the activity closed/screen off, both real VPS worker-origin MCP calls also
+succeeded: Running/read_only/capture-enabled, and 13 durable alerts/highest warning.
+The 13 are retained historical alerts, not a claim of 13 new post-update detections.
+Missing and invalid bearer tests against the private reader each returned HTTP 401.
+
+Acceptance: WORKER-VERIFIED stale-attachment recovery and fresh autonomous analysis.
+NOT full production certification. Phone reboot, a newly forced DHCP lease change,
+cross-subnet/NAT movement and workstation-shutdown continuity were NOT VERIFIED.
+The existing /24 scope and network routing constraints still apply. No R2, Alexa,
+pre-filter, router/firewall/mail service or other VM rollout was performed here.
+
 ## Approved implementation checkpoint — 2026-10-26
 
 The owner explicitly approved the existing locator, Android JNI and APK manifest

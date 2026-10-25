@@ -16,15 +16,18 @@ pre-filter deliverable. Complete the assigned recovery/storage/R2/Alexa/acceptan
 work where independently executable. Discuss final minimal pre-filter integration
 with the owner after its handoff; do not use it as a blanket implementation gate.
 
-- Newer recovery finding (2026-10-26): the other workstream's Linux recovery is
-  already merged and its focused 28-test suite passes. Ordinary Android app tests
-  prove RTM_GETNEIGH is usable on the Mi without explicit bind. The owner approved
-  existing locator/JNI/manifest edits and tested APK deployment. Those edits and
-  the bounded production netlink backend are implemented; API30 APK 1.1.3/code 11
-  is built, signing-continuity verified, and awaiting installation/readback.
-  See `ANDROID_CAMERA_RELOCATION_READINESS.md` for exact evidence and artifact
-  digest. Vendor SDK/site-connector work is not a prerequisite on this handset.
-  Do not call the production camera recovered until fresh native counts advance.
+- Newer recovery result (2026-10-26): the owner-approved Android netlink fix is
+  committed/pushed at `73b09e61bfb1b39438990dffb43d089c10932814` and deployed as
+  APK 1.1.3/code 11 in place, preserving data/signing/permissions. Installed digest
+  matches the tested artifact. Native state changed from no_frame/0 observations/
+  654 fetch failures to analyzed; observations advanced 75 -> 242 across an
+  Activity-closed/screen-off interval, with zero decode failures and one initial
+  fetch failure. Discovery reports found/rediscovered and enrolled-MAC netlink
+  identity. Both actual VPS worker tools succeed; missing/invalid auth return 401.
+  Acceptance is WORKER-VERIFIED stale-attachment recovery/fresh analysis, not full
+  reboot/network/shutdown certification. Read `ANDROID_CAMERA_RELOCATION_READINESS.md`
+  for scope and artifact evidence. The other workstream's pre-filter was not edited.
+  Vendor SDK/site-connector work is not a prerequisite for this same-/24 recovery.
 - Pulled `origin/main` with `--ff-only`: already up to date. The existing shared
   main checkout additionally contains the other workstream's local Tier0Gate
   checkpoint `7c94b0e`; its source/tests were not modified by integration.
