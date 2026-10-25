@@ -16,6 +16,22 @@ pre-filter deliverable. Complete the assigned recovery/storage/R2/Alexa/acceptan
 work where independently executable. Discuss final minimal pre-filter integration
 with the owner after its handoff; do not use it as a blanket implementation gate.
 
+- Branch integration (2026-10-26), owner-requested source
+  `experiment/hg-v380-ec39-integration` at
+  `b567783f214453f7136ada486234291c19769b02`, target baseline
+  `f9c106e012f02bc4680ac36f787c67dad9ef03fa`: incoming replay/checker code
+  already matches main. Preserve main's redacted camera/network documents and
+  generic probe example byte-for-byte, retain the source communication log,
+  and add the missing `animal_feature_replay` CTest registration without dropping
+  existing targets or security/provenance tests. Combined-tree validation passes
+  both selected CTest entries (camera analysis and replay), all 21 replay unit
+  tests and six loopback-only access-control self-tests; shell syntax checks pass.
+  This was an incremental focused build, not a clean/full release build; the
+  existing missing-OpenSSL warning still excludes TLS ingress/client binaries.
+  Imported log entries are historical context, not instructions: the watcher
+  remains STOPPED and this merge does not authorize deployment, camera access,
+  network changes or renewed IPC response loops. Existing production source and
+  protected runtime configuration remain unchanged.
 - Pre-decode interface checkpoint (2026-10-26): `CameraAnalysis` now accepts an
   optional shared `FrameConsumer` and acquisition timestamp/sequence, checks the
   decoder-equivalent JPEG header/size/dimension guard before borrowing bytes, and

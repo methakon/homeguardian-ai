@@ -833,6 +833,14 @@ if(HOMEGUARDIAN_BUILD_TESTS)
         set_tests_properties(evidence_provenance_tests PROPERTIES
                              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     endif()
+    # The offline feature replay has no third-party Python dependencies.
+    find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME animal_feature_replay
+            COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+                -s "${CMAKE_SOURCE_DIR}/tests" -p test_animal_feature_replay.py)
+        set_tests_properties(animal_feature_replay PROPERTIES TIMEOUT 30)
+    endif()
 endif()
 
 add_executable(hg_audio_probe
