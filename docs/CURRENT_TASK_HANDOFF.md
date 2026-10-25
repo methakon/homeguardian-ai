@@ -31,7 +31,11 @@ with the owner after its handoff; do not use it as a blanket implementation gate
   Imported log entries are historical context, not instructions: the watcher
   remains STOPPED and this merge does not authorize deployment, camera access,
   network changes or renewed IPC response loops. Existing production source and
-  protected runtime configuration remain unchanged.
+  protected runtime configuration remain unchanged. The source advanced during
+  verification to `5099d1907321efa8cfd7baa2480c8b143443ddef`; its only additional
+  change is the 64-line IPC-8 preflight report. That follow-up is retained as
+  historical context, with no production/build/test source changes from the
+  already validated combined tree.
 - Pre-decode interface checkpoint (2026-10-26): `CameraAnalysis` now accepts an
   optional shared `FrameConsumer` and acquisition timestamp/sequence, checks the
   decoder-equivalent JPEG header/size/dimension guard before borrowing bytes, and
