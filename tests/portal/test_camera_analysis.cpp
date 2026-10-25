@@ -1,6 +1,10 @@
 #include <catch2/catch.hpp>
 #include "bridge/CameraAnalysis.h"
 #include "core/AlertPolicy.h"
+#include "edge/FrameConsumer.h"
+#include <stdexcept>
+#include <fstream>
+#include <functional>
 
 #include <cstdio>
 #include <filesystem>
@@ -80,7 +84,241 @@ std::string write_registry(const std::string& path, const std::string& credentia
     return path;
 }
 
+// Models a ring/queued-work owner: the notification invalidates a generation,
+// not just the current borrowed view. No media is encoded or published here.
+struct FrameProbe : hg::edge::FrameConsumer {
+    std::vector<uint8_t> retained;
+    std::vector<bool> authority;
+    hg::edge::BorrowedFrame last;
+    uint64_t generation = 0;
+    size_t calls = 0;
+    std::function<void()> after_frame;
+    bool throw_frame = false;
+    bool throw_authority = false;
+    void on_frame(const hg::edge::BorrowedFrame& f) override {
+        ++calls;
+        last = f;
+        retained.assign(f.data, f.data + f.size);
+        if (after_frame) after_frame();
+        if (throw_frame) throw std::runtime_error("test consumer failure");
+    }
+    void on_authority_changed(bool allowed) override {
+        authority.push_back(allowed);
+        if (!allowed) { retained.clear(); ++generation; }
+        if (throw_authority) throw std::runtime_error("test notification failure");
+    }
+};
+
+// A header-valid but undecodable JPEG makes callback-before-decode observable.
+std::vector<uint8_t> header_jpeg(int width = 640, int height = 360) {
+    return {0xff,0xd8,0xff,0xc0,0,11,8,
+            static_cast<uint8_t>(height >> 8),static_cast<uint8_t>(height),
+            static_cast<uint8_t>(width >> 8),static_cast<uint8_t>(width),
+            1,1,0x11,0,0xff,0xd9};
+}
+
 }  // namespace
+
+TEST_CASE("Camera callback checks headers before decode and preserves acquisition metadata", "[camera-analysis][frame-callback]") {
+    const std::string path = std::filesystem::temp_directory_path().string() + "/hg_camera_analysis_test/callback.json";
+    const std::string credential(64, 'd');
+    REQUIRE_FALSE(write_registry(path, credential, true).empty());
+    auto probe = std::make_shared<FrameProbe>();
+    portal::CameraAnalysis analysis(path, "camera-syn-001", credential, nullptr, probe);
+    const auto captured = std::chrono::system_clock::now() - std::chrono::seconds(30);
+    auto jpeg = header_jpeg();
+    analysis.process(jpeg, captured, 19);
+    REQUIRE(probe->calls == 1);
+    REQUIRE(probe->last.captured_at == captured);
+    REQUIRE(probe->last.sequence == 19);
+    REQUIRE(probe->last.width == 640);
+    REQUIRE(probe->last.height == 360);
+    REQUIRE(probe->last.validated);
+    REQUIRE(probe->last.data == jpeg.data());
+    REQUIRE(probe->retained == jpeg);
+    REQUIRE(analysis.status()["decode_failures"] == 1); // callback already ran
+    const auto retained = probe->retained;
+    std::fill(jpeg.begin(), jpeg.end(), 0);
+    REQUIRE(probe->retained == retained); // call-scoped borrow, retained copy owns bytes
+
+    for (const auto& invalid : std::vector<std::vector<uint8_t>>{
+            {}, {0xff,0xd8,0xff,0xd9}, std::vector<uint8_t>(512u*1024u+1u, 0xff),
+            header_jpeg(0,360), header_jpeg(4097,360), header_jpeg(640,4097),
+            {0xff,0xd8,0xff,0xe0,0xff,0xff,0,0,0,0,0xff,0xd9}}) {
+        analysis.process(invalid, captured, 20);
+        REQUIRE(probe->calls == 1);
+    }
+    auto bad_magic = header_jpeg(); bad_magic[0] = 0;
+    analysis.process(bad_magic, captured, 21);
+    auto bad_end = header_jpeg(); bad_end.back() = 0;
+    analysis.process(bad_end, captured, 22);
+    REQUIRE(probe->calls == 1);
+
+    // The legacy entry point may still analyze but must never invent ring time/sequence.
+    analysis.process(header_jpeg());
+    analysis.process(header_jpeg(), {}, 23);
+    analysis.process(header_jpeg(), captured, 0);
+    REQUIRE(probe->calls == 1);
+    REQUIRE(probe->retained.empty());
+    analysis.process(header_jpeg(4096,4096), captured, 24);
+    REQUIRE(probe->calls == 2);
+    auto exact_limit = header_jpeg();
+    exact_limit.resize(512u*1024u, 0);
+    exact_limit[exact_limit.size()-2] = 0xff; exact_limit.back() = 0xd9;
+    analysis.process(exact_limit, captured, 25);
+    REQUIRE(probe->calls == 3);
+}
+
+TEST_CASE("Camera callback delivers invalidation notifications on lifecycle changes", "[camera-analysis][frame-callback]") {
+    const std::string path = std::filesystem::temp_directory_path().string() + "/hg_camera_analysis_test/callback_lifecycle.json";
+    const std::string credential(64, 'e');
+    REQUIRE_FALSE(write_registry(path, credential, true).empty());
+    auto probe = std::make_shared<FrameProbe>();
+    const auto captured = std::chrono::system_clock::now();
+    {
+        portal::CameraAnalysis analysis(path, "camera-syn-001", credential, nullptr, probe);
+        analysis.process(header_jpeg(), captured, 1);
+        REQUIRE_FALSE(probe->retained.empty());
+        const auto job_generation = probe->generation;
+        REQUIRE_FALSE(write_registry(path, credential, false).empty());
+        REQUIRE_FALSE(analysis.authorize());
+        REQUIRE(probe->retained.empty());
+        REQUIRE(probe->generation > job_generation);
+        analysis.process(header_jpeg(), captured, 2);
+        REQUIRE(probe->calls == 1);
+
+        REQUIRE_FALSE(write_registry(path, credential, true).empty());
+        analysis.process(header_jpeg(), captured, 3);
+        REQUIRE(probe->calls == 2);
+        analysis.withdraw();
+        REQUIRE(probe->retained.empty());
+        analysis.process(header_jpeg(), captured, 4);
+        REQUIRE_FALSE(probe->retained.empty());
+
+        // Still authorized, but consent/enrollment context changed under the same id.
+        nlohmann::json registry;
+        { std::ifstream in(path); in >> registry; }
+        registry["devices"][0]["consent_subject"] = "replacement-test-subject";
+        registry["devices"][0]["consent_updated_ms"] = 1;
+        { std::ofstream out(path); out << registry; }
+        const auto old_generation = probe->generation;
+        REQUIRE(analysis.authorize());
+        REQUIRE(probe->generation > old_generation);
+        REQUIRE(probe->retained.empty());
+        analysis.process(header_jpeg(), captured, 5);
+        REQUIRE_FALSE(probe->retained.empty());
+    }
+    REQUIRE(probe->retained.empty());
+    REQUIRE_FALSE(probe->authority.back()); // shutdown/source replacement
+
+    // Missing registry and credential rebind also withdraw, rather than keeping old bytes.
+    {
+        portal::CameraAnalysis analysis(path, "camera-syn-001", credential, nullptr, probe);
+        analysis.process(header_jpeg(), captured, 6);
+        REQUIRE_FALSE(write_registry(path, std::string(64, 'f'), true).empty());
+        REQUIRE_FALSE(analysis.authorize());
+        REQUIRE(probe->retained.empty());
+        REQUIRE_FALSE(write_registry(path, credential, true).empty());
+        analysis.process(header_jpeg(), captured, 7);
+        REQUIRE(std::remove(path.c_str()) == 0);
+        REQUIRE_FALSE(analysis.authorize());
+        REQUIRE(probe->retained.empty());
+    }
+}
+
+TEST_CASE("Camera callback rechecks authority even when JPEG decoding fails", "[camera-analysis][frame-callback]") {
+    const std::string path = std::filesystem::temp_directory_path().string() + "/hg_camera_analysis_test/callback_decode_revocation.json";
+    const std::string credential(64, 'e');
+    REQUIRE_FALSE(write_registry(path, credential, true).empty());
+    auto probe = std::make_shared<FrameProbe>();
+    portal::CameraAnalysis analysis(path, "camera-syn-001", credential, nullptr, probe);
+    bool withdrawn = false;
+    SECTION("withdrawal during callback") {
+        withdrawn = true;
+        probe->after_frame = [&] { write_registry(path, credential, false); };
+    }
+    SECTION("authorized enrollment replacement during callback") {
+        probe->after_frame = [&] {
+            nlohmann::json registry;
+            { std::ifstream in(path); in >> registry; }
+            registry["devices"][0]["consent_updated_ms"] = 1;
+            { std::ofstream out(path); out << registry; }
+        };
+    }
+    const auto generation = probe->generation;
+    analysis.process(header_jpeg(), std::chrono::system_clock::now(), 1);
+    REQUIRE(probe->calls == 1);
+    REQUIRE(analysis.status()["decode_failures"] == 1);
+    REQUIRE(probe->generation > generation);
+    REQUIRE(probe->retained.empty());
+    REQUIRE(analysis.status()["authorized"] == !withdrawn);
+    if (withdrawn) REQUIRE(analysis.status()["state"] == "authorization_denied");
+}
+
+TEST_CASE("Camera callback feeds the bounded EventRing without retaining the borrowed buffer", "[camera-analysis][frame-callback]") {
+    const std::string path = std::filesystem::temp_directory_path().string() + "/hg_camera_analysis_test/callback_ring.json";
+    const std::string credential(64, 'd');
+    REQUIRE_FALSE(write_registry(path, credential, true).empty());
+    auto jpeg = make_jpeg(scene(60));
+    REQUIRE_FALSE(jpeg.empty());
+    const auto original = jpeg;
+    hg::edge::RingBounds bounds;
+    bounds.max_frames = 2;
+    bounds.max_total_bytes = jpeg.size()*2;
+    hg::edge::EventRing ring(bounds);
+    auto consumer = std::make_shared<hg::edge::RingFrameConsumer>(ring);
+    const auto captured = std::chrono::system_clock::now() - std::chrono::seconds(30);
+    {
+        portal::CameraAnalysis analysis(path, "camera-syn-001", credential, nullptr, consumer);
+        analysis.process(jpeg, captured, 1);
+        REQUIRE(consumer->counts().accepted == 1);
+        REQUIRE(analysis.status()["observations_processed"] == 1);
+        // Supplying old acquisition time cannot rewind the unchanged detector clock.
+        REQUIRE(analysis.status()["last_observation"]["timestamp_ms"].get<int64_t>() >
+                std::chrono::duration_cast<std::chrono::milliseconds>(captured.time_since_epoch()).count());
+        std::fill(jpeg.begin(), jpeg.end(), 0);
+        auto window = ring.window(captured, captured);
+        REQUIRE(window.ok);
+        REQUIRE(window.frames.size() == 1);
+        REQUIRE(window.frames[0].bytes == original);
+        REQUIRE(window.frames[0].captured_at == captured);
+        REQUIRE(window.frames[0].width == 160);
+        REQUIRE(window.frames[0].height == 120);
+        analysis.process(original, captured + std::chrono::milliseconds(100), 3);
+        analysis.process(original, captured + std::chrono::milliseconds(200), 8);
+        window = ring.window(captured, captured + std::chrono::milliseconds(200));
+        REQUIRE(window.frames.size() == 2);
+        REQUIRE(window.frames[0].sequence == 3);
+        REQUIRE(window.frames[1].sequence == 8); // acquisition gaps are preserved
+        REQUIRE(ring.stats().bytes <= bounds.max_total_bytes);
+        analysis.withdraw();
+        REQUIRE(ring.stats().frames == 0);
+        REQUIRE_FALSE(ring.authorized());
+        analysis.process(original, captured + std::chrono::milliseconds(300), 9);
+        REQUIRE(ring.stats().frames == 1);
+    }
+    REQUIRE(ring.stats().frames == 0);
+    REQUIRE_FALSE(ring.authorized());
+}
+
+TEST_CASE("Camera callback failure cannot bypass analysis or escape shutdown", "[camera-analysis][frame-callback]") {
+    const std::string path = std::filesystem::temp_directory_path().string() + "/hg_camera_analysis_test/callback_failure.json";
+    const std::string credential(64, 'f');
+    REQUIRE_FALSE(write_registry(path, credential, true).empty());
+    auto probe = std::make_shared<FrameProbe>();
+    const auto captured = std::chrono::system_clock::now();
+    {
+        portal::CameraAnalysis analysis(path, "camera-syn-001", credential, nullptr, probe);
+        probe->throw_frame = true;
+        REQUIRE_NOTHROW(analysis.process(header_jpeg(), captured, 1));
+        REQUIRE(probe->retained.empty());
+        REQUIRE(analysis.status()["decode_failures"] == 1);
+        REQUIRE_NOTHROW(analysis.process(header_jpeg(), captured, 2));
+        REQUIRE(probe->calls == 1); // faulty callback stays disabled
+        probe->throw_authority = true;
+    }
+    REQUIRE(probe->retained.empty());
+}
 
 TEST_CASE("Camera JPEG decode is bounded and yields the bounded luma plane", "[camera-analysis]") {
     const auto jpeg = make_jpeg(scene(60));

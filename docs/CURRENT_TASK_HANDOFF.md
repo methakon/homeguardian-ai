@@ -16,6 +16,18 @@ pre-filter deliverable. Complete the assigned recovery/storage/R2/Alexa/acceptan
 work where independently executable. Discuss final minimal pre-filter integration
 with the owner after its handoff; do not use it as a blanket implementation gate.
 
+- Pre-decode interface checkpoint (2026-10-26): `CameraAnalysis` now accepts an
+  optional shared `FrameConsumer` and acquisition timestamp/sequence, checks the
+  decoder-equivalent JPEG header/size/dimension guard before borrowing bytes, and
+  emits lifecycle/authority invalidation notifications. Decode failures also refresh
+  authority after retention. The actual ring chain and existing durable-alert path
+  pass 233 assertions in nine focused cases; Android decoder,
+  recovery and MCP regressions also pass. This is a HOST-TESTED interface, not
+  installed pre-roll: existing production callers still have no bound consumer
+  and omit sampling metadata. `EDGE_VIDEO_PREDECODE_CALLBACK_HANDOFF.md` records
+  the exact API, request-time versus exposure-time limitation, caller assembly
+  boundary and pending joint genuine-clip/device measurements. No observer source,
+  acquisition behavior, detector policy or production deployment was changed.
 - Newer recovery result (2026-10-26): the owner-approved Android netlink fix is
   committed/pushed at `73b09e61bfb1b39438990dffb43d089c10932814` and deployed as
   APK 1.1.3/code 11 in place, preserving data/signing/permissions. Installed digest

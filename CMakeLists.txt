@@ -749,6 +749,8 @@ if(HOMEGUARDIAN_BUILD_TESTS)
     # executable so this path can be run (and read) without building the whole suite.
     add_executable(hg_camera_analysis_tests
         ${CMAKE_SOURCE_DIR}/tests/portal/test_camera_analysis.cpp
+        ${CMAKE_SOURCE_DIR}/src/edge/EventRing.cpp
+        ${CMAKE_SOURCE_DIR}/src/edge/FrameConsumer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/CameraActivitySession.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ChangeCharacter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/ActivityDetectors.cpp

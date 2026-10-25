@@ -8,6 +8,8 @@
 #include "core/UUID.h"
 #include "camera/RegistryAuthorizer.h"
 #include "bridge/LiveCameraFeed.h"
+#include "edge/FrameConsumer.h"
+#include <chrono>
 #include <nlohmann/json.hpp>
 #if defined(__ANDROID__)
 #if !defined(__ANDROID_API__) || __ANDROID_API__ < 30
@@ -31,12 +33,17 @@
 #include <mutex>
 
 namespace homeguardian::portal {
+// Header-only validation shared by decoder and pre-decode consumer. This does not
+// claim that the compressed scan will decode; malformed scan data still fails there.
+inline bool checked_jpeg_dimensions(const std::vector<uint8_t>& jpeg,int& w,int& h) {
+ return jpeg.size()<=512u*1024u && detail::looks_like_jpeg(jpeg) &&
+        detail::jpeg_dimensions(jpeg,&w,&h) && w>0 && h>0 && w<=4096 && h<=4096;
+}
 // No shell, files, network protocols or caller-controlled command arguments. Both
 // byte directions, runtime, dimensions, child resources and reap are bounded.
 inline std::vector<uint8_t> decode_jpeg_luma(const std::vector<uint8_t>& jpeg) {
  int w=0,h=0;
- if(jpeg.size()>512*1024 || !detail::looks_like_jpeg(jpeg) ||
-    !detail::jpeg_dimensions(jpeg,&w,&h) || w>4096 || h>4096) return {};
+ if(!checked_jpeg_dimensions(jpeg,w,h)) return {};
 #if defined(__ANDROID__)
 #if defined(__ANDROID_API__) && __ANDROID_API__ >= 30
  // Each call owns its decoder; no subprocesses, shared decoder or global setup.
@@ -113,31 +120,69 @@ inline std::vector<uint8_t> decode_jpeg_luma(const std::vector<uint8_t>& jpeg) {
 
 class CameraAnalysis {
 public:
- CameraAnalysis(std::string registry,std::string device,std::string credential,PersistenceAudit* audit)
- : path_(std::move(registry)), device_(std::move(device)),credential_(std::move(credential)),audit_(audit), pipeline_(rules()) { reset(); }
- bool authorize(){
+ // One immutable source/enrollment binding per instance. On source replacement,
+ // destroy this instance before using a new one. The shared consumer outlives the
+ // final invalidation. Its callbacks must be bounded and non-reentrant: no calls
+ // back into CameraAnalysis, no network, disk or encoding on this serialized path.
+ CameraAnalysis(std::string registry,std::string device,std::string credential,PersistenceAudit* audit,
+                std::shared_ptr<hg::edge::FrameConsumer> consumer={})
+ : path_(std::move(registry)), device_(std::move(device)),credential_(std::move(credential)),audit_(audit),consumer_(std::move(consumer)), pipeline_(rules()) { reset(); }
+ ~CameraAnalysis(){notify_consumer_authority(false,true);}
+ bool authorize(){std::lock_guard<std::mutex> guard(process_mutex_);return authorize_locked();}
+ void withdraw(){std::lock_guard<std::mutex> guard(process_mutex_);withdraw_locked();}
+private:
+ bool authorize_locked(){
   net::DeviceRegistry fresh;std::string reason;
-  if(!fresh.load(path_,&reason)){withdraw();return false;}
+  if(!fresh.load(path_,&reason)){withdraw_locked();return false;}
   camera::RegistryAuthorizer auth(fresh,"home_security");
   camera::LogicalDeviceId id;id.site_id="portal";id.device_id=device_; // site identity is operator-owned, not browser input
   const auto* d=fresh.find(device_);
   if(!d || d->consent_purpose!="home_security" || !d->has_camera ||
-     auth.authorize(id,credential_,camera::Capability::video)!=camera::AuthorizationOutcome::allowed){withdraw();return false;}
+     auth.authorize(id,credential_,camera::Capability::video)!=camera::AuthorizationOutcome::allowed){withdraw_locked();return false;}
   if(authorized_ && synthetic_!=d->is_synthetic)reset();
-  synthetic_=d->is_synthetic;provenance_known_=true;authorized_=true;return true;
+  // Authorization outcome is unchanged. A changed consent/enrollment context
+  // invalidates retained bytes/jobs even if the replacement is also authorized.
+  if(authorized_ && (consent_revision_!=d->consent_updated_ms ||
+     consent_subject_!=d->consent_subject || source_type_!=d->device_type))
+   notify_consumer_authority(false,true);
+  consent_revision_=d->consent_updated_ms;consent_subject_=d->consent_subject;source_type_=d->device_type;
+  synthetic_=d->is_synthetic;provenance_known_=true;authorized_=true;
+  notify_consumer_authority(true);return true;
  }
+ void withdraw_locked(){reset();authorized_=false;state_="authorization_denied";}
+public:
  void note_no_frame(){ std::lock_guard<std::mutex> g(process_mutex_); if(state_!="authorization_denied") state_="no_frame"; }
- void withdraw(){reset();authorized_=false;state_="authorization_denied";}
- void process(const std::vector<uint8_t>& jpeg){
+ // Acquisition supplies sampling time and sequence; neither is manufactured here.
+ // Legacy calls without metadata retain nothing, but keep the existing analyzer.
+ void process(const std::vector<uint8_t>& jpeg,
+              std::chrono::system_clock::time_point captured_at={},uint64_t sequence=0){
   std::lock_guard<std::mutex> guard(process_mutex_);
   // The analysis clock is the WALL clock: the correlation window, the observation timestamp and
-  // the persisted metadata must be comparable with the engine's own clock. The caller supplies
-  // media only; it cannot pin or rewind time.
+  // the persisted metadata must be comparable with the engine's own clock. Acquisition
+  // metadata is used ONLY for the ring; it cannot pin or rewind the detection clock.
   const int64_t ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-  if(!authorize())return;
+  if(!authorize_locked())return;
+  // CALL-SCOPED borrow: the consumer owns any retained, bounded copy. Header
+  // checks run before retention, using exactly the decoder's admission guard.
+  if(consumer_ && !consumer_failed_){
+   int w=0,h=0;
+   if(captured_at<=std::chrono::system_clock::time_point{} || sequence==0){
+    notify_consumer_authority(false,true); // unknown sampling metadata, never invent it
+   } else if(checked_jpeg_dimensions(jpeg,w,h)){
+    const hg::edge::BorrowedFrame frame{jpeg.data(),jpeg.size(),w,h,captured_at,sequence,true};
+    try {consumer_->on_frame(frame);}
+    catch(...) {consumer_failed_=true;notify_consumer_authority(false,true);}
+   }
+  }
   auto luma=decode_jpeg_luma(jpeg);
-  if(luma.empty()){++decode_failures_;state_="decode_failed";return;}
-  if(!authorize())return;
+  if(luma.empty()){
+   ++decode_failures_;state_="decode_failed";
+   // The consumer may already retain these bytes. Refresh even on decode
+   // failure so a withdrawal/replacement during decode cannot leave them live.
+   if(consumer_)authorize_locked();
+   return;
+  }
+  if(!authorize_locked())return;
   const auto now=std::chrono::system_clock::time_point(std::chrono::milliseconds(ms));
   if(last_ms_ && ms<=last_ms_){state_="timestamp_refused";return;}
   last_ms_=ms;
@@ -154,7 +199,7 @@ public:
   auto candidate=pipeline_.process(o.to_event());
   if(!candidate)return;
   ++qualified_;
-  if(!authorize())return;
+  if(!authorize_locked())return;
   candidate->details["camera_observation_id"]=o.observation_id;
   candidate->details["acquired_at_ms"]=ms;
   bool suppressed=false;
@@ -172,9 +217,23 @@ public:
  }
 private:
  static std::vector<std::shared_ptr<ICorrelationRule>> rules(){DetectionFusionRule::Config c;c.evidence_detector_ids={"camera-motion-activity"};c.use_episode_evidence=true;c.episode.require_motion_character=true;return {std::make_shared<DetectionFusionRule>("camera-detection-fusion",c)};}
- void reset(){CameraActivitySession::Config c;c.width=160;c.height=120;session_=std::make_unique<CameraActivitySession>(c);pipeline_.clear_history();policy_.reset();anomaly_.reset();last_ms_=0;current_=nullptr;statistical_=nullptr;last_alert_json_=nullptr;recent_.clear();}
+ // Consumer failure disables retention, not analysis, authorization or persistence.
+ // Always attempt withdrawal, including shutdown; no callback exception escapes.
+ void notify_consumer_authority(bool allowed,bool force=false) noexcept {
+  if(!consumer_ || (allowed && consumer_failed_) || (!force && consumer_authorized_==allowed))return;
+  consumer_authorized_=allowed;
+  try {consumer_->on_authority_changed(allowed);}
+  catch(...) {
+   consumer_failed_=true;consumer_authorized_=false;
+   if(allowed){try {consumer_->on_authority_changed(false);}catch(...) {}}
+  }
+ }
+ void reset(){notify_consumer_authority(false,true);CameraActivitySession::Config c;c.width=160;c.height=120;session_=std::make_unique<CameraActivitySession>(c);pipeline_.clear_history();policy_.reset();anomaly_.reset();last_ms_=0;current_=nullptr;statistical_=nullptr;last_alert_json_=nullptr;recent_.clear();}
  mutable std::mutex process_mutex_;
  std::string path_,device_,credential_;PersistenceAudit* audit_;
+ std::shared_ptr<hg::edge::FrameConsumer> consumer_;
+ bool consumer_authorized_=false,consumer_failed_=false;
+ int64_t consent_revision_=0;std::string consent_subject_,source_type_;
  Pipeline pipeline_;AlertPolicy policy_;AnomalyMonitor anomaly_;std::unique_ptr<CameraActivitySession> session_;
  bool authorized_=false,synthetic_=false,provenance_known_=false;int64_t last_ms_=0;
  uint64_t processed_=0,decode_failures_=0,qualified_=0,commits_=0,commit_failures_=0,suppressed_=0;

@@ -33,6 +33,7 @@ def decoder_source():
             'namespace detail {\n' +
             function(live, 'inline bool looks_like_jpeg(') + '\n' +
             function(live, 'inline bool jpeg_dimensions(') + '\n}\n' +
+            function(header, 'inline bool checked_jpeg_dimensions(') + '\n' +
             function(header, 'inline std::vector<uint8_t> decode_jpeg_luma('))
 
 
