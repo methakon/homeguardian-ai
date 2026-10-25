@@ -7,10 +7,14 @@ ingress workaround below. The existing WireGuard UDP port now admits roaming IPv
 sources, with enrolled-key authentication and all private MCP/application controls
 retained. Exact policy, scoped operator utility and acceptance limits:
 [roaming private MCP](ROAMING_PRIVATE_MCP.md). Cloud rule readback and external UDP
-arrival succeeded; this does NOT establish current phone connectivity. The approved
-handset is unavailable over ADB at the latest check, its handshake is stale, and
-both worker tools still fail initialization. Earlier positive checkpoints below
-are historical evidence, not current recovery certification.
+arrival succeeded. Subsequent verified phone access, activation of its existing
+VPN profile and starting its existing bridge restored both actual-worker tools:
+Running/read_only/capture-enabled status and 13 durable alerts (highest warning).
+Repeated worker reads succeeded; missing/wrong reader credentials returned 401.
+No native-engine/VPS-service restart or APK install was used. Host ADB still has
+intermittent transport failures. Fresh camera-processing counters, private-camera
+DHCP recovery, reboot recovery and full observer stability remain unverified.
+Earlier positive checkpoints below are historical, not full current certification.
 
 ## Final checkpoint — 2026-10-23, 04:02 IST: REMOTE MCP VERIFIED
 

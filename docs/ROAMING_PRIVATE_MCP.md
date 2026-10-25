@@ -70,6 +70,17 @@ all future network conditions or platform lifecycle recovery.
 
 ## Applied checkpoint — 2026-10-25
 
+**Later recovery supersedes the offline statement at the end of this checkpoint:**
+USB access was recovered and verified by the phone's own identity despite missing
+USB serial descriptors. The existing VPN profile was OFF; enabling that verified
+profile produced a fresh authenticated handshake. Starting the existing app bridge
+then restored both actual-worker native tools. Repeated status reads returned
+Running/read_only/capture-enabled, and the durable summary returned 13 alerts,
+highest severity warning. Missing/wrong reader authentication still returned 401.
+No native engine or VPS service restart, credential export or APK install was used.
+Fresh frame-processing counters, automatic cold-start recovery and private-camera
+DHCP recovery remain unverified; see CURRENT_TASK_HANDOFF.md for the native gap.
+
 Source `7d8e0ebcad49ef3cf917c4dd4943e0809014af50` was pushed before application.
 Seven policy tests passed. Live dry-run found two existing rules and planned one
 addition. Apply verified exclusive target membership, wrote a private before/after

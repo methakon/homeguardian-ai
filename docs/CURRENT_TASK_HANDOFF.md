@@ -132,6 +132,56 @@ input if progress is impossible.
 
 ### Active MCP repair checkpoint
 
+**Latest recovery: both actual worker-origin MCP tools now succeed.**
+The owner's USB-debugging notification was correct. An empty host ADB list did NOT
+prove a physical disconnection. USB hardware/interface remained visible; native
+and libusb ADB backends exhibited missing serial descriptors and transport read
+failures. A fresh libusb-backed debugging server recovered access, and the phone's
+own serial was verified before operating it. Do not identify a different handset
+solely from an absent USB serial descriptor. Host ADB server processes also changed
+during diagnosis; attribution of every restart is not established. Only integration
+should manage shared host ADB lifecycle during this acceptance window.
+
+The configured existing phone VPN profile was found OFF. After verifying its
+assigned overlay and approved VPS endpoint, integration enabled that profile;
+the server recorded a fresh enrolled-phone handshake. No key or endpoint was
+changed. The existing app's Start bridge control was then invoked successfully;
+no APK installation or native-engine/VPS-service restart occurred. The temporary
+USB stay-awake setting was restored to its original value.
+
+Two successive actual-worker positive probes returned genuine native data:
+`get_homeguardian_status`: Running, read_only=true, capture_enabled=true;
+`get_alert_summary`: alert_count=13, highest_severity=warning, read_only=true.
+Initialize, tools/call and session cleanup returned HTTP 200 at the traced check.
+The final repeated probe also verified reader missing/wrong authorization returns
+401. The production phone MCP bearer was never exported. This supersedes the
+earlier blanket UNAVAILABLE/phone-disconnected statements below.
+
+MCP transport is recovered, but fresh camera-processing counters were NOT verified:
+host USB transport failed again before the read-only counter check completed.
+Do not infer fresh analysis from capture_enabled or existing alert count. No full
+observer/native-wiring stability signal, reboot recovery, changed-private-network
+acceptance or end-to-end clip/Alexa acceptance is claimed.
+
+**Owner's network requirement, reiterated:** except for the Oracle server's stable
+endpoint, physical public AND private addresses of phones, cameras, connectors and
+viewers may change. Use logical device identity and credentials; addresses are
+temporary locations. Assigned VPN overlay roles are distinct from DHCP/ISP
+addresses; do not confuse stable virtual routing assignments with static physical
+addresses. Do not promise automatic reallocation of overlay addresses without a
+separately verified provisioning/role update.
+
+Audit found an unresolved native camera gap: `CameraProvisioner` stores an approved
+private IPv4 host, and the JNI camera path explicitly disables rediscovery and
+requires that fixed host/MAC binding. The existing Linux ARP locator and V380
+discovery resolver are NOT proof of deployed JUAN recovery on Android. Follow
+`HG_NET_ARCH_01_NETWORK_INDEPENDENT_CAMERA_INTEGRATION.md`: site-local authorized
+connector, logical identity, verified current attachment and outbound control.
+Implement/test that missing binding without credential sprays, arbitrary subnet
+sweeps, a workstation dependency or weakening consent/identity checks. Keep it
+distinct from the now-recovered MCP transport and serialize shared acquisition
+edits with the observer worker.
+
 **Current decision and rollout: roaming ingress, not another home-/32 exemption.**
 The owner explicitly rejected dependence on static home/public IP addresses and
 authorized preparing and implementing an adaptive solution. Implemented and pushed
