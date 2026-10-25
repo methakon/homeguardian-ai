@@ -128,10 +128,6 @@ public:
     void reset();
 
 private:
-    static bool is_motion(ChangeCharacter c) {
-        // The host's own definition, so this agrees with the rest of the analyzer by construction.
-        return homeguardian::is_localized_or_diffuse_motion(c);
-    }
     void push_window(bool weak_hit);
     std::size_t weak_count() const;
     void expire_if_stale(std::chrono::system_clock::time_point now);

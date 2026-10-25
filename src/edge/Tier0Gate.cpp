@@ -3,14 +3,23 @@
 namespace hg::edge {
 
 ChangeCharacter change_character_from_string(const std::string& s) {
-    // The host's closed vocabulary. An unrecognised string maps to `unknown`, which is not motion,
-    // so a typo or a future addition can never be silently treated as an event.
-    if (s == "quiet")                 return ChangeCharacter::quiet;
-    if (s == "global_illumination")   return ChangeCharacter::global_illumination;
-    if (s == "localized_unipolar")    return ChangeCharacter::localized_unipolar;
-    if (s == "localized_motion")      return ChangeCharacter::localized_motion;
-    if (s == "diffuse_motion")        return ChangeCharacter::diffuse_motion;
-    if (s == "illumination_settling") return ChangeCharacter::illumination_settling;
+    // Derived from the host's OWN `change_character_to_string` rather than restating the vocabulary.
+    // A hardcoded list is a second source of truth: the moment core adds, renames or re-types a
+    // character, a copied list keeps compiling while silently mapping the new one to `unknown`.
+    // Round-tripping means this parser knows every character the host can print, by construction.
+    constexpr ChangeCharacter kAll[] = {
+        ChangeCharacter::quiet,
+        ChangeCharacter::global_illumination,
+        ChangeCharacter::localized_unipolar,
+        ChangeCharacter::localized_motion,
+        ChangeCharacter::diffuse_motion,
+        ChangeCharacter::illumination_settling,
+    };
+    for (ChangeCharacter c : kAll) {
+        if (s == homeguardian::change_character_to_string(c)) return c;
+    }
+    // Unrecognised maps to `unknown`, which is not motion, so a typo or a future addition can never
+    // be silently treated as an event.
     return ChangeCharacter::unknown;
 }
 
@@ -80,7 +89,10 @@ TriggerEvent Tier0Gate::update(const CameraFinding& f, std::chrono::system_clock
         f.character_valid ? change_character_from_string(f.change_character) : ChangeCharacter::unknown;
     ev.character = character;
 
-    const bool motion = is_motion(character);
+    // The host's own predicate, called directly rather than through a local alias: it is documented
+    // as the thing to test when you want "motion, not merely change", and an alias here would be one
+    // more place for that meaning to drift.
+    const bool motion = homeguardian::is_localized_or_diffuse_motion(character);
     const double strong_t = f.idle_band > 0.0 ? f.idle_band * cfg_.strong_multiplier
                                               : cfg_.uncalibrated_strong;
     const double weak_t   = f.idle_band > 0.0 ? f.idle_band * cfg_.weak_multiplier

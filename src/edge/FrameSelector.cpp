@@ -23,7 +23,39 @@ void place(int& origin, int& size, int limit) {
 
 }  // namespace
 
-RoiBox FrameSelector::roi_for(const MotionRegion& region, int source_width, int source_height,
+bool FrameSelector::region_usable(const CameraFinding& finding, bool centroid_valid,
+                                  std::string* why) {
+    // The host classifies the change, so this component does not re-decide what motion is - it asks.
+    // `is_localized_or_diffuse_motion` is the host's own predicate, documented as the thing to test
+    // when you want "motion, not merely change", so a light switching on or an exposure decay can
+    // never produce a motion crop.
+    if (!finding.character_valid) {
+        if (why) *why = "the host reported no change character for this event";
+        return false;
+    }
+    const ChangeCharacter c = change_character_from_string(finding.change_character);
+    if (!homeguardian::is_localized_or_diffuse_motion(c)) {
+        if (why) {
+            *why = std::string("the host classified the change as ") +
+                   homeguardian::change_character_to_string(c) + ", which is not motion";
+        }
+        return false;
+    }
+    if (!centroid_valid) {
+        // The finding carries a spread and a travel but no centroid, so without one there is no
+        // "where" to crop around - only a "how much".
+        if (why) *why = "no centroid was supplied, so the region has no location";
+        return false;
+    }
+    if (why) {
+        *why = std::string("the host classified the change as ") +
+               homeguardian::change_character_to_string(c);
+    }
+    return true;
+}
+
+RoiBox FrameSelector::roi_for(const CameraFinding& finding, bool centroid_valid, double centroid_x,
+                              double centroid_y, int source_width, int source_height,
                               double min_roi_fraction, double roi_padding, bool& from_motion) const {
     RoiBox box;
     if (source_width <= 0 || source_height <= 0) {
@@ -36,8 +68,10 @@ RoiBox FrameSelector::roi_for(const MotionRegion& region, int source_width, int 
     // single-pixel spread yields a single-pixel crop and the "crop" saves nothing worth having.
     const int floor_px = std::max(8, static_cast<int>(std::ceil(min_roi_fraction * shorter)));
 
-    if (!region.valid) {
-        // No region. A centred box of the floor size, and the caller is told it was a fallback.
+    std::string why;
+    if (!region_usable(finding, centroid_valid, &why)) {
+        // No usable region. A centred box of the floor size, and the caller is told it was a
+        // fallback - along with WHY the host's own classification did not yield one.
         from_motion = false;
         box.width = std::min(floor_px, source_width);
         box.height = std::min(floor_px, source_height);
@@ -46,9 +80,11 @@ RoiBox FrameSelector::roi_for(const MotionRegion& region, int source_width, int 
         return box;
     }
 
-    // The extent covers the spread AND the travel: a subject that moved across the frame during
-    // the event is not contained by its final spread alone.
-    double half_norm = std::max(region.spread_radius + region.travel * 0.5, 0.0);
+    // The host's own descriptors, consumed rather than copied. `spread_radius` is the RMS spread of
+    // the changed mass over the frame diagonal; `region_travel` is how far the centroid moved. The
+    // extent covers BOTH: a subject that moved across the frame during the event is not contained
+    // by its final spread alone.
+    double half_norm = std::max(finding.spread_radius + finding.region_travel * 0.5, 0.0);
     half_norm *= (1.0 + std::max(roi_padding, 0.0));
 
     int w = static_cast<int>(std::ceil(half_norm * 2.0 * source_width));
@@ -58,8 +94,8 @@ RoiBox FrameSelector::roi_for(const MotionRegion& region, int source_width, int 
     w = std::min(w, source_width);
     h = std::min(h, source_height);
 
-    const double cx = std::clamp(region.centroid_x, 0.0, 1.0);
-    const double cy = std::clamp(region.centroid_y, 0.0, 1.0);
+    const double cx = std::clamp(centroid_x, 0.0, 1.0);
+    const double cy = std::clamp(centroid_y, 0.0, 1.0);
     box.x = static_cast<int>(std::lround(cx * source_width - w / 2.0));
     box.y = static_cast<int>(std::lround(cy * source_height - h / 2.0));
     box.width = w;
@@ -115,19 +151,25 @@ SelectionResult FrameSelector::select(const std::vector<FrameCandidate>& candida
     if (want < kMinSelectedFrames) want = kMinSelectedFrames;
     if (want > in_window.size()) want = in_window.size();
 
+    std::string why;
+    const bool usable = region_usable(request.finding, request.centroid_valid, &why);
+    r.character_reason = why;
+
     bool from_motion = false;
-    r.roi = roi_for(request.region, request.source_width, request.source_height,
-                    request.min_roi_fraction, request.roi_padding, from_motion);
+    r.roi = roi_for(request.finding, request.centroid_valid, request.centroid_x, request.centroid_y,
+                    request.source_width, request.source_height, request.min_roi_fraction,
+                    request.roi_padding, from_motion);
     r.roi_from_motion = from_motion;
 
     if (!r.roi.valid()) {
         r.reason = "no usable crop could be computed";
         return r;
     }
-    if (!from_motion && !request.allow_centre_fallback) {
+    if (!usable && !request.allow_centre_fallback) {
         // The caller has said a fallback crop is not acceptable evidence. Honour that rather than
         // returning a centre crop the caller cannot distinguish from a located subject.
-        r.reason = "no motion region, and a centre-crop fallback was not permitted";
+        r.reason = "no usable motion region (" + why +
+                   "), and a centre-crop fallback was not permitted";
         return r;
     }
 
@@ -164,9 +206,10 @@ SelectionResult FrameSelector::select(const std::vector<FrameCandidate>& candida
 
     r.ok = true;
     r.reason = from_motion
-                   ? "selected " + std::to_string(r.frames.size()) + " frames cropped to the motion region"
+                   ? "selected " + std::to_string(r.frames.size()) +
+                         " frames cropped to the host-classified motion region"
                    : "selected " + std::to_string(r.frames.size()) +
-                         " frames cropped to a FALLBACK centre box - no motion region was available";
+                         " frames cropped to a FALLBACK centre box - " + why;
     return r;
 }
 
