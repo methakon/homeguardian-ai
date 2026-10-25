@@ -86,12 +86,40 @@ Consumes the **existing** findings; extracts nothing.
 |---|---|
 | in | `motion_level` (changed fraction), `change_character`, region travel, the session's **own calibrated idle band** |
 | strong | above the calibrated high threshold → **fire on one frame** |
-| weak | above the calibrated low threshold → fire only if **2 of the last 3** agree |
+| weak | above the calibrated low threshold → fire only if **2 of the last 3 observations** agree |
 | latch | open 0.8-1.5 s past the **most recent valid hit**; further hits extend the same event |
 | anchor | **`first_weak_hit` is recorded on the first weak hit, not at confirmation** — it anchors the look-back |
 | states | `QUIET → CANDIDATE → ACTIVE → COOLDOWN → QUIET` |
 | invariant | **no transition may reduce the Tier-0 rate** |
 | forbidden | hardcoded fractions that ignore the session's idle-band calibration |
+
+**The gate fires on the project's own definition of motion, not on a raw fraction.** The repository
+already carries a closed `ChangeCharacter` vocabulary that separates movement from lighting, and a
+helper that tests exactly "motion, not merely change". The gate composes both:
+
+    fire only on   is_motion(character)  ==  localized_motion | diffuse_motion
+    never on       global_illumination      a brightness step
+                   illumination_settling    the camera's own decay after that step
+                   localized_unipolar       an object appearing, or a light switching on IN the scene
+                   quiet, unknown
+
+Thresholds are **multiples of the session's calibrated idle band**, not absolute constants — the
+sensor's own idle floor is a property of that camera, exposure and lighting (the value measured on
+the target camera is ~0.0098), so an absolute fraction would either label noise as motion or hide a
+small body. `diffuse_motion` additionally requires travel consistency, because that class includes
+rain and foliage.
+
+**Prototype status (2026-10-24).** The gate was prototyped out-of-tree against the repository's real
+headers and host-tested: **21/21 checks pass**, covering illumination rejection, single-strong-hit
+firing, the K-of-N weak path with an interrupting quiet observation, the anchor preceding
+confirmation, candidate expiry, the diffuse travel guard, stalled-vs-quiet, event extension instead
+of duplication, and latch release. **The first draft failed 2 of 18 checks** — a shared timeout field
+made the candidate state cancel itself on the first non-motion observation, silently missing any
+crossing with a gap between hits. That is the primary target case, and review had not caught it
+(FRICTION_LOG Incident 85). The prototype, not the plan, found it.
+
+Nothing from the prototype is committed to the repository; it lives in the scratch workspace and is
+re-expressed here so the implementation inherits the fix rather than the bug.
 
 ### Stage 3 — `EventJobQueue` (observer)
 

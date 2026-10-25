@@ -3428,3 +3428,31 @@ Not a code fix. Provenance is established before consensus is counted: agreement
 **Suggestion:** Establish whether multiple sources are independent before treating their agreement as corroboration; for a review chain, recency plus an explicit statement of correction outranks the count of documents that agree. Where sources were written in sequence, the later one's diff is the signal, not the overlap.
 
 **Status:** fixed
+
+## Incident 85: A shared timeout field made a state machine cancel its own candidate state
+
+**Date:** 2026-10-24
+**Task attempted:** Prototype the Tier-0 event gate and host-test it before committing any implementation, following the written plan's "measure and prove before building" discipline.
+
+**Steps:**
+1. Wrote the gate as a state machine (`quiet → candidate → active → cooldown`) with an asymmetric trigger: one strong hit fires, weak hits confirm on K of the last N.
+2. Bounded the *candidate* state with the same `latch_until_` field the *active* state uses.
+3. Ran a host test in which a weak hit, a quiet observation, then a second weak hit should confirm the event.
+
+**Expected result:** Two weak hits within the last three observations fire the gate.
+
+**Actual result:** The gate never fired on that sequence. `latch_until_` is only assigned on the *active* path, so on the candidate path it held its default-constructed value (the clock epoch). Every non-motion observation therefore satisfied `now >= latch_until_`, and the first quiet frame silently destroyed the candidate and cleared the hit window. The failure mode is the worst kind: no error, no crash — the gate simply misses events that have any gap between hits, which is exactly the fast-crossing case the whole design exists to catch.
+
+**Severity:** High (P1) — a silent miss of the primary target case, in a component whose entire purpose is not to miss it.
+
+**Fix:**
+The candidate now has its own explicit timeout (`candidate_window`), and the K-of-N window advances on **every observation** — a quiet observation is recorded as a miss in the window rather than clearing it, which is what "K of the last N observations" actually means.
+
+**Evidence:**
+- Out-of-tree prototype compiled against the repository's real headers (`src/core/ChangeCharacter.h`, `src/core/CameraActivitySession.h`), scratch workspace only, no repository file touched.
+- v1: `16/18 checks passed, 2 failed` — the failing check was "two weak hits within the window fire".
+- v2: `21/21 checks passed, 0 failed`, including "an intervening quiet observation does NOT cancel the candidate", "the anchor is the first weak hit, not the confirming frame", and "a lone weak hit does not latch forever".
+
+**Suggestion:** Give each state its own timeout field, and set it on entry to that state. A timeout carried over from another state is default-initialised when read on a path that never set it, so the comparison silently succeeds and the state expires instantly. Test every state transition sequence that includes an interrupting "nothing happened" sample — the interrupting case is where a shared field fails, and it is the case a happy-path test never exercises.
+
+**Status:** fixed
