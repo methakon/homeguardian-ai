@@ -4,16 +4,92 @@ This is the durable execution queue and handoff, not a new roadmap milestone.
 Update statuses and evidence here as each task finishes. Do not treat an interrupted
 response, a plan, a build, or an active service as successful live acceptance.
 
-## Shared communication channel
+## Latest owner checkpoint — 2026-10-25
 
-Read [inter-process communication](inter%20process%20communication.md) at task/session
-start, before shared-file edits, after the current bounded work unit and before
-reporting. Append replies to pending questions addressed to your workstream; post
-your own questions there and wait for explicit acknowledgments where required.
-Preserve other messages and all owner/security gates. No automatic background
-watcher or delivery is implied. Initial integration request awaits observer reply.
+This section supersedes older coordination, push-freeze and sequencing statements
+below where they conflict. Read it first after a restart.
 
-## Execution order
+### Analyzer architecture and ownership
+
+The other workstream's low-power event trigger is PART OF the native C++ analyzer,
+not a separate/replacement analysis system. It is the pre-filter before expensive
+analysis: inexpensive bounded observation detects an event; selected heavier
+analysis and event recording run only when triggered. Low-power observation still
+has to operate while idle; no claim of zero idle CPU, zero decoding or guaranteed
+thermal safety is made. Measure actual CPU, latency, recall, queue bounds, memory
+and temperature on the phone before accepting the power-saving claim.
+
+Integration must be ready to connect the finished pre-filter to the existing
+acquisition/analysis path when its owner hands it over. Do not duplicate the gate,
+change its logic or create a second acquisition/polling path. Existing authorization,
+provenance, cancellation, alert persistence and read-only MCP boundaries stay intact.
+
+The owner explicitly restricts this workstream to files it created. Before changing
+any other/shared file, identify the exact path and proposed change, discuss it with
+the owner and obtain permission. Do not infer write ownership from a directory name
+or permission to read. The other workstream's source and tests remain untouched.
+
+Source review at `eb328041b1fecaa10a8bba0c48ff4419ae844b63` confirms an existing
+native motion/statistical/correlation/durable-alert analyzer. Each accepted fetched
+snapshot enters `CameraAnalysis::process()`. It does NOT establish an integrated
+low-power-trigger/selective-inference cascade. That analyzer reports identity,
+falls, animals and emergencies unavailable; do not advertise full semantic coverage.
+
+### Six delivery points, in agreed order
+
+1. Restore fresh autonomous camera acquisition and analysis on the Mi phone, with
+   safe enrolled-identity-based recovery from changing physical private/public
+   addresses. No fixed DHCP assumption, root workaround, credential spraying or
+   workstation runtime dependency. Keep both actual worker-origin MCP tools working
+   and verify negative authorization. Last verified MCP reads succeeded, but native
+   acquisition had no frames/zero current-run observations. Existing stored alerts
+   do not satisfy fresh-analysis acceptance. Supported JUAN identity discovery or
+   an approved site-local mechanism remains the recorded prerequisite.
+2. Integrate the other workstream's completed low-power pre-filter into the C++
+   analyzer, followed by selective analysis and bounded event recording. Respect
+   its source ownership. Validate one genuine triggered clip jointly, not a
+   synthetic stand-in. This point cannot be closed before its deliverable and any
+   owner-required shared-file authorization exist.
+3. Implement and test the strict-under-80% storage safeguard, counting published
+   bytes and pending reservations. Reclaim only eligible managed clips through
+   confirmed durable deletion; preserve event metadata. Fail closed/507 when space
+   cannot be established. Never release uncertain pending charges or delete unrelated
+   objects. Verify strict boundary, concurrency, failures and restart behavior.
+4. Activate private R2 producer uploads and authenticated portal playback using
+   existing protected settings. Verify actual upload/publication, date-range/list/
+   pagination/deep-link/login-return behavior and access denials. Producer uploads
+   directly to R2; no continuous recording, public bucket or Oracle media relay.
+5. Deploy and verify the existing Alexa skill update using the owner's authorized
+   console session. Alexa stays an adapter for genuine native results, with concise
+   speech and a stable authorized portal event link; not a replacement analyzer or
+   an unimplemented unsolicited-announcement service.
+6. Verify workstation-independent end-to-end operation, including phone restart,
+   dynamic-address/network recovery, native results through the actual worker/Alexa
+   lane, authorized portal playback and access denials. Record any physical Echo or
+   reboot/network/shutdown test that cannot be performed as NOT VERIFIED.
+
+For EACH point: implement, run relevant tests and real acceptance, commit with a
+clear descriptive message, then push and verify the exact remote SHA. The owner's
+new explicit per-point push instruction supersedes the former wait-until-goodbye
+freeze. Do not push unrelated work or call a point complete based on source/tests
+alone. This documentation checkpoint is not implementation acceptance of a point.
+Do not deploy untested or unpushed source; preserve existing production restrictions.
+
+Complete independent preparation while waiting for the pre-filter, but do not
+pretend all six can be accepted before the recording/pre-filter deliverable exists.
+Expose concrete dependencies to the owner; do not skip failed prerequisites or
+silently alter the sequence to manufacture completion.
+
+### Coordination stopped
+
+The owner stopped the integration IPC watcher because coordination was interrupting
+both workstreams. It was terminated and verified exited. Do NOT rearm it, introduce
+another watcher, resume automated IPC reply loops or let coordination replace delivery.
+The canonical log is the root checkout's `docs/INTER_PROCESS_COMMUNICATION.md` if
+manual owner-requested coordination is needed; the lower-case/spaced log is superseded.
+The older watcher and push-policy messages are historical, not current instructions.
+
+## Earlier execution order — historical; use the six points above
 
 1. **FIRST: restore both phone MCP tools.** Owner explicitly prioritized this over
    R2 work and hosted Alexa deployment. Reproduce from the actual VPS mailbox-worker
