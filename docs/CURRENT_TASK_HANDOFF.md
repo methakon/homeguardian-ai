@@ -132,6 +132,26 @@ input if progress is impossible.
 
 ### Active MCP repair checkpoint
 
+**Post-resume check: MCP works, but fresh camera analysis fails.**
+Actual worker-origin reads again returned Running/read_only/capture-enabled and
+13 durable alerts, highest warning, with a recent phone VPN handshake. The installed
+phone app remains version 1.1.1 (code 9). Two direct, read-only native-stat samples
+reported `camera_state=no_frame`, `observations_processed=0`,
+`alerts_committed=0`, `decode_failures=0`, `fetch_failures=348`.
+Thus current camera acquisition is broken; old durable alerts are not fresh
+analysis evidence. The phone neighbor table showed an unresolved old attachment.
+
+A non-credential TCP connection to the camera's previously reported moved-address
+hint succeeded, and the workstation's current neighbor entry matched the enrolled
+camera MAC from protected configuration. The address was treated only as a hint;
+identity was checked separately. No camera credential or media was sent/read and
+no phone camera configuration was changed. This workstation-side identity check
+is diagnosis only, not an acceptable permanent dependency or proof that an Android
+app can perform the same ARP lookup. A read-only review of supported JUAN discovery
+mechanisms is in progress before implementing native location recovery. Existing
+V380 discovery is not assumed compatible. Observer shared/native wiring remains
+gated pending fresh analysis and safe integration.
+
 **Latest recovery: both actual worker-origin MCP tools now succeed.**
 The owner's USB-debugging notification was correct. An empty host ADB list did NOT
 prove a physical disconnection. USB hardware/interface remained visible; native
