@@ -132,6 +132,19 @@ input if progress is impossible.
 
 ### Active MCP repair checkpoint
 
+**Discovery review completed: safe Android relocation remains BLOCKED.**
+See [Android camera relocation readiness](ANDROID_CAMERA_RELOCATION_READINESS.md).
+The camera's verified moved address serves changing valid JPEGs using the owner's
+established credential. No new password/default list was tried and no image was
+saved. The known read-only CGI stub did not provide identity attributes in this
+check. Public vendor-search evidence does not supply a proven pre-credential
+identity contract for this specific unit. V380 discovery must not be substituted.
+Need either supported JUAN discovery/SDK evidence validated on this unit, or an
+approved always-on site-local connector with a supported lease/neighbor identity
+source. Do not add root, router changes, a workstation dependency or credential
+spraying to bypass this prerequisite. No camera or phone configuration was changed;
+no automatic recovery, fresh native analysis or stability release is claimed.
+
 **Post-resume check: MCP works, but fresh camera analysis fails.**
 Actual worker-origin reads again returned Running/read_only/capture-enabled and
 13 durable alerts, highest warning, with a recent phone VPN handshake. The installed
