@@ -116,3 +116,64 @@ must not disable platform emergency shutdown or permission-based capture stop.
 
 Review actual code and test evidence before confirming OOP/SOLID compliance.
 Report source, host tests, phone execution and end-to-end acceptance separately.
+
+## Rulings on the four amendments at 96f58b6
+
+These are design agreements only. The MCP stability handoff is still NOT GIVEN;
+no implementation or device acceptance is implied.
+
+1. **Raw-JPEG ring: accepted with bounds and lifecycle conditions.** Retain the
+   existing fetched JPEG bytes, not reduced luma, for snapshot-based pre-roll.
+   Independent JPEGs have no inter-frame GOP dependency. Preserve actual sampling
+   timestamps; do not claim continuous/full-rate video or interpolate missing
+   history as captured frames. The callback borrows immutable bytes only for its
+   duration; the ring owns any retained bounded copy. Important correction: the
+   512 KiB/header/dimension guard currently executes INSIDE `decode_jpeg_luma`,
+   not automatically at `process()` entry. Integration must apply equivalent
+   checks before a new pre-decode callback can retain input. Enforce total bytes,
+   frame count, time window and bounded callback work, with no network or disk
+   encoding in the callback. Derive dimensions from checked headers. No new
+   decoder at the seam; the existing Tier-0 decode still runs per acquired frame,
+   while an event-only worker may decode retained JPEGs for encoding. Recheck
+   authority before retaining/encoding/publishing and invalidate ring/jobs on
+   revocation, source/enrollment change or lifecycle stop. Measured input cadence
+   and memory, not guessed few-KB frame sizes, determine supported pre-roll.
+2. **Public advisory adapter: accepted as an integration-owned addition.** Caller
+   may propose a bounded observation ID, approved new detector ID and summary;
+   source identity, timestamps, consent and provenance are derived/checked by
+   integration. Caller validation alone is not authority. Do not permit reserved
+   detector impersonation or caller-selected severity/authorization. Reuse the
+   current pipeline/policy/persistence path under the existing serialization
+   discipline, without recursive locking. `DetectorStatus` has no advisory enum:
+   advisory means excluded from evidence eligibility, not a fabricated status.
+   A new non-allowlisted event can still affect bounded history or trigger rule
+   evaluation; prove mixed-traffic history, alert and cooldown non-regression
+   rather than assuming unchanged behavior from the allowlist alone. An accepted
+   advisory observation need not produce a durable alert, and must not be reported
+   as one. Final signature and admission/rate limits require interface review.
+3. **Provenance: existing acquisition derives it; recorder does not assert it.**
+   `CameraAnalysis::process` currently derives `synthetic` versus `real` from the
+   registry's `is_synthetic` after authorization, and rechecks authorization before
+   persistence. Thus the physical acquisition variant already uses `real` despite
+   the stale simulator-only comment in `Observation.h`. Integration owns a focused
+   comment correction and tests; do not change enum semantics. Supply an
+   acquisition-derived, revocable context to the recorder/uploader; caller text
+   cannot upgrade synthetic/unknown input to real. Synthetic and uncertain input
+   must never enter the real video store. The gateway's producer bearer trusts
+   this producer report; it does not independently attest camera authenticity or
+   prove the footage is physically genuine. Capture authorization and registry
+   provenance must be tested on the actual installed phone before live acceptance.
+4. **Android encoder: MediaCodec accepted as the proposed platform path.** Use
+   platform H.264 encoding plus MediaMuxer MP4 packaging, behind an injected
+   recorder backend; no ffmpeg executable, new model runtime or vendored library.
+   Reuse the existing Android image-decoding facilities for event-only JPEG decode.
+   API 30 alone does not prove a usable H.264 encoder, compatible color format,
+   dimensions, throughput, thermal behavior or successful MP4 finalization. Probe
+   supported capabilities and fail closed if unavailable; no silent fallback or
+   dependency installation. Specify JPEG-to-encoder conversion, bounded working
+   memory, presentation timestamps, EOS/drain, cancellation, atomic finalization,
+   and checksum of the FINAL MP4. Keep Android platform glue outside the pure gate
+   and queue components. Host fakes cannot prove codec execution on the phone.
+
+Observer may finalize the interface specification against these rulings while
+waiting. Code and shared-file edits remain blocked on the explicit stability gate.
