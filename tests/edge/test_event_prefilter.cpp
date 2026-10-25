@@ -153,6 +153,36 @@ int main() {
         ck(!after.analyse, "and nothing is analysed afterwards on the strength of the old event");
     }
 
+    std::printf("== a ONE-FRAME event is caught, because detection is not gated ==\n");
+    {
+        // This is the property that matters. The pre-filter gates ANALYSIS, never detection: it
+        // sees a finding for every frame the capture loop delivers, so an event lasting a single
+        // frame still fires. The contrast is the existing `--cadence` knob in
+        // main_camera_bridge.cpp, which `continue`s BEFORE session.ingest() and therefore skips
+        // detection itself - with cadence N, N-1 of every N frames are never examined, and an
+        // event falling between two sampled frames is invisible however brief or obvious it was.
+        EventPreFilter pf;
+        for (int i = 0; i < 50; ++i) pf.submit(quiet(), T(ms(i * 100)));
+        auto single = pf.submit(motion("localized_motion", 0.09), T(ms(5000)));
+        ck(single.begins_event, "an event present in exactly ONE frame still fires");
+        ck(single.analyse, "and that frame is analysed");
+        ck(pf.stats().events == 1, "counted as one event");
+        ck(pf.stats().frames_seen == 51,
+           "51 frames were SEEN - the pre-filter looked at every one, it did not skip 50");
+    }
+
+    std::printf("== a one-frame event is reported, not lost, even among a storm of suppression ==\n");
+    {
+        EventPreFilter pf;
+        for (int i = 0; i < 200; ++i) {
+            if (i % 3 == 0)       pf.submit(motion("global_illumination", 0.3), T(ms(i * 100)));
+            else if (i == 137)    pf.submit(motion("localized_motion", 0.09), T(ms(i * 100)));
+            else                  pf.submit(quiet(), T(ms(i * 100)));
+        }
+        ck(pf.stats().events == 1, "the single real crossing among 200 frames is still found");
+        ck(pf.stats().suppressed_illumination > 0, "while every illumination frame was rejected");
+    }
+
     std::printf("== a mixed realistic minute, end to end ==\n");
     {
         EventPreFilter pf;
