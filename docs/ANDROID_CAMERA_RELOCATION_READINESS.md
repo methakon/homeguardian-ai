@@ -1,6 +1,59 @@
 # Android camera relocation: verified gap and safe integration prerequisite
 
-## Current findings
+## Recheck on the actual Android phone — 2026-10-26
+
+The other workstream DID implement MAC-anchored recovery and an autonomous
+90-second watcher in `camera_ingest/recovery.py` and wire it into the Python relay
+(commits `3e66284`, `37f8a78`, `c9483db`). These commits are already in main.
+A fresh focused run of `python3 -m unittest camera_ingest.test_recovery -q` passed
+28 tests. This verifies those recovery rules, not Android app deployment.
+
+The production Android call site remains different:
+`apk_service/jni/hg_edge_service_jni.cpp:371` sets `scan_enabled=false`, and its
+status names `owner_approved_fixed_host_mac_no_rediscovery`. The default native
+locator reads `/proc/net/arp`; Python invokes `ip neigh show`. Neither the Python
+watcher nor an Android-compatible discovery provider is wired into that service.
+
+A temporary diagnostic APK was built with the existing SDK/NDK for min/target/API
+30. Its only requested permission was normal `INTERNET`. It was installed only on
+the independently identity-verified enrolled handset; its installed APK SHA-256
+matched the built artifact before execution. The completed test ran native code
+from an explicit receiver under the ordinary app UID/SELinux domain, NOT ADB shell:
+
+    ordinary_uid=true domain=untrusted_app
+    proc_errno=13 socket_errno=0
+    arp_ioctl_result=-1 arp_ioctl_errno=13
+    netlink_errno=0 neighbor_rows=7 complete_ipv4_mac_rows=5
+
+Both `/proc/net/arp` opening and the read-only `SIOCGARP` ioctl returned EACCES.
+HOWEVER, a follow-up ordinary-app-UID test successfully used NETLINK_ROUTE /
+RTM_GETNEIGH, returned seven neighbor messages and validated five records with an
+IPv4 destination and a six-byte link-layer address. No private values were logged.
+The earlier blanket implication that Android has no usable kernel-neighbor backend
+was too broad: this is a verified candidate backend on the enrolled handset.
+
+The ioctl used the empty address and emitted no network packet. The netlink dump
+queried only the kernel; it sent no packet to a camera, changed no routes and used
+no camera credential, host, MAC or media. An initial Activity-based attempt timed
+out behind the UI; the completed receiver-based tests run without dismissing the
+lock screen.
+
+Final tested diagnostic APK SHA-256:
+`80b569cef9820ebd1a650ac25958f085d976a441247a169b92ef24f2d414ead4`.
+The temporary package was uninstalled and absence was read back. No existing
+HomeGuardian APK/source, camera settings, VPN, OS permissions or services were
+modified by this diagnostic. Only the temporary diagnostic APK was installed;
+no SDK, privileged access or persistent service was added.
+
+Next implementation: add bounded netlink dump/parsing as the Android locator I/O
+backend; preserve the existing enrolled-MAC matching, conflict rejection, consent,
+cooldown, credential-destination checks and single acquisition loop. Wire that
+backend into the Android call site and verify actual relocated-camera processing.
+Netlink capability alone is NOT a completed camera-recovery acceptance test.
+Do not replace the other workstream's algorithm or turn on its Linux I/O blindly.
+The owner's shared-file permission gate still applies to Android service wiring.
+
+## Last acquisition evidence
 
 The VPS worker can read both genuine phone MCP tools. This does not establish
 camera acquisition. Direct native status samples on the installed phone reported
@@ -61,7 +114,11 @@ The connector must be inside a network segment that can reach the camera and mus
 dial outward to the coordination plane. A VPN to the phone does not discover a
 dumb camera's LAN lease or create routes through unrelated NAT segments.
 
-One of the following must be established before claiming safe automatic recovery:
+The primary implementation route is now the verified ordinary-app-UID netlink
+neighbor backend above, integrated with the existing enrolled-MAC policy. It still
+needs bounded production parsing, Android wiring and real-camera acceptance.
+If that backend proves insufficient on another device/network, the earlier
+fallback options remain:
 
 1. A supported discovery/identity contract for the actual JUAN unit that can be
    used by an unprivileged Android application before routing camera credentials.
