@@ -2,8 +2,9 @@
 
 **Date:** 2026-10-24
 **Workstream:** `HG-EDGE-VIDEO` (observer)
-**Basis:** `docs/EDGE_VIDEO_INTEGRATION_ACKNOWLEDGMENT.md` @ `a3a53fb`; the four amendment rulings
-recorded in the integration worker's reply to `docs/EDGE_VIDEO_OWNERSHIP_CONFIRMATION.md` @ `96f58b6`.
+**Basis:** `docs/EDGE_VIDEO_INTEGRATION_ACKNOWLEDGMENT.md` @ `498ccbd` — specifically its section
+"Rulings on the four amendments at 96f58b6". **That committed text is authoritative**, and it is
+more complete than the abridged reply it was summarised from; §1a records the reconciliation.
 **Status:** SPECIFICATION FINALISED. **Implementation gate remains CLOSED** — no code, no shared-file
 edit, pending the MCP recovery/stability handoff.
 
@@ -34,6 +35,30 @@ Two further constraints accepted without correction and carried into the spec: t
 in `Observation.h` is **stale for the physical acquisition variant**, and the gateway trusts its
 authorized producer's provenance report rather than attesting camera authenticity itself.
 
+### 1a. Reconciliation against the committed rulings
+
+This specification was first drafted from the abridged reply, before the authoritative committed
+text at `498ccbd` was read. Comparing them found **eleven constraints present in the commit and
+absent from the reply**. They are binding and are incorporated below; where the two differ, the
+commit governs.
+
+| # | constraint from the committed rulings | where it lands here |
+|---|---|---|
+| 1 | do not interpolate missing history and present it as captured frames | §2, §5.1 |
+| 2 | derive dimensions from checked headers | §2 |
+| 3 | **no network or disk encoding in the callback** | §2, §5.6 |
+| 4 | measured input cadence and memory — not guessed frame sizes — determine supported pre-roll | §5.1, §7 |
+| 5 | reuse the pipeline under the existing serialization discipline, **without recursive locking** | §3 |
+| 6 | no caller-selected **severity** (as well as authorization) | §3 |
+| 7 | final signature and **admission/rate limits** require interface review | §3 |
+| 8 | synthetic **and uncertain** input must never enter the real video store | §4 |
+| 9 | reuse the existing Android image-decoding facilities for event-only decode | §5.6 |
+| 10 | **atomic** finalization of the MP4 | §5.5 |
+| 11 | capture authorization and registry provenance must be tested on the **actual installed phone** | §7 |
+
+The lesson is recorded rather than left implicit: a chat summary of a committed document is not the
+document. The commit is the artifact of record, and the spec is checked against it.
+
 ## 2. Interface A — JPEG pre-roll seam (integration supplies, this workstream consumes)
 
 The ring's payload is the **fetched JPEG bytes**, read before decode through a borrowed, read-only
@@ -46,8 +71,12 @@ callback.
 | what the ring must bound | **total bytes, frame count, age, and callback work** |
 | invalidation triggers | authorization withdrawal, source change, shutdown → clear retained data **and** invalidate queued work |
 | decode policy | the acquisition seam adds **no** decode. Existing analysis continues to decode acquired frames for Tier-0. Decoding retained JPEGs for **event encoding** is a separate, permitted decode |
-| timestamps | **actual capture timestamps preserved**; the ring must not resynthesise them |
+| timestamps | **actual capture timestamps preserved**; the ring must not resynthesise them. Missing or unobserved history is **never interpolated and presented as captured frames** |
 | cadence | snapshot cadence. **Must never be described as continuous or full-rate video** |
+| dimensions | **derived from checked headers**, never assumed and never taken from a caller |
+| callback discipline | **no network and no disk encoding inside the callback** — it borrows bytes and returns |
+| authority | authority is **rechecked before retaining, encoding or publishing**, not only at admission |
+| pre-roll sizing | **measured input cadence and memory determine supported pre-roll** — not a guessed per-frame size |
 
 **Terminology constraint for all documents and alerts:** this is *snapshot pre-roll*. The words
 "continuous", "full-rate", and "video pre-roll" are not to be applied to it. A clip assembled from
@@ -75,8 +104,12 @@ a **caller** of it.
 
 * "already validated" confers **no** bypass — revalidation at admission applies;
 * reserved-detector impersonation is forbidden;
-* caller-selected authorization is forbidden;
+* caller-selected authorization **and caller-selected severity** are forbidden;
 * a submitted observation is **not** a persisted alert (C3).
+* the existing pipeline is reused under its existing serialization discipline, **without recursive
+  locking**;
+* the final method signature, and the admission and rate limits, are settled by **interface review**
+  — not assumed by the caller.
 
 **Behavioural contract the caller must be tested against, not assumed into (C2):**
 
@@ -94,6 +127,7 @@ tests; **no enum semantics change**.
 The recorder therefore receives an **acquisition-derived, revocable context** and:
 
 * **must not promote synthetic or unknown input to real**;
+* **synthetic and uncertain input must never enter the real video store**, on any path;
 * must not assert `real` itself, in any field, on any path;
 * must carry the context through to the reservation, where the gateway trusts the authorized
   producer's report.
@@ -113,6 +147,10 @@ detection-triggered capture. A green host suite proves nothing here.
   queued work**, in that order, deterministically.
 * Retention is sized on the measured frame size in V-0 — **not** on an assumed figure.
 * Every retained frame carries its **original capture timestamp**.
+* **Missing history is never interpolated** to fill a gap and then presented as captured frames; a
+  gap stays a gap, and the clip is honest about it.
+* Authority is **rechecked before retaining**, not only at admission.
+* The callback path performs **no network and no disk encoding**.
 
 ### 5.2 `Tier0Gate`
 
@@ -140,25 +178,34 @@ detection-triggered capture. A green host suite proves nothing here.
 
 * Owns clip assembly policy, bounds, cancellation and the measurement of the **finalised** MP4.
 * **Size and MD5 are computed on the finalised MP4**, never on a partial or predicted stream.
+* Finalisation is **atomic**: the clip becomes visible to the uploader only once it is complete and
+  measured, so a cancelled or failed recording can never be published as a finished artifact.
 * Fail closed when the clip cannot be produced; no partial clip is ever published.
 
 ### 5.6 `AndroidVideoEncoder` — platform glue, deliberately separate
 
 Android codec code is kept in its own unit so §5.5 stays pure and host-testable. Platform H.264
-`MediaCodec` plus `MediaMuxer` for MP4 packaging; **no ffmpeg executable and no new dependency.**
+`MediaCodec` plus `MediaMuxer` for MP4 packaging; **no ffmpeg executable, no new model runtime and no
+vendored library.** Event-only JPEG decode **reuses the existing Android image-decoding facilities**
+rather than adding a second decoder.
 
-At runtime the encoder must verify, and **fail closed if unsupported** with no silent fallback:
+The backend is **injected** into the pure recorder, so the recorder's policy and bounds are testable
+with a fake while the platform path supplies the real encoder.
+
+At runtime the encoder must verify, and **fail closed if unsupported** with no silent fallback and no
+dependency installation:
 
 * encoder availability and a usable configuration;
-* supported dimensions and colour formats, and any required conversion;
-* timestamp handling;
+* supported dimensions and colour formats, and the JPEG-to-encoder conversion;
+* presentation timestamps;
 * EOS / drain completion;
 * cancellation mid-stream;
-* bounded memory;
-* successful MP4 finalisation.
+* bounded working memory;
+* atomic MP4 finalisation (see §5.5).
 
-**API 30 does not guarantee a suitable codec configuration.** Encoder acceptance is a **device**
-result; host tests cannot establish it.
+**API 30 alone does not prove a usable H.264 encoder**, a compatible colour format, the dimensions,
+the throughput, the thermal behaviour or a successful MP4 finalisation. Encoder acceptance is a
+**device** result; host fakes cannot prove codec execution on the phone.
 
 ### 5.7 `EventClipUploader` — thin producer client
 
@@ -210,6 +257,9 @@ result; host tests cannot establish it.
 * real events produce a clip; a quiet scene produces none;
 * 30-60 min soak logging CPU, temperature and **queue depth**, with queue depth not climbing;
 * **installed-phone verification of the real, detection-triggered path** (§4).
+* **capture authorization and registry-derived provenance exercised on the actual installed phone**
+  — the acquisition-derived `real` claim is a device result and cannot be established by a host
+  test or a fake.
 
 **Four states, reported separately and never merged:** source implementation · host tests · phone
 execution · end-to-end acceptance. `docs/EVENT_VIDEO_STORAGE.md` is explicit that a signed-URL match
