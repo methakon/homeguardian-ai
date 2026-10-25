@@ -9,6 +9,36 @@ response, a plan, a build, or an active service as successful live acceptance.
 This section supersedes older coordination, push-freeze and sequencing statements
 below where they conflict. Read it first after a restart.
 
+### Latest execution and owner clarification
+
+The owner clarified that independent work must NOT wait for the other workstream's
+pre-filter deliverable. Complete the assigned recovery/storage/R2/Alexa/acceptance
+work where independently executable. Discuss final minimal pre-filter integration
+with the owner after its handoff; do not use it as a blanket implementation gate.
+
+- Pulled `origin/main` with `--ff-only`: already up to date. The existing shared
+  main checkout additionally contains the other workstream's local Tier0Gate
+  checkpoint `7c94b0e`; its source/tests were not modified by integration.
+- A fresh approved-handset identity check succeeded over USB. Installed application
+  remains version 1.1.1/code 9. The inspected UI belongs to System UI rather than
+  the status activity; no fresh camera counter read is claimed from that attempt.
+- Fresh reads using the deployed mailbox client's code, private configuration and
+  actual service OS identity returned genuine Running/read_only/capture-enabled
+  status and 13 durable alerts/highest warning. No credentials were printed and no
+  phone, VPN, worker or gateway service configuration/restart was changed.
+- The strict-under-80% storage safeguard is now implemented in integration-owned
+  `web_mcp/event_videos.js`, with new hermetic pressure tests. It counts pending
+  reservations, enforces integer-exact boundaries, preserves charged failure states,
+  and reuses confirmed durable deletion with explicit pressure/retention opt-ins.
+  There is no live deletion or activation in this checkpoint.
+- Verification: 207 relevant event-video tests passed locally. An isolated rehearsal
+  on the production Node v18.19.1 runtime passed 44 pressure/retention tests using
+  FAKE credentials/control responses, with no cloud media or production changes.
+  These do not certify live R2 upload, physical recording or fresh phone analysis.
+
+The six points below remain acceptance obligations, not a reason to suspend
+independent source implementation while another deliverable is unfinished.
+
 ### Analyzer architecture and ownership
 
 The other workstream's low-power event trigger is PART OF the native C++ analyzer,

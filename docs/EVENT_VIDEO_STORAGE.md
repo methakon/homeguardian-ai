@@ -164,7 +164,9 @@ Set only in the protected deployment environment, never source control:
 | `HG_EVENT_VIDEO_NOTIFICATION_TOKEN_FILE` | gateway-owned 0600 notification-reader key |
 | `HG_EVENT_VIDEO_MAX_DURATION_SECONDS` | clip-duration limit, default 30, hard maximum 120 |
 | `HG_EVENT_VIDEO_MAX_BYTES` | per-clip byte limit, no greater than 25 MiB |
-| `HG_EVENT_VIDEO_STORAGE_LIMIT_BYTES` | reservation budget; default/hard ceiling 8 GiB |
+| `HG_EVENT_VIDEO_STORAGE_LIMIT_BYTES` | optional lower reservation cap; hard ceiling 8 GiB, also constrained by the strict budget rule below |
+| `HG_EVENT_VIDEO_STORAGE_BUDGET_BYTES` | allocated byte budget, default 10,000,000,000; positive safe integer; admission must stay strictly below 80% |
+| `HG_EVENT_VIDEO_PRESSURE_CLEANUP_ENABLED` | exact `1`, together with cleanup enabled, permits one oldest published clip deletion on reservation pressure; OFF otherwise |
 | `HG_EVENT_VIDEO_RETENTION_DAYS` | completed-clip retention from publication time, default 7 days; only applies when cleanup is explicitly enabled |
 | `HG_EVENT_VIDEO_CLEANUP_ENABLED` | exact `1` enables cleanup; absent/other values leave it OFF |
 
@@ -172,6 +174,26 @@ Keep bucket public development URLs and public custom domains disabled. Confirm
 this in Cloudflare; signed access alone does not prove the bucket is private.
 Provide bucket-scoped object read/write credentials, not an account-wide/global
 Cloudflare key. Do not enable paid Stream or change DNS/tunnels/mail/firewall/VPN.
+
+The effective admission cap is the smaller of the configured storage limit and
+`floor((4 * allocated_budget - 1) / 5)`, calculated with integer arithmetic.
+The default budget therefore admits at most 7,999,999,999 charged bytes, never the
+80% boundary itself. The budget is an allocation, not automatic discovery of an
+account-wide quota. Pending, ready and deleting entries remain charged. A budget
+reduction does not erase existing charges or revoke already-issued short-lived
+URLs; over-budget pending retries cannot obtain renewed PUT authority.
+
+Pressure reclamation is separately opt-in AND requires the existing cleanup
+opt-in. With both switches exactly `1`, a new reservation may resume a deleting
+entry or reclaim the oldest ready entry regardless of age, using the SAME durable
+DELETE/HEAD-confirmation transaction as retention. At most one deletion is attempted
+per reservation. If more space is still needed, return 507 and retain metadata;
+the producer keeps the same event identity/local clip and uses bounded backoff.
+R2 control failures return a sanitized 503 and retain the charge. Never delete
+published clips if the request cannot fit even after removing all eligible clips,
+or if the catalog entry bound or per-request size already prevents admission.
+Age-based cleanup alone does not authorize younger-clip pressure deletion.
+Neither switch has been activated in production by this implementation.
 
 The local budget counts pending uploads as well as completed ones. It does not
 silently free reservations whose PUT result is unknown, because an orphaned object
@@ -205,8 +227,8 @@ acceptance remains separate from the hermetic tests and must precede enabling
 unattended cleanup on the real bucket.
 
 R2's published free Standard allowance is 10 GB-month, 1 million Class A and
-10 million Class B requests per month, with free internet egress. The 8 GiB
-application budget leaves headroom but is not an account billing cap: other
+10 million Class B requests per month, with free internet egress. The strict byte
+admission limit leaves headroom but is not an account billing cap: other
 buckets, request counts and shared account usage also matter. Do not promise zero
 charges merely because local bytes are below the application budget. Billing
 activation/payment approval, if Cloudflare requires it, is an owner action.

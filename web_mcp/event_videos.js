@@ -182,31 +182,36 @@ class EventVideos {
       candidates.sort((a, b) => Number(b.status === 'deleting') - Number(a.status === 'deleting') || a.ready_at - b.ready_at || a.id.localeCompare(b.id));
       const e = candidates[0];
       if (!e) return result;
-      if (e.status === 'ready') {
-        e.status = 'deleting';
-        try { this._save(c, data); } catch (_) { corrupt(); } // Durable denial BEFORE DELETE.
-      }
-      const deleted = await this._control(c, e, 'DELETE');
-      if (![200, 204].includes(deleted?.status)) fail(503, 'event_video_r2_unavailable');
-      const confirmed = await this._control(c, e, 'HEAD');
-      if (confirmed?.status !== 404) fail(503, 'event_video_r2_unavailable');
-      // Copy rather than mutate the charged state if persistence fails.
-      try { this._save(c, { ...data, entries: data.entries.map(item => item === e ? { ...e, status: 'expired' } : item) }); }
-      catch (_) {
-        // A directory fsync can fail after rename. Restore the charged catalog
-        // while still holding the lock; never report expiration on this path.
-        try {
-          if (this._load(c).entries.find(item => item.id === e.id)?.status === 'expired') this._save(c, data);
-        } catch (_) {
-          // If even rollback cannot be persisted, leave the exclusion lock for
-          // operator reconciliation instead of permitting uncharged new PUTs.
-          const error = new EventVideoError(503, 'event_video_catalog_unavailable');
-          error.preserveCatalogLock = true; throw error;
-        }
-        corrupt();
-      }
+      await this._expire(c, data, e);
       return { ...result, expired: 1 };
     });
+  }
+  async _expire(c, data, e) {
+    if (!['ready', 'deleting'].includes(e.status)) corrupt();
+    if (e.status === 'ready') {
+      e.status = 'deleting';
+      try { this._save(c, data); } catch (_) { corrupt(); } // Durable denial BEFORE DELETE.
+    }
+    const deleted = await this._control(c, e, 'DELETE');
+    if (![200, 204].includes(deleted?.status)) fail(503, 'event_video_r2_unavailable');
+    const confirmed = await this._control(c, e, 'HEAD');
+    if (confirmed?.status !== 404) fail(503, 'event_video_r2_unavailable');
+    // Copy rather than mutate the charged state if persistence fails.
+    try { this._save(c, { ...data, entries: data.entries.map(item => item === e ? { ...e, status: 'expired' } : item) }); }
+    catch (_) {
+      // A directory fsync can fail after rename. Restore the charged catalog
+      // while still holding the lock; never report expiration on this path.
+      try {
+        if (this._load(c).entries.find(item => item.id === e.id)?.status === 'expired') this._save(c, data);
+      } catch (_) {
+        // If even rollback cannot be persisted, leave the exclusion lock for
+        // operator reconciliation instead of permitting uncharged new PUTs.
+        const error = new EventVideoError(503, 'event_video_catalog_unavailable');
+        error.preserveCatalogLock = true; throw error;
+      }
+      corrupt();
+    }
+    return this._load(c);
   }
   async _control(c, e, method) {
     const url = signR2({ ...c.r2, key: e.object_key, method, expires: 120, now: this.now() });
@@ -240,10 +245,13 @@ class EventVideos {
       safeDirectories(path.dirname(index));
       const origin = new URL(this.publicOrigin);
       if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) unavailable();
+      const budget = integerEnv(e, 'HG_EVENT_VIDEO_STORAGE_BUDGET_BYTES', 10000000000, Number.MAX_SAFE_INTEGER);
+      // Integer arithmetic: accepted bytes must be STRICTLY below 4/5 of budget.
+      const pressureLimit = Number((BigInt(budget) * 4n - 1n) / 5n);
       return { r2, index, origin: origin.origin,
         duration: integerEnv(e, 'HG_EVENT_VIDEO_MAX_DURATION_SECONDS', 30, 120),
         bytes: integerEnv(e, 'HG_EVENT_VIDEO_MAX_BYTES', MAX_BYTES, MAX_BYTES),
-        storage: integerEnv(e, 'HG_EVENT_VIDEO_STORAGE_LIMIT_BYTES', MAX_STORAGE, MAX_STORAGE),
+        storage: Math.min(integerEnv(e, 'HG_EVENT_VIDEO_STORAGE_LIMIT_BYTES', MAX_STORAGE, MAX_STORAGE), pressureLimit),
         retention: integerEnv(e, 'HG_EVENT_VIDEO_RETENTION_DAYS', 7, 36600) };
     } catch (_) { unavailable(); }
   }
@@ -325,13 +333,27 @@ class EventVideos {
   }
   async prepare(body) {
     const c = this._config(), metadata = validateBody(body, c, this.now());
-    return this._write(c, data => {
+    return this._write(c, async data => {
       const existing = data.entries.find(e => e.metadata.event_id === metadata.event_id);
       if (existing) {
         if (stable(existing.metadata) !== stable(metadata)) fail(409, 'event_video_event_conflict');
+        if (existing.status === 'pending' && data.entries.reduce((n, e) => n + (e.status === 'expired' ? 0 : e.metadata.size_bytes), 0) > c.storage) fail(507, 'event_video_storage_full');
         return this._prepared(c, existing);
       }
-      if (data.entries.length >= MAX_ENTRIES || data.entries.reduce((n, e) => n + (e.status === 'expired' ? 0 : e.metadata.size_bytes), 0) + metadata.size_bytes > c.storage) fail(507, 'event_video_storage_full');
+      const charged = () => data.entries.reduce((n, e) => n + (e.status === 'expired' ? 0 : e.metadata.size_bytes), 0);
+      if (data.entries.length >= MAX_ENTRIES || metadata.size_bytes > c.storage) fail(507, 'event_video_storage_full');
+      if (charged() + metadata.size_bytes > c.storage && this.env.HG_EVENT_VIDEO_CLEANUP_ENABLED === '1' && this.env.HG_EVENT_VIDEO_PRESSURE_CLEANUP_ENABLED === '1') {
+        // Never discard pending charges or delete clips when pending bytes alone
+        // already make this request impossible. One confirmed deletion per request
+        // bounds control-plane work; remaining pressure returns 507 for later retry.
+        const pending = data.entries.reduce((n, e) => n + (e.status === 'pending' ? e.metadata.size_bytes : 0), 0);
+        if (pending + metadata.size_bytes <= c.storage) {
+          const candidates = data.entries.filter(e => e.status === 'ready' || e.status === 'deleting');
+          candidates.sort((a, b) => Number(b.status === 'deleting') - Number(a.status === 'deleting') || a.ready_at - b.ready_at || a.id.localeCompare(b.id));
+          if (candidates[0]) data = await this._expire(c, data, candidates[0]);
+        }
+      }
+      if (charged() + metadata.size_bytes > c.storage) fail(507, 'event_video_storage_full');
       const id = crypto.randomUUID(), created = this.now();
       const entry = { id, object_key: `event-videos/${id}.mp4`, created_at: created, expires_at: created + 3600000, status: 'pending', ready_at: null, metadata };
       data.entries.push(entry); this._save(c, data); // Durable charge BEFORE releasing a signed PUT.
