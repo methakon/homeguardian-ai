@@ -132,6 +132,31 @@ input if progress is impossible.
 
 ### Active MCP repair checkpoint
 
+**Newer checkpoint: USB access restored; cloud ingress approval is now the blocker.**
+The owner reconnected the handset and ADB is authorized. The existing active VPN
+tunnel was toggled OFF then ON through its normal UI, with both states read back;
+the other configured tunnels remained OFF. No keys, endpoint, routes or stored
+tunnel configuration were edited. Handshake still failed and actual worker probes
+still returned HTTP 503 at initialize for both tools.
+
+Read-only inspection verified the configured phone endpoint matches the deployed
+VPS UDP listener. Bounded packet-header capture saw no UDP arrivals during probes
+from the handset and workstation. The target instance's actual VNIC has one
+security list and one NSG; their combined UDP-port ingress admits only two prior
+public /32 sources. The current operator/home public IP matches neither source.
+Thus the cloud ingress restriction blocks the current home network before native
+MCP session processing. Do not replace credentials or weaken application auth.
+
+Proposed remedy is ONE additive current-home /32 ingress rule for the existing
+WireGuard UDP port in the existing HomeGuardian NSG, preserving every other rule.
+An explicit approval request timed out without an answer: **NOT APPROVED, NOT
+APPLIED**. No cloud/host firewall, service, key or route change was made. Await
+owner approval, then verify the exact rule by readback, handshake freshness and
+both actual worker tools. Private source addresses/resource identifiers are kept
+out of this public record. The observer stability gate remains CLOSED.
+
+The following is the earlier checkpoint, retained for chronology:
+
 Actual worker-identity probes reproduced HTTP 503 on `initialize` for both tools.
 The phone native foreground service was running, with installed app version 1.1.1
 (versionCode 9), and Wi-Fi connected. Phone bridge logs showed repeated private
