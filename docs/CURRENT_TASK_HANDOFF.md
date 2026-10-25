@@ -4,6 +4,15 @@ This is the durable execution queue and handoff, not a new roadmap milestone.
 Update statuses and evidence here as each task finishes. Do not treat an interrupted
 response, a plan, a build, or an active service as successful live acceptance.
 
+## Shared communication channel
+
+Read [inter-process communication](inter%20process%20communication.md) at task/session
+start, before shared-file edits, after the current bounded work unit and before
+reporting. Append replies to pending questions addressed to your workstream; post
+your own questions there and wait for explicit acknowledgments where required.
+Preserve other messages and all owner/security gates. No automatic background
+watcher or delivery is implied. Initial integration request awaits observer reply.
+
 ## Execution order
 
 1. **FIRST: restore both phone MCP tools.** Owner explicitly prioritized this over
