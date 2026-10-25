@@ -132,6 +132,35 @@ input if progress is impossible.
 
 ### Active MCP repair checkpoint
 
+**Current decision and rollout: roaming ingress, not another home-/32 exemption.**
+The owner explicitly rejected dependence on static home/public IP addresses and
+authorized preparing and implementing an adaptive solution. Implemented and pushed
+source `7d8e0ebcad49ef3cf917c4dd4943e0809014af50`; see
+[roaming private MCP](ROAMING_PRIVATE_MCP.md). The policy admits roaming IPv4
+sources to the existing WireGuard UDP port ONLY, preserving peer authentication,
+private MCP/coordinator bindings and application authentication. No public TCP MCP,
+new peer, host firewall, key, route, DNS or Cloudflare change was made.
+
+Seven policy tests passed. The operator utility's actual dry-run planned one rule;
+the explicitly authorized apply snapshotted the exclusively attached NSG, added
+one rule and read back all two prior rules unchanged. A repeat dry-run reported
+zero additions/already compliant. A readiness-synchronized packet capture confirmed
+the workstation's 14-byte UDP probe now arrives at the VPS. Missing and incorrect
+reader authorization still return 401; external TCP probes to the MCP/coordinator
+ports did not connect. No unauthenticated WireGuard peer was enrolled.
+
+The approved Mi phone is no longer visible in ADB. A visible USB device did not
+match its previously verified serial; no alternate device was operated. The
+phone's last handshake remains stale and both actual worker tool calls still
+return 503 during initialization. Thus the dynamic-source ingress defect is fixed,
+but native MCP recovery and fresh on-phone analysis remain NOT VERIFIED. Restore
+authorized Mi access to recover its existing tunnel/session and finish the two-tool
+positive checks. No observer stability signal has been issued. Actual second-network
+roaming, reboot, IPv6-only and UDP-blocked-network fallback remain unverified.
+
+The checkpoints below are historical and superseded where they disagree with the
+roaming policy; the single-current-home-/32 remedy is withdrawn.
+
 **Newer checkpoint: USB access restored; cloud ingress approval is now the blocker.**
 The owner reconnected the handset and ADB is authorized. The existing active VPN
 tunnel was toggled OFF then ON through its normal UI, with both states read back;

@@ -67,3 +67,20 @@ from connectivity. No host test or rule-list entry alone proves those live check
 A second public-network change and phone reboot remain NOT VERIFIED until tested.
 The static policy removes the identified source-/32 restriction but does not prove
 all future network conditions or platform lifecycle recovery.
+
+## Applied checkpoint — 2026-10-25
+
+Source `7d8e0ebcad49ef3cf917c4dd4943e0809014af50` was pushed before application.
+Seven policy tests passed. Live dry-run found two existing rules and planned one
+addition. Apply verified exclusive target membership, wrote a private before/after
+snapshot, added the roaming rule and read back both original rules unchanged.
+A repeat dry-run found three rules and planned zero additions. A synchronized
+capture then observed the external workstation's actual 14-byte UDP probe at the
+VPS. An earlier fixed-delay capture was inconclusive; readiness must precede send.
+
+The reader rejects missing and wrong authorization with 401. Public TCP probes to
+8790, 18994 and 18995 did not connect. Coordinator and mailbox remain active.
+The phone subsequently was absent from ADB and its last handshake remained stale;
+both worker-origin tool calls still returned 503 at initialize. The cloud roaming
+policy is applied, but phone/MCP recovery is NOT COMPLETE and the observer gate
+remains CLOSED. A fresh phone connection is required for the remaining checks.

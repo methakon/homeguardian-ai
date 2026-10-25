@@ -1,5 +1,17 @@
 # Private VPN and remote MCP readiness
 
+## Current roaming policy — 2026-10-25
+
+Owner-directed dynamic-public-IP support supersedes the historical source-/32
+ingress workaround below. The existing WireGuard UDP port now admits roaming IPv4
+sources, with enrolled-key authentication and all private MCP/application controls
+retained. Exact policy, scoped operator utility and acceptance limits:
+[roaming private MCP](ROAMING_PRIVATE_MCP.md). Cloud rule readback and external UDP
+arrival succeeded; this does NOT establish current phone connectivity. The approved
+handset is unavailable over ADB at the latest check, its handshake is stale, and
+both worker tools still fail initialization. Earlier positive checkpoints below
+are historical evidence, not current recovery certification.
+
 ## Final checkpoint — 2026-10-23, 04:02 IST: REMOTE MCP VERIFIED
 
 Four blockers were reported and all four are now resolved and measured. Remote
