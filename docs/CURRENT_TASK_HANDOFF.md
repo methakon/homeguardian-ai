@@ -130,6 +130,30 @@ input if progress is impossible.
 
 ## Evidence required to close tasks
 
+### Active MCP repair checkpoint
+
+Actual worker-identity probes reproduced HTTP 503 on `initialize` for both tools.
+The phone native foreground service was running, with installed app version 1.1.1
+(versionCode 9), and Wi-Fi connected. Phone bridge logs showed repeated private
+coordinator connect timeouts. Both coordinator/reader listeners were present on
+the private VPN address; the enrolled phone peer's last handshake was 68094 seconds
+old at the check and a VPS-to-phone private ping failed. Thus the first demonstrated
+break is private VPN transport, before native MCP session dispatch.
+
+Recovery of the existing phone tunnel was being inspected, without changing keys,
+routes or firewall rules. The handset disappeared from USB ADB immediately after
+waking it/opening the existing VPN app, before UI inspection or any tunnel toggle.
+Repeated device enumeration remained empty; connection to the previously known
+phone's ADB TCP endpoint was refused. No VPN toggle, app installation, key extraction,
+service restart or network-configuration change was performed.
+
+The current relay session regression ran successfully: 13 checks passed, including
+stale-session initialization, HTTP failure handling, redirect denial and mutation
+refusal. This does not repair the VPN or establish deployment of the source's app
+version 1.1.2. Reconnect/authorize the owner's phone over USB to resume existing-tunnel
+recovery, then probe both tools from the worker again. The observer implementation
+stability gate remains CLOSED; no fresh analysis or positive tool acceptance claimed.
+
 For each task, record changed paths, source SHA, actual test command/result,
 deployment readback, consumer result, remaining limitations and the next task.
 Until that evidence exists, retain PENDING or BLOCKED rather than DONE.
