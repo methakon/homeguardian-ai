@@ -16,6 +16,31 @@ pre-filter deliverable. Complete the assigned recovery/storage/R2/Alexa/acceptan
 work where independently executable. Discuss final minimal pre-filter integration
 with the owner after its handoff; do not use it as a blanket implementation gate.
 
+- Phone power-off diagnosis and remote-path recovery (2026-10-28): the handset
+  restarted at about 02:08 IST with boot reason `cold,powerkey`. Battery history
+  shows 71% before and after that boundary and 33.5 C last recorded pre-boot, so
+  battery exhaustion and thermal shutdown are NOT supported; the preceding
+  shutdown cause itself is not recorded, and `powerkey` explains only the boot
+  that followed. No previous-kernel trace or explicit shutdown reason survived.
+  The outage cause is separate and confirmed: the WireGuard tunnel the phone
+  actually uses (named `21`, interface key matching the VPS peer for
+  `192.168.77.4/32`, peer `192.168.77.1/32`) was DOWN after the restart, the
+  HomeGuardian bridge restore then refused once because no VPN was active, and
+  the app keeps no retry after that single refusal. Authenticated VPS reads
+  therefore returned HTTP 503 while unauthenticated ones still returned 401.
+  Recovery, with no key, peer, credential or camera change: the existing tunnel
+  was brought up, the bridge was started from the app, and it dialled and
+  authenticated. Verified afterwards: VPS WireGuard handshake current, overlay
+  ping 0% loss, `get_homeguardian_status` = Running/read_only/capture_enabled,
+  `get_alert_summary` = 136 alerts/highest warning, and missing/invalid bearer
+  still 401. Reboot durability REMAINS OPEN: this WireGuard build exposes no
+  start-on-boot option, and the bridge is restored only once at engine start, so
+  a power cycle still needs a manual tunnel start and bridge start. Two stale
+  tunnel profiles also exist (`homegurdian`, whose key matches no current VPS
+  peer, and `mimsb`, which fails to start because it has no addresses); they
+  were left untouched. Per-frame camera observation counters are not exposed to
+  a read-only reader on this build, so fresh analysis is evidenced only by
+  capture being authorized and probes succeeding, not by an observation count.
 - Branch integration (2026-10-26), owner-requested source
   `experiment/hg-v380-ec39-integration` at
   `b567783f214453f7136ada486234291c19769b02`, target baseline
