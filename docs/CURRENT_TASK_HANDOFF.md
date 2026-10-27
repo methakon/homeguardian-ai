@@ -16,6 +16,34 @@ pre-filter deliverable. Complete the assigned recovery/storage/R2/Alexa/acceptan
 work where independently executable. Discuss final minimal pre-filter integration
 with the owner after its handoff; do not use it as a blanket implementation gate.
 
+- Unattended-recovery hardening (2026-10-28): implemented and device-verified.
+  `BridgeSupervisor` (new, pure logic, host-tested) gives the outbound bridge a
+  capped-backoff retry (5s, 15s, 45s, 120s, then 300s) driven from the existing
+  watchdog tick, so a bridge that is refused because no tunnel is up yet is
+  retried instead of staying dead for the process lifetime; an explicit Stop
+  still wins, and service teardown preserves the persisted intent. Every attempt
+  is classified (`vpn_unavailable`, `auth_refused`, `timeout`, `refused`,
+  `not_configured`, `other`) and logged as `BRIDGE_RETRY`/`BRIDGE_WAIT_VPN`/
+  `BRIDGE_UP`, with a retry count exposed in the app status. Version is now
+  1.1.4/code 12, installed in place with the tested artifact digest matched.
+  Prevention outside the app: Android always-on VPN is set for the WireGuard
+  package, and both WireGuard and this package are exempted from battery
+  optimisation — without that exemption ActivityManager logs "Stopping service
+  due to app idle" for the WireGuard VpnService about two minutes after boot and
+  the tunnel never returns. Verified by three reboots: with the tunnel up at
+  shutdown, the phone returns unattended — VPN transport up, service started from
+  BOOT_COMPLETED, bridge connected and authenticated, and genuine VPS reads
+  returned Running/capture-enabled plus the durable alert summary (137,
+  highest warning) at 0.39-1.33 s, with missing/invalid bearer still 401.
+  With the tunnel down at boot the supervisor was observed waiting
+  (`BRIDGE_WAIT_VPN ... tunnel=DOWN`) and then connecting by itself once the
+  tunnel came up, without an operator pressing Start. REMEDIATION OF A LATER
+  LOSS: if the phone is powered off while its tunnel is down, always-on VPN
+  starts the WireGuard service but restores no tunnel in this build, so the
+  bridge waits — closing that needs either an operator tunnel start or an
+  approved expansion allowing this app to control the tunnel
+  (`com.wireguard.android.permission.CONTROL_TUNNELS` plus WireGuard's
+  "Allow remote control apps"); neither is enabled here.
 - Phone power-off diagnosis and remote-path recovery (2026-10-28): the handset
   restarted at about 02:08 IST with boot reason `cold,powerkey`. Battery history
   shows 71% before and after that boundary and 33.5 C last recorded pre-boot, so

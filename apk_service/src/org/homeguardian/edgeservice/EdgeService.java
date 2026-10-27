@@ -66,6 +66,18 @@ public class EdgeService extends Service {
     private int consecutiveProbeFails = 0;
     private long healthySinceMs = 0;
 
+    /**
+     * Bridge retry state. The bridge is refused while no VPN tunnel is up, and a restart
+     * brings this service up before (or without) a tunnel, so a one-shot attempt at engine
+     * start used to leave remote reads broken until an operator pressed Start. The supervisor
+     * retries with capped backoff and an explicit Stop still wins.
+     */
+    private final BridgeSupervisor bridgeSupervisor = new BridgeSupervisor();
+    private volatile boolean bridgeWanted = false;
+    private volatile long bridgeNextAttemptAtMs = 0L;
+    private volatile String bridgeLastCategory = "";
+    private int bridgeWaitedForVpn;
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -118,7 +130,7 @@ public class EdgeService extends Service {
         }
         if (ACTION_BRIDGE_STOP.equals(action)) {
             getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putBoolean("desired_running", false).apply();
-            stopBridge();
+            stopBridge(true);
             return START_STICKY;
         }
 
@@ -135,7 +147,7 @@ public class EdgeService extends Service {
 
     @Override
     public void onDestroy() {
-        stopBridge();
+        stopBridge(false);
         Log.i(TAG, "onDestroy");
         scheduleStop("service destroyed");
         super.onDestroy();
@@ -239,6 +251,9 @@ public class EdgeService extends Service {
     private void watchdogTick() {
         if (stopping) return;
         try {
+            // Runs on every tick, before any early return below, so a dead native engine
+            // cannot also starve the bridge retry.
+            bridgeTick();
             // (a) is the native engine still alive?
             if (!NativeEngine.isRunning()) {
                 EdgeState.nativeRunning = false;
@@ -363,7 +378,50 @@ public class EdgeService extends Service {
         String endpoint = prefs.getString("endpoint", "");
         // A fresh install dials nowhere. Preserve an existing operator-configured
         // endpoint, but never override an explicitly persisted Stop decision.
-        if (prefs.getBoolean("desired_running", endpoint.length() > 0)) startBridge(null);
+        if (!prefs.getBoolean("desired_running", endpoint.length() > 0)) return;
+        // Wanted survives a restart; the supervisor keeps trying while no tunnel is up yet.
+        bridgeWanted = true;
+        bridgeNextAttemptAtMs = 0L;
+        bridgeSupervisor.reset();
+        startBridge(null);
+    }
+
+    /**
+     * Called from every watchdog tick. Cheap: it only acts when the bridge is wanted and not
+     * running, and never sooner than the supervisor allows.
+     */
+    private void bridgeTick() {
+        EdgeState.bridgeAttempts = bridgeSupervisor.attempts();
+        if (!BridgeSupervisor.shouldAttempt(bridgeWanted, EdgeState.bridgeRunning, stopping)) {
+            bridgeWaitedForVpn = 0;
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now < bridgeNextAttemptAtMs) return;
+        if (!TransportPolicy.vpnTunnelUp()) {
+            // A tunnel that is still coming up is expected after a restart. Wait quietly but
+            // record it, because "no tunnel" is the single most common cause of this outage.
+            bridgeWaitedForVpn++;
+            bridgeNextAttemptAtMs = now + bridgeSupervisor.nextDelayMs();
+            if (bridgeWaitedForVpn == 1 || bridgeWaitedForVpn % 10 == 0) {
+                McpProbe.appendLog(this, "BRIDGE_WAIT_VPN attempt=" + bridgeWaitedForVpn
+                        + " tunnel=DOWN next_ms=" + bridgeSupervisor.nextDelayMs());
+            }
+            EdgeState.bridgeStatus = "bridge: waiting for VPN tunnel";
+            EdgeState.notifyChanged();
+            return;
+        }
+        bridgeWaitedForVpn = 0;
+        startBridge(null);
+    }
+
+    private void scheduleBridgeRetry(String reason) {
+        bridgeLastCategory = BridgeSupervisor.classify(reason);
+        bridgeNextAttemptAtMs = System.currentTimeMillis() + bridgeSupervisor.nextDelayMs();
+        EdgeState.bridgeAttempts = bridgeSupervisor.attempts();
+        McpProbe.appendLog(this, "BRIDGE_RETRY reason=" + bridgeLastCategory
+                + " attempt=" + bridgeSupervisor.attempts()
+                + " next_ms=" + (bridgeNextAttemptAtMs - System.currentTimeMillis()));
     }
 
     private synchronized void startBridge(String url) {
@@ -382,6 +440,9 @@ public class EdgeService extends Service {
             EdgeState.notifyChanged();
             return;
         }
+        // Reaching here means an endpoint exists: an operator Start or a restart expresses the
+        // intent to run, so a refusal now is retried rather than final. Only Stop clears it.
+        bridgeWanted = true;
         if (bridge != null && bridge.isRunning()) {
             Log.i(TAG, "bridge already running; not creating a second session");
             EdgeState.bridgeStatus = OutboundMcpBridge.status();
@@ -399,15 +460,34 @@ public class EdgeService extends Service {
         Log.i(TAG, "bridge: " + r);
         EdgeState.bridgeRunning = bridge.isRunning();
         if (EdgeState.bridgeRunning) {
+            bridgeWanted = true;
+            bridgeWaitedForVpn = 0;
+            bridgeSupervisor.reset();
+            bridgeNextAttemptAtMs = 0L;
+            bridgeLastCategory = "";
+            EdgeState.bridgeAttempts = 0;
             getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putBoolean("desired_running", true).apply();
+            McpProbe.appendLog(this, "BRIDGE_UP " + BridgeSupervisor.classify(r));
+        } else {
+            scheduleBridgeRetry(r);
         }
         EdgeState.bridgeStatus = r;
         updateNotification("bridge: " + r);
         EdgeState.notifyChanged();
     }
 
-    /** Stop the bridge and close its session. Safe when it was never started. */
-    private synchronized void stopBridge() {
+    /**
+     * Stop the bridge and close its session. Safe when it was never started.
+     * `operator` false is an internal teardown (service destroy): the persisted
+     * intent to run survives, so the next start resumes it.
+     */
+    private synchronized void stopBridge(boolean operator) {
+        if (operator) {
+            bridgeWanted = false;
+            bridgeSupervisor.reset();
+            bridgeNextAttemptAtMs = 0L;
+            EdgeState.bridgeAttempts = 0;
+        }
         OutboundMcpBridge b = bridge;
         bridge = null;
         if (b != null) {
@@ -415,13 +495,13 @@ public class EdgeService extends Service {
             Log.i(TAG, "bridge stopped");
         }
         EdgeState.bridgeRunning = false;
-        EdgeState.bridgeStatus = "bridge: stopped by operator";
+        EdgeState.bridgeStatus = operator ? "bridge: stopped by operator" : "bridge: stopping with service";
         EdgeState.notifyChanged();
     }
 
     private void stopEverything(String reason) {
         getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putBoolean("desired_running", false).apply();
-        stopBridge();          // never leave an outbound session open past a service stop
+        stopBridge(true);      // never leave an outbound session open past a service stop
         scheduleStop(reason);
     }
 

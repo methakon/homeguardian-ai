@@ -411,6 +411,10 @@ public class MainActivity extends Activity implements EdgeState.Listener {
           .append('\n');
         bb.append("vpn tunnel     : ").append(TransportPolicy.vpnTunnelUp() ? "UP" : "DOWN").append('\n');
         bb.append("bridge status  : ").append(EdgeState.bridgeStatus).append('\n');
+        if (EdgeState.bridgeAttempts > 0) {
+            bb.append("bridge retries : ").append(EdgeState.bridgeAttempts)
+              .append(" (capped backoff; Stop clears)\n");
+        }
         String btext = bb.toString();
         if (!btext.equals(lastBridgeText)) {
             bridgeView.setText(btext);

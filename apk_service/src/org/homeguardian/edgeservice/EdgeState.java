@@ -42,6 +42,8 @@ public final class EdgeState {
     // the transport policy blocks a start, which is what makes a misconfiguration fixable.
     public static volatile boolean bridgeRunning = false;
     public static volatile String bridgeStatus = "bridge: idle (not started)";
+    /** Bridge recovery attempts consumed by the supervisor; 0 when healthy. */
+    public static volatile int bridgeAttempts = 0;
     public static volatile String bridgeEndpoint = "";
 
     private static final CopyOnWriteArrayList<Listener> LISTENERS = new CopyOnWriteArrayList<Listener>();
