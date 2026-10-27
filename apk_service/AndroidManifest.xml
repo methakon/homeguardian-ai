@@ -27,8 +27,8 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.homeguardian.edgeservice"
-    android:versionCode="12"
-    android:versionName="1.1.4">
+    android:versionCode="13"
+    android:versionName="1.1.5">
 
     <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="30" />
 
@@ -43,6 +43,14 @@
         This takes the approved set from three to four.
     -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+      Lets this app ask the WireGuard client to bring its EXISTING tunnel up after a power
+      cycle, which Android's always-on VPN does not do in this build. The permission is
+      declared by WireGuard as dangerous, so it is requested at runtime and remains a user
+      decision; WireGuard also requires its own "Allow remote control apps" setting. Nothing
+      here can create, modify or delete a tunnel.
+    -->
+    <uses-permission android:name="com.wireguard.android.permission.CONTROL_TUNNELS" />
 
     <application
         android:label="HomeGuardian Edge"

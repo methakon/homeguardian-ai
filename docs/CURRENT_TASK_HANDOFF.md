@@ -16,6 +16,29 @@ pre-filter deliverable. Complete the assigned recovery/storage/R2/Alexa/acceptan
 work where independently executable. Discuss final minimal pre-filter integration
 with the owner after its handoff; do not use it as a blanket implementation gate.
 
+- Tunnel-control hardening (2026-10-28, owner-approved permission expansion):
+  the app now asks the WireGuard client to raise the EXISTING tunnel it was
+  configured with, so a power cycle recovers even when Android's always-on VPN
+  restores nothing. Added `com.wireguard.android.permission.CONTROL_TUNNELS`
+  (damage-limited: one package-scoped `SET_TUNNEL_UP` broadcast, name taken only
+  from an operator-typed field, validated by a bounded pattern, rate limited to
+  one request per 60 s, guarded by a runtime permission check, and no ability to
+  create, modify or tear down a tunnel — `SET_TUNNEL_DOWN` and `prepare()` are
+  absent and asserted absent by test). The request deliberately runs BEFORE the
+  "bridge already running" gate, because a bound-but-failing bridge is exactly
+  when the tunnel must be asked for. Version 1.1.5/code 13 installed in place
+  with the artifact digest matched; the runtime grant was accepted on the device
+  and WireGuard's own "Allow remote control apps" was enabled on the handset.
+  Device evidence: with always-on VPN explicitly cleared and the phone rebooted,
+  the tunnel came back with no UI interaction, WireGuard logged
+  `Bringing tunnel 21 UP` immediately after `BRIDGE_TUNNEL_REQUEST sent`, the
+  bridge connected and authenticated, and genuine reads returned
+  Running/capture-enabled plus the alert summary (138, highest warning) with
+  missing/invalid bearer still 401. Five of six consecutive reads succeeded; the
+  one miss was the existing 1-second client budget, not a tunnel or bridge
+  failure. Always-on VPN was then restored as redundant protection. Remaining
+  operator-visible requirement: the tunnel NAME field must stay filled in; with
+  it empty the app never broadcasts, by design.
 - Unattended-recovery hardening (2026-10-28): implemented and device-verified.
   `BridgeSupervisor` (new, pure logic, host-tested) gives the outbound bridge a
   capped-backoff retry (5s, 15s, 45s, 120s, then 300s) driven from the existing

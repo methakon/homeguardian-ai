@@ -78,6 +78,22 @@ public class EdgeService extends Service {
     private volatile String bridgeLastCategory = "";
     private int bridgeWaitedForVpn;
 
+    /**
+     * Requesting the existing WireGuard tunnel, nothing more: Android's always-on VPN starts
+     * the WireGuard service but restores no tunnel in this build, so after a power cycle the
+     * phone can sit with a live MCP server and no path to the coordinator. The app therefore
+     * asks WireGuard to raise the tunnel it was told to use. The request is package-scoped, the
+     * name is operator-configured and validated, it is rate limited, and the WireGuard client
+     * still decides - this cannot create or alter a tunnel.
+     */
+    private static final String WG_PACKAGE = "com.wireguard.android";
+    private static final String WG_ACTION_SET_TUNNEL_UP = "com.wireguard.android.action.SET_TUNNEL_UP";
+    private static final String WG_EXTRA_TUNNEL = "tunnel";
+    private static final String CONTROL_TUNNELS = "com.wireguard.android.permission.CONTROL_TUNNELS";
+    private static final long TUNNEL_REQUEST_INTERVAL_MS = 60_000L;
+    private volatile long tunnelRequestNextAtMs = 0L;
+    private boolean tunnelPermissionLogged = false;
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -392,6 +408,14 @@ public class EdgeService extends Service {
      */
     private void bridgeTick() {
         EdgeState.bridgeAttempts = bridgeSupervisor.attempts();
+        if (!bridgeWanted || stopping) {
+            bridgeWaitedForVpn = 0;
+            return;
+        }
+        // The tunnel is asked for BEFORE the "already running" gate below: while the tunnel is
+        // down the bridge object stays alive and keeps failing to re-establish, so a request
+        // placed after that gate would never fire in exactly the case it exists for.
+        if (!TransportPolicy.vpnTunnelUp()) maybeRequestTunnelUp();
         if (!BridgeSupervisor.shouldAttempt(bridgeWanted, EdgeState.bridgeRunning, stopping)) {
             bridgeWaitedForVpn = 0;
             return;
@@ -413,6 +437,36 @@ public class EdgeService extends Service {
         }
         bridgeWaitedForVpn = 0;
         startBridge(null);
+    }
+
+    /**
+     * Asks the WireGuard client to raise the configured tunnel. Silent no-op unless the
+     * operator configured a name, the name is well formed, the permission is granted and the
+     * interval has elapsed, so an unconfigured install never broadcasts anything.
+     */
+    private void maybeRequestTunnelUp() {
+        String name = getSharedPreferences("hg_bridge", MODE_PRIVATE).getString("tunnel", "").trim();
+        if (name.length() == 0) return;
+        if (!BridgeSupervisor.validTunnelName(name)) return;
+        if (checkSelfPermission(CONTROL_TUNNELS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (!tunnelPermissionLogged) {
+                tunnelPermissionLogged = true;
+                McpProbe.appendLog(this, "BRIDGE_TUNNEL_NO_PERMISSION permission not granted");
+            }
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now < tunnelRequestNextAtMs) return;
+        tunnelRequestNextAtMs = now + TUNNEL_REQUEST_INTERVAL_MS;
+        Intent up = new Intent(WG_ACTION_SET_TUNNEL_UP);
+        up.setPackage(WG_PACKAGE);          // never an implicit broadcast to anything else
+        up.putExtra(WG_EXTRA_TUNNEL, name);
+        try {
+            sendBroadcast(up);
+            McpProbe.appendLog(this, "BRIDGE_TUNNEL_REQUEST sent name_len=" + name.length());
+        } catch (Throwable t) {
+            McpProbe.appendLog(this, "BRIDGE_TUNNEL_REQUEST failed " + t.getClass().getSimpleName());
+        }
     }
 
     private void scheduleBridgeRetry(String reason) {

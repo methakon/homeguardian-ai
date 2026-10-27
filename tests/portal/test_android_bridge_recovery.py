@@ -59,6 +59,16 @@ public final class Harness {
         ck("refused".equals(BridgeSupervisor.classify("connection refused")), "refusal classified");
         ck("unknown".equals(BridgeSupervisor.classify("")), "empty classified as unknown");
         ck("unknown".equals(BridgeSupervisor.classify(null)), "null classified as unknown");
+
+        ck(BridgeSupervisor.validTunnelName("21"), "plain tunnel name accepted");
+        ck(BridgeSupervisor.validTunnelName("home gurdian"), "name with a space accepted");
+        ck(BridgeSupervisor.validTunnelName("wg-prod_1.0"), "hyphen, underscore, dot accepted");
+        ck(!BridgeSupervisor.validTunnelName(""), "empty name refused");
+        ck(!BridgeSupervisor.validTunnelName(null), "null name refused");
+        ck(!BridgeSupervisor.validTunnelName("line\nbreak"), "newline refused");
+        ck(!BridgeSupervisor.validTunnelName("x".repeat(65)), "over-long name refused");
+        ck(!BridgeSupervisor.validTunnelName("../../../etc/passwd"), "path-like name refused");
+        ck(!BridgeSupervisor.validTunnelName("name;rm -rf /"), "shell-like name refused");
         // A category must never echo the input: it is logged, and the input can carry an address.
         ck(!BridgeSupervisor.classify("refused: no VPN network is active, and 10.1.2.3 is not loopback")
                 .contains("10.1.2.3"), "category does not echo the input");
@@ -144,6 +154,32 @@ class BridgeRecoveryTests(unittest.TestCase):
         restore = restore[:restore.index('private void bridgeTick()')]
         self.assertIn('desired_running', restore)
         self.assertIn('bridgeWanted = true', restore)
+
+    def test_tunnel_control_is_narrow(self):
+        """The app may ask for one existing tunnel; it may not manage VPNs."""
+        manifest = (ROOT / 'apk_service/AndroidManifest.xml').read_text()
+        self.assertIn('com.wireguard.android.permission.CONTROL_TUNNELS', manifest)
+        for forbidden in ('BIND_VPN_SERVICE', 'WRITE_SECURE_SETTINGS'):
+            self.assertNotIn(forbidden, manifest)
+
+        service = (SERVICE / 'EdgeService.java').read_text()
+        request = service[service.index('private void maybeRequestTunnelUp()'):]
+        request = request[:request.index('private void scheduleBridgeRetry')]
+        self.assertIn('setPackage(WG_PACKAGE)', request)      # explicit package, never implicit
+        self.assertIn('checkSelfPermission(CONTROL_TUNNELS)', request)
+        self.assertIn('BridgeSupervisor.validTunnelName(name)', request)
+        self.assertIn('TUNNEL_REQUEST_INTERVAL_MS', request)  # rate limited
+        self.assertIn('SET_TUNNEL_UP', request)
+        self.assertNotIn('SET_TUNNEL_DOWN', service)          # never tears a tunnel down
+        self.assertNotIn('prepare(', service)                 # never claims a VPN itself
+        # The operator-configured name is the only value that may enter the request.
+        self.assertIn('getString("tunnel", "")', request)
+
+    def test_tunnel_name_is_configured_from_the_ui_only(self):
+        activity = (SERVICE / 'MainActivity.java').read_text()
+        self.assertIn('tunnelField', activity)
+        self.assertIn('putString("tunnel"', activity)
+        self.assertIn('requestPermissions(new String[]{CONTROL_TUNNELS}', activity)
 
     def test_status_exposes_retry_state(self):
         self.assertIn('bridgeAttempts', (SERVICE / 'EdgeState.java').read_text())

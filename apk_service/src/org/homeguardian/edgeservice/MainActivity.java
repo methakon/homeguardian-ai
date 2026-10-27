@@ -39,6 +39,7 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private Button stopBtn;
     private Button restartBtn;
     private EditText endpointField;
+    private EditText tunnelField;
     private Button bridgeStartBtn;
     private Button bridgeStopBtn;
     private TextView bridgeView;
@@ -57,6 +58,8 @@ public class MainActivity extends Activity implements EdgeState.Listener {
     private Boolean lastRunning = null;
     private String lastBridgeText = null;
     private Boolean lastBridgeRunning = null;
+    private static final String CONTROL_TUNNELS = "com.wireguard.android.permission.CONTROL_TUNNELS";
+    private static final int TUNNEL_PERMISSION_REQUEST = 4711;
 
     private final Runnable ticker = new Runnable() {
         public void run() {
@@ -72,6 +75,9 @@ public class MainActivity extends Activity implements EdgeState.Listener {
         EdgeState.addListener(this);
         EdgeState.nativeLoaded = NativeEngine.isLoaded();
         EdgeState.nativeVersion = NativeEngine.version();
+        if (checkSelfPermission(CONTROL_TUNNELS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{CONTROL_TUNNELS}, TUNNEL_PERMISSION_REQUEST);
+        }
     }
 
     @Override
@@ -169,6 +175,19 @@ public class MainActivity extends Activity implements EdgeState.Listener {
         endpointField.setText(getSharedPreferences("hg_bridge", MODE_PRIVATE)
                 .getString("endpoint", ""));
         root.addView(endpointField);
+
+        // Optional. With a name here AND this app holding WireGuard's CONTROL_TUNNELS grant,
+        // the service can ask the client to raise that existing tunnel after a power cycle.
+        // Empty means it never asks: an unconfigured install still dials nowhere.
+        tunnelField = new EditText(this);
+        tunnelField.setHint("WireGuard tunnel name (lets the service raise it after a reboot)");
+        tunnelField.setSingleLine(true);
+        tunnelField.setSaveEnabled(false);
+        tunnelField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        tunnelField.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        tunnelField.setText(getSharedPreferences("hg_bridge", MODE_PRIVATE).getString("tunnel", ""));
+        root.addView(tunnelField);
 
         LinearLayout row4 = new LinearLayout(this);
         bridgeStartBtn = button("Start bridge", new View.OnClickListener() {
@@ -329,7 +348,10 @@ public class MainActivity extends Activity implements EdgeState.Listener {
      */
     private void onBridgeStart() {
         String url = endpointField.getText().toString().trim();
-        getSharedPreferences("hg_bridge", MODE_PRIVATE).edit().putString("endpoint", url).apply();
+        getSharedPreferences("hg_bridge", MODE_PRIVATE).edit()
+                .putString("endpoint", url)
+                .putString("tunnel", tunnelField.getText().toString().trim())
+                .apply();
         // Use the same route-aware gate as the service: overlay peers commonly
         // have /32 addresses, so interface-subnet inference rejects a valid VPN.
         RouteSecurityPolicy.wireAndroidPlatform(this);
@@ -410,6 +432,10 @@ public class MainActivity extends Activity implements EdgeState.Listener {
           .append(EdgeState.bridgeEndpoint.length() == 0 ? "(none configured)" : EdgeState.bridgeEndpoint)
           .append('\n');
         bb.append("vpn tunnel     : ").append(TransportPolicy.vpnTunnelUp() ? "UP" : "DOWN").append('\n');
+        bb.append("tunnel control : ")
+          .append(checkSelfPermission(CONTROL_TUNNELS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                  ? "granted" : "not granted (tap here to allow)")
+          .append('\n');
         bb.append("bridge status  : ").append(EdgeState.bridgeStatus).append('\n');
         if (EdgeState.bridgeAttempts > 0) {
             bb.append("bridge retries : ").append(EdgeState.bridgeAttempts)

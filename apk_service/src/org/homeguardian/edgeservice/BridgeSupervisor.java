@@ -46,6 +46,18 @@ public final class BridgeSupervisor {
         return delay;
     }
 
+    /**
+     * A tunnel name this app may ask WireGuard to raise. Bounded and restricted to a plain
+     * profile name: the value is placed in an Intent extra, so anything exotic is refused here
+     * rather than sanitised later.
+     */
+    private static final java.util.regex.Pattern TUNNEL_NAME =
+            java.util.regex.Pattern.compile("[A-Za-z0-9 ._-]{1,64}");
+
+    public static boolean validTunnelName(String name) {
+        return name != null && TUNNEL_NAME.matcher(name).matches();
+    }
+
     /** Whether the supervisor is allowed to try at all in this state. */
     public static boolean shouldAttempt(boolean wanted, boolean running, boolean stopping) {
         return wanted && !running && !stopping;
